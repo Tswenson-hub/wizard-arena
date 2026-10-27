@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wizard Arena</title>
+<link rel="stylesheet" href="/css/style.css">
+<script type="importmap">
+{ "imports": {
+  "three": "/vendor/three/build/three.module.js",
+  "three/addons/": "/vendor/three/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<!-- Join screen -->
+<div id="join" class="overlay">
+  <div class="panel">
+    <h1>Wizard Arena</h1>
+    <p class="sub">Low-poly spell duels. Bring friends.</p>
+    <form id="joinForm">
+      <input id="nameInput" maxlength="14" placeholder="Your wizard name" autocomplete="off" spellcheck="false">
+      <button type="submit" id="joinBtn">Enter the arena</button>
+    </form>
+    <div class="controls">
+      <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move &nbsp; <kbd>Mouse</kbd> look</div>
+      <div><kbd>LMB</kbd> Spark bolt — quick, low damage, stuns</div>
+      <div><kbd>RMB</kbd> hold: Meteor — long wind-up, heavy damage</div>
+      <div><kbd>Space</kbd> hold: Ward — blocks spells from the front, drains stamina</div>
+      <div><kbd>E</kbd> Blink — teleport forward</div>
+      <div><kbd>F</kbd> pick up / throw objects &nbsp; <kbd>G</kbd> drop &nbsp; <kbd>Tab</kbd> scoreboard</div>
+    </div>
+    <p id="loadStatus" class="status">Loading wizard…</p>
+  </div>
+</div>
+
+<!-- HUD -->
+<div id="hud" class="hidden">
+  <div id="crosshair"><div class="ring"></div><div class="dot"></div></div>
+  <div id="chargeRing"><svg viewBox="0 0 60 60"><circle class="bg" cx="30" cy="30" r="26"/><circle class="fg" cx="30" cy="30" r="26"/></svg></div>
+
+  <div id="bars">
+    <div class="bar hp"><div class="fill"></div><span class="label">HP</span></div>
+    <div class="bar st"><div class="fill"></div><span class="label">STAMINA</span></div>
+  </div>
+
+  <div id="abilities">
+    <div class="ab" data-ab="fast"><div class="cd"></div><span class="key">LMB</span><span class="name">Spark</span></div>
+    <div class="ab" data-ab="heavy"><div class="cd"></div><span class="key">RMB</span><span class="name">Meteor</span></div>
+    <div class="ab" data-ab="block"><div class="cd"></div><span class="key">SPACE</span><span class="name">Ward</span></div>
+    <div class="ab" data-ab="tp"><div class="cd"></div><span class="key">E</span><span class="name">Blink</span></div>
+    <div class="ab" data-ab="throw"><div class="cd"></div><span class="key">F</span><span class="name">Grab</span></div>
+  </div>
+
+  <div id="feed"></div>
+  <div id="hint"></div>
+  <div id="status"></div>
+  <div id="deathScreen" class="hidden"><div class="big">You were vanquished</div><div class="small">Respawning…</div></div>
+  <div id="vignette"></div>
+
+  <div id="scoreboard" class="hidden">
+    <h2>Scoreboard</h2>
+    <table><thead><tr><th>Wizard</th><th>Kills</th><th>Deaths</th></tr></thead><tbody></tbody></table>
+  </div>
+  <div id="clickToPlay" class="hidden">Click to capture the mouse</div>
+</div>
+
+<script type="module" src="/js/main.js"></script>
+</body>
+</html>

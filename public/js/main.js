@@ -1,0 +1,562 @@
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import * as C from '../shared/constants.js';
+import { Net } from './net.js';
+import { Input } from './input.js';
+import { Sfx } from './audio.js';
+import { buildWorld, makePropMesh, spinners } from './world.js';
+import { Wizard, registerModel } from './wizard.js';
+import { Effects } from './effects.js';
+
+// ---------------------------------------------------------------- setup
+const canvas = document.getElementById('game');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(new URLSearchParams(location.search).has('low') ? 1 : Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+const LOW_FX = new URLSearchParams(location.search).has('low');   // ?low for weak GPUs
+renderer.shadowMap.enabled = !LOW_FX;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 300);
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+buildWorld(scene);
+const effects = new Effects(scene);
+const input = new Input(canvas);
+const sfx = new Sfx();
+const net = new Net();
+
+const $ = (s) => document.querySelector(s);
+const ui = {
+  join: $('#join'), form: $('#joinForm'), name: $('#nameInput'), joinBtn: $('#joinBtn'), loadStatus: $('#loadStatus'),
+  hud: $('#hud'), hp: $('#bars .hp .fill'), st: $('#bars .st .fill'), stBar: $('#bars .st'),
+  charge: $('#chargeRing'), chargeFg: $('#chargeRing .fg'),
+  feed: $('#feed'), hint: $('#hint'), status: $('#status'), death: $('#deathScreen'), vignette: $('#vignette'),
+  scoreboard: $('#scoreboard'), scoreBody: $('#scoreboard tbody'), clickToPlay: $('#clickToPlay'),
+  ab: Object.fromEntries([...document.querySelectorAll('.ab')].map(el => [el.dataset.ab, el])),
+};
+
+// ---------------------------------------------------------------- game state
+const players = new Map();   // id -> Wizard
+const props = new Map();     // id -> { data, mesh }
+let me = null;               // local Wizard
+let myId = null;
+
+const local = {
+  pos: new THREE.Vector3(), vel: new THREE.Vector3(),
+  yaw: 0, pitch: 0.25,
+  cd: { fast: 0, heavy: 0, tp: 0, throw: 0 },
+  charging: false, chargeStart: 0, chargeSent: false,
+  blocking: false,
+  anim: 'idle',
+  lastSend: 0,
+  stunUntil: 0,
+};
+let now = 0;
+const tmp = { v1: new THREE.Vector3(), v2: new THREE.Vector3(), v3: new THREE.Vector3() };
+
+// ---------------------------------------------------------------- loading
+try { ui.name.value = localStorage.getItem('wizardName') || ''; } catch {}
+ui.joinBtn.disabled = true;
+
+const loader = new GLTFLoader();
+loader.load('/models/wizard.glb', (gltf) => {
+  registerModel(gltf);
+  ui.loadStatus.textContent = 'Ready. Pick a name and enter.';
+  ui.joinBtn.disabled = false;
+  if (!ui.name.value) ui.name.value = 'Wizard' + Math.floor(Math.random() * 900 + 100);
+  ui.name.focus();
+}, (ev) => {
+  if (ev.total) ui.loadStatus.textContent = `Loading wizard… ${Math.round(ev.loaded / ev.total * 100)}%`;
+}, (err) => {
+  ui.loadStatus.textContent = 'Failed to load the wizard model: ' + (err?.message || err);
+});
+
+ui.form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (ui.joinBtn.disabled) return;
+  const name = ui.name.value.trim() || 'Wizard';
+  try { localStorage.setItem('wizardName', name); } catch {}
+  ui.joinBtn.disabled = true; ui.loadStatus.textContent = 'Connecting…';
+  sfx.init(); sfx.resume();
+  try {
+    const welcome = await net.connect(name);
+    onWelcome(welcome);
+  } catch (err) {
+    ui.loadStatus.textContent = err.message || 'Connection failed';
+    ui.joinBtn.disabled = false;
+  }
+});
+
+ui.clickToPlay.addEventListener('click', () => input.requestLock());
+input.onLockChange = (locked) => { ui.clickToPlay.classList.toggle('hidden', locked || !me); };
+net.onClose = () => {
+  if (!me) return;
+  ui.status.textContent = 'Disconnected from server — refresh to rejoin.';
+  ui.status.style.color = '#ff5c6a';
+};
+
+// ---------------------------------------------------------------- network handlers
+function onWelcome(msg) {
+  myId = msg.id;
+  for (const p of msg.players) addPlayer(p);
+  for (const pr of msg.props) setProp(pr, true);
+  for (const pj of msg.projectiles) effects.spawnProjectile(pj);
+  me = players.get(myId);
+  local.pos.set(me.targetPos.x, 0, me.targetPos.z);
+  ui.join.classList.add('hidden');
+  ui.hud.classList.remove('hidden');
+  input.enabled = true;
+  input.requestLock();
+  feed(`Welcome, <b>${esc(me.name)}</b>. ${players.size - 1} other wizard${players.size === 2 ? '' : 's'} here.`);
+}
+
+function addPlayer(info) {
+  if (players.has(info.id)) return players.get(info.id);
+  const w = new Wizard(info, scene, info.id === myId);
+  applySnapshot(w, info);
+  players.set(info.id, w);
+  return w;
+}
+
+function applySnapshot(w, s) {
+  if (w !== me) {
+    w.targetPos.set(s.p[0], s.p[1], s.p[2]);
+    w.targetYaw = s.yaw;
+    w.netAnim = s.anim;
+  }
+  w.hp = s.hp; w.st = s.st; w.kills = s.kills; w.deaths = s.deaths;
+  w.blocking = s.blocking; w.charging = s.charging; w.stunned = s.stun;
+  if (s.dead !== w.dead) w.dead = s.dead;
+  if (w === me) {
+    if (!s.blocking && local.blocking) { local.blocking = false; }   // server cancelled the ward
+    if (!s.charging && local.charging && local.chargeSent) { local.charging = false; }
+  }
+  if (s.carrying !== w.carrying) {
+    w.carrying = s.carrying;
+    w.setCarry(s.carrying ? makePropMesh(props.get(s.carrying)?.data.type || 'crate') : null);
+  }
+}
+
+function setProp(data, initial = false) {
+  let entry = props.get(data.id);
+  if (!entry) {
+    entry = { data, mesh: makePropMesh(data.type) };
+    scene.add(entry.mesh);
+    props.set(data.id, entry);
+  }
+  const prevState = entry.data.state;
+  entry.data = data;
+  entry.mesh.position.set(data.x, 0, data.z);
+  entry.mesh.visible = data.state === 'idle';
+  if (data.state === 'idle' && prevState === 'broken' && !initial) {
+    entry.mesh.scale.setScalar(0.01); entry.spawnT = 0;   // pop-in
+    effects.burst(new THREE.Vector3(data.x, 0.5, data.z), C.PROP_TYPES[data.type].color, 8, 2, 0.3, 0);
+  }
+  if (data.state === 'carried') {
+    const carrier = players.get(data.carrier);
+    if (carrier && carrier.carrying !== data.id) { carrier.carrying = data.id; carrier.setCarry(makePropMesh(data.type)); }
+  }
+}
+
+function dist(w) { return w ? Math.hypot(w.group.position.x - local.pos.x, w.group.position.z - local.pos.z) : 0; }
+
+function handleMessage(msg) {
+  switch (msg.t) {
+    case 'snap':
+      for (const s of msg.players) {
+        const w = players.get(s.id) || addPlayer(s);
+        applySnapshot(w, s);
+      }
+      break;
+    case 'joined': {
+      const w = addPlayer(msg.player);
+      if (w !== me) feed(`<b>${esc(w.name)}</b> entered the arena`);
+      break;
+    }
+    case 'leave': {
+      const w = players.get(msg.id);
+      if (w) { feed(`<b>${esc(w.name)}</b> left`); w.dispose(scene); players.delete(msg.id); }
+      break;
+    }
+    case 'proj': {
+      effects.spawnProjectile(msg);
+      const owner = players.get(msg.owner);
+      if (owner) {
+        const d = dist(owner);
+        if (msg.kind === 'fast') { owner.oneShot('cast_fast', 0.45, 2.6, 0.25); sfx.castFast(d); }
+        else if (msg.kind === 'heavy') { owner.charging = false; owner.oneShot('cast_heavy', 0.55, 1.5, 1.9); sfx.castHeavy(d); }
+        else { owner.oneShot('cast_fast', 0.4, 2.6, 0.3); sfx.throw_(d); }
+      }
+      break;
+    }
+    case 'projEnd': {
+      const pr = effects.projectiles.get(msg.id);
+      effects.endProjectile(msg);
+      if (msg.hit && pr) {
+        const d = Math.hypot(msg.p[0] - local.pos.x, msg.p[2] - local.pos.z);
+        if (pr.kind === 'heavy') { sfx.bigImpact(d); shake(0.5 / (1 + d * 0.15)); }
+        else if (msg.surface !== 'player') sfx.impact(d);
+      }
+      break;
+    }
+    case 'hit': {
+      const target = players.get(msg.target);
+      if (!target) break;
+      const d = dist(target);
+      const c = target.group.position.clone(); c.y += 1;
+      if (msg.blocked) { effects.blockFlash(c); sfx.block(d); }
+      else {
+        effects.burst(c, 0xff3b4e, 10, 3, 0.35);
+        target.oneShot('stun', msg.kind === 'heavy' ? 0.5 : 0.55, 3.0, 0.3);
+        if (target !== me) sfx.impact(d);
+      }
+      if (target === me) {
+        if (!msg.blocked) {
+          sfx.hurt(); flashVignette(); shake(msg.kind === 'heavy' ? 0.6 : 0.25);
+          local.stunUntil = now + (C.SPELLS[msg.kind]?.stun || 0.4);
+        }
+        // knockback
+        local.vel.x += msg.dir[0] * msg.kb; local.vel.z += msg.dir[2] * msg.kb;
+        if (!msg.blocked && local.charging) local.charging = false;
+      }
+      if (msg.attacker === myId && msg.dmg > 0) hitmarker();
+      break;
+    }
+    case 'blockBreak': {
+      const w = players.get(msg.id);
+      if (!w) break;
+      sfx.blockBreak(dist(w));
+      effects.burst(w.group.position.clone().add(new THREE.Vector3(0, 1, 0)), 0x9ae4ff, 24, 5, 0.4);
+      if (w === me) { local.blocking = false; local.stunUntil = now + C.BLOCK_BREAK_STUN; flashVignette(); feed('Your ward shattered!'); }
+      w.blocking = false;
+      break;
+    }
+    case 'chargeStart': {
+      const w = players.get(msg.id);
+      if (w) { w.charging = true; sfx.chargeStart(dist(w)); }
+      break;
+    }
+    case 'chargeCancel': {
+      const w = players.get(msg.id);
+      if (w) { w.charging = false; if (w === me) { local.charging = false; } }
+      break;
+    }
+    case 'tp': {
+      const w = players.get(msg.id);
+      effects.teleport(msg.from, msg.to);
+      if (w) {
+        sfx.teleport(dist(w));
+        w.oneShot('dash', 0.5, 2.5, 2.2);
+        if (w !== me) { w.targetPos.set(msg.to[0], 0, msg.to[2]); w.group.position.copy(w.targetPos); }
+        else if (local.pos.distanceTo(new THREE.Vector3(msg.to[0], 0, msg.to[2])) > 1.5) local.pos.set(msg.to[0], 0, msg.to[2]);
+      }
+      break;
+    }
+    case 'prop':
+      setProp(msg.prop);
+      if (msg.prop.state === 'carried') { const w = players.get(msg.prop.carrier); if (w) sfx.pickup(dist(w)); }
+      break;
+    case 'propBreak': {
+      const e = props.get(msg.id);
+      if (e) {
+        e.data.state = 'broken'; e.mesh.visible = false;
+        effects.propBreak(e.data.type, msg.p);
+        sfx.shatter(Math.hypot(msg.p[0] - local.pos.x, msg.p[2] - local.pos.z));
+        for (const w of players.values()) if (w.carrying === msg.id) { w.carrying = null; w.setCarry(null); }
+      }
+      break;
+    }
+    case 'death': {
+      const w = players.get(msg.id);
+      const k = players.get(msg.killer);
+      if (!w) break;
+      w.dead = true;
+      effects.death([w.group.position.x, 0, w.group.position.z]);
+      sfx.death(dist(w));
+      if (w === me) { ui.death.classList.remove('hidden'); local.charging = false; local.blocking = false; }
+      if (k && k !== w) feed(`<b>${esc(k.name)}</b> vanquished <b>${esc(w.name)}</b>`);
+      else feed(`<b>${esc(w.name)}</b> perished`);
+      break;
+    }
+    case 'respawn': {
+      const w = players.get(msg.id);
+      if (!w) break;
+      w.dead = false;
+      if (w === me) { local.pos.set(msg.p[0], 0, msg.p[2]); local.vel.set(0, 0, 0); ui.death.classList.add('hidden'); local.stunUntil = 0; }
+      else { w.targetPos.set(msg.p[0], 0, msg.p[2]); w.group.position.copy(w.targetPos); }
+      effects.teleport(msg.p, msg.p);
+      break;
+    }
+  }
+}
+
+// ---------------------------------------------------------------- UI helpers
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function feed(html) {
+  const el = document.createElement('div'); el.innerHTML = html;
+  ui.feed.prepend(el);
+  while (ui.feed.children.length > 6) ui.feed.lastChild.remove();
+  setTimeout(() => el.remove(), 6000);
+}
+let vignetteT = 0;
+function flashVignette() { ui.vignette.classList.add('hit'); vignetteT = 0.25; }
+let shakeAmt = 0;
+function shake(a) { shakeAmt = Math.max(shakeAmt, a); }
+function hitmarker() {
+  const ch = $('#crosshair .ring'); ch.style.borderColor = '#ffd25c'; ch.style.transform = 'scale(1.4)';
+  setTimeout(() => { ch.style.borderColor = ''; ch.style.transform = ''; }, 120);
+}
+let scoreVisible = false, scoreT = 0;
+function updateScoreboard() {
+  const rows = [...players.values()].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
+  ui.scoreBody.innerHTML = rows.map(w => `<tr class="${w === me ? 'me' : ''}"><td style="color:#${w.color.toString(16).padStart(6, '0')}">${esc(w.name)}</td><td>${w.kills}</td><td>${w.deaths}</td></tr>`).join('');
+}
+
+// ---------------------------------------------------------------- local player update
+const aimDir = new THREE.Vector3();
+const aimOrigin = new THREE.Vector3();
+
+function computeAim() {
+  camera.getWorldDirection(aimDir);
+  const target = tmp.v1.copy(camera.position).addScaledVector(aimDir, 40);
+  me.hand.getWorldPosition(aimOrigin);
+  // keep the origin sane even mid-animation
+  if (aimOrigin.distanceTo(local.pos) > 2 || aimOrigin.y < 0.3) aimOrigin.set(local.pos.x, local.pos.y + 1.3, local.pos.z);
+  aimDir.copy(target).sub(aimOrigin).normalize();
+}
+
+function nearestIdleProp() {
+  let best = null, bd = C.PICKUP_RANGE;
+  for (const e of props.values()) {
+    if (e.data.state !== 'idle') continue;
+    const d = Math.hypot(e.data.x - local.pos.x, e.data.z - local.pos.z);
+    if (d < bd) { bd = d; best = e; }
+  }
+  return best;
+}
+
+function updateLocal(dt) {
+  const stunned = now < local.stunUntil || me.stunned;
+  const canAct = !me.dead && !stunned;
+
+  // mouse look
+  if (input.locked) {
+    local.yaw -= input.mouseDX * 0.0022;
+    local.pitch = THREE.MathUtils.clamp(local.pitch + input.mouseDY * 0.0022, -0.6, 1.1);
+  }
+
+  // ---- actions
+  if (canAct) {
+    // block
+    const wantBlock = input.down('Space') && me.st > 2 && !local.charging;
+    if (wantBlock !== local.blocking) { local.blocking = wantBlock; net.send({ t: 'block', on: wantBlock }); }
+
+    // fast bolt
+    if (input.lmbPressed && !local.blocking && !local.charging && !me.carrying && now >= local.cd.fast) {
+      computeAim();
+      local.cd.fast = now + C.SPELLS.fast.cooldown;
+      net.send({ t: 'cast', kind: 'fast', origin: aimOrigin.toArray(), dir: aimDir.toArray() });
+    }
+    // heavy wind-up: press to start, fires automatically when fully charged
+    if (input.rmbPressed && !local.blocking && !local.charging && !me.carrying && now >= local.cd.heavy) {
+      local.charging = true; local.chargeStart = now; local.chargeSent = false;
+      net.send({ t: 'chargeStart' });
+    }
+    if (local.charging && !local.chargeSent && now - local.chargeStart >= C.SPELLS.heavy.chargeTime) {
+      computeAim();
+      local.chargeSent = true;
+      local.cd.heavy = now + C.SPELLS.heavy.cooldown;
+      net.send({ t: 'chargeRelease', origin: aimOrigin.toArray(), dir: aimDir.toArray() });
+      setTimeout(() => { local.charging = false; }, 150);
+    }
+    // blink
+    if (input.justPressed('KeyE') && !local.charging && now >= local.cd.tp) {
+      const dir = [Math.sin(local.yaw), 0, Math.cos(local.yaw)];
+      const from = [local.pos.x, 0, local.pos.z];
+      const to = C.computeTeleport(from, dir);
+      local.cd.tp = now + C.TELEPORT.cooldown;
+      net.send({ t: 'teleport', dir, from });
+      local.pos.set(to[0], 0, to[2]); local.vel.set(0, 0, 0);
+      if (local.blocking) { local.blocking = false; }
+    }
+    // grab / throw / drop
+    if (input.justPressed('KeyF')) {
+      if (me.carrying) {
+        if (now >= local.cd.throw) {
+          computeAim();
+          local.cd.throw = now + C.THROW_COOLDOWN;
+          net.send({ t: 'throw', dir: aimDir.toArray() });
+        }
+      } else if (!local.charging && !local.blocking && nearestIdleProp()) {
+        net.send({ t: 'pickup' });
+      }
+    }
+    if (input.justPressed('KeyG') && me.carrying) net.send({ t: 'drop' });
+  } else {
+    if (local.blocking) { local.blocking = false; net.send({ t: 'block', on: false }); }
+  }
+
+  // ---- movement (camera-relative)
+  let mx = 0, mz = 0;
+  if (input.down('KeyW')) mz += 1;
+  if (input.down('KeyS')) mz -= 1;
+  if (input.down('KeyA')) mx -= 1;
+  if (input.down('KeyD')) mx += 1;
+  const moving = (mx || mz) && canAct;
+  let speed = C.MOVE_SPEED;
+  if (local.charging) speed = C.CHARGE_MOVE_SPEED;
+  else if (local.blocking) speed = C.BLOCK_MOVE_SPEED;
+  const fwd = tmp.v1.set(Math.sin(local.yaw), 0, Math.cos(local.yaw));
+  const right = tmp.v2.set(Math.cos(local.yaw), 0, -Math.sin(local.yaw));
+  const wish = tmp.v3.set(0, 0, 0);
+  if (moving) { wish.addScaledVector(fwd, mz).addScaledVector(right, mx).normalize().multiplyScalar(speed); }
+  // accelerate toward wish velocity; knockback lives in local.vel too
+  const accel = Math.min(1, dt * 12);
+  local.vel.x += (wish.x - local.vel.x) * accel;
+  local.vel.z += (wish.z - local.vel.z) * accel;
+  if (!me.dead) local.pos.addScaledVector(local.vel, dt);
+
+  // ---- collisions (2D circles)
+  const pr = C.PLAYER_RADIUS;
+  const pushOut = (cx, cz, r) => {
+    const dx = local.pos.x - cx, dz = local.pos.z - cz;
+    const d = Math.hypot(dx, dz);
+    if (d < r + pr && d > 0.0001) { const k = (r + pr - d) / d; local.pos.x += dx * k; local.pos.z += dz * k; }
+  };
+  for (const p of C.PILLARS) pushOut(p.x, p.z, p.r);
+  for (const t of C.TREES) pushOut(t.x, t.z, t.r);
+  for (const e of props.values()) if (e.data.state === 'idle') pushOut(e.data.x, e.data.z, C.PROP_TYPES[e.data.type].r * 0.8);
+  for (const w of players.values()) if (w !== me && !w.dead) pushOut(w.group.position.x, w.group.position.z, pr);
+  const r = Math.hypot(local.pos.x, local.pos.z);
+  if (r > C.ARENA_RADIUS) { local.pos.x *= C.ARENA_RADIUS / r; local.pos.z *= C.ARENA_RADIUS / r; }
+
+  // ---- apply to the wizard
+  me.group.position.copy(local.pos);
+  me.group.rotation.y = local.yaw;
+  me.blocking = local.blocking;
+  me.charging = local.charging;
+  me.updateAnimation(!!moving, dt);
+  local.anim = me.dead ? 'dead' : local.charging ? 'charge' : local.blocking ? 'block' : moving ? 'run' : 'idle';
+
+  // ---- send state (20 Hz)
+  if (now - local.lastSend > 1 / 20) {
+    local.lastSend = now;
+    net.send({ t: 'state', p: [local.pos.x, 0, local.pos.z], yaw: local.yaw, anim: local.anim });
+  }
+
+  // ---- camera: over-the-shoulder orbit
+  let camDist = 4.2;
+  const pivot = tmp.v1.set(local.pos.x, local.pos.y + 1.55, local.pos.z);
+  const back = tmp.v2.set(-Math.sin(local.yaw) * Math.cos(local.pitch), Math.sin(local.pitch), -Math.cos(local.yaw) * Math.cos(local.pitch));
+  const shoulder = tmp.v3.set(Math.cos(local.yaw), 0, -Math.sin(local.yaw)).multiplyScalar(0.7);
+  // pull the camera in if a pillar sits between it and the wizard (2D circle test along the boom)
+  for (const p of C.PILLARS) {
+    for (let d = 0.6; d < camDist; d += 0.3) {
+      const x = pivot.x + back.x * d + shoulder.x, z = pivot.z + back.z * d + shoulder.z;
+      if (pivot.y + back.y * d < p.h + 0.5 && Math.hypot(x - p.x, z - p.z) < p.r + 0.35) { camDist = Math.max(1.2, d - 0.3); break; }
+    }
+  }
+  const desired = pivot.clone().addScaledVector(back, camDist).add(shoulder);
+  if (desired.y < 0.4) desired.y = 0.4;
+  camera.position.lerp(desired, Math.min(1, dt * 18));
+  const look = pivot.clone().add(shoulder).addScaledVector(back, -6);
+  if (shakeAmt > 0.001) {
+    camera.position.x += (Math.random() - 0.5) * shakeAmt; camera.position.y += (Math.random() - 0.5) * shakeAmt;
+    shakeAmt *= Math.max(0, 1 - dt * 10);
+  }
+  camera.lookAt(look);
+}
+
+// ---------------------------------------------------------------- HUD
+let lastHud = { hp: -1, st: -1 };
+function updateHud(dt) {
+  if (me.hp !== lastHud.hp) { ui.hp.style.width = `${me.hp}%`; lastHud.hp = me.hp; }
+  const stShown = me.st;
+  if (Math.abs(stShown - lastHud.st) > 0.5) { ui.st.style.width = `${stShown}%`; lastHud.st = stShown; ui.stBar.classList.toggle('low', stShown < 25); }
+
+  // charge ring
+  if (local.charging) {
+    const k = Math.min(1, (now - local.chargeStart) / C.SPELLS.heavy.chargeTime);
+    ui.charge.classList.add('on'); ui.charge.classList.toggle('ready', k >= 1);
+    ui.chargeFg.style.strokeDashoffset = 163.4 * (1 - k);
+  } else ui.charge.classList.remove('on');
+
+  // ability cooldown fills
+  const cdFill = (key, until, total) => { const k = Math.max(0, Math.min(1, (until - now) / total)); ui.ab[key].querySelector('.cd').style.height = `${k * 100}%`; };
+  cdFill('fast', local.cd.fast, C.SPELLS.fast.cooldown);
+  cdFill('heavy', local.cd.heavy, C.SPELLS.heavy.cooldown);
+  cdFill('tp', local.cd.tp, C.TELEPORT.cooldown);
+  cdFill('throw', local.cd.throw, C.THROW_COOLDOWN);
+  ui.ab.block.classList.toggle('active', local.blocking);
+  ui.ab.heavy.classList.toggle('active', local.charging);
+  ui.ab.block.classList.toggle('disabled', me.st < 3);
+  ui.ab.throw.querySelector('.name').textContent = me.carrying ? 'Throw' : 'Grab';
+  ui.ab.throw.classList.toggle('active', !!me.carrying);
+  ui.ab.fast.classList.toggle('disabled', !!me.carrying);
+  ui.ab.heavy.classList.toggle('disabled', !!me.carrying);
+
+  // hint
+  let hint = '';
+  if (me.carrying) hint = 'F throw · G drop';
+  else if (!me.dead && nearestIdleProp()) hint = 'F pick up';
+  else if (now < local.stunUntil) hint = 'Stunned!';
+  ui.hint.textContent = hint; ui.hint.classList.toggle('on', !!hint);
+
+  if (vignetteT > 0) { vignetteT -= dt; if (vignetteT <= 0) ui.vignette.classList.remove('hit'); }
+
+  const want = input.down('Tab');
+  if (want !== scoreVisible) { scoreVisible = want; ui.scoreboard.classList.toggle('hidden', !want); if (want) { updateScoreboard(); scoreT = now; } }
+  if (scoreVisible && now - scoreT > 0.5) { updateScoreboard(); scoreT = now; }
+
+  if (Math.floor(now) !== Math.floor(now - dt)) {
+    ui.status.textContent = `${players.size} wizard${players.size === 1 ? '' : 's'} online · ${me.kills} kill${me.kills === 1 ? '' : 's'}`;
+  }
+}
+
+// ---------------------------------------------------------------- main loop
+let last = performance.now();
+function frame(t) {
+  requestAnimationFrame(frame);
+  const dt = Math.min(0.05, (t - last) / 1000); last = t;
+  now = t / 1000;
+
+  if (me) {
+    for (const msg of net.drain()) handleMessage(msg);
+    updateLocal(dt);
+    for (const w of players.values()) {
+      if (w === me) continue;
+      w.interpolate(dt);
+      const moving = w.netAnim === 'run';
+      w.updateAnimation(moving, dt);
+    }
+    for (const w of players.values()) w.faceCamera(camera);
+    updateHud(dt);
+  } else {
+    // idle camera drift on the join screen
+    const a = t * 0.00008;
+    camera.position.set(Math.sin(a) * 26, 9, Math.cos(a) * 26);
+    camera.lookAt(0, 2, 0);
+  }
+
+  // prop pop-in + spinning crystals
+  for (const e of props.values()) {
+    if (e.spawnT !== undefined) { e.spawnT += dt; const s = Math.min(1, e.spawnT * 4); e.mesh.scale.setScalar(s); if (s >= 1) delete e.spawnT; }
+  }
+  for (const s of spinners) { s.rotation.y += dt; s.position.y += Math.sin(t * 0.002) * 0.002; }
+
+  effects.update(dt);
+  renderer.render(scene, camera);
+  input.endFrame();
+}
+requestAnimationFrame(frame);
+
+// Debug handle (used by the automated smoke test; harmless in production).
+window.__wa = { input, net, local, players, props, effects, scene, camera };

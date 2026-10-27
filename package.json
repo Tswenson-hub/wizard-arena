@@ -1,0 +1,19 @@
+{
+  "name": "wizard-arena",
+  "version": "1.0.0",
+  "description": "Low-poly multiplayer wizard duel in the browser (three.js + WebSockets)",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "three": "^0.170.0",
+    "ws": "^8.18.0"
+  }
+}
