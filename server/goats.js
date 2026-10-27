@@ -1,8 +1,10 @@
-// Meadow goats: harmless grazers until something hits one. Then it rears up, charges whoever
-// hit it, and rams the first wizard it reaches. A ram is fatal unless the wizard wards facing it.
-//   graze -> wander -> graze ...            (idle)
-//   (hit) -> windup -> charge -> recover    (charge ran out or reached the arena edge)
-//                            \-> dizzy      (hit a pillar, a tree or a ward)
+// Farm goats: harmless grazers in the pen until something hits one. Then it rears up, leaps the
+// fence (charges ignore fence posts and trample crops), charges whoever hit it, and rams the first
+// wizard it reaches. A ram is fatal unless the wizard wards facing it. Then it trots home through the gate.
+//   graze -> wander -> graze ...                      (idle, always inside the pen)
+//   (hit) -> windup -> charge -> recover -> return    (charge ran out or reached the arena edge)
+//                            \-> dizzy   -> return    (hit a pillar, a tree, the house or a ward)
+//   return: around the pen to the gate, in, then graze
 
 import * as C from '../public/shared/constants.js';
 
@@ -15,6 +17,7 @@ export function createGoats() {
     id: i + 1, x, z, yaw: Math.random() * Math.PI * 2,
     state: 'graze', until: rand(1, 5),     // seconds of grazing left (converted to absolute time on first update)
     target: null, angeredBy: null, dest: null, vx: 0, vz: 0, started: false,
+    route: null, routeT: 0, checkT: 0, checkPos: null, detours: 0,
   }));
 }
 
@@ -28,6 +31,14 @@ export function angerGoat(g, ownerId, ctx) {
   g.state = 'windup'; g.until = t + G.windup;
   g.target = ownerId; g.angeredBy = ownerId;
   ctx.broadcast({ t: 'goatAngry', id: g.id, target: ownerId });
+}
+
+// Knock a charging (or winding-up) goat dizzy, as if it hit a pillar: Arcane Cyclone answering a charge.
+export function dizzyGoat(g, ctx) {
+  if (g.state !== 'charge' && g.state !== 'windup') return false;
+  g.state = 'dizzy'; g.until = ctx.now() + G.dizzyTime;
+  ctx.broadcast({ t: 'goatBonk', id: g.id, p: [g.x, 0.8, g.z] });
+  return true;
 }
 
 // A ward stops the goat if the wizard is facing it (within the usual block cone).
@@ -44,7 +55,10 @@ export function updateGoats(goats, dt, ctx) {
     if (!g.started) { g.started = true; g.until = t + g.until; }
     switch (g.state) {
       case 'graze':
-        if (t >= g.until) { g.state = 'wander'; g.dest = pickDest(g); }
+        if (t >= g.until) {
+          if (C.inPen(g.x, g.z, 0.3)) { g.state = 'wander'; g.dest = pickDest(g); }
+          else goHome(g, t);
+        }
         break;
       case 'wander': {
         const dx = g.dest[0] - g.x, dz = g.dest[1] - g.z;
@@ -66,7 +80,14 @@ export function updateGoats(goats, dt, ctx) {
         break;
       case 'dizzy':
       case 'recover':
-        if (t >= g.until) { g.state = 'graze'; g.until = t + rand(2, 5); g.target = null; }
+        if (t >= g.until) {
+          g.target = null;
+          if (C.inPen(g.x, g.z, 0.3)) { g.state = 'graze'; g.until = t + rand(2, 5); }
+          else goHome(g, t);
+        }
+        break;
+      case 'return':
+        trotHome(g, dt, t, ctx);
         break;
     }
   }
@@ -84,13 +105,14 @@ function charge(g, dt, t, ctx) {
       ctx.breakProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z]);
     }
   }
-  // ram the first wizard in reach
+  // ram the first wizard in reach (it runs under anyone up in the air)
   for (const p of ctx.players.values()) {
-    if (p.dead || Math.hypot(p.p[0] - g.x, p.p[2] - g.z) > G.radius + C.PLAYER_RADIUS + 0.25) continue;
+    if (p.dead || p.p[1] >= G.rammableBelow || Math.hypot(p.p[0] - g.x, p.p[2] - g.z) > G.radius + C.PLAYER_RADIUS + 0.25) continue;
     return ram(g, p, t, ctx);
   }
-  // pillars and trees stop it cold
+  // pillars, trees, the house and the tractor stop it cold; it leaps fences and tramples crops
   for (const o of C.COLLIDERS) {
+    if (o.kind === 'fence' || o.kind === 'crop') continue;
     if (Math.hypot(o.x - g.x, o.z - g.z) < o.r + G.radius) {
       pushOut(g, ctx);
       g.state = 'dizzy'; g.until = t + G.dizzyTime;
@@ -139,6 +161,7 @@ function turnToward(g, want, maxStep) {
 // Keep the goat out of pillars, trees, props and the arena rim. Returns true if it bumped something.
 function pushOut(g, ctx) {
   let hit = false;
+  if (g.ghost) return false;
   const out = (cx, cz, r) => {
     const dx = g.x - cx, dz = g.z - cz, d = Math.hypot(dx, dz);
     if (d < r + G.radius && d > 1e-4) { const k = (r + G.radius - d) / d; g.x += dx * k; g.z += dz * k; hit = true; }
@@ -150,13 +173,88 @@ function pushOut(g, ctx) {
   return hit;
 }
 
+// Somewhere to graze inside the pen, not too far from where the goat stands.
 function pickDest(g) {
-  for (let i = 0; i < 10; i++) {
-    const a = Math.random() * Math.PI * 2, d = rand(3, 9);
-    const x = g.x + Math.sin(a) * d, z = g.z + Math.cos(a) * d;
-    if (Math.hypot(x, z) > C.ARENA_RADIUS - 4) continue;
-    if (C.COLLIDERS.some(o => Math.hypot(o.x - x, o.z - z) < o.r + 1.2)) continue;
+  const m = 1.3;
+  for (let i = 0; i < 20; i++) {
+    const x = rand(C.PEN.x0 + m, C.PEN.x1 - m), z = rand(C.PEN.z0 + m, C.PEN.z1 - m);
+    if (i < 12 && Math.hypot(x - g.x, z - g.z) > 9) continue;
+    if (C.COLLIDERS.some(o => o.kind !== 'fence' && Math.hypot(o.x - x, o.z - z) < o.r + 1.2)) continue;
     return [x, z];
   }
-  return [g.x * 0.8, g.z * 0.8];
+  return [(C.PEN.x0 + C.PEN.x1) / 2, (C.PEN.z0 + C.PEN.z1) / 2];
+}
+
+// ---------------------------------------------------------------- going home
+// Route: around the outside of the pen (via its corners) to the gate, through it, then a grazing spot.
+const PAD = 1.9;
+const CORNERS = [
+  [C.PEN.x0 - PAD, C.PEN.z0 - PAD], [C.PEN.x1 + PAD, C.PEN.z0 - PAD],
+  [C.PEN.x1 + PAD, C.PEN.z1 + PAD], [C.PEN.x0 - PAD, C.PEN.z1 + PAD],
+];
+
+// Does segment a-b cross the pen rectangle (grown by `grow`)? Liang-Barsky clip.
+function crossesPen(a, b, grow = 0.5) {
+  let t0 = 0, t1 = 1;
+  const dx = b[0] - a[0], dz = b[1] - a[1];
+  const edges = [[-dx, a[0] - (C.PEN.x0 - grow)], [dx, (C.PEN.x1 + grow) - a[0]], [-dz, a[1] - (C.PEN.z0 - grow)], [dz, (C.PEN.z1 + grow) - a[1]]];
+  for (const [p, q] of edges) {
+    if (Math.abs(p) < 1e-9) { if (q < 0) return false; continue; }
+    const r = q / p;
+    if (p < 0) { if (r > t1) return false; if (r > t0) t0 = r; }
+    else { if (r < t0) return false; if (r < t1) t1 = r; }
+  }
+  return true;
+}
+
+// Shortest path from `from` to the gate over the corner waypoints (5 nodes, so plain Dijkstra).
+export function routeToGate(from) {
+  const nodes = [from, ...CORNERS, C.PEN.gateOut];
+  const goal = nodes.length - 1;
+  const dist = nodes.map(() => Infinity), prev = nodes.map(() => -1), done = nodes.map(() => false);
+  dist[0] = 0;
+  for (;;) {
+    let u = -1;
+    for (let i = 0; i < nodes.length; i++) if (!done[i] && (u < 0 || dist[i] < dist[u])) u = i;
+    if (u < 0 || dist[u] === Infinity) break;
+    done[u] = true;
+    if (u === goal) break;
+    for (let v = 1; v < nodes.length; v++) {
+      if (done[v] || crossesPen(nodes[u], nodes[v])) continue;
+      const d = dist[u] + Math.hypot(nodes[v][0] - nodes[u][0], nodes[v][1] - nodes[u][1]);
+      if (d < dist[v]) { dist[v] = d; prev[v] = u; }
+    }
+  }
+  const path = [];
+  for (let v = goal; v > 0; v = prev[v]) { if (v < 0) return [C.PEN.gateOut]; path.unshift(nodes[v]); }
+  return path;
+}
+
+function goHome(g, t) {
+  g.state = 'return';
+  g.route = [...routeToGate([g.x, g.z]), C.PEN.gateIn, pickDest({ x: C.PEN.gateIn[0], z: C.PEN.gateIn[1] })];
+  g.routeT = t; g.checkT = t; g.checkPos = [g.x, g.z]; g.detours = 0; g.ghost = false;
+}
+
+function trotHome(g, dt, t, ctx) {
+  const wp = g.route[0];
+  const dx = wp[0] - g.x, dz = wp[1] - g.z;
+  if (Math.hypot(dx, dz) < 0.6) {
+    g.route.shift();
+    if (!g.route.length) { g.state = 'graze'; g.until = t + rand(2, 5); g.ghost = false; }
+    return;
+  }
+  turnToward(g, Math.atan2(dx, dz), 4 * dt);
+  g.x += Math.sin(g.yaw) * G.trotSpeed * dt; g.z += Math.cos(g.yaw) * G.trotSpeed * dt;
+  pushOut(g, ctx);
+  // Stuck on something (the house, a tractor, a prop pile)? Step aside, and after a long time just
+  // hop everything on the way home.
+  if (t - g.checkT > 1.5) {
+    if (Math.hypot(g.x - g.checkPos[0], g.z - g.checkPos[1]) < 0.6) {
+      const side = g.detours++ % 2 ? 1 : -1, a = g.yaw + side * Math.PI / 2;
+      g.route.unshift([g.x + Math.sin(a) * 2.5, g.z + Math.cos(a) * 2.5]);
+    }
+    g.checkT = t; g.checkPos = [g.x, g.z];
+  }
+  if (t - g.routeT > 30) g.ghost = true;
 }

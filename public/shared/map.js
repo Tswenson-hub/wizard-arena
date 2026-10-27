@@ -1,7 +1,16 @@
 // Map layout, shared by server and client: arena size, obstacles, props, goats and spawn points.
 // Owned by the environment track; gameplay code reads it through constants.js (which re-exports it).
+//
+// The wizard's farmstead. +z is north. Standing in the courtyard facing the farmhouse (north),
+// the goat pen is on your left (+x) and the crop field on your right (-x).
+//
+//                 farmhouse (0, 26)
+//      tractor
+//   crop field      courtyard + well      goat pen (gate faces the courtyard)
+//   (-x)            (0, 0)                (+x)
+//                 south meadow, trees
 
-export const ARENA_RADIUS = 34;       // playable circle radius (m)
+export const ARENA_RADIUS = 40;       // playable circle radius (m)
 
 // Prop archetypes. `r` is the collision radius, `h` the height used for the hit sphere.
 export const PROP_TYPES = {
@@ -11,15 +20,18 @@ export const PROP_TYPES = {
   rock:    { r: 0.6,  h: 1.0, hp: 1, color: 0x8d9299 },
   pot:     { r: 0.4,  h: 0.9, hp: 1, color: 0x6a8fd0 },
   potion:  { r: 0.5,  h: 1.15, hp: 1, color: 0x9a5cff },   // Meshy potion barrel (models/potion.glb)
+  hay:     { r: 0.55, h: 0.9, hp: 1, color: 0xd9b45a },    // small round hay bale lying on its side
 };
 
-// Meadow goats. They graze until a spell or thrown object hits one; then it rears up and charges
-// whoever hit it. A charge that connects is fatal unless the wizard wards facing the goat.
+// Goats. They graze in the pen until a spell or thrown object hits one; then it rears up, leaps the
+// fence and charges whoever hit it. A charge that connects is fatal unless the wizard wards facing
+// the goat. Afterwards it trots back into the pen through the gate.
 export const GOAT = {
   count: 4,
   radius: 0.6,          // body radius for collisions and hits
   hitY: 0.7,            // centre of the hit sphere above the ground
   walkSpeed: 1.3,
+  trotSpeed: 2.6,       // heading home to the pen
   windup: 0.7,          // seconds rearing up before the charge
   chargeSpeed: 12.5,
   chargeTime: 3.0,      // longest a charge lasts
@@ -28,45 +40,122 @@ export const GOAT = {
   recoverTime: 1.2,     // after a charge runs out
   blockCost: 50,        // stamina a ward spends stopping a goat
   blockKnockback: 7,
+  rammableBelow: 1.0,   // wizards whose feet are higher than this (Skyward Flash) are passed under
 };
-export const GOAT_SPAWNS = [[9, -18], [-19, -6], [17, 15], [-9, 21]];
 
-// Fixed obstacles in the arena (not pickable). Clients use these for movement collision,
-// server uses them for projectile collision.
+// ------------------------------------------------------------ farmhouse
+// The Meshy farmhouse (models/farmhouse.glb), front door facing the courtyard.
+export const FARMHOUSE = { x: 0, z: 26, height: 11, yaw: Math.PI };
+const HOUSE_BLOCKS = [[-3.3, 23.4], [0, 23.0], [3.3, 23.4], [-3.4, 27.8], [0, 28.2], [3.4, 27.8]];
+
+// ------------------------------------------------------------ goat pen (west, +x)
+// An axis-aligned fenced rectangle. The gate is a gap in the courtyard-facing side (x = x0).
+export const PEN = {
+  x0: 18, x1: 33, z0: -13, z1: 9,
+  gate: { z0: -3.4, z1: -0.6 },
+  postR: 0.25, postH: 0.7, postSpacing: 0.62,   // postH: spells fly over; aiming at a goat's body clears it
+};
+PEN.gateOut = [16.0, (PEN.gate.z0 + PEN.gate.z1) / 2];   // just outside the gate
+PEN.gateIn = [19.8, (PEN.gate.z0 + PEN.gate.z1) / 2];    // just inside it
+export const inPen = (x, z, margin = 0) =>
+  x > PEN.x0 + margin && x < PEN.x1 - margin && z > PEN.z0 + margin && z < PEN.z1 - margin;
+
+// Fence edges as segments [[ax, az], [bx, bz]]; the gate side is split around the opening.
+export const FENCE_SEGMENTS = [
+  [[PEN.x0, PEN.z0], [PEN.x1, PEN.z0]],
+  [[PEN.x1, PEN.z0], [PEN.x1, PEN.z1]],
+  [[PEN.x1, PEN.z1], [PEN.x0, PEN.z1]],
+  [[PEN.x0, PEN.z1], [PEN.x0, PEN.gate.z1]],
+  [[PEN.x0, PEN.gate.z0], [PEN.x0, PEN.z0]],
+];
+// Posts along every segment, close enough that a 0.45 m wizard can't slip between them.
+export const FENCE_POSTS = [];
+for (const [a, b] of FENCE_SEGMENTS) {
+  const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  const n = Math.ceil(len / PEN.postSpacing);
+  for (let i = 0; i <= n; i++) {
+    const x = a[0] + (b[0] - a[0]) * i / n, z = a[1] + (b[1] - a[1]) * i / n;
+    if (!FENCE_POSTS.some(p => Math.hypot(p[0] - x, p[1] - z) < 0.05)) FENCE_POSTS.push([x, z]);
+  }
+}
+
+// The gate leaf stands swung open outward from its hinge on the north gate post.
+export const GATE_LEAF = { hinge: [PEN.x0, PEN.gate.z1], dir: [-0.16, 0.99], len: PEN.gate.z1 - PEN.gate.z0 };
+for (let i = 1; i <= 4; i++) {
+  const k = GATE_LEAF.len * i / 4;
+  FENCE_POSTS.push([GATE_LEAF.hinge[0] + GATE_LEAF.dir[0] * k, GATE_LEAF.hinge[1] + GATE_LEAF.dir[1] * k]);
+}
+
+// Distance from (x, z) to the nearest fence (ignores the gate gap). Used for the goats' leap arc.
+export function fenceDistance(x, z) {
+  let best = Infinity;
+  for (const [a, b] of FENCE_SEGMENTS) {
+    const sx = b[0] - a[0], sz = b[1] - a[1];
+    const k = Math.max(0, Math.min(1, ((x - a[0]) * sx + (z - a[1]) * sz) / (sx * sx + sz * sz)));
+    best = Math.min(best, Math.hypot(a[0] + sx * k - x, a[1] + sz * k - z));
+  }
+  return best;
+}
+
+export const GOAT_SPAWNS = [[22.5, -8], [27, -3.5], [24, 3], [29.5, -9.5]];
+
+// Inside the pen: a lean-to shelter against the back fence and a water trough by the gate.
+export const SHELTER = { x: 31.2, z: 5.6, yaw: -Math.PI / 2, w: 4.2, d: 2.6 };
+export const TROUGH = { x: 20.4, z: 5.2, yaw: 0, len: 2.0 };
+
+// ------------------------------------------------------------ crop field (east, -x)
+// Rows run north-south; walkable furrows between them. Each plant is a low collider: it blocks
+// walking but spells fly over it.
+export const FIELD = { x0: -33, x1: -18.4, z0: -11, z1: 10.5 };
+export const CROP_ROWS = [-19, -21.6, -24.2, -26.8, -29.4, -32].map(x => ({ x, z0: -11, z1: 10 }));
+export const CROPS = [];
+for (const row of CROP_ROWS) {
+  for (let z = row.z0; z <= row.z1 + 1e-6; z += 0.9) CROPS.push([row.x, z]);
+}
+export const SCARECROW = { x: -25.5, z: 11.6, yaw: Math.PI * 0.95 };
+
+// ------------------------------------------------------------ farm machinery and courtyard
+// Tractor parked between the field and the courtyard: hard cover.
+export const TRACTOR = { x: -14.8, z: 13.2, yaw: 2.35, len: 4.2 };
+export const WELL = { x: 0, z: 2, r: 1.25, h: 2.6 };
+export const CART = { x: -4, z: -16, yaw: 0.5 };
+// Big round bales standing on end: courtyard cover. [x, z]
+export const HAY_STACKS = [[-6, 4], [-6.9, 5.4], [5.6, -5], [6.9, -5.6], [-14, -2], [13, 3.2], [13.6, 4.6]];
+
+// Fixed obstacles in the arena (not pickable). Rune pillars with floating crystals.
 export const PILLARS = [
-  { x: 0, z: 0, r: 1.6, h: 4.5 },
-  { x: 14, z: 10, r: 1.1, h: 3.8 },
-  { x: -14, z: 10, r: 1.1, h: 3.8 },
-  { x: 14, z: -10, r: 1.1, h: 3.8 },
-  { x: -14, z: -10, r: 1.1, h: 3.8 },
-  { x: 0, z: 22, r: 1.3, h: 5 },
-  { x: 0, z: -22, r: 1.3, h: 5 },
-  { x: 24, z: 0, r: 1.3, h: 5 },
-  { x: -24, z: 0, r: 1.3, h: 5 },
+  { x: 10, z: 9.5, r: 1.2, h: 5 },
+  { x: -9, z: -11, r: 1.2, h: 5 },
+  { x: 9.5, z: -12.5, r: 1.2, h: 5 },
+  { x: 0, z: -25, r: 1.3, h: 5 },
 ];
 
 export const TREES = [
-  { x: 20, z: 20, r: 0.6 }, { x: -21, z: 19, r: 0.6 }, { x: 22, z: -18, r: 0.6 }, { x: -19, z: -22, r: 0.6 },
-  { x: 8, z: 27, r: 0.6 }, { x: -9, z: -28, r: 0.6 }, { x: 28, z: 9, r: 0.6 }, { x: -27, z: -7, r: 0.6 },
-  { x: 29, z: -12, r: 0.6 }, { x: -30, z: 12, r: 0.6 }, { x: 12, z: -29, r: 0.6 }, { x: -13, z: 29, r: 0.6 },
+  { x: 22, z: -20, r: 0.6 }, { x: -20, z: -20, r: 0.6 }, { x: -12, z: -31, r: 0.6 }, { x: 12, z: -31, r: 0.6 },
+  { x: 30, z: -21, r: 0.6 }, { x: -30, z: -19, r: 0.6 }, { x: -13, z: 31, r: 0.6 }, { x: 13, z: 32, r: 0.6 },
+  { x: 24, z: 22, r: 0.6 }, { x: -24, z: 23, r: 0.6 }, { x: 0, z: -36, r: 0.6 },
 ];
 
 // Initial prop placement: [type, x, z]
 export const PROP_SPAWNS = [
-  ['crate', 5, 5], ['crate', -5, 5], ['crate', 5, -5], ['crate', -5, -5],
-  ['barrel', 9, 0], ['barrel', -9, 0], ['barrel', 0, 9], ['barrel', 0, -9],
-  ['pumpkin', 12, 4], ['pumpkin', -12, -4], ['pumpkin', 4, -12], ['pumpkin', -4, 12],
-  ['rock', 18, 0], ['rock', -18, 0], ['rock', 0, 16], ['rock', 0, -16],
-  ['pot', 10, 14], ['pot', -10, -14], ['pot', 16, -5], ['pot', -16, 5],
-  ['crate', 20, -6], ['crate', -20, 6], ['pumpkin', 6, 20], ['pumpkin', -6, -20],
-  ['pot', 23, 14], ['pot', -23, -14], ['barrel', 15, -16], ['barrel', -15, 16],
-  ['potion', 7, -7], ['potion', -7, 7], ['potion', 26, -4], ['potion', -26, 4],
+  // by the house: barrels, crates and the potion barrels
+  ['crate', -7.5, 19.5], ['crate', -8.6, 18.4], ['crate', -6.4, 18.0], ['barrel', 7.4, 19.6], ['barrel', 8.6, 18.6],
+  ['potion', 5.6, 19.2], ['potion', -4.8, 19.4], ['potion', 9.5, 16.5], ['potion', -10.5, 16.0],
+  // pumpkins along the field edge
+  ['pumpkin', -16.8, -8], ['pumpkin', -16.8, -3], ['pumpkin', -16.8, 2], ['pumpkin', -16.8, 7], ['pumpkin', -20.3, 11.5],
+  // loose hay by the pen and the stacks
+  ['hay', 15.8, 6.5], ['hay', 15.6, -7.5], ['hay', -4.4, 6.2], ['hay', 4.2, -7.0],
+  // courtyard: pots around the well, a few crates and barrels
+  ['pot', 2.4, 0], ['pot', -2.4, 0.8], ['pot', 1, 4.6], ['crate', 3, -12], ['barrel', -3, 11], ['barrel', 3.5, 12],
+  // south meadow: rocks and a crate or two
+  ['rock', 15, -18], ['rock', -15, -16], ['rock', 6, -29], ['rock', -7, -27], ['crate', 20, -26], ['crate', -21, -25],
+  ['barrel', -0.5, -14], ['pumpkin', -6, -18.5],
 ];
 
+// Nobody spawns in the pen, the field or the house.
 export const SPAWN_POINTS = [
-  [10, 0, 10], [-10, 0, 10], [10, 0, -10], [-10, 0, -10],
-  [0, 0, 15], [0, 0, -15], [15, 0, 0], [-15, 0, 0],
-  [20, 0, 12], [-20, 0, -12], [20, 0, -12], [-20, 0, 12],
+  [0, 0, -6], [6, 0, -19], [-6, 0, -20], [14, 0, -22], [-14, 0, -22], [0, 0, -32],
+  [8, 0, 4], [-9, 0, 8], [-12, 0, -8], [13, 0, -6], [4, 0, 14], [-5, 0, 14.5],
 ];
 
 
@@ -75,7 +164,21 @@ export const SPAWN_POINTS = [
 // (telekinesis, bot aiming, cover) only count colliders at least LOS_HEIGHT tall.
 // Add new obstacles here (a fence is a chain of post circles) and every system picks them up.
 export const LOS_HEIGHT = 1.6;
+const along = (o, len, n, r, h, kind) => Array.from({ length: n }, (_, i) => {
+  const k = n === 1 ? 0 : (i / (n - 1) - 0.5) * len;
+  return { x: o.x + Math.sin(o.yaw) * k, z: o.z + Math.cos(o.yaw) * k, r, h, kind };
+});
 export const COLLIDERS = [
   ...PILLARS.map(p => ({ x: p.x, z: p.z, r: p.r, h: p.h, kind: 'pillar' })),
   ...TREES.map(t => ({ x: t.x, z: t.z, r: t.r, h: 6, kind: 'tree' })),
+  ...HOUSE_BLOCKS.map(([x, z]) => ({ x: FARMHOUSE.x + x, z: FARMHOUSE.z - 26 + z, r: 2.55, h: 9, kind: 'house' })),
+  ...FENCE_POSTS.map(([x, z]) => ({ x, z, r: PEN.postR, h: PEN.postH, kind: 'fence' })),
+  ...along({ ...SHELTER, yaw: SHELTER.yaw + Math.PI / 2 }, SHELTER.w - 1.6, 2, 1.25, 2.4, 'shelter'),   // spread along its width
+  ...along(TROUGH, TROUGH.len - 0.9, 2, 0.5, 0.75, 'trough'),
+  ...CROPS.map(([x, z]) => ({ x, z, r: 0.5, h: 0.9, kind: 'crop' })),
+  { x: SCARECROW.x, z: SCARECROW.z, r: 0.35, h: 2.4, kind: 'scarecrow' },
+  ...along(TRACTOR, TRACTOR.len - 2.4, 2, 1.4, 3.0, 'tractor'),
+  { x: WELL.x, z: WELL.z, r: WELL.r, h: WELL.h, kind: 'well' },
+  ...along(CART, 1.0, 2, 0.8, 1.7, 'cart'),
+  ...HAY_STACKS.map(([x, z]) => ({ x, z, r: 0.85, h: 1.7, kind: 'hay' })),
 ];

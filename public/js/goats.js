@@ -1,9 +1,12 @@
 // Client-side goats: the Meshy goat model mirrored from server snapshots. The model has no rig, so
-// grazing, trotting, rearing up, galloping and seeing stars are all done by moving the whole body.
+// grazing, trotting, rearing up, galloping, leaping the pen fence and seeing stars are all done by
+// moving the whole body. The server ignores fence posts while a goat charges; the leap is drawn here.
 import * as THREE from 'three';
 import * as C from '../shared/constants.js';
-import { models } from './world.js';
+import { models, trampleCrops, updateCrops } from './world.js';
 
+const LEAP_HALF = 1.5, LEAP_HEIGHT = 1.25;     // the hop starts 1.5 m before the fence and peaks 1.25 m up
+const PEN_CX = (C.PEN.x0 + C.PEN.x1) / 2, PEN_CZ = (C.PEN.z0 + C.PEN.z1) / 2;
 const starGeo = new THREE.OctahedronGeometry(0.07, 0);
 const starMat = new THREE.MeshBasicMaterial({ color: 0xffe066 });
 
@@ -75,8 +78,23 @@ export class GoatView {
       case 'charge':  pitch = 0.18; lift = Math.abs(Math.sin(t * 20)) * 0.16; roll = Math.sin(t * 20) * 0.05; break;
       case 'dizzy':   roll = Math.sin(t * 5) * 0.2; pitch = Math.sin(t * 3.3) * 0.08; break;
       case 'recover': pitch = 0.1 + Math.sin(t * 6) * 0.03; break;                // panting
+      case 'return':  lift = Math.abs(Math.sin(t * 10)) * 0.08; roll = Math.sin(t * 10) * 0.05; break;   // trotting home
     }
-    const k = Math.min(1, dt * 14);
+    // Leap over the pen fence: a hop arc centred on the fence line (the server lets charges through it).
+    const p = this.group.position;
+    if (this.state === 'charge' || this.state === 'return') {
+      const fd = C.fenceDistance(p.x, p.z);
+      if (fd < LEAP_HALF) {
+        const k = fd / LEAP_HALF;
+        lift = Math.max(lift, (1 - k * k) * LEAP_HEIGHT);
+        // nose up on the way over, legs tucked
+        const inside = C.inPen(p.x, p.z), goingOut = Math.sin(this.group.rotation.y) * (p.x - PEN_CX) + Math.cos(this.group.rotation.y) * (p.z - PEN_CZ) > 0;
+        pitch = (inside === goingOut ? -0.45 : 0.35) * (1 - k);
+      }
+    }
+    if (charging) { trampleCrops(p.x, p.z, 1.1); }
+    updateCrops();
+    const k = Math.min(1, dt * (lift > 0.3 ? 30 : 14));
     b.rotation.x += (pitch - b.rotation.x) * k;
     b.rotation.z += (roll - b.rotation.z) * k;
     b.position.y += (lift - b.position.y) * k;
