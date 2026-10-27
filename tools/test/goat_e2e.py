@@ -23,6 +23,10 @@ async def main():
         for trial in ['noblock','block']:
             await pg.wait_for_function("!window.__wa.players.get(window.__wa.local && [...window.__wa.players.values()].find(p=>!p.bot).id).dead", timeout=15000)
             gid = None
+            await pg.evaluate("""() => { const w=window.__wa, L=w.local; const gs=[...w.goats.values()].map(g=>g.group.position);
+              const c=gs.reduce((a,p)=>[a[0]+p.x/gs.length,a[1]+p.z/gs.length],[0,0]); const l=Math.hypot(...c)||1;
+              L.pos.set(c[0]-c[0]/l*11, 0, c[1]-c[1]/l*11); }""")
+            await pg.wait_for_timeout(800)
             for _ in range(40):
                 gid = await pg.evaluate("""async () => { const C = await import('/shared/constants.js'); const w=window.__wa, L=w.local; let best=null, bd=1e9;
                   for (const g of w.goats.values()) { const p=g.group.position; const d=Math.hypot(p.x-L.pos.x, p.z-L.pos.z);

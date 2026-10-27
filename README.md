@@ -1,8 +1,9 @@
 # Wizard Arena
 
 A low-poly, browser-based multiplayer wizard brawler built with **three.js** and **WebSockets**.
-Players duel with spells, block with a stamina-powered ward, blink around the arena, and pick up
-and hurl the scenery at each other. Uses the Meshy wizard model and its seven animation clips.
+Wizards duel across a farmstead with a spellbook of their choosing, block with a stamina-powered
+ward, hurl the scenery at each other with telekinesis, and try not to anger the goats.
+Uses the Meshy wizard model and its seven animation clips.
 
 ## Quick start
 
@@ -31,8 +32,9 @@ node bot.js clear                     # remove them
 | Normal | 0.25 s | ±3.5° | partly | 60%, blinks away from meteors |
 | Hard | 0.12 s | ±1.2° | fully | 90%, blinks, wards, punishes wind-ups |
 
-All bots strafe, keep their preferred range, retreat behind pillars when losing, interrupt meteor
-wind-ups with sparks, and use telekinesis.
+All bots strafe, keep their preferred range, retreat behind cover when losing, interrupt wind-ups
+with sparks, and use telekinesis. Each bot rolls a random spellbook: cyclone bots close in and spin,
+flash bots escape upward, and all of them lead shots at falling targets.
 
 ## Controls
 
@@ -41,29 +43,57 @@ wind-ups with sparks, and use telekinesis.
 | `W A S D` | Move (camera-relative) |
 | Mouse | Look / aim |
 | `LMB` | **Spark** — quick bolt, low damage, briefly stuns the target |
-| `RMB` | **Meteor** — 1.25 s wind-up, heavy damage and knockback. Being hit cancels it. |
+| `RMB` | **Power spell** from your spellbook: Meteor or Arcane Cyclone (below) |
 | `Space` (hold) | **Ward** — blocks spells and thrown objects arriving from the front. Drains stamina while held and per spell blocked; if stamina runs out the ward shatters and you're staggered. |
-| `E` | **Blink** — teleport 9 m in the direction you're facing (4 s cooldown) |
+| `E` | **Mobility spell** from your spellbook: Blink or Skyward Flash (below). In the air: hold `E` to float slower, `Space` to drop |
 | `F` | **Telekinesis**: aim at an object up to 16 m away to lift it; `F` again hurls it at the crosshair. A held object floats beside you and absorbs one spell aimed at you. |
 | `G` | Set the held object down |
 | `M` | Mute / unmute (volume is in the `Esc` menu) |
 | `Tab` (hold) | Scoreboard |
-| `Esc` | Pause menu: bots, volume |
+| `Esc` | Pause menu: spellbook, bots, volume |
 
-Crates, barrels, pumpkins, rocks and pots can be lifted with telekinesis and hurled (22 damage,
+### Spellbook
+
+Choose a spell for each slot on the join screen or any time in the `Esc` menu (saved in your browser;
+a slot that's mid-cast switches when the cast ends). Cooldowns belong to the slot, so swapping
+doesn't reset them. The scoreboard shows everyone's spells.
+
+| Slot | Spell | What it does |
+|---|---|---|
+| LMB | **Spark** | Quick bolt, 9 damage, short stun |
+| RMB | **Meteor** | 1.25 s wind-up, then a heavy fireball: 38 damage, big knockback. Being hit cancels the wind-up. |
+| RMB | **Arcane Cyclone** | 0.45 s wind-up (purple rune grows under you; you can't ward, you move slowly, a hit cancels it), then you spin and blast everything within 5.5 m: 28 damage, stun, knockback outward. Breaks objects, angers goats, and stops a charging goat cold. A ward facing you blocks it. 5 s cooldown. |
+| E | **Blink** | Teleport 9 m forward. 4 s cooldown. |
+| E | **Skyward Flash** | Flash 7 m straight up, then float down with full steering (hold `E` to float slower, `Space` to drop). Spark and telekinesis work in the air; ward and power spells don't. Goats and cyclones can't reach you up there, but you're a slow target. 6 s cooldown. |
+
+### The farmstead
+
+**+z is north.** The wizard's farmhouse stands on the north side of the yard; facing it, the goat pen
+is on your left (east) and the crop field on your right (west).
+
+- **Courtyard**: open ground in front of the house around a stone well, with hay stacks, a hand cart
+  and four rune pillars as cover. The south meadow is open for long-range duels.
+- **Goat pen**: picket fence with a gate, a lean-to and a water trough. Fences block walking but
+  spells fly over them.
+- **Crop field**: corn rows you walk between; spells fly over the plants, and explosions and
+  charging goats flatten them for a while. A wizard-hatted scarecrow watches over it.
+- **Tractor**: parked between the field and the yard, solid cover.
+
+Crates, barrels, pumpkins, rocks, pots and hay bales can be lifted with telekinesis and hurled (22 damage,
 shatters on impact) and are destroyed by any spell that hits them. They respawn after ~18 s.
 Spark stuns can't be chained: after one wears off, you're immune to spark stuns for 0.6 s.
 Purple potion barrels are thrown the same way and burst in a splash.
 
 ### Goats
 
-Four meadow goats graze around the arena. Hit one with anything (a spark, a meteor, a hurled
-object) and it rears up for 0.7 s, then charges whoever hit it at 12.5 m/s, curving after them.
+Four meadow goats graze in their pen. Hit one with anything (a spark, a meteor, a hurled
+object, a cyclone) and it rears up for 0.7 s, leaps the fence, then charges whoever hit it at 12.5 m/s, curving after them.
 **A goat that reaches you kills you in one hit** unless your ward faces it; a ward stops it but costs
 50 stamina, and an empty ward shatters. Charging goats smash through objects, get knocked dizzy by
 pillars and trees, and ram anyone in their way. If a goat you angered rams someone else, the kill
-is yours. Blink sideways late to dodge one. Normal and Hard bots won't shoot through goats; Easy
-bots anger them by accident.
+is yours. Blink sideways late or flash skyward to dodge one (goats pass under airborne wizards), or
+hit it with an Arcane Cyclone to knock it dizzy. Afterwards it trots back to the pen through the gate.
+Normal and Hard bots won't shoot through goats; Easy bots anger them by accident.
 
 Append `?low` to the URL to disable shadows on weak GPUs.
 
@@ -72,10 +102,15 @@ Append `?low` to the URL to disable shadows on weak GPUs.
 ```
 server.js                  Node + express + ws. Authoritative for combat: spells, projectiles,
                            hits, HP, stamina, stuns, blocking cone, props, deaths/respawns.
-public/shared/constants.js Tuning values shared by server and client (damage, speeds, map layout).
+public/shared/constants.js Tuning shared by server and client: SPELLBOOK (every spell's slot, blurb and
+                           numbers), speeds, stamina. Re-exports map.js.
+public/shared/map.js       Map layout: arena radius, COLLIDERS (every solid thing as a circle with a
+                           height: movement hits all of them, spells fly over low ones), props,
+                           goats, spawn points.
 public/js/main.js          Client bootstrap, local player controller, camera, HUD, message handling.
 public/js/wizard.js        Skinned wizard instances + animation state machine.
-public/js/world.js         Low-poly arena, pillars, trees, prop mesh factories.
+public/js/world.js         The farmstead: ground, house, pen, field, tractor and stand-in meshes,
+                           Meshy model loading (FARM_MODELS), prop mesh factories, crop trampling.
 public/js/effects.js       Projectile visuals, particles, debris, teleport/impact effects.
 public/js/net.js           WebSocket wrapper.      public/js/input.js   Keyboard + pointer lock.
 public/js/audio.js         3D positional sound (HRTF panners, reverb, compressor) over the CC0
@@ -84,9 +119,12 @@ public/models/wizard.glb   The Meshy wizard with all animation clips merged into
 public/models/*.glb        Meshy goat, potion barrel and farmhouse, shrunk for the web with
                            tools/optimize-models.sh (the farmhouse went from 222 MB to 5.5 MB).
 public/js/goats.js         Goat visuals (procedural grazing / rearing / galloping / dizzy).
-server/goats.js            Goat state machine: graze, wander, windup, charge, ram, dizzy.
+server/goats.js            Goat state machine: graze/wander in the pen, windup, charge (leaping the
+                           fence), ram, dizzy, return home through the gate.
 server/bots.js             Server-side AI wizards (Easy / Normal / Hard).
 bot.js                     CLI to add or clear bots on a running server.
+tools/test/                Headless bot matches (botmatch.mjs, spellmatch.mjs) and a goat browser test.
+docs/agents/               Briefs and hand-off notes from the parallel environment/gameplay build.
 ```
 
 Clients own their own movement and report position 20×/s; the server sanity-checks speed and
