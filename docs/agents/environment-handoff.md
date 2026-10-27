@@ -7,10 +7,10 @@ courtyard facing the farmhouse, the goat pen is on your **left (+x)** and the cr
 | Area | Where | Details |
 |---|---|---|
 | Farmhouse | (0, 26), door facing the well | Meshy model scaled to 11 m. 7 colliders (`kind: 'house'`, `h` 9), fitted to the walls. I measured the model's vertices below 2.5 m and drew the colliders over the top-down view to check them. Shadow camera widened to ±50. |
-| Courtyard | around (0, 2) | Packed-earth yard with paths to the door, the gate, the field and the south meadow. Stone well (`h` 2.6) in the middle. Hay stacks (`h` 1.7, so they block LOS) in pairs as cover. Hand cart (−4, −16). Four rune pillars with glowing bands and floating crystals at (10, 9.5), (−9, −11), (9.5, −12.5), (0, −25). The south meadow stays open for long-range duels. |
+| Courtyard | around (0, 2) | Packed-earth yard with paths to the door, the gate, the field and the south meadow. Stone well (`h` 2.6) in the middle. Big round hay bales (Meshy, lying on their sides, 1.7 m tall, `h` 1.7 so they block LOS) in pairs as cover. Hand cart (−4, −16). Four rune pillars with glowing bands and floating crystals at (10, 9.5), (−9, −11), (9.5, −12.5), (0, −25). The south meadow stays open for long-range duels. |
 | Goat pen | x 18…33, z −13…9 | Picket fence: 119 post colliders (`kind: 'fence'`, r 0.25, ≤ 0.62 m apart, `h` **0.7**). The gate is a 2.8 m gap in the courtyard-facing side, with its leaf swung open flat along the outside of the fence. Inside: a lean-to shelter and a water trough. All 4 goats spawn and graze inside. |
-| Crop field | x −33…−18.4, z −11…10.5 | 6 corn rows running north-south, 144 plant colliders (`kind: 'crop'`, r 0.5, `h` 0.9). Rows block walking. Furrows about 1.5 m wide are walkable, and spells fly over. A scarecrow in a wizard hat stands at the north end. Pumpkins line the edge. |
-| Tractor | (−14.8, 13.2) | Procedural red tractor. 2 colliders r 1.4, `h` 3.0: hard cover. |
+| Crop field | x −33…−18.4, z −11…10.5 | 6 corn rows running north-south, 144 plant colliders (`kind: 'crop'`, r 0.5, `h` 0.9). Rows block walking. Furrows about 1.5 m wide are walkable, and spells fly over. A Meshy scarecrow in a wizard hat (2.4 m) stands at the north end. Pumpkins line the edge. |
+| Tractor | (−14.8, 13.2), grille toward the courtyard | Meshy wizard tractor, 3 m tall. 3 colliders (`h` 3.0, hard cover) fitted to the model's measured footprint: 4.3 m long, 2.5 m across the rear wheels, 2.0 m across the front. |
 | Spawns / props | | 12 spawn points, none in the pen, the field or the house. Crates, barrels and the 4 potion barrels are by the house; pumpkins along the field edge; pots around the well; rocks in the south meadow. New throwable **`hay`** (small round bale) is in `PROP_TYPES`, with 4 near the pen and the stacks. |
 
 ### Goats (`server/goats.js`, `public/js/goats.js`)
@@ -52,12 +52,27 @@ Fixed during testing: the open gate leaf first stuck out at an angle and trapped
 It now lies flat along the fence.
 
 ## Meshy assets
-- No new Meshy files have arrived on `~/Desktop` yet. All farm pieces are procedural stand-ins.
-- To swap one in:
-  1. `tools/optimize-models.sh one ~/Desktop/Meshy_AI_<x>.glb tractor`, which writes `public/models/tractor.glb`.
-  2. Add `['tractor', '/models/tractor.glb', <height m>]` to `FARM_MODELS` in `world.js`.
-- Stand-in names: `tractor, well, cart, scarecrow, haystack, shelter, trough`. `models.hay` (if loaded) replaces the hay-bale prop mesh.
-- Fence and crops are instanced. A Meshy fence or crop would need a small instancing change.
+| Model | Source on `~/Desktop` | Output | Notes |
+|---|---|---|---|
+| tractor | `Meshy_AI_low_poly_wizard_tract_1027224222_texture.glb` | `public/models/tractor.glb`, 0.65 MB, 14k verts | Exported nose toward −x; `FARM_MODELS` turns it +π/2 to face +z. |
+| scarecrow | `Meshy_AI_low_poly_wizard_scare_1027224239_texture.glb` | `public/models/scarecrow.glb`, 0.63 MB | Faces +z as exported. |
+| hay | `Meshy_AI_low_poly_hay_bale_1027224234_texture.glb` | `public/models/hay.glb`, 0.38 MB | One load, two sizes: `models.hay` (0.9 m, the throwable prop) and `models.haystack` (1.7 m, the courtyard cover). |
+
+I ignored the duplicate `… (1).glb` tractor and the untextured `_generate.glb` scarecrow.
+`du -sh public/models` is now 9.3 MB.
+I rendered each model once beside a +z arrow (`mv_front.png`, `mv_top.png`, `mv_scare.png`) and took in-game shots
+(`o_m_tractor.png`, `o_m_scarecrow.png`, `o_m_hay.png`, `o_m_hayprop.png`, and the tractor collider overlay `c_tractor.png`).
+I looked at all of them.
+After the swap, botmatch on 4102 still has the bots fighting (5 kills in 90 s, first kill 4.9 s in a second run), with the goats penned and no bot stuck.
+
+The well, cart, shelter and trough are still procedural stand-ins. To swap one:
+1. `tools/optimize-models.sh one ~/Desktop/Meshy_AI_<x>.glb <name>`
+2. Add `['<name>', '/models/<name>.glb', <height m>, <yaw to face +z>]` to `FARM_MODELS` in `world.js`.
+   Stand-in names are `well, cart, shelter, trough`.
+3. Render it once to check the facing.
+
+Run the script under `sh` and pass arguments literally. A zsh `for` loop that splits `$pair` silently passes nothing.
+Fence and crops are instanced. A Meshy fence or crop would need a small instancing change.
 
 ## For the gameplay agent / Ty
 - Requests filed in `requests.md`:

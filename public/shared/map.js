@@ -122,7 +122,10 @@ export const SCARECROW = { x: -25.5, z: 11.6, yaw: Math.PI * 0.95 };
 
 // ------------------------------------------------------------ farm machinery and courtyard
 // Tractor parked between the field and the courtyard: hard cover.
-export const TRACTOR = { x: -14.8, z: 13.2, yaw: 2.35, len: 4.2 };
+export const TRACTOR = { x: -14.8, z: 13.2, yaw: 2.35, len: 4.3 };
+// Footprint as circles [offset along its heading, r], fitted to the Meshy model: 4.3 m long,
+// 2.5 m across the rear wheels, 2.0 m across the front.
+const TRACTOR_BLOCKS = [[-1.15, 1.25], [0.3, 1.0], [1.45, 1.0]];
 export const WELL = { x: 0, z: 2, r: 1.25, h: 2.6 };
 export const CART = { x: -4, z: -16, yaw: 0.5 };
 // Big round bales standing on end: courtyard cover. [x, z]
@@ -183,7 +186,7 @@ export const COLLIDERS = [
   ...along(TROUGH, TROUGH.len - 0.9, 2, 0.5, 0.75, 'trough'),
   ...CROPS.map(([x, z]) => ({ x, z, r: 0.5, h: 0.9, kind: 'crop' })),
   { x: SCARECROW.x, z: SCARECROW.z, r: 0.35, h: 2.4, kind: 'scarecrow' },
-  ...along(TRACTOR, TRACTOR.len - 2.4, 2, 1.4, 3.0, 'tractor'),
+  ...TRACTOR_BLOCKS.map(([k, r]) => ({ x: TRACTOR.x + Math.sin(TRACTOR.yaw) * k, z: TRACTOR.z + Math.cos(TRACTOR.yaw) * k, r, h: 3.0, kind: 'tractor' })),
   { x: WELL.x, z: WELL.z, r: WELL.r, h: WELL.h, kind: 'well' },
   ...along(CART, 1.0, 2, 0.8, 1.7, 'cart'),
   ...HAY_STACKS.map(([x, z]) => ({ x, z, r: 0.85, h: 1.7, kind: 'hay' })),

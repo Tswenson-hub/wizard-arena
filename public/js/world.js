@@ -438,8 +438,8 @@ function makeHayStack() {
 // mesh centred on the origin, about one unit tall, facing +z.
 export const models = { goat: null, potion: null, farmhouse: null };
 
-// Scale a model to `height` metres with its base on y = 0, centred on x/z.
-function fitModel(gltf, height) {
+// Scale a model to `height` metres with its base on y = 0, centred on x/z, turned by `yaw` so it faces +z.
+function fitModel(gltf, height, yaw = 0) {
   const root = gltf.scene;
   root.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   const bb = new THREE.Box3().setFromObject(root);
@@ -448,12 +448,16 @@ function fitModel(gltf, height) {
   root.position.set(-(bb.min.x + bb.max.x) / 2 * k, -bb.min.y * k, -(bb.min.z + bb.max.z) / 2 * k);
   const holder = new THREE.Group();
   holder.add(root);
+  holder.rotation.y = yaw;
   return holder;
 }
 
-// Farm pieces with a Meshy model: [stand-in name, url, height in metres]. A model that fails to load
-// leaves its procedural stand-in in place.
-const FARM_MODELS = [];
+// Farm pieces with a Meshy model: [stand-in name, url, height in metres, yaw that turns it to face +z].
+// A model that fails to load leaves its procedural stand-in in place.
+const FARM_MODELS = [
+  ['tractor', '/models/tractor.glb', 3.0, Math.PI / 2],     // exported nose toward -x
+  ['scarecrow', '/models/scarecrow.glb', 2.4],
+];
 
 export function loadModels(loader, scene) {
   const load = (url) => new Promise((res, rej) => loader.load(url, res, undefined, rej));
@@ -469,7 +473,13 @@ export function loadModels(loader, scene) {
       scene.add(house);
       models.farmhouse = house;
     }),
-    ...FARM_MODELS.map(([name, url, h]) => load(url).then(g => { models[name] = fitModel(g, h); swapModel(name, models[name]); }, () => {})),
+    ...FARM_MODELS.map(([name, url, h, yaw]) => load(url).then(g => { models[name] = fitModel(g, h, yaw); swapModel(name, models[name]); }, () => {})),
+    // One round bale, two sizes: the throwable prop and the big courtyard cover stacks.
+    load('/models/hay.glb').then(g => {
+      models.haystack = fitModel({ scene: g.scene.clone() }, 1.7);
+      models.hay = fitModel(g, C.PROP_TYPES.hay.h);
+      swapModel('haystack', models.haystack);
+    }, () => {}),
   ]);
 }
 
