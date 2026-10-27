@@ -110,7 +110,26 @@ export const PROP_TYPES = {
   pumpkin: { r: 0.45, h: 0.8, hp: 1, color: 0xf08a2a },
   rock:    { r: 0.6,  h: 1.0, hp: 1, color: 0x8d9299 },
   pot:     { r: 0.4,  h: 0.9, hp: 1, color: 0x6a8fd0 },
+  potion:  { r: 0.5,  h: 1.15, hp: 1, color: 0x9a5cff },   // Meshy potion barrel (models/potion.glb)
 };
+
+// Meadow goats. They graze until a spell or thrown object hits one; then it rears up and charges
+// whoever hit it. A charge that connects is fatal unless the wizard wards facing the goat.
+export const GOAT = {
+  count: 4,
+  radius: 0.6,          // body radius for collisions and hits
+  hitY: 0.7,            // centre of the hit sphere above the ground
+  walkSpeed: 1.3,
+  windup: 0.7,          // seconds rearing up before the charge
+  chargeSpeed: 12.5,
+  chargeTime: 3.0,      // longest a charge lasts
+  turnRate: 2.0,        // rad/s of homing while charging: you can sidestep late or blink
+  dizzyTime: 2.2,       // after hitting a pillar, tree or a ward
+  recoverTime: 1.2,     // after a charge runs out
+  blockCost: 50,        // stamina a ward spends stopping a goat
+  blockKnockback: 7,
+};
+export const GOAT_SPAWNS = [[9, -18], [-19, -6], [17, 15], [-9, 21]];
 
 // Fixed obstacles in the arena (not pickable). Clients use these for movement collision,
 // server uses them for projectile collision.
@@ -141,6 +160,7 @@ export const PROP_SPAWNS = [
   ['pot', 10, 14], ['pot', -10, -14], ['pot', 16, -5], ['pot', -16, 5],
   ['crate', 20, -6], ['crate', -20, 6], ['pumpkin', 6, 20], ['pumpkin', -6, -20],
   ['pot', 23, 14], ['pot', -23, -14], ['barrel', 15, -16], ['barrel', -15, 16],
+  ['potion', 7, -7], ['potion', -7, 7], ['potion', 26, -4], ['potion', -26, 4],
 ];
 
 export const SPAWN_POINTS = [

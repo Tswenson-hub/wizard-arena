@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import * as C from './public/shared/constants.js';
 import { createBot, updateBots, botKnockback, BOT_LIMIT } from './server/bots.js';
+import { createGoats, updateGoats, angerGoat, goatPublic } from './server/goats.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -34,6 +35,7 @@ const players = new Map();   // id -> player
 const sockets = new Map();   // id -> ws
 const projectiles = new Map();
 const props = new Map();
+const goats = createGoats();
 let nextProjId = 1;
 
 // ---------------------------------------------------------------- props
@@ -170,7 +172,7 @@ function applyHit(target, proj) {
   if (target.hp <= 0 && !target.dead) killPlayer(target, attacker);
 }
 
-function killPlayer(target, attacker) {
+function killPlayer(target, attacker, cause = null) {
   target.dead = true;
   target.hp = 0;
   target.charging = false;
@@ -179,7 +181,7 @@ function killPlayer(target, attacker) {
   target.respawnAt = now() + C.RESPAWN_TIME;
   if (target.carrying) dropProp(target, true);
   if (attacker && attacker.id !== target.id) attacker.kills++;
-  broadcast({ t: 'death', id: target.id, killer: attacker ? attacker.id : null });
+  broadcast({ t: 'death', id: target.id, killer: attacker ? attacker.id : null, cause });
 }
 
 function respawn(p) {
@@ -216,6 +218,7 @@ function breakProp(prop, at) {
 function simulate(dt) {
   const t = now();
   updateBots(dt, world);
+  updateGoats(goats, dt, goatCtx);
 
   for (const p of players.values()) {
     if (p.dead) {
@@ -288,6 +291,16 @@ function simulate(dt) {
       if (d < C.HIT_RADIUS + proj.radius) {
         applyHit(pl, proj);
         endProjectile(proj, true, { surface: 'player', target: pl.id });
+        done = true; break;
+      }
+    }
+    if (done) continue;
+
+    // goats: no damage, but now it's angry at whoever cast or threw this
+    for (const g of goats) {
+      if (Math.hypot(proj.p[0] - g.x, proj.p[1] - C.GOAT.hitY, proj.p[2] - g.z) < C.GOAT.radius + proj.radius) {
+        angerGoat(g, proj.owner, goatCtx);
+        endProjectile(proj, true, { surface: 'goat', goat: g.id });
         done = true; break;
       }
     }
@@ -469,7 +482,12 @@ function removePlayer(id) {
   broadcast({ t: 'leave', id });
 }
 
-const world = { players, props, projectiles, handle, now };
+const world = { players, props, projectiles, goats, handle, now };
+const goatCtx = {
+  players, props, now, broadcast, breakProp, killPlayer,
+  // humans apply goat knockback themselves from the goatRam message
+  knockback: (p, dir, kb) => { if (p.bot) botKnockback(p, dir, kb); },
+};
 
 const validVec = (v) => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite);
 
@@ -532,6 +550,7 @@ wss.on('connection', (ws) => {
         t: 'welcome', id,
         players: [...players.values()].map(playerPublic),
         props: [...props.values()].map(propPublic),
+        goats: goats.map(goatPublic),
         projectiles: [...projectiles.values()].map(pr => ({ id: pr.id, kind: pr.kind, owner: pr.owner, propType: pr.propType, p: pr.p, v: pr.v, g: pr.g, r: pr.radius, life: pr.life - (now() - pr.born) })),
       }));
       broadcast({ t: 'joined', player: playerPublic(p) });
@@ -569,7 +588,7 @@ setInterval(() => {
 
 setInterval(() => {
   if (players.size === 0) return;
-  broadcast({ t: 'snap', time: now(), players: [...players.values()].map(playerPublic) });
+  broadcast({ t: 'snap', time: now(), players: [...players.values()].map(playerPublic), goats: goats.map(goatPublic) });
 }, 1000 / C.SNAPSHOT_RATE);
 
 httpServer.listen(PORT, () => console.log(`Wizard Arena listening on http://localhost:${PORT}`));

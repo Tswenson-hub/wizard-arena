@@ -22,14 +22,15 @@ const DIFFICULTY = {
     aggression: 0.55,   // chance per decision to attack when it can
     tk: 0.06,           // chance per decision to lift a prop when one is handy
     punish: 0.25,       // chance it spots and punishes a meteor wind-up
+    goatAware: false,   // checks for goats in its line of fire (Easy bots anger them by accident)
   },
   normal: {
     react: 0.25, aimErr: 3.5, lead: 0.6, dodge: 0.6, blinkDodge: true,
-    think: 1 / 3, speed: 0.95, range: [8, 14], aggression: 0.8, tk: 0.12, punish: 0.7,
+    think: 1 / 3, speed: 0.95, range: [8, 14], aggression: 0.8, tk: 0.12, punish: 0.7, goatAware: true,
   },
   hard: {
     react: 0.12, aimErr: 1.2, lead: 1, dodge: 0.9, blinkDodge: true,
-    think: 1 / 6, speed: 1, range: [9, 15], aggression: 0.95, tk: 0.1, punish: 1,
+    think: 1 / 6, speed: 1, range: [9, 15], aggression: 0.95, tk: 0.1, punish: 1, goatAware: true,
   },
 };
 
@@ -167,9 +168,25 @@ function think(me, world, t) {
   const d = target ? dist2D(me.p, target.p) : Infinity;
   const los = target ? hasLOS(me.p, target.p) : false;
 
-  // ---- defence: notice threats, react after our reaction time
-  for (const id of b.threats.keys()) if (!world.projectiles.has(id)) b.threats.delete(id);
+  // ---- defence: a charging goat is the deadliest thing in the arena
   let reacted = false;
+  for (const g of world.goats) {
+    const key = 'goat' + g.id;
+    if (g.state !== 'charge') { b.threats.delete(key); continue; }
+    const vx = Math.sin(g.yaw) * C.GOAT.chargeSpeed, vz = Math.cos(g.yaw) * C.GOAT.chargeSpeed;
+    const rx = g.x - me.p[0], rz = g.z - me.p[2];
+    const tc = -(rx * vx + rz * vz) / (C.GOAT.chargeSpeed ** 2);
+    const miss = Math.hypot(rx + vx * tc, rz + vz * tc);
+    const homing = g.target === me.id;
+    if (tc <= 0 || tc > 1.2 || (!homing && miss > C.GOAT.radius + C.PLAYER_RADIUS + 0.6)) continue;
+    let rec = b.threats.get(key);
+    if (!rec) { rec = { seenAt: t, react: cfg.react * rand(0.8, 1.3), handled: false, ignore: Math.random() > cfg.dodge }; b.threats.set(key, rec); }
+    b.goatDanger = t + 0.3;
+    if (rec.handled || rec.ignore || reacted || t < rec.seenAt + rec.react) continue;
+    rec.handled = true; reacted = true;
+    respondGoat(me, g, [vx, 0, vz], tc, t, act);
+  }
+  for (const id of b.threats.keys()) if (typeof id === 'number' && !world.projectiles.has(id)) b.threats.delete(id);
   for (const proj of world.projectiles.values()) {
     if (proj.owner === me.id) continue;
     const th = threatOf(me, proj);
@@ -182,13 +199,14 @@ function think(me, world, t) {
   }
 
   // ---- maintain ongoing actions
-  if (me.blocking && (t >= b.blockUntil || me.st < 15)) act({ t: 'block', on: false });
+  if (me.blocking && (t >= b.blockUntil || (me.st < 15 && !b.faceGoat))) { act({ t: 'block', on: false }); b.faceGoat = null; }
+  if (!me.blocking) b.faceGoat = null;
   if (me.charging && t >= b.chargeFireAt) {
     const from = [me.p[0], me.p[1] + 1.3, me.p[2]];
     const tgt = target && !target.dead ? target : null;
     act({ t: 'chargeRelease', dir: tgt ? aimAt(me, from, tgt, C.SPELLS.heavy.speed, 0, cfg) : [Math.sin(me.yaw), 0, Math.cos(me.yaw)] });
   }
-  if (!free || !target || me.blocking || me.charging) return;
+  if (!free || !target || me.blocking || me.charging || t < (b.goatDanger || 0)) return;
 
   const carried = me.carrying ? world.props.get(me.carrying) : null;
 
@@ -197,8 +215,8 @@ function think(me, world, t) {
     if (!b.chargeSeen.has(target.id)) b.chargeSeen.set(target.id, { at: t, go: Math.random() < cfg.punish });
     const seen = b.chargeSeen.get(target.id);
     if (seen.go && t >= seen.at + cfg.react) {
-      if (carried?.state === 'carried' && t >= me.cd.throw && throwLOS(me, target)) return throwProp(me, target, act, cfg);
-      if (!me.carrying && t >= me.cd.fast) return spark(me, target, act, cfg);
+      if (carried?.state === 'carried' && t >= me.cd.throw && throwLOS(me, target)) return throwProp(me, target, act, cfg, world);
+      if (!me.carrying && t >= me.cd.fast) return spark(me, target, act, cfg, world);
     }
   } else b.chargeSeen.delete(target.id);
 
@@ -210,7 +228,7 @@ function think(me, world, t) {
     if (carried.state !== 'carried' || t < me.cd.throw) return;
     if (!b.holdSince) b.holdSince = t;
     const busy = target.charging || target.blocking || isStunned(target, t);
-    if (d < 22 && throwLOS(me, target) && (busy || t - b.holdSince > rand(0.4, 1.4))) { b.holdSince = 0; return throwProp(me, target, act, cfg); }
+    if (d < 22 && throwLOS(me, target) && (busy || t - b.holdSince > rand(0.4, 1.4))) { b.holdSince = 0; return throwProp(me, target, act, cfg, world); }
     return;
   }
   b.holdSince = 0;
@@ -248,30 +266,49 @@ function think(me, world, t) {
     return;
   }
   // Sparks: the bread and butter. Against a raised ward they still drain stamina.
-  if (fastReady && d < 28 && (!targetWarded || Math.random() < 0.5)) return spark(me, target, act, cfg);
+  if (fastReady && d < 28 && (!targetWarded || Math.random() < 0.5)) return spark(me, target, act, cfg, world);
 }
 
-function spark(me, target, act, cfg) {
+function spark(me, target, act, cfg, world) {
   const from = [me.p[0], me.p[1] + 1.3, me.p[2]];
   const dir = aimAt(me, from, target, C.SPELLS.fast.speed, 0, cfg);
-  if (lineBlocked(from, dir, dist2D(me.p, target.p), C.SPELLS.fast.radius)) return;
+  if (lineBlocked(from, dir, dist2D(me.p, target.p), C.SPELLS.fast.radius, cfg.goatAware && world.goats)) return;
   me.yaw = yawTo(me.p, target.p);
   act({ t: 'cast', kind: 'fast', dir });
 }
 
-function throwProp(me, target, act, cfg) {
+function throwProp(me, target, act, cfg, world) {
   me.yaw = yawTo(me.p, target.p);
   const from = C.holdPoint(me.p, me.yaw);
   const dir = aimAt(me, from, target, C.SPELLS.prop.speed, C.SPELLS.prop.gravity, cfg);
-  if (lineBlocked(from, dir, dist2D(from, target.p), C.SPELLS.prop.radius)) return;
+  if (lineBlocked(from, dir, dist2D(from, target.p), C.SPELLS.prop.radius, cfg.goatAware && world.goats)) return;
   act({ t: 'throw', dir });   // already gravity-compensated, so no aim point for the server to re-solve
 }
 
-// Would a shot along `dir` clip a pillar or tree within `range` metres?
-function lineBlocked(from, dir, range, radius) {
+// Would a shot along `dir` clip a pillar or tree (or, if given, a goat) within `range` metres?
+function lineBlocked(from, dir, range, radius, goats = null) {
   const l = Math.hypot(dir[0], dir[2]) || 1;
   const to = [from[0] + dir[0] / l * range, 0, from[2] + dir[2] / l * range];
-  return !!C.pillarBlocks(from, to, radius + 0.15) || C.TREES.some(tr => segDist(from, to, tr) < tr.r + radius + 0.1);
+  return !!C.pillarBlocks(from, to, radius + 0.15) || C.TREES.some(tr => segDist(from, to, tr) < tr.r + radius + 0.1)
+    || (goats || []).some(g => segDist(from, to, g) < C.GOAT.radius + radius + 0.3);
+}
+
+// A goat is charging at us: ward facing it if we can afford it, else blink or dive aside.
+function respondGoat(me, g, vel, tc, t, act) {
+  const b = me.bot;
+  if (me.charging) act({ t: 'chargeRelease', dir: [Math.sin(me.yaw), 0, Math.cos(me.yaw)] });   // abandon the meteor
+  if (!canAct(me, t)) return;
+  if (me.st >= C.GOAT.blockCost + 5) {
+    me.yaw = Math.atan2(g.x - me.p[0], g.z - me.p[2]);
+    act({ t: 'block', on: true });
+    b.blockUntil = t + tc + 0.45;
+    b.faceGoat = g.id;
+    return;
+  }
+  if (t >= me.cd.tp) return blinkSideways(me, null, act, vel);
+  const l = Math.hypot(vel[0], vel[2]) || 1;
+  b.dodgeVec = [-vel[2] / l * b.strafe, vel[0] / l * b.strafe];
+  b.dodgeUntil = t + 0.6;
 }
 
 // The prop launches from the hold point beside us, so check the line from there (with its width).
@@ -388,7 +425,9 @@ function moveBot(me, dt, world, t) {
       if (t >= b.strafeUntil) { if (Math.random() < 0.6) b.strafe *= -1; b.strafeUntil = t + rand(0.5, 1.8) / (cfg.dodge + 0.4); }
       const strafe = los ? 0.9 : 1;
       if (!(lowHp && los && wx)) { wx = fx * fwd + fz * strafe * b.strafe; wz = fz * fwd - fx * strafe * b.strafe; }
-      if (!me.blocking) me.yaw = Math.atan2(fx, fz);
+      const fg = me.blocking && b.faceGoat ? world.goats.find(g => g.id === b.faceGoat) : null;
+      if (fg) me.yaw = Math.atan2(fg.x - me.p[0], fg.z - me.p[2]);
+      else if (!me.blocking) me.yaw = Math.atan2(fx, fz);
     } else {
       // nobody to fight: drift toward the middle
       wx = -me.p[0]; wz = -me.p[2];
@@ -419,6 +458,7 @@ function moveBot(me, dt, world, t) {
   for (const tr of C.TREES) pushOut(tr.x, tr.z, tr.r);
   for (const prop of world.props.values()) if (prop.state === 'idle') pushOut(prop.x, prop.z, C.PROP_TYPES[prop.type].r * 0.8);
   for (const q of world.players.values()) if (q !== me && !q.dead) pushOut(q.p[0], q.p[2], pr);
+  for (const g of world.goats) pushOut(g.x, g.z, C.GOAT.radius);
   const r = Math.hypot(me.p[0], me.p[2]);
   if (r > C.ARENA_RADIUS) { me.p[0] *= C.ARENA_RADIUS / r; me.p[2] *= C.ARENA_RADIUS / r; }
 
