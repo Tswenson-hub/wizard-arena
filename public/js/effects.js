@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import * as C from '../shared/constants.js';
 import { makePropMesh, makeFragments } from './world.js';
 
-const SPELL_COLORS = { fast: 0x7ad8ff, heavy: 0xff7a2a, prop: 0xffffff };
+const SPELL_COLORS = { fast: 0x7ad8ff, heavy: 0xff7a2a, prop: 0xb48cff };
 
 export class Effects {
   constructor(scene) {
@@ -48,8 +48,10 @@ export class Effects {
       g.add(light);
     } else {
       const mesh = makePropMesh(msg.propType);
-      mesh.position.y = -0.45;
+      mesh.position.y = -C.PROP_TYPES[msg.propType].h * 0.5;
       g.add(mesh);
+      const shell = new THREE.Mesh(new THREE.IcosahedronGeometry(C.PROP_TYPES[msg.propType].r + 0.3, 0), this.mat(0xb48cff, { wireframe: true, opacity: 0.45 }));
+      g.add(shell);
       g.userData.spin = new THREE.Vector3(Math.random() * 6 - 3, Math.random() * 6 - 3, Math.random() * 6 - 3);
     }
     g.position.set(msg.p[0], msg.p[1], msg.p[2]);
@@ -146,11 +148,12 @@ export class Effects {
       // trail
       pr.trail += dt;
       const interval = pr.kind === 'heavy' ? 0.025 : 0.035;
-      if (pr.kind !== 'prop' && pr.trail > interval) {
+      if (pr.trail > interval) {
         pr.trail = 0;
         const m = new THREE.Mesh(this.sphereGeo, this.mat(SPELL_COLORS[pr.kind], { opacity: 0.5 }));
         m.position.copy(pr.pos);
-        m.scale.setScalar(pr.kind === 'heavy' ? 0.5 : 0.2);
+        if (pr.kind === 'prop') m.position.add(new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(0.6));
+        m.scale.setScalar(pr.kind === 'heavy' ? 0.5 : pr.kind === 'prop' ? 0.14 : 0.2);
         this.scene.add(m);
         this.particles.push({ mesh: m, vel: new THREE.Vector3(), life: 0, maxLife: pr.kind === 'heavy' ? 0.4 : 0.25, grav: 0, shrink: true });
       }

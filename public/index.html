@@ -24,13 +24,19 @@
       <input id="nameInput" maxlength="14" placeholder="Your wizard name" autocomplete="off" spellcheck="false">
       <button type="submit" id="joinBtn">Enter the arena</button>
     </form>
+    <div class="practice-row">
+      <label for="botCount">Practice bots</label>
+      <select id="botCount"><option value="0">None</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select>
+      <select id="botDiff"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard</option></select>
+    </div>
     <div class="controls">
       <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move &nbsp; <kbd>Mouse</kbd> look</div>
       <div><kbd>LMB</kbd> Spark bolt — quick, low damage, stuns</div>
       <div><kbd>RMB</kbd> hold: Meteor — long wind-up, heavy damage</div>
       <div><kbd>Space</kbd> hold: Ward — blocks spells from the front, drains stamina</div>
       <div><kbd>E</kbd> Blink — teleport forward</div>
-      <div><kbd>F</kbd> pick up / throw objects &nbsp; <kbd>G</kbd> drop &nbsp; <kbd>Tab</kbd> scoreboard</div>
+      <div><kbd>F</kbd> Telekinesis — aim at an object to lift it, <kbd>F</kbd> again to hurl it. It shields you while held</div>
+      <div><kbd>G</kbd> set it down &nbsp; <kbd>Tab</kbd> scoreboard &nbsp; <kbd>M</kbd> mute &nbsp; <kbd>Esc</kbd> menu</div>
     </div>
     <p id="loadStatus" class="status">Loading wizard…</p>
   </div>
@@ -51,7 +57,7 @@
     <div class="ab" data-ab="heavy"><div class="cd"></div><span class="key">RMB</span><span class="name">Meteor</span></div>
     <div class="ab" data-ab="block"><div class="cd"></div><span class="key">SPACE</span><span class="name">Ward</span></div>
     <div class="ab" data-ab="tp"><div class="cd"></div><span class="key">E</span><span class="name">Blink</span></div>
-    <div class="ab" data-ab="throw"><div class="cd"></div><span class="key">F</span><span class="name">Grab</span></div>
+    <div class="ab" data-ab="throw"><div class="cd"></div><span class="key">F</span><span class="name">Lift</span></div>
   </div>
 
   <div id="feed"></div>
@@ -64,7 +70,22 @@
     <h2>Scoreboard</h2>
     <table><thead><tr><th>Wizard</th><th>Kills</th><th>Deaths</th></tr></thead><tbody></tbody></table>
   </div>
-  <div id="clickToPlay" class="hidden">Click to capture the mouse</div>
+  <div id="clickToPlay" class="hidden">
+    <div class="pause panel">
+      <h2>Paused</h2>
+      <button id="resumeBtn" class="primary">Resume</button>
+      <h3>Practice bots <span id="botTally"></span></h3>
+      <div class="btn-row">
+        <button data-bot="easy">+ Easy</button><button data-bot="normal">+ Normal</button><button data-bot="hard">+ Hard</button>
+        <button id="clearBots" class="ghost">Remove all</button>
+      </div>
+      <h3>Sound</h3>
+      <div class="vol-row">
+        <input id="volume" type="range" min="0" max="100" step="1">
+        <label><input id="mute" type="checkbox"> Mute <kbd>M</kbd></label>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script type="module" src="/js/main.js"></script>

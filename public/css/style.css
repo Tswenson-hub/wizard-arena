@@ -95,4 +95,21 @@ kbd {
 #scoreboard tr.me td { color: var(--gold); }
 #scoreboard td:nth-child(2), #scoreboard td:nth-child(3), #scoreboard th:nth-child(2), #scoreboard th:nth-child(3) { text-align: right; }
 
-#clickToPlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 22px; background: rgba(0,0,0,0.45); pointer-events: auto; cursor: pointer; }
+#clickToPlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.45); pointer-events: auto; }
+.pause.panel { width: min(92vw, 420px); padding: 24px 28px; }
+.pause h2 { margin: 0 0 14px; font-size: 22px; letter-spacing: 2px; color: var(--gold); }
+.pause h3 { margin: 20px 0 8px; font-size: 13px; font-weight: normal; letter-spacing: 1px; text-transform: uppercase; color: var(--dim); }
+.pause button, .practice-row select {
+  padding: 8px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.2); font: inherit; font-size: 14px;
+  background: rgba(255,255,255,0.08); color: var(--ink); cursor: pointer;
+}
+.pause button:hover { border-color: var(--gold); }
+.pause button.primary { width: 100%; padding: 11px; border: none; font-weight: 700; background: var(--gold); color: #2a1d05; }
+.pause button.ghost { background: transparent; }
+.btn-row { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.vol-row { display: flex; align-items: center; gap: 12px; font-size: 14px; }
+.vol-row input[type=range] { flex: 1; accent-color: var(--gold); }
+.practice-row { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 14px; color: var(--dim); }
+.practice-row label { margin-right: auto; }
+.practice-row select option { background: #1a1428; }
+#scoreboard .bot { margin-left: 6px; padding: 0 5px; border-radius: 4px; font-size: 10px; text-transform: uppercase; background: rgba(255,255,255,0.12); color: var(--dim); }

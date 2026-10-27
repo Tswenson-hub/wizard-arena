@@ -1,0 +1,78 @@
+{
+  "spark_cast": [
+    "spark_cast_1.m4a",
+    "spark_cast_2.m4a",
+    "spark_cast_3.m4a"
+  ],
+  "meteor_cast": [
+    "meteor_cast.m4a"
+  ],
+  "charge_loop": [
+    "charge_loop.m4a"
+  ],
+  "impact_small": [
+    "impact_small_1.m4a",
+    "impact_small_2.m4a",
+    "impact_small_3.m4a"
+  ],
+  "impact_big": [
+    "impact_big_1.m4a",
+    "impact_big_2.m4a",
+    "impact_big_3.m4a"
+  ],
+  "hit_body": [
+    "hit_body_1.m4a",
+    "hit_body_2.m4a",
+    "hit_body_3.m4a"
+  ],
+  "ward_block": [
+    "ward_block_1.m4a",
+    "ward_block_2.m4a",
+    "ward_block_3.m4a"
+  ],
+  "ward_break": [
+    "ward_break.m4a"
+  ],
+  "ward_loop": [
+    "ward_loop.m4a"
+  ],
+  "blink": [
+    "blink.m4a"
+  ],
+  "tk_lift": [
+    "tk_lift.m4a"
+  ],
+  "tk_throw": [
+    "tk_throw_1.m4a",
+    "tk_throw_2.m4a",
+    "tk_throw_3.m4a"
+  ],
+  "prop_shatter_wood": [
+    "prop_shatter_wood_1.m4a",
+    "prop_shatter_wood_2.m4a"
+  ],
+  "prop_shatter_stone": [
+    "prop_shatter_stone.m4a"
+  ],
+  "footstep": [
+    "footstep_1.m4a",
+    "footstep_2.m4a",
+    "footstep_3.m4a",
+    "footstep_4.m4a"
+  ],
+  "death": [
+    "death.m4a"
+  ],
+  "hurt": [
+    "hurt.m4a"
+  ],
+  "respawn": [
+    "respawn.m4a"
+  ],
+  "ui_click": [
+    "ui_click.m4a"
+  ],
+  "ambient_loop": [
+    "ambient_loop.m4a"
+  ]
+}

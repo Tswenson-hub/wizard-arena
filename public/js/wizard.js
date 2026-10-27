@@ -1,6 +1,14 @@
 // A wizard in the scene: cloned skinned model, animation state machine, nameplate, colour ring.
 import * as THREE from 'three';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
+import * as C from '../shared/constants.js';
+
+// Shared telekinesis visuals: glowing motes along the beam and a shell around the held prop.
+const TK_COLOR = 0xb48cff;
+const moteGeo = new THREE.IcosahedronGeometry(1, 0);
+const moteMat = new THREE.MeshBasicMaterial({ color: 0xd9c4ff, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false });
+const shellMat = new THREE.MeshBasicMaterial({ color: TK_COLOR, transparent: true, opacity: 0.35, wireframe: true, blending: THREE.AdditiveBlending, depthWrite: false });
+const BEAM_MOTES = 12;
 
 let baseModel = null;
 let clips = {};
@@ -61,6 +69,8 @@ function makeNameplate(name, color) {
 export class Wizard {
   constructor(info, scene, isLocal) {
     this.id = info.id; this.name = info.name; this.color = info.color; this.isLocal = isLocal;
+    this.bot = info.bot || null;
+    this.scene = scene;
     this.group = new THREE.Group();
     this.model = skeletonClone(baseModel);
     this.group.add(this.model);
@@ -110,7 +120,7 @@ export class Wizard {
     this.chargeLight = new THREE.PointLight(0xff7a2a, 0, 7);
     scene.add(this.chargeLight);
 
-    this.nameplate = makeNameplate(info.name, info.color);
+    this.nameplate = makeNameplate(this.bot ? `${info.name} · ${this.bot}` : info.name, info.color);
     this.nameplate.position.y = 2.25;
     this.nameplate.visible = !isLocal;
     this.group.add(this.nameplate);
@@ -129,6 +139,13 @@ export class Wizard {
     this.hp = 100; this.st = 100; this.blocking = false; this.charging = false; this.dead = false; this.stunned = false;
     this.carrying = null; this.kills = 0; this.deaths = 0;
     this.carryMesh = null;
+    this.carry = null;           // { holder, liftFrom, t } while a prop floats beside us
+
+    // telekinesis beam from the staff hand to the held prop
+    this.beam = new THREE.Group();
+    for (let i = 0; i < BEAM_MOTES; i++) this.beam.add(new THREE.Mesh(moteGeo, moteMat));
+    this.beam.visible = false;
+    scene.add(this.beam);
 
     // interpolation targets for remote wizards
     this.targetPos = new THREE.Vector3(info.p[0], info.p[1], info.p[2]);
@@ -207,11 +224,7 @@ export class Wizard {
     this.hpFill.position.x = -(1 - this.hp / 100) * 0.6;
     this.ring.material.opacity = this.dead ? 0.1 : 0.75;
 
-    // carried prop sits above the head
-    if (this.carryMesh) {
-      this.carryMesh.position.set(0, 2.15 + Math.sin(performance.now() / 300) * 0.05, 0.1);
-      this.carryMesh.rotation.y += dt * 1.5;
-    }
+    this.updateCarry(dt);
 
     // death: sink into the ground
     const target = this.dead ? 1 : 0;
@@ -234,12 +247,69 @@ export class Wizard {
     this.hpBar.quaternion.copy(camera.quaternion);
   }
 
-  setCarry(mesh) {
-    if (this.carryMesh) { this.group.remove(this.carryMesh); this.carryMesh = null; }
-    if (mesh) { this.carryMesh = mesh; this.group.add(mesh); }
+  // Start (or stop, with null) holding a prop by telekinesis. `liftFrom` is where it rises from.
+  setCarry(mesh, liftFrom = null) {
+    if (this.carry) { this.scene.remove(this.carry.holder); this.carry = null; }
+    this.carryMesh = mesh;
+    this.beam.visible = false;
+    if (!mesh) return;
+    const type = mesh.userData.type;
+    const spec = C.PROP_TYPES[type];
+    const holder = new THREE.Group();
+    mesh.position.y = -spec.h * 0.5;             // pivot at the prop's middle
+    const shell = new THREE.Mesh(moteGeo, shellMat);
+    shell.scale.setScalar(spec.r + 0.25);
+    holder.add(mesh, shell);
+    const start = liftFrom ? new THREE.Vector3(liftFrom[0], spec.h * 0.5, liftFrom[2]) : this.holdPoint();
+    holder.position.copy(start);
+    this.scene.add(holder);
+    this.carry = { holder, shell, start, t: liftFrom ? 0 : 1, spin: new THREE.Vector3(Math.random() - 0.5, 1, Math.random() - 0.5).normalize() };
+  }
+
+  holdPoint() {
+    const p = this.group.position;
+    const hp = C.holdPoint([p.x, p.y, p.z], this.group.rotation.y);
+    return new THREE.Vector3(hp[0], hp[1], hp[2]);
+  }
+
+  updateCarry(dt) {
+    const c = this.carry;
+    if (!c || this.dead) { this.beam.visible = false; if (c) c.holder.visible = !this.dead; return; }
+    const now = performance.now() / 1000;
+    c.t = Math.min(1, c.t + dt / C.TK.liftTime);
+    const e = 1 - Math.pow(1 - c.t, 3);                         // ease-out
+    const hold = this.holdPoint();
+    hold.y += Math.sin(now * 2.6 + this.id) * 0.07;              // gentle bob
+    if (c.t < 1) {
+      // rise in an arc from where it stood
+      c.holder.position.lerpVectors(c.start, hold, e);
+      c.holder.position.y += Math.sin(e * Math.PI) * 0.6;
+    } else c.holder.position.lerp(hold, Math.min(1, dt * 16));
+    c.holder.rotateOnAxis(c.spin, dt * (c.t < 1 ? 6 : 0.9));
+    c.shell.rotation.y += dt * 2; c.shell.rotation.x += dt * 1.3;
+    c.shell.material.opacity = 0.25 + Math.sin(now * 6) * 0.08;
+
+    // beam: motes along a curve from the staff hand to the prop, drifting outward
+    const hand = new THREE.Vector3(); this.hand.getWorldPosition(hand);
+    const to = c.holder.position;
+    const mid = hand.clone().lerp(to, 0.5); mid.y += 0.35;
+    this.beam.visible = true;
+    this.beam.children.forEach((m, i) => {
+      const k = ((i / BEAM_MOTES) + now * 1.4) % 1;
+      const a = 1 - k;
+      m.position.set(
+        a * a * hand.x + 2 * a * k * mid.x + k * k * to.x,
+        a * a * hand.y + 2 * a * k * mid.y + k * k * to.y,
+        a * a * hand.z + 2 * a * k * mid.z + k * k * to.z);
+      m.position.x += Math.sin(now * 9 + i * 1.7) * 0.05;
+      m.position.y += Math.cos(now * 8 + i * 2.3) * 0.05;
+      m.scale.setScalar(0.035 + Math.sin(k * Math.PI) * 0.045);
+    });
   }
 
   dispose(scene) {
+    this.setCarry(null);
+    scene.remove(this.beam);
     scene.remove(this.group);
     scene.remove(this.chargeOrb);
     scene.remove(this.chargeLight);

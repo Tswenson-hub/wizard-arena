@@ -71,7 +71,7 @@ export const TK = {
   range: 16,
   aimConeDeg: 12,
   liftTime: 0.35,
-  hold: { fwd: 1.25, side: -0.75, up: 1.75 },  // hold point relative to the caster (side < 0 = left)
+  hold: { fwd: 1.25, side: -0.75, up: 1.75 },  // relative to the caster; side < 0 is their right, clear of the crosshair
 };
 
 // Where a carried prop floats for a wizard at `p` facing `yaw`.

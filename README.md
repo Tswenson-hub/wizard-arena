@@ -15,11 +15,24 @@ Open the URL in two browser windows (or send it to friends on your LAN) and ente
 
 ### Playing alone
 
-Spawn AI opponents in a second terminal:
+Pick a number of practice bots and a difficulty on the join screen, or press `Esc` in game and use
+**+ Easy / + Normal / + Hard**. Bots run on the server, so they work on a hosted copy too, and they
+leave when the last human does. From a terminal:
 
 ```bash
-node bot.js 3       # three bots; node bot.js 3 ws://host:port for a remote server
+node bot.js 3 hard                    # add three Hard bots (max 6)
+node bot.js 2 easy wss://your-app.onrender.com
+node bot.js clear                     # remove them
 ```
+
+| Bots | Reaction | Aim | Leads shots | Dodges |
+|---|---|---|---|---|
+| Easy | 0.45 s | ±7° | no | 25%, never blinks |
+| Normal | 0.25 s | ±3.5° | partly | 60%, blinks away from meteors |
+| Hard | 0.12 s | ±1.2° | fully | 90%, blinks, wards, punishes wind-ups |
+
+All bots strafe, keep their preferred range, retreat behind pillars when losing, interrupt meteor
+wind-ups with sparks, and use telekinesis.
 
 ## Controls
 
@@ -31,13 +44,15 @@ node bot.js 3       # three bots; node bot.js 3 ws://host:port for a remote serv
 | `RMB` | **Meteor** — 1.25 s wind-up, heavy damage and knockback. Being hit cancels it. |
 | `Space` (hold) | **Ward** — blocks spells and thrown objects arriving from the front. Drains stamina while held and per spell blocked; if stamina runs out the ward shatters and you're staggered. |
 | `E` | **Blink** — teleport 9 m in the direction you're facing (4 s cooldown) |
-| `F` | Pick up the nearest object / throw the object you're carrying |
-| `G` | Drop what you're carrying |
+| `F` | **Telekinesis**: aim at an object up to 16 m away to lift it; `F` again hurls it at the crosshair. A held object floats beside you and absorbs one spell aimed at you. |
+| `G` | Set the held object down |
+| `M` | Mute / unmute (volume is in the `Esc` menu) |
 | `Tab` (hold) | Scoreboard |
-| `Esc` | Release the mouse |
+| `Esc` | Pause menu: bots, volume |
 
-Crates, barrels, pumpkins, rocks and pots can be picked up and thrown (22 damage, shatters on impact)
-and are destroyed by any spell that hits them. They respawn after ~18 s.
+Crates, barrels, pumpkins, rocks and pots can be lifted with telekinesis and hurled (22 damage,
+shatters on impact) and are destroyed by any spell that hits them. They respawn after ~18 s.
+Spark stuns can't be chained: after one wears off, you're immune to spark stuns for 0.6 s.
 
 Append `?low` to the URL to disable shadows on weak GPUs.
 
@@ -52,9 +67,11 @@ public/js/wizard.js        Skinned wizard instances + animation state machine.
 public/js/world.js         Low-poly arena, pillars, trees, prop mesh factories.
 public/js/effects.js       Projectile visuals, particles, debris, teleport/impact effects.
 public/js/net.js           WebSocket wrapper.      public/js/input.js   Keyboard + pointer lock.
-public/js/audio.js         Synthesized sound effects (no audio files).
+public/js/audio.js         3D positional sound (HRTF panners, reverb, compressor) over the CC0
+                           samples in public/sounds (see CREDITS.md there); synth fallback.
 public/models/wizard.glb   The Meshy wizard with all animation clips merged into one 1.4 MB file.
-bot.js                     Headless AI opponents for testing.
+server/bots.js             Server-side AI wizards (Easy / Normal / Hard).
+bot.js                     CLI to add or clear bots on a running server.
 ```
 
 Clients own their own movement and report position 20×/s; the server sanity-checks speed and
@@ -75,13 +92,22 @@ second doubles as the idle stance), `Two_Handed_Parry` (ward), `Charged_Spell_Ca
 
 ## Deploying
 
-Any host that runs a long-lived Node process with WebSocket support works
-(Render, Railway, Fly.io, a VPS, Docker). Serverless platforms (e.g. Vercel functions) do **not**
-support the WebSocket server.
+**Not on Vercel.** The game needs a long-running Node process that holds WebSocket connections open;
+Vercel's serverless functions can't do that. Any host that runs a normal Node server works.
+
+### Render (recommended, free tier)
+
+1. Push this folder to a GitHub repo.
+2. In the [Render dashboard](https://dashboard.render.com): **New → Blueprint**, pick the repo. It reads
+   `render.yaml` (Node, `npm ci`, `npm start`, health check at `/healthz`).
+3. Share the `https://wizard-arena-xxxx.onrender.com` URL. The client uses `wss://` automatically.
+
+The free plan sleeps after ~15 minutes with nobody connected; the first visit afterwards takes ~30 s
+to wake it. The paid Starter plan stays awake. Railway and Fly.io work the same way (Fly can use the
+included `Dockerfile`).
 
 ```bash
 docker build -t wizard-arena . && docker run -p 3000:3000 wizard-arena
 ```
 
-The server reads `PORT` from the environment. Put it behind HTTPS and the client automatically
-uses `wss://`.
+The server reads `PORT` from the environment.

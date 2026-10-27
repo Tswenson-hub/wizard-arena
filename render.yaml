@@ -1,0 +1,10 @@
+# Render Blueprint: New → Blueprint in the Render dashboard, point it at this repo.
+services:
+  - type: web
+    name: wizard-arena
+    runtime: node
+    plan: free            # sleeps after ~15 min idle; "starter" stays awake
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /healthz
+    autoDeploy: true

@@ -40,6 +40,7 @@ const ui = {
   charge: $('#chargeRing'), chargeFg: $('#chargeRing .fg'),
   feed: $('#feed'), hint: $('#hint'), status: $('#status'), death: $('#deathScreen'), vignette: $('#vignette'),
   scoreboard: $('#scoreboard'), scoreBody: $('#scoreboard tbody'), clickToPlay: $('#clickToPlay'),
+  botCount: $('#botCount'), botDiff: $('#botDiff'), botTally: $('#botTally'), volume: $('#volume'), mute: $('#mute'),
   ab: Object.fromEntries([...document.querySelectorAll('.ab')].map(el => [el.dataset.ab, el])),
 };
 
@@ -63,7 +64,11 @@ let now = 0;
 const tmp = { v1: new THREE.Vector3(), v2: new THREE.Vector3(), v3: new THREE.Vector3() };
 
 // ---------------------------------------------------------------- loading
-try { ui.name.value = localStorage.getItem('wizardName') || ''; } catch {}
+try {
+  ui.name.value = localStorage.getItem('wizardName') || '';
+  const bots = JSON.parse(localStorage.getItem('wizardBots') || 'null');
+  if (bots) { ui.botCount.value = bots.count; ui.botDiff.value = bots.difficulty; }
+} catch {}
 ui.joinBtn.disabled = true;
 
 const loader = new GLTFLoader();
@@ -83,20 +88,36 @@ ui.form.addEventListener('submit', async (e) => {
   e.preventDefault();
   if (ui.joinBtn.disabled) return;
   const name = ui.name.value.trim() || 'Wizard';
-  try { localStorage.setItem('wizardName', name); } catch {}
+  try {
+    localStorage.setItem('wizardName', name);
+    localStorage.setItem('wizardBots', JSON.stringify({ count: ui.botCount.value, difficulty: ui.botDiff.value }));
+  } catch {}
   ui.joinBtn.disabled = true; ui.loadStatus.textContent = 'Connecting…';
   sfx.init(); sfx.resume();
   try {
     const welcome = await net.connect(name);
     onWelcome(welcome);
+    for (let i = 0; i < +ui.botCount.value; i++) net.send({ t: 'addBot', difficulty: ui.botDiff.value });
   } catch (err) {
     ui.loadStatus.textContent = err.message || 'Connection failed';
     ui.joinBtn.disabled = false;
   }
 });
 
-ui.clickToPlay.addEventListener('click', () => input.requestLock());
-input.onLockChange = (locked) => { ui.clickToPlay.classList.toggle('hidden', locked || !me); };
+// Pause menu (shown whenever the mouse isn't captured): resume, practice bots, volume.
+ui.clickToPlay.addEventListener('click', (e) => { if (e.target === ui.clickToPlay) input.requestLock(); });
+$('#resumeBtn').addEventListener('click', () => { sfx.click(); input.requestLock(); });
+for (const b of document.querySelectorAll('[data-bot]')) b.addEventListener('click', () => { sfx.click(); net.send({ t: 'addBot', difficulty: b.dataset.bot }); });
+$('#clearBots').addEventListener('click', () => { sfx.click(); net.send({ t: 'removeBots' }); });
+ui.volume.value = Math.round(sfx.volume * 100);
+ui.mute.checked = sfx.muted;
+ui.volume.addEventListener('input', () => { sfx.volume = ui.volume.value / 100; if (sfx.muted) { sfx.muted = false; ui.mute.checked = false; } });
+ui.mute.addEventListener('change', () => { sfx.muted = ui.mute.checked; });
+input.onLockChange = (locked) => { ui.clickToPlay.classList.toggle('hidden', locked || !me); updateBotTally(); };
+function updateBotTally() {
+  const n = [...players.values()].filter(w => w.bot).length;
+  ui.botTally.textContent = n ? `(${n} in arena)` : '';
+}
 net.onClose = () => {
   if (!me) return;
   ui.status.textContent = 'Disconnected from server — refresh to rejoin.';
@@ -139,10 +160,14 @@ function applySnapshot(w, s) {
     if (!s.blocking && local.blocking) { local.blocking = false; }   // server cancelled the ward
     if (!s.charging && local.charging && local.chargeSent) { local.charging = false; }
   }
-  if (s.carrying !== w.carrying) {
-    w.carrying = s.carrying;
-    w.setCarry(s.carrying ? makePropMesh(props.get(s.carrying)?.data.type || 'crate') : null);
-  }
+  if (s.carrying !== w.carrying) startCarry(w, s.carrying);
+}
+
+// Show wizard `w` holding prop `id` (or nothing). A prop still rising lifts from where it stood.
+function startCarry(w, id) {
+  w.carrying = id;
+  const e = id ? props.get(id) : null;
+  w.setCarry(e ? makePropMesh(e.data.type) : null, e && e.data.state === 'lifting' ? [e.data.x, 0, e.data.z] : null);
 }
 
 function setProp(data, initial = false) {
@@ -160,13 +185,17 @@ function setProp(data, initial = false) {
     entry.mesh.scale.setScalar(0.01); entry.spawnT = 0;   // pop-in
     effects.burst(new THREE.Vector3(data.x, 0.5, data.z), C.PROP_TYPES[data.type].color, 8, 2, 0.3, 0);
   }
-  if (data.state === 'carried') {
+  if (data.state === 'lifting' || data.state === 'carried') {
     const carrier = players.get(data.carrier);
-    if (carrier && carrier.carrying !== data.id) { carrier.carrying = data.id; carrier.setCarry(makePropMesh(data.type)); }
+    if (carrier && carrier.carrying !== data.id) startCarry(carrier, data.id);
+  } else {
+    // thrown, dropped or broken: nobody holds it any more
+    for (const w of players.values()) if (w.carrying === data.id) startCarry(w, null);
   }
 }
 
-function dist(w) { return w ? Math.hypot(w.group.position.x - local.pos.x, w.group.position.z - local.pos.z) : 0; }
+// Where a wizard's sounds come from (chest height).
+function wpos(w) { return w.group.position.clone().setY(w.group.position.y + 1.1); }
 
 function handleMessage(msg) {
   switch (msg.t) {
@@ -178,22 +207,22 @@ function handleMessage(msg) {
       break;
     case 'joined': {
       const w = addPlayer(msg.player);
-      if (w !== me) feed(`<b>${esc(w.name)}</b> entered the arena`);
+      if (w !== me) feed(`<b>${esc(w.name)}</b> entered the arena${w.bot ? ` <span style="opacity:.6">(${w.bot} bot)</span>` : ''}`);
+      updateBotTally();
       break;
     }
     case 'leave': {
       const w = players.get(msg.id);
-      if (w) { feed(`<b>${esc(w.name)}</b> left`); w.dispose(scene); players.delete(msg.id); }
+      if (w) { feed(`<b>${esc(w.name)}</b> left`); stopWizardAudio(w); w.dispose(scene); players.delete(msg.id); updateBotTally(); }
       break;
     }
     case 'proj': {
       effects.spawnProjectile(msg);
       const owner = players.get(msg.owner);
       if (owner) {
-        const d = dist(owner);
-        if (msg.kind === 'fast') { owner.oneShot('cast_fast', 0.45, 2.6, 0.25); sfx.castFast(d); }
-        else if (msg.kind === 'heavy') { owner.charging = false; owner.oneShot('cast_heavy', 0.55, 1.5, 1.9); sfx.castHeavy(d); }
-        else { owner.oneShot('cast_fast', 0.4, 2.6, 0.3); sfx.throw_(d); }
+        if (msg.kind === 'fast') { owner.oneShot('cast_fast', 0.45, 2.6, 0.25); sfx.castFast(msg.p); }
+        else if (msg.kind === 'heavy') { owner.charging = false; owner.oneShot('cast_heavy', 0.55, 1.5, 1.9); sfx.castHeavy(msg.p); }
+        else { owner.oneShot('cast_fast', 0.4, 2.6, 0.3); sfx.throw_(msg.p); if (owner.carrying) startCarry(owner, null); }
       }
       break;
     }
@@ -202,21 +231,20 @@ function handleMessage(msg) {
       effects.endProjectile(msg);
       if (msg.hit && pr) {
         const d = Math.hypot(msg.p[0] - local.pos.x, msg.p[2] - local.pos.z);
-        if (pr.kind === 'heavy') { sfx.bigImpact(d); shake(0.5 / (1 + d * 0.15)); }
-        else if (msg.surface !== 'player') sfx.impact(d);
+        if (pr.kind === 'heavy') { sfx.bigImpact(msg.p); shake(0.5 / (1 + d * 0.15)); }
+        else if (msg.surface !== 'player' && pr.kind === 'fast') sfx.impact(msg.p);
       }
       break;
     }
     case 'hit': {
       const target = players.get(msg.target);
       if (!target) break;
-      const d = dist(target);
       const c = target.group.position.clone(); c.y += 1;
-      if (msg.blocked) { effects.blockFlash(c); sfx.block(d); }
+      if (msg.blocked) { effects.blockFlash(c); sfx.block(c); }
       else {
         effects.burst(c, 0xff3b4e, 10, 3, 0.35);
         target.oneShot('stun', msg.kind === 'heavy' ? 0.5 : 0.55, 3.0, 0.3);
-        if (target !== me) sfx.impact(d);
+        sfx.hitBody(c);
       }
       if (target === me) {
         if (!msg.blocked) {
@@ -233,7 +261,7 @@ function handleMessage(msg) {
     case 'blockBreak': {
       const w = players.get(msg.id);
       if (!w) break;
-      sfx.blockBreak(dist(w));
+      sfx.blockBreak(wpos(w));
       effects.burst(w.group.position.clone().add(new THREE.Vector3(0, 1, 0)), 0x9ae4ff, 24, 5, 0.4);
       if (w === me) { local.blocking = false; local.stunUntil = now + C.BLOCK_BREAK_STUN; flashVignette(); feed('Your ward shattered!'); }
       w.blocking = false;
@@ -241,7 +269,7 @@ function handleMessage(msg) {
     }
     case 'chargeStart': {
       const w = players.get(msg.id);
-      if (w) { w.charging = true; sfx.chargeStart(dist(w)); }
+      if (w) w.charging = true;   // its hum is started by updateWizardAudio()
       break;
     }
     case 'chargeCancel': {
@@ -253,7 +281,7 @@ function handleMessage(msg) {
       const w = players.get(msg.id);
       effects.teleport(msg.from, msg.to);
       if (w) {
-        sfx.teleport(dist(w));
+        sfx.teleport(msg.to);
         w.oneShot('dash', 0.5, 2.5, 2.2);
         if (w !== me) { w.targetPos.set(msg.to[0], 0, msg.to[2]); w.group.position.copy(w.targetPos); }
         else if (local.pos.distanceTo(new THREE.Vector3(msg.to[0], 0, msg.to[2])) > 1.5) local.pos.set(msg.to[0], 0, msg.to[2]);
@@ -261,16 +289,16 @@ function handleMessage(msg) {
       break;
     }
     case 'prop':
+      if (msg.prop.state === 'lifting') sfx.pickup([msg.prop.x, 0.6, msg.prop.z]);
       setProp(msg.prop);
-      if (msg.prop.state === 'carried') { const w = players.get(msg.prop.carrier); if (w) sfx.pickup(dist(w)); }
       break;
     case 'propBreak': {
       const e = props.get(msg.id);
       if (e) {
         e.data.state = 'broken'; e.mesh.visible = false;
         effects.propBreak(e.data.type, msg.p);
-        sfx.shatter(Math.hypot(msg.p[0] - local.pos.x, msg.p[2] - local.pos.z));
-        for (const w of players.values()) if (w.carrying === msg.id) { w.carrying = null; w.setCarry(null); }
+        sfx.shatter(msg.p, e.data.type);
+        for (const w of players.values()) if (w.carrying === msg.id) startCarry(w, null);
       }
       break;
     }
@@ -280,7 +308,7 @@ function handleMessage(msg) {
       if (!w) break;
       w.dead = true;
       effects.death([w.group.position.x, 0, w.group.position.z]);
-      sfx.death(dist(w));
+      sfx.death(wpos(w));
       if (w === me) { ui.death.classList.remove('hidden'); local.charging = false; local.blocking = false; }
       if (k && k !== w) feed(`<b>${esc(k.name)}</b> vanquished <b>${esc(w.name)}</b>`);
       else feed(`<b>${esc(w.name)}</b> perished`);
@@ -293,6 +321,7 @@ function handleMessage(msg) {
       if (w === me) { local.pos.set(msg.p[0], 0, msg.p[2]); local.vel.set(0, 0, 0); ui.death.classList.add('hidden'); local.stunUntil = 0; }
       else { w.targetPos.set(msg.p[0], 0, msg.p[2]); w.group.position.copy(w.targetPos); }
       effects.teleport(msg.p, msg.p);
+      sfx.respawn([msg.p[0], 1, msg.p[2]]);
       break;
     }
   }
@@ -317,7 +346,7 @@ function hitmarker() {
 let scoreVisible = false, scoreT = 0;
 function updateScoreboard() {
   const rows = [...players.values()].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
-  ui.scoreBody.innerHTML = rows.map(w => `<tr class="${w === me ? 'me' : ''}"><td style="color:#${w.color.toString(16).padStart(6, '0')}">${esc(w.name)}</td><td>${w.kills}</td><td>${w.deaths}</td></tr>`).join('');
+  ui.scoreBody.innerHTML = rows.map(w => `<tr class="${w === me ? 'me' : ''}"><td style="color:#${w.color.toString(16).padStart(6, '0')}">${esc(w.name)}${w.bot ? `<span class="bot">${w.bot} bot</span>` : ''}</td><td>${w.kills}</td><td>${w.deaths}</td></tr>`).join('');
 }
 
 // ---------------------------------------------------------------- local player update
@@ -333,15 +362,68 @@ function computeAim() {
   aimDir.copy(target).sub(aimOrigin).normalize();
 }
 
-function nearestIdleProp() {
-  let best = null, bd = C.PICKUP_RANGE;
+// The prop telekinesis would grab: closest to the crosshair ray within range and cone, else
+// anything at point-blank range. Mirrors tkTarget() in server.js.
+const camDir = new THREE.Vector3();
+function tkTarget() {
+  camera.getWorldDirection(camDir);
+  const o = camera.position;
+  const cone = C.TK.aimConeDeg * Math.PI / 180;
+  const p = [local.pos.x, 0, local.pos.z];
+  let best = null, bestScore = -Infinity, near = null, nd = C.PICKUP_RANGE;
   for (const e of props.values()) {
-    if (e.data.state !== 'idle') continue;
-    const d = Math.hypot(e.data.x - local.pos.x, e.data.z - local.pos.z);
-    if (d < bd) { bd = d; best = e; }
+    const d = e.data;
+    if (d.state !== 'idle') continue;
+    const d2 = Math.hypot(d.x - p[0], d.z - p[2]);
+    if (d2 < nd) { nd = d2; near = e; }
+    if (d2 > C.TK.range) continue;
+    const spec = C.PROP_TYPES[d.type];
+    const vx = d.x - o.x, vy = spec.h * 0.5 - o.y, vz = d.z - o.z;
+    const l = Math.hypot(vx, vy, vz) || 1;
+    const cos = (vx * camDir.x + vy * camDir.y + vz * camDir.z) / l;
+    if (Math.acos(THREE.MathUtils.clamp(cos, -1, 1)) - Math.atan2(spec.r, l) > cone) continue;
+    if (C.pillarBlocks(p, [d.x, 0, d.z], 0.1)) continue;
+    const score = cos - l * 0.002;
+    if (score > bestScore) { bestScore = score; best = e; }
   }
-  return best;
+  return best || near;
 }
+
+// What the crosshair is pointing at (wizard, pillar, tree or ground), for aiming hurled props.
+function aimPoint() {
+  camera.getWorldDirection(camDir);
+  const o = camera.position;
+  let best = 60;
+  const hitSphere = (c, r) => {
+    const lx = c.x - o.x, ly = c.y - o.y, lz = c.z - o.z;
+    const tca = lx * camDir.x + ly * camDir.y + lz * camDir.z;
+    if (tca < 0) return;
+    const d2 = lx * lx + ly * ly + lz * lz - tca * tca;
+    if (d2 > r * r) return;
+    const t = tca - Math.sqrt(r * r - d2);
+    if (t > 4.5 && t < best) best = t;       // ignore anything between the camera and us
+  };
+  for (const w of players.values()) if (w !== me && !w.dead) hitSphere(tmp.v1.copy(w.group.position).setY(w.group.position.y + C.HIT_CENTER_Y), C.HIT_RADIUS + 0.3);
+  // pillars and trees as vertical cylinders (2D ray vs circle)
+  const hx = camDir.x, hz = camDir.z, hl = Math.hypot(hx, hz) || 1;
+  for (const c of [...C.PILLARS, ...C.TREES]) {
+    const lx = c.x - o.x, lz = c.z - o.z;
+    const tca = (lx * hx + lz * hz) / hl;
+    const d2 = lx * lx + lz * lz - tca * tca;
+    if (tca < 0 || d2 > c.r * c.r) continue;
+    const t = (tca - Math.sqrt(c.r * c.r - d2)) / hl;
+    if (t > 4.5 && t < best && o.y + camDir.y * t < (c.h || 6)) best = t;
+  }
+  if (camDir.y < -0.01) { const t = -o.y / camDir.y; if (t > 4.5 && t < best) best = t; }
+  return [o.x + camDir.x * best, Math.max(0.3, o.y + camDir.y * best), o.z + camDir.z * best];
+}
+
+// Glow marker on the prop telekinesis would grab.
+const tkMarker = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 1),
+  new THREE.MeshBasicMaterial({ color: 0xb48cff, wireframe: true, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false }));
+tkMarker.visible = false;
+scene.add(tkMarker);
+let tkHover = null;
 
 function updateLocal(dt) {
   const stunned = now < local.stunUntil || me.stunned;
@@ -387,16 +469,17 @@ function updateLocal(dt) {
       local.pos.set(to[0], 0, to[2]); local.vel.set(0, 0, 0);
       if (local.blocking) { local.blocking = false; }
     }
-    // grab / throw / drop
+    // telekinesis: lift / hurl / set down
     if (input.justPressed('KeyF')) {
       if (me.carrying) {
-        if (now >= local.cd.throw) {
+        if (now >= local.cd.throw && props.get(me.carrying)?.data.state === 'carried') {
           computeAim();
           local.cd.throw = now + C.THROW_COOLDOWN;
-          net.send({ t: 'throw', dir: aimDir.toArray() });
+          net.send({ t: 'throw', dir: aimDir.toArray(), target: aimPoint() });
         }
-      } else if (!local.charging && !local.blocking && nearestIdleProp()) {
-        net.send({ t: 'pickup' });
+      } else if (!local.charging && !local.blocking && tkHover) {
+        camera.getWorldDirection(camDir);
+        net.send({ t: 'pickup', aimOrigin: camera.position.toArray(), aimDir: camDir.toArray() });
       }
     }
     if (input.justPressed('KeyG') && me.carrying) net.send({ t: 'drop' });
@@ -498,16 +581,24 @@ function updateHud(dt) {
   ui.ab.block.classList.toggle('active', local.blocking);
   ui.ab.heavy.classList.toggle('active', local.charging);
   ui.ab.block.classList.toggle('disabled', me.st < 3);
-  ui.ab.throw.querySelector('.name').textContent = me.carrying ? 'Throw' : 'Grab';
+  ui.ab.throw.querySelector('.name').textContent = me.carrying ? 'Hurl' : 'Lift';
   ui.ab.throw.classList.toggle('active', !!me.carrying);
   ui.ab.fast.classList.toggle('disabled', !!me.carrying);
   ui.ab.heavy.classList.toggle('disabled', !!me.carrying);
 
   // hint
   let hint = '';
-  if (me.carrying) hint = 'F throw · G drop';
-  else if (!me.dead && nearestIdleProp()) hint = 'F pick up';
+  tkHover = !me.dead && !me.carrying ? tkTarget() : null;
+  if (tkHover) {
+    const spec = C.PROP_TYPES[tkHover.data.type];
+    tkMarker.visible = true;
+    tkMarker.position.set(tkHover.data.x, spec.h * 0.5, tkHover.data.z);
+    tkMarker.scale.setScalar(spec.r + 0.3 + Math.sin(now * 6) * 0.04);
+    tkMarker.rotation.y += dt * 1.5;
+  } else tkMarker.visible = false;
+  if (me.carrying) hint = 'F hurl · G set down';
   else if (now < local.stunUntil) hint = 'Stunned!';
+  else if (tkHover) hint = 'F lift';
   ui.hint.textContent = hint; ui.hint.classList.toggle('on', !!hint);
 
   if (vignetteT > 0) { vignetteT -= dt; if (vignetteT <= 0) ui.vignette.classList.remove('hit'); }
@@ -520,6 +611,27 @@ function updateHud(dt) {
     ui.status.textContent = `${players.size} wizard${players.size === 1 ? '' : 's'} online · ${me.kills} kill${me.kills === 1 ? '' : 's'}`;
   }
 }
+
+// ---------------------------------------------------------------- per-wizard sound
+// Charge hum (rising in pitch), ward hum and footsteps follow each wizard around.
+function updateWizardAudio(w, dt) {
+  const pos = wpos(w);
+  const charging = w.charging && !w.dead, warding = w.blocking && !w.dead;
+  if (charging && !w.sndCharge) w.sndCharge = sfx.loop('charge_loop', { pos, vol: 0.55, rate: 0.6 });
+  else if (!charging && w.sndCharge) { w.sndCharge.stop(0.08); w.sndCharge = null; }
+  if (w.sndCharge) { w.sndCharge.setPos(pos); w.sndCharge.setRate(0.6 + Math.min(1, w.chargeT / C.SPELLS.heavy.chargeTime) * 0.9); }
+  if (warding && !w.sndWard) w.sndWard = sfx.loop('ward_loop', { pos, vol: 0.45, fadeIn: 0.12 });
+  else if (!warding && w.sndWard) { w.sndWard.stop(0.2); w.sndWard = null; }
+  if (w.sndWard) w.sndWard.setPos(pos);
+
+  // running steps every 0.3 s; slowed by a ward or wind-up, every 0.5 s
+  const speed = w === me ? Math.hypot(local.vel.x, local.vel.z) : (w.netAnim === 'run' ? C.MOVE_SPEED : 0);
+  const moving = !w.dead && speed > 1.5;
+  const interval = speed > 4 ? 0.3 : 0.5;
+  w.stepT = (w.stepT || 0) + dt;
+  if (moving && w.stepT > interval) { w.stepT = 0; sfx.footstep(w.group.position, w === me ? 0.28 : 0.4); }
+}
+function stopWizardAudio(w) { w.sndCharge?.stop(); w.sndWard?.stop(); w.sndCharge = w.sndWard = null; }
 
 // ---------------------------------------------------------------- main loop
 let last = performance.now();
@@ -539,6 +651,9 @@ function frame(t) {
     }
     for (const w of players.values()) w.faceCamera(camera);
     updateHud(dt);
+    if (input.justPressed('KeyM')) { sfx.muted = !sfx.muted; ui.mute.checked = sfx.muted; feed(sfx.muted ? 'Sound muted (M)' : 'Sound on'); }
+    sfx.setListener(camera);
+    for (const w of players.values()) updateWizardAudio(w, dt);
   } else {
     // idle camera drift on the join screen
     const a = t * 0.00008;
@@ -559,4 +674,4 @@ function frame(t) {
 requestAnimationFrame(frame);
 
 // Debug handle (used by the automated smoke test; harmless in production).
-window.__wa = { input, net, local, players, props, effects, scene, camera };
+window.__wa = { input, net, local, players, props, effects, scene, camera, sfx };
