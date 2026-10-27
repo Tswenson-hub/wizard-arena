@@ -1,6 +1,8 @@
 #!/bin/sh
 # Shrink raw Meshy exports into the web-ready models in public/models.
 #   tools/optimize-models.sh <goat.glb> <potion.glb> <farmhouse.glb>
+#   tools/optimize-models.sh one <src.glb> <name> [simplify-ratio] [texture-size]
+#     -> public/models/<name>.glb (defaults: ratio 0.35, 1024 px; aim for < 1 MB, ~10k tris for props)
 # Needs network access the first time (npx fetches @gltf-transform/cli).
 set -e
 G="npx --yes @gltf-transform/cli@4"
@@ -13,7 +15,12 @@ shrink() { # src dst simplify-ratio texture-size
   $G webp "$TMP/c.glb" "$TMP/d.glb" --quality 80
   $G quantize "$TMP/d.glb" "$2"
 }
-shrink "$1" "$OUT/goat.glb" 0.35 1024        # 15k -> 8.6k tris, 7.5 MB -> 0.6 MB
-shrink "$2" "$OUT/potion.glb" 0.35 1024      # 12k -> 6k tris,   7.4 MB -> 0.5 MB
-shrink "$3" "$OUT/farmhouse.glb" 0.02 2048   # 3.6M -> 130k tris, 222 MB -> 5.5 MB
+if [ "$1" = one ]; then
+  shrink "$2" "$OUT/$3.glb" "${4:-0.35}" "${5:-1024}"
+  ls -la "$OUT/$3.glb"
+else
+  shrink "$1" "$OUT/goat.glb" 0.35 1024        # 15k -> 8.6k tris, 7.5 MB -> 0.6 MB
+  shrink "$2" "$OUT/potion.glb" 0.35 1024      # 12k -> 6k tris,   7.4 MB -> 0.5 MB
+  shrink "$3" "$OUT/farmhouse.glb" 0.02 2048   # 3.6M -> 130k tris, 222 MB -> 5.5 MB
+fi
 rm -rf "$TMP"
