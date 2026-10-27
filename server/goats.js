@@ -90,7 +90,7 @@ function charge(g, dt, t, ctx) {
     return ram(g, p, t, ctx);
   }
   // pillars and trees stop it cold
-  for (const o of [...C.PILLARS, ...C.TREES]) {
+  for (const o of C.COLLIDERS) {
     if (Math.hypot(o.x - g.x, o.z - g.z) < o.r + G.radius) {
       pushOut(g, ctx);
       g.state = 'dizzy'; g.until = t + G.dizzyTime;
@@ -143,8 +143,7 @@ function pushOut(g, ctx) {
     const dx = g.x - cx, dz = g.z - cz, d = Math.hypot(dx, dz);
     if (d < r + G.radius && d > 1e-4) { const k = (r + G.radius - d) / d; g.x += dx * k; g.z += dz * k; hit = true; }
   };
-  for (const o of C.PILLARS) out(o.x, o.z, o.r);
-  for (const o of C.TREES) out(o.x, o.z, o.r);
+  for (const o of C.COLLIDERS) out(o.x, o.z, o.r);
   for (const prop of ctx.props.values()) if (prop.state === 'idle') out(prop.x, prop.z, C.PROP_TYPES[prop.type].r * 0.8);
   const r = Math.hypot(g.x, g.z), max = C.ARENA_RADIUS - 1.5;
   if (r > max) { g.x *= max / r; g.z *= max / r; hit = true; }
@@ -156,7 +155,7 @@ function pickDest(g) {
     const a = Math.random() * Math.PI * 2, d = rand(3, 9);
     const x = g.x + Math.sin(a) * d, z = g.z + Math.cos(a) * d;
     if (Math.hypot(x, z) > C.ARENA_RADIUS - 4) continue;
-    if ([...C.PILLARS, ...C.TREES].some(o => Math.hypot(o.x - x, o.z - z) < o.r + 1.2)) continue;
+    if (C.COLLIDERS.some(o => Math.hypot(o.x - x, o.z - z) < o.r + 1.2)) continue;
     return [x, z];
   }
   return [g.x * 0.8, g.z * 0.8];

@@ -1,9 +1,11 @@
 // Shared between server and client. Keep this file dependency-free.
+// Map layout (arena size, obstacles, props, goats, spawns) lives in map.js and is re-exported here.
+import { COLLIDERS, ARENA_RADIUS, LOS_HEIGHT } from './map.js';
+export * from './map.js';
 
 export const TICK_RATE = 60;          // server simulation Hz
 export const SNAPSHOT_RATE = 20;      // server -> client state broadcast Hz
 
-export const ARENA_RADIUS = 34;       // playable circle radius (m)
 export const PLAYER_HEIGHT = 1.8;
 export const PLAYER_RADIUS = 0.45;
 export const HIT_CENTER_Y = 0.95;     // centre of the hit-sphere above feet
@@ -91,83 +93,19 @@ export function ballisticDir(origin, target, speed, gravity) {
   return [vx / l, vy / l, vz / l];
 }
 
-// Does the 2D segment a→b pass through any pillar? (pillars are taller than anything thrown at them)
+// Does the 2D segment a→b pass through anything tall enough to block a chest-height line
+// (pillars, trees, buildings — not fences or crops)? Returns the collider or null.
 export function pillarBlocks(a, b, pad = 0) {
   const sx = b[0] - a[0], sz = b[2] - a[2];
   const ll = sx * sx + sz * sz || 1;
-  for (const pil of PILLARS) {
-    const k = Math.max(0, Math.min(1, ((pil.x - a[0]) * sx + (pil.z - a[2]) * sz) / ll));
-    if (Math.hypot(a[0] + sx * k - pil.x, a[2] + sz * k - pil.z) < pil.r + pad) return pil;
+  for (const c of COLLIDERS) {
+    if (c.h < LOS_HEIGHT) continue;
+    const k = Math.max(0, Math.min(1, ((c.x - a[0]) * sx + (c.z - a[2]) * sz) / ll));
+    if (Math.hypot(a[0] + sx * k - c.x, a[2] + sz * k - c.z) < c.r + pad) return c;
   }
   return null;
 }
 export const PROP_RESPAWN_TIME = 18;
-
-// Prop archetypes. `r` is the collision radius, `h` the height used for the hit sphere.
-export const PROP_TYPES = {
-  crate:   { r: 0.55, h: 1.1, hp: 1, color: 0xc08a4a },
-  barrel:  { r: 0.5,  h: 1.2, hp: 1, color: 0x8a5a3a },
-  pumpkin: { r: 0.45, h: 0.8, hp: 1, color: 0xf08a2a },
-  rock:    { r: 0.6,  h: 1.0, hp: 1, color: 0x8d9299 },
-  pot:     { r: 0.4,  h: 0.9, hp: 1, color: 0x6a8fd0 },
-  potion:  { r: 0.5,  h: 1.15, hp: 1, color: 0x9a5cff },   // Meshy potion barrel (models/potion.glb)
-};
-
-// Meadow goats. They graze until a spell or thrown object hits one; then it rears up and charges
-// whoever hit it. A charge that connects is fatal unless the wizard wards facing the goat.
-export const GOAT = {
-  count: 4,
-  radius: 0.6,          // body radius for collisions and hits
-  hitY: 0.7,            // centre of the hit sphere above the ground
-  walkSpeed: 1.3,
-  windup: 0.7,          // seconds rearing up before the charge
-  chargeSpeed: 12.5,
-  chargeTime: 3.0,      // longest a charge lasts
-  turnRate: 2.0,        // rad/s of homing while charging: you can sidestep late or blink
-  dizzyTime: 2.2,       // after hitting a pillar, tree or a ward
-  recoverTime: 1.2,     // after a charge runs out
-  blockCost: 50,        // stamina a ward spends stopping a goat
-  blockKnockback: 7,
-};
-export const GOAT_SPAWNS = [[9, -18], [-19, -6], [17, 15], [-9, 21]];
-
-// Fixed obstacles in the arena (not pickable). Clients use these for movement collision,
-// server uses them for projectile collision.
-export const PILLARS = [
-  { x: 0, z: 0, r: 1.6, h: 4.5 },
-  { x: 14, z: 10, r: 1.1, h: 3.8 },
-  { x: -14, z: 10, r: 1.1, h: 3.8 },
-  { x: 14, z: -10, r: 1.1, h: 3.8 },
-  { x: -14, z: -10, r: 1.1, h: 3.8 },
-  { x: 0, z: 22, r: 1.3, h: 5 },
-  { x: 0, z: -22, r: 1.3, h: 5 },
-  { x: 24, z: 0, r: 1.3, h: 5 },
-  { x: -24, z: 0, r: 1.3, h: 5 },
-];
-
-export const TREES = [
-  { x: 20, z: 20, r: 0.6 }, { x: -21, z: 19, r: 0.6 }, { x: 22, z: -18, r: 0.6 }, { x: -19, z: -22, r: 0.6 },
-  { x: 8, z: 27, r: 0.6 }, { x: -9, z: -28, r: 0.6 }, { x: 28, z: 9, r: 0.6 }, { x: -27, z: -7, r: 0.6 },
-  { x: 29, z: -12, r: 0.6 }, { x: -30, z: 12, r: 0.6 }, { x: 12, z: -29, r: 0.6 }, { x: -13, z: 29, r: 0.6 },
-];
-
-// Initial prop placement: [type, x, z]
-export const PROP_SPAWNS = [
-  ['crate', 5, 5], ['crate', -5, 5], ['crate', 5, -5], ['crate', -5, -5],
-  ['barrel', 9, 0], ['barrel', -9, 0], ['barrel', 0, 9], ['barrel', 0, -9],
-  ['pumpkin', 12, 4], ['pumpkin', -12, -4], ['pumpkin', 4, -12], ['pumpkin', -4, 12],
-  ['rock', 18, 0], ['rock', -18, 0], ['rock', 0, 16], ['rock', 0, -16],
-  ['pot', 10, 14], ['pot', -10, -14], ['pot', 16, -5], ['pot', -16, 5],
-  ['crate', 20, -6], ['crate', -20, 6], ['pumpkin', 6, 20], ['pumpkin', -6, -20],
-  ['pot', 23, 14], ['pot', -23, -14], ['barrel', 15, -16], ['barrel', -15, 16],
-  ['potion', 7, -7], ['potion', -7, 7], ['potion', 26, -4], ['potion', -26, 4],
-];
-
-export const SPAWN_POINTS = [
-  [10, 0, 10], [-10, 0, 10], [10, 0, -10], [-10, 0, -10],
-  [0, 0, 15], [0, 0, -15], [15, 0, 0], [-15, 0, 0],
-  [20, 0, 12], [-20, 0, -12], [20, 0, -12], [-20, 0, 12],
-];
 
 export const PLAYER_COLORS = [
   0xff5c5c, 0x5cb8ff, 0x6ef08a, 0xffd25c, 0xd98cff, 0xff9d5c, 0x5cf0e0, 0xff7ad9,
@@ -183,11 +121,11 @@ export function computeTeleport(from, dir) {
   let to = [from[0] + dx * TELEPORT.distance, 0, from[2] + dz * TELEPORT.distance];
   const r = Math.hypot(to[0], to[2]);
   if (r > ARENA_RADIUS - 1) { to[0] *= (ARENA_RADIUS - 1) / r; to[2] *= (ARENA_RADIUS - 1) / r; }
-  for (const pil of PILLARS) {
-    const d = Math.hypot(to[0] - pil.x, to[2] - pil.z);
-    if (d < pil.r + PLAYER_RADIUS) {
-      const push = (pil.r + PLAYER_RADIUS + 0.1) / (d || 1);
-      to = [pil.x + (to[0] - pil.x) * push, 0, pil.z + (to[2] - pil.z) * push];
+  for (const c of COLLIDERS) {
+    const d = Math.hypot(to[0] - c.x, to[2] - c.z);
+    if (d < c.r + PLAYER_RADIUS) {
+      const push = (c.r + PLAYER_RADIUS + 0.1) / (d || 1);
+      to = [c.x + (to[0] - c.x) * push, 0, c.z + (to[2] - c.z) * push];
     }
   }
   return to;

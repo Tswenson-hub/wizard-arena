@@ -437,13 +437,13 @@ function aimPoint() {
   for (const g of goats.values()) hitSphere(tmp.v1.copy(g.group.position).setY(C.GOAT.hitY), C.GOAT.radius + 0.2);
   // pillars and trees as vertical cylinders (2D ray vs circle)
   const hx = camDir.x, hz = camDir.z, hl = Math.hypot(hx, hz) || 1;
-  for (const c of [...C.PILLARS, ...C.TREES]) {
+  for (const c of C.COLLIDERS) {
     const lx = c.x - o.x, lz = c.z - o.z;
     const tca = (lx * hx + lz * hz) / hl;
     const d2 = lx * lx + lz * lz - tca * tca;
     if (tca < 0 || d2 > c.r * c.r) continue;
     const t = (tca - Math.sqrt(c.r * c.r - d2)) / hl;
-    if (t > 4.5 && t < best && o.y + camDir.y * t < (c.h || 6)) best = t;
+    if (t > 4.5 && t < best && o.y + camDir.y * t < c.h) best = t;
   }
   if (camDir.y < -0.01) { const t = -o.y / camDir.y; if (t > 4.5 && t < best) best = t; }
   return [o.x + camDir.x * best, Math.max(0.3, o.y + camDir.y * best), o.z + camDir.z * best];
@@ -545,8 +545,7 @@ function updateLocal(dt) {
     const d = Math.hypot(dx, dz);
     if (d < r + pr && d > 0.0001) { const k = (r + pr - d) / d; local.pos.x += dx * k; local.pos.z += dz * k; }
   };
-  for (const p of C.PILLARS) pushOut(p.x, p.z, p.r);
-  for (const t of C.TREES) pushOut(t.x, t.z, t.r);
+  for (const c of C.COLLIDERS) pushOut(c.x, c.z, c.r);
   for (const e of props.values()) if (e.data.state === 'idle') pushOut(e.data.x, e.data.z, C.PROP_TYPES[e.data.type].r * 0.8);
   for (const w of players.values()) if (w !== me && !w.dead) pushOut(w.group.position.x, w.group.position.z, pr);
   for (const g of goats.values()) if (g.state !== 'charge') pushOut(g.group.position.x, g.group.position.z, C.GOAT.radius);
@@ -573,7 +572,7 @@ function updateLocal(dt) {
   const back = tmp.v2.set(-Math.sin(local.yaw) * Math.cos(local.pitch), Math.sin(local.pitch), -Math.cos(local.yaw) * Math.cos(local.pitch));
   const shoulder = tmp.v3.set(Math.cos(local.yaw), 0, -Math.sin(local.yaw)).multiplyScalar(0.7);
   // pull the camera in if a pillar sits between it and the wizard (2D circle test along the boom)
-  for (const p of C.PILLARS) {
+  for (const p of C.COLLIDERS) {
     for (let d = 0.6; d < camDist; d += 0.3) {
       const x = pivot.x + back.x * d + shoulder.x, z = pivot.z + back.z * d + shoulder.z;
       if (pivot.y + back.y * d < p.h + 0.5 && Math.hypot(x - p.x, z - p.z) < p.r + 0.35) { camDist = Math.max(1.2, d - 0.3); break; }

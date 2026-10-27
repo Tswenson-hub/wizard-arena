@@ -255,15 +255,9 @@ function simulate(dt) {
     }
     // pillars
     let done = false;
-    for (const pil of C.PILLARS) {
-      if (proj.p[1] < pil.h && Math.hypot(proj.p[0] - pil.x, proj.p[2] - pil.z) < pil.r + proj.radius) {
-        endProjectile(proj, true, { surface: 'pillar' }); done = true; break;
-      }
-    }
-    if (done) continue;
-    for (const tr of C.TREES) {
-      if (proj.p[1] < 6 && Math.hypot(proj.p[0] - tr.x, proj.p[2] - tr.z) < tr.r + proj.radius) {
-        endProjectile(proj, true, { surface: 'tree' }); done = true; break;
+    for (const c of C.COLLIDERS) {
+      if (proj.p[1] < c.h && Math.hypot(proj.p[0] - c.x, proj.p[2] - c.z) < c.r + proj.radius) {
+        endProjectile(proj, true, { surface: c.kind }); done = true; break;
       }
     }
     if (done) continue;

@@ -289,7 +289,7 @@ function throwProp(me, target, act, cfg, world) {
 function lineBlocked(from, dir, range, radius, goats = null) {
   const l = Math.hypot(dir[0], dir[2]) || 1;
   const to = [from[0] + dir[0] / l * range, 0, from[2] + dir[2] / l * range];
-  return !!C.pillarBlocks(from, to, radius + 0.15) || C.TREES.some(tr => segDist(from, to, tr) < tr.r + radius + 0.1)
+  return !!C.pillarBlocks(from, to, radius + 0.15)
     || (goats || []).some(g => segDist(from, to, g) < C.GOAT.radius + radius + 0.3);
 }
 
@@ -314,7 +314,7 @@ function respondGoat(me, g, vel, tc, t, act) {
 // The prop launches from the hold point beside us, so check the line from there (with its width).
 function throwLOS(me, target) {
   const from = C.holdPoint(me.p, yawTo(me.p, target.p));
-  return !C.pillarBlocks(from, target.p, 0.7) && !C.TREES.some(tr => segDist(from, target.p, tr) < tr.r + 0.6);
+  return !C.pillarBlocks(from, target.p, 0.7);
 }
 function segDist(a, b, c) {
   const sx = b[0] - a[0], sz = b[2] - a[2];
@@ -454,8 +454,7 @@ function moveBot(me, dt, world, t) {
     const dd = Math.hypot(dx, dz);
     if (dd < rr + pr && dd > 1e-4) { const kk = (rr + pr - dd) / dd; me.p[0] += dx * kk; me.p[2] += dz * kk; }
   };
-  for (const p of C.PILLARS) pushOut(p.x, p.z, p.r);
-  for (const tr of C.TREES) pushOut(tr.x, tr.z, tr.r);
+  for (const c of C.COLLIDERS) pushOut(c.x, c.z, c.r);
   for (const prop of world.props.values()) if (prop.state === 'idle') pushOut(prop.x, prop.z, C.PROP_TYPES[prop.type].r * 0.8);
   for (const q of world.players.values()) if (q !== me && !q.dead) pushOut(q.p[0], q.p[2], pr);
   for (const g of world.goats) pushOut(g.x, g.z, C.GOAT.radius);
@@ -473,7 +472,8 @@ function moveBot(me, dt, world, t) {
 
 function coverPoint(me, target) {
   let best = null, bd = Infinity;
-  for (const pil of C.PILLARS) {
+  for (const pil of C.COLLIDERS) {
+    if (pil.h < 2.5 || pil.r < 0.8) continue;   // cover means something big
     const ax = pil.x - target.p[0], az = pil.z - target.p[2];
     const al = Math.hypot(ax, az) || 1;
     const pt = [pil.x + ax / al * (pil.r + 1.3), pil.z + az / al * (pil.r + 1.3)];
