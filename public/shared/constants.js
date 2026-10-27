@@ -64,6 +64,80 @@ export const TELEPORT = {
   cooldown: 4.0,
 };
 
+// ---------------------------------------------------------------- spellbook
+// Players choose which spell sits in each ability slot. Adding a spell = one entry here plus its
+// handler on the server (server.js) and client (main.js). `cooldown` is per slot: swapping spells
+// doesn't reset it.
+export const LOADOUT_SLOTS = {
+  primary:  { key: 'LMB', label: 'Primary' },
+  power:    { key: 'RMB', label: 'Power' },
+  mobility: { key: 'E',   label: 'Mobility' },
+};
+
+export const SPELLBOOK = {
+  spark: {
+    id: 'spark', slot: 'primary', name: 'Spark',
+    blurb: 'Quick bolt. Low damage, briefly stuns.',
+    cooldown: SPELLS.fast.cooldown,
+  },
+  meteor: {
+    id: 'meteor', slot: 'power', name: 'Meteor',
+    blurb: '1.25 s wind-up, then a heavy fireball. Being hit cancels it.',
+    cooldown: SPELLS.heavy.cooldown, windup: SPELLS.heavy.chargeTime,
+  },
+  cyclone: {
+    id: 'cyclone', slot: 'power', name: 'Arcane Cyclone',
+    blurb: 'Short wind-up, then spin: hits everyone within 5.5 m and flings them outward.',
+    windup: 0.45,        // can't ward, move at CHARGE_MOVE_SPEED; being hit cancels it
+    spin: 0.5,           // two full turns; the damage pulse fires at the start
+    radius: 5.5,
+    height: 2.5,         // vertical reach above/below the caster's feet (airborne wizards escape it)
+    damage: 28,
+    stun: 0.35,
+    knockback: 6,        // m/s straight outward
+    staminaCost: 35,     // a ward facing the caster blocks it for this much stamina
+    cooldown: 5,
+  },
+  blink: {
+    id: 'blink', slot: 'mobility', name: 'Blink',
+    blurb: 'Teleport 9 m in the direction you face.',
+    cooldown: TELEPORT.cooldown,
+  },
+  skyward: {
+    id: 'skyward', slot: 'mobility', name: 'Skyward Flash',
+    blurb: 'Flash 7 m straight up and float down. Hold E to hover, Space to drop.',
+    height: 7,           // launch height (m)
+    maxHeight: 8,        // the server never accepts a wizard higher than this
+    floatTime: 2.8,      // after this the wizard drops
+    fallSpeed: 2.5,      // m/s default descent
+    slowFallSpeed: 1.2,  // m/s holding E
+    dropSpeed: 6,        // m/s after Space or once floatTime runs out
+    airSpeed: 4.5,       // horizontal steering speed while airborne
+    cooldown: 6,         // from launch
+  },
+};
+
+export const DEFAULT_LOADOUT = { primary: 'spark', power: 'meteor', mobility: 'blink' };
+
+// The spells a slot can hold, in display order.
+export const spellsFor = (slot) => Object.values(SPELLBOOK).filter(s => s.slot === slot);
+
+// A valid loadout built from `want`, falling back slot by slot to `base` for unknown ids.
+export function sanitizeLoadout(want, base = DEFAULT_LOADOUT) {
+  const out = { ...base };
+  for (const slot of Object.keys(LOADOUT_SLOTS)) {
+    const id = want?.[slot];
+    if (typeof id === 'string' && Object.hasOwn(SPELLBOOK, id) && SPELLBOOK[id].slot === slot) out[slot] = id;
+  }
+  return out;
+}
+
+// Damage/stun/knockback/stamina spec for a `hit` kind: a projectile kind or a spellbook id.
+export const hitSpec = (kind) => SPELLS[kind] || SPELLBOOK[kind];
+
+// Longest a Skyward Flash can keep a wizard off the ground (float at the slowest rate, then drop).
+export const FLIGHT_MAX_TIME = SPELLBOOK.skyward.floatTime + SPELLBOOK.skyward.maxHeight / SPELLBOOK.skyward.dropSpeed + 0.6;
+
 export const PICKUP_RANGE = 2.6;      // grab the nearest prop at point-blank range, wherever you aim
 export const THROW_COOLDOWN = 0.6;
 export const SPARK_STUN_IMMUNITY = 0.6; // after a spark stun ends, further sparks don't re-stun for this long

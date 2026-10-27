@@ -29,12 +29,11 @@
       <select id="botCount"><option value="0">None</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select>
       <select id="botDiff"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard</option></select>
     </div>
+    <h3 class="book-title">Spellbook</h3>
+    <div class="spellbook" id="joinBook"></div>
     <div class="controls">
-      <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move &nbsp; <kbd>Mouse</kbd> look</div>
-      <div><kbd>LMB</kbd> Spark bolt — quick, low damage, stuns</div>
-      <div><kbd>RMB</kbd> hold: Meteor — long wind-up, heavy damage</div>
+      <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move &nbsp; <kbd>Mouse</kbd> look &nbsp; <kbd>LMB</kbd> <kbd>RMB</kbd> <kbd>E</kbd> your spells</div>
       <div><kbd>Space</kbd> hold: Ward — blocks spells from the front, drains stamina</div>
-      <div><kbd>E</kbd> Blink — teleport forward</div>
       <div><kbd>F</kbd> Telekinesis — aim at an object to lift it, <kbd>F</kbd> again to hurl it. It shields you while held</div>
       <div>Don't hit the goats. An angry goat charges and kills in one hit, unless your ward faces it</div>
       <div><kbd>G</kbd> set it down &nbsp; <kbd>Tab</kbd> scoreboard &nbsp; <kbd>M</kbd> mute &nbsp; <kbd>Esc</kbd> menu</div>
@@ -55,9 +54,9 @@
 
   <div id="abilities">
     <div class="ab" data-ab="fast"><div class="cd"></div><span class="key">LMB</span><span class="name">Spark</span></div>
-    <div class="ab" data-ab="heavy"><div class="cd"></div><span class="key">RMB</span><span class="name">Meteor</span></div>
+    <div class="ab" data-ab="power"><div class="cd"></div><span class="key">RMB</span><span class="name">Meteor</span></div>
     <div class="ab" data-ab="block"><div class="cd"></div><span class="key">SPACE</span><span class="name">Ward</span></div>
-    <div class="ab" data-ab="tp"><div class="cd"></div><span class="key">E</span><span class="name">Blink</span></div>
+    <div class="ab" data-ab="mobility"><div class="cd"></div><span class="key">E</span><span class="name">Blink</span></div>
     <div class="ab" data-ab="throw"><div class="cd"></div><span class="key">F</span><span class="name">Lift</span></div>
   </div>
 
@@ -69,12 +68,14 @@
 
   <div id="scoreboard" class="hidden">
     <h2>Scoreboard</h2>
-    <table><thead><tr><th>Wizard</th><th>Kills</th><th>Deaths</th></tr></thead><tbody></tbody></table>
+    <table><thead><tr><th>Wizard</th><th>Spells</th><th>Kills</th><th>Deaths</th></tr></thead><tbody></tbody></table>
   </div>
   <div id="clickToPlay" class="hidden">
     <div class="pause panel">
       <h2>Paused</h2>
       <button id="resumeBtn" class="primary">Resume</button>
+      <h3>Spellbook <span class="book-note">changes apply right away (after a cast in progress)</span></h3>
+      <div class="spellbook" id="pauseBook"></div>
       <h3>Practice bots <span id="botTally"></span></h3>
       <div class="btn-row">
         <button data-bot="easy">+ Easy</button><button data-bot="normal">+ Normal</button><button data-bot="hard">+ Hard</button>

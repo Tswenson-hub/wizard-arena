@@ -165,6 +165,15 @@ export class Sfx {
     this.play(blocked ? 'ward_block' : 'impact_big', { pos, vol: 1.1, rate: blocked ? 0.7 : 1 });
     if (!blocked) this.play('hit_body', { pos, vol: 1, rate: 0.8 });
   }
+  // Arcane Cyclone: a low rising hum on the wind-up, then a swoosh and a deep thump on the spin.
+  cycloneWindup(pos) { this.play('tk_lift', { pos, vol: 0.8, rate: 0.55, jitter: 0.03 }); }
+  cyclonePulse(pos) {
+    this.play('tk_throw', { pos, vol: 1.1, rate: 0.65, jitter: 0.04 });
+    this.play('impact_big', { pos, vol: 1.0, rate: 0.6, jitter: 0.04, delay: 0.03 });
+  }
+  // Skyward Flash: the blink, pitched up; a soft thud on landing.
+  skyward(pos) { this.play('blink', { pos, vol: 0.8, rate: 1.45, jitter: 0.04 }); }
+  land(pos) { this.play('footstep', { pos, vol: 0.9, rate: 0.7, jitter: 0.1 }); }
   goatBonk(pos) { this.play('impact_small', { pos, vol: 1, rate: 0.55 }); }
 
   // Synthesized goat bleat: a buzzy tone with a fast wobble, shaped by a nasal formant filter.

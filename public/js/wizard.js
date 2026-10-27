@@ -10,6 +10,50 @@ const moteMat = new THREE.MeshBasicMaterial({ color: 0xd9c4ff, transparent: true
 const shellMat = new THREE.MeshBasicMaterial({ color: TK_COLOR, transparent: true, opacity: 0.35, wireframe: true, blending: THREE.AdditiveBlending, depthWrite: false });
 const BEAM_MOTES = 12;
 
+const CYC = C.SPELLBOOK.cyclone;
+
+// Arcane Cyclone telegraph: a purple runic circle drawn once on a canvas, shared by every wizard.
+let runeTex = null;
+function runeTexture() {
+  if (runeTex) return runeTex;
+  const S = 512, c = document.createElement('canvas');
+  c.width = c.height = S;
+  const g = c.getContext('2d');
+  g.translate(S / 2, S / 2);
+  g.strokeStyle = '#e6c8ff'; g.fillStyle = '#e6c8ff'; g.lineCap = 'round';
+  g.shadowColor = '#b46cff'; g.shadowBlur = 14;
+  const ring = (r, w) => { g.lineWidth = w; g.beginPath(); g.arc(0, 0, r, 0, Math.PI * 2); g.stroke(); };
+  ring(246, 7); ring(226, 3); ring(150, 4); ring(70, 3);
+  // rune glyphs between the outer rings: a few strokes each, from a fixed seed so it never flickers
+  let seed = 7;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let i = 0; i < 18; i++) {
+    g.save(); g.rotate(i / 18 * Math.PI * 2); g.translate(0, -188); g.lineWidth = 4;
+    g.beginPath();
+    for (let k = 0; k < 3; k++) { g.moveTo((rnd() - 0.5) * 22, (rnd() - 0.5) * 26); g.lineTo((rnd() - 0.5) * 22, (rnd() - 0.5) * 26); }
+    g.stroke(); g.restore();
+  }
+  // a star inside
+  g.lineWidth = 3; g.beginPath();
+  for (let i = 0; i <= 7; i++) { const a = i * 3 / 7 * Math.PI * 2; g[i ? 'lineTo' : 'moveTo'](Math.sin(a) * 150, -Math.cos(a) * 150); }
+  g.stroke();
+  runeTex = new THREE.CanvasTexture(c);
+  runeTex.colorSpace = THREE.SRGBColorSpace;
+  return runeTex;
+}
+
+// Soft dark disc under an airborne wizard, so everyone can see where they'll land.
+let shadowTex = null;
+function shadowTexture() {
+  if (shadowTex) return shadowTex;
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  grad.addColorStop(0, 'rgba(20,0,40,0.75)'); grad.addColorStop(0.6, 'rgba(20,0,40,0.35)'); grad.addColorStop(1, 'rgba(20,0,40,0)');
+  g.fillStyle = grad; g.fillRect(0, 0, 128, 128);
+  return (shadowTex = new THREE.CanvasTexture(c));
+}
+
 let baseModel = null;
 let clips = {};
 
@@ -120,6 +164,25 @@ export class Wizard {
     this.chargeLight = new THREE.PointLight(0xff7a2a, 0, 7);
     scene.add(this.chargeLight);
 
+    // Arcane Cyclone: runic circle on the ground during the wind-up, then a two-turn spin
+    this.rune = new THREE.Mesh(new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ map: runeTexture(), color: 0x9a50ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+    this.rune.visible = false; this.rune.renderOrder = 2;
+    scene.add(this.rune);
+    this.cycloneT = -1;          // seconds since the wind-up began; -1 = no cyclone
+    this.spinT = -1;             // seconds into the spin; -1 = not spinning
+
+    // landing shadow + ring while airborne (Skyward Flash)
+    this.shadow = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 1.8).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ map: shadowTexture(), transparent: true, depthWrite: false }));
+    const landRing = new THREE.Mesh(new THREE.RingGeometry(0.62, 0.72, 32).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0xc890ff, transparent: true, opacity: 0.6, depthWrite: false }));
+    landRing.position.y = 0.01;
+    this.shadow.add(landRing);
+    this.shadow.visible = false;
+    scene.add(this.shadow);
+    this.loadout = info.loadout || C.DEFAULT_LOADOUT;
+
     this.nameplate = makeNameplate(this.bot ? `${info.name} · ${this.bot}` : info.name, info.color);
     this.nameplate.position.y = 2.25;
     this.nameplate.visible = !isLocal;
@@ -187,11 +250,20 @@ export class Wizard {
 
   inOneShot() { return performance.now() / 1000 < this.oneShotUntil; }
 
+  startCyclone() { this.cycloneT = 0; }
+  cancelCyclone() { this.cycloneT = -1; }
+  // The pulse: two full turns over the spin, with the dash clip underneath.
+  spin() {
+    this.cycloneT = Math.max(this.cycloneT, CYC.windup);
+    this.spinT = 0;
+    this.oneShot('dash', CYC.spin, 2.5, 2.2);
+  }
+
   // Decide the looping state from the mirrored server state + movement. Called every frame.
   updateAnimation(moving, dt) {
     if (this.dead) { this.setBase('stun', 0.1); }
     else if (!this.inOneShot()) {
-      if (this.charging) this.setBase('cast_heavy', 0.1);
+      if (this.charging || (this.cycloneT >= 0 && this.cycloneT < CYC.windup)) this.setBase('cast_heavy', 0.1);
       else if (this.blocking) this.setBase('block');
       else if (moving) this.setBase('run');
       else this.setBase('idle', 0.25);
@@ -219,6 +291,9 @@ export class Wizard {
       this.chargeT = 0; this.chargeOrb.visible = false; this.chargeLight.intensity = 0;
     }
 
+    this.updateCyclone(dt);
+    this.updateShadow();
+
     // health bar
     this.hpFill.scale.x = Math.max(0.001, this.hp / 100);
     this.hpFill.position.x = -(1 - this.hp / 100) * 0.6;
@@ -231,6 +306,40 @@ export class Wizard {
     this.dissolve += (target - this.dissolve) * Math.min(1, dt * (this.dead ? 1.2 : 8));
     this.model.position.y = -this.dissolve * 1.6;
     this.model.rotation.x = this.dissolve * 0.5;
+  }
+
+  updateCyclone(dt) {
+    if (this.dead) { this.cycloneT = -1; this.spinT = -1; }
+    // spin the model (the group keeps facing the aim)
+    if (this.spinT >= 0) {
+      this.spinT += dt;
+      const k = Math.min(1, this.spinT / CYC.spin);
+      this.model.rotation.y = (1 - Math.pow(1 - k, 2)) * Math.PI * 4;
+      if (k >= 1) { this.spinT = -1; this.model.rotation.y = 0; }
+    }
+    if (this.cycloneT < 0) { this.rune.visible = false; return; }
+    this.cycloneT += dt;
+    const fadeOut = CYC.windup + 0.25;
+    if (this.cycloneT > fadeOut) { this.cycloneT = -1; this.rune.visible = false; return; }
+    // grows to the full radius over the wind-up, then flares and fades as the spin goes off
+    const k = Math.min(1, this.cycloneT / CYC.windup);
+    const grow = 1 - Math.pow(1 - k, 3);
+    this.rune.visible = true;
+    this.rune.position.set(this.group.position.x, 0.13, this.group.position.z);   // above the courtyard decals (0.05)
+    this.rune.scale.setScalar(Math.max(0.05, grow * CYC.radius));
+    this.rune.rotation.y += dt * (1.2 + k * 3);
+    this.rune.material.opacity = this.cycloneT <= CYC.windup ? 0.35 + 0.55 * k + Math.sin(this.cycloneT * 40) * 0.05
+      : 0.9 * (1 - (this.cycloneT - CYC.windup) / (fadeOut - CYC.windup));
+  }
+
+  updateShadow() {
+    const y = this.group.position.y;
+    const show = y > 0.3 && !this.dead;
+    this.shadow.visible = show;
+    if (!show) return;
+    this.shadow.position.set(this.group.position.x, 0.12, this.group.position.z);
+    this.shadow.scale.setScalar(0.8 + y * 0.08);
+    this.shadow.material.opacity = 0.9 - y * 0.05;
   }
 
   // Smooth remote movement toward the latest snapshot.
@@ -313,5 +422,7 @@ export class Wizard {
     scene.remove(this.group);
     scene.remove(this.chargeOrb);
     scene.remove(this.chargeLight);
+    scene.remove(this.rune);
+    scene.remove(this.shadow);
   }
 }

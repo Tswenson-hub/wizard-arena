@@ -9,7 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import * as C from './public/shared/constants.js';
 import { createBot, updateBots, botKnockback, BOT_LIMIT } from './server/bots.js';
-import { createGoats, updateGoats, angerGoat, goatPublic } from './server/goats.js';
+import * as Goats from './server/goats.js';
+const { createGoats, updateGoats, angerGoat, goatPublic } = Goats;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -50,7 +51,7 @@ function propPublic(p) {
 const isHeld = (prop) => prop.state === 'lifting' || prop.state === 'carried';
 
 // ---------------------------------------------------------------- players
-function newPlayer(id, name) {
+function newPlayer(id, name, loadout = C.DEFAULT_LOADOUT) {
   const sp = C.SPAWN_POINTS[(id - 1) % C.SPAWN_POINTS.length];
   return {
     id, name,
@@ -60,8 +61,11 @@ function newPlayer(id, name) {
     blocking: false, blockReleasedAt: -10,
     stunUntil: 0, stunImmuneUntil: 0, dead: false, respawnAt: 0,
     kills: 0, deaths: 0,
-    cd: { fast: 0, heavy: 0, tp: 0, throw: 0 },
+    cd: { fast: 0, power: 0, mobility: 0, throw: 0 },   // per slot, whichever spell is in it
+    loadout: C.sanitizeLoadout(loadout), pendingLoadout: null,
     charging: false, chargeStart: 0,
+    cyclone: null,                // { start, pulseAt, endAt, pulsed } during an Arcane Cyclone
+    flightStart: 0, flightUntil: 0,   // Skyward Flash window: y may exceed 0 only inside it
     carrying: null,
     lastHitBy: null,
     lastStateAt: 0,
@@ -76,12 +80,39 @@ function playerPublic(p) {
     blocking: p.blocking, charging: p.charging,
     stun: p.stunUntil > now(), dead: p.dead,
     carrying: p.carrying, kills: p.kills, deaths: p.deaths,
+    loadout: p.loadout,
     bot: p.bot ? p.bot.difficulty : undefined,
   };
 }
 
 const isStunned = (p) => p.stunUntil > now();
 const canAct = (p) => !p.dead && !isStunned(p);
+const isAirborne = (p) => p.flightUntil > now();
+const CYCLONE = C.SPELLBOOK.cyclone, SKY = C.SPELLBOOK.skyward;
+
+// ---------------------------------------------------------------- loadouts
+// A slot that's mid-cast keeps its spell until the cast ends; the change waits in pendingLoadout.
+const slotBusy = (p, slot) => slot === 'power' ? p.charging || !!p.cyclone : slot === 'mobility' ? isAirborne(p) : false;
+function setLoadout(p, want) {
+  const next = C.sanitizeLoadout(want, { ...p.loadout, ...p.pendingLoadout });
+  const now_ = {}, later = {};
+  for (const slot of Object.keys(next)) (slotBusy(p, slot) ? later : now_)[slot] = next[slot];
+  p.pendingLoadout = Object.keys(later).length ? later : null;
+  applyLoadout(p, now_);
+}
+function applyLoadout(p, part) {
+  const merged = { ...p.loadout, ...part };
+  if (Object.keys(merged).every(k => merged[k] === p.loadout[k])) return;
+  p.loadout = merged;
+  broadcast({ t: 'loadout', id: p.id, loadout: p.loadout });
+}
+function flushPendingLoadout(p) {
+  if (!p.pendingLoadout) return;
+  const ready = {}, still = {};
+  for (const [slot, id] of Object.entries(p.pendingLoadout)) (slotBusy(p, slot) ? still : ready)[slot] = id;
+  p.pendingLoadout = Object.keys(still).length ? still : null;
+  applyLoadout(p, ready);
+}
 
 function send(id, msg) {
   const ws = sockets.get(id);
@@ -120,8 +151,10 @@ function endProjectile(proj, hit, extra = {}) {
   broadcast({ t: 'projEnd', id: proj.id, hit, p: proj.p, ...extra });
 }
 
+// `proj` is a projectile, or anything shaped like one: { kind, owner, v } where v is the direction
+// the hit travels (the Arcane Cyclone passes its outward push).
 function applyHit(target, proj) {
-  const spec = C.SPELLS[proj.kind];
+  const spec = C.hitSpec(proj.kind);
   const attacker = players.get(proj.owner);
   const t = now();
 
@@ -156,8 +189,9 @@ function applyHit(target, proj) {
       target.stunUntil = Math.max(target.stunUntil, t + spec.stun);
       if (proj.kind === 'fast') target.stunImmuneUntil = target.stunUntil + C.SPARK_STUN_IMMUNITY;
     }
-    // Being hit cancels a heavy wind-up.
+    // Being hit cancels a heavy wind-up or a cyclone that hasn't spun yet.
     if (target.charging) { target.charging = false; broadcast({ t: 'chargeCancel', id: target.id }); }
+    cancelCyclone(target);
   }
 
   target.hp -= dmg;
@@ -170,12 +204,15 @@ function applyHit(target, proj) {
   });
 
   if (target.hp <= 0 && !target.dead) killPlayer(target, attacker);
+  return { dmg, blocked };
 }
 
 function killPlayer(target, attacker, cause = null) {
   target.dead = true;
   target.hp = 0;
   target.charging = false;
+  cancelCyclone(target);
+  target.flightUntil = 0; target.p[1] = 0;
   target.blocking = false;
   target.deaths++;
   target.respawnAt = now() + C.RESPAWN_TIME;
@@ -188,7 +225,7 @@ function respawn(p) {
   const sp = C.SPAWN_POINTS[Math.floor(Math.random() * C.SPAWN_POINTS.length)];
   p.p = [sp[0] + rand(-1, 1), 0, sp[2] + rand(-1, 1)];
   p.hp = C.MAX_HP; p.st = C.MAX_STAMINA;
-  p.dead = false; p.stunUntil = 0; p.blocking = false; p.charging = false;
+  p.dead = false; p.stunUntil = 0; p.blocking = false; p.charging = false; p.cyclone = null; p.flightUntil = 0;
   broadcast({ t: 'respawn', id: p.id, p: p.p });
 }
 
@@ -205,6 +242,41 @@ function dropProp(p, destroy) {
     prop.x = clamp(hp[0], -C.ARENA_RADIUS, C.ARENA_RADIUS); prop.z = clamp(hp[2], -C.ARENA_RADIUS, C.ARENA_RADIUS);
     broadcast({ t: 'prop', prop: propPublic(prop) });
   }
+}
+
+// ---------------------------------------------------------------- Arcane Cyclone
+function cancelCyclone(p) {
+  if (!p.cyclone || p.cyclone.pulsed) return;
+  p.cyclone = null;
+  broadcast({ t: 'cycloneCancel', id: p.id });
+}
+
+// The single damage pulse at the start of the spin.
+function cyclonePulse(p) {
+  const t = now();
+  p.cyclone.pulsed = true;
+  p.cd.power = t + CYCLONE.cooldown;
+  const hits = [];
+  for (const q of players.values()) {
+    if (q === p || q.dead) continue;
+    const d = dist2D(q.p, p.p);
+    if (d > CYCLONE.radius + C.PLAYER_RADIUS || Math.abs(q.p[1] - p.p[1]) > CYCLONE.height) continue;
+    const out = d > 0.01 ? [(q.p[0] - p.p[0]) / d, 0, (q.p[2] - p.p[2]) / d] : [Math.sin(q.yaw), 0, Math.cos(q.yaw)];
+    const { dmg, blocked } = applyHit(q, { kind: 'cyclone', owner: p.id, v: out });
+    hits.push({ id: q.id, dmg, blocked });
+  }
+  if (p.p[1] < 1) {
+    for (const prop of props.values()) {
+      if (prop.state !== 'idle') continue;
+      if (dist2D(p.p, [prop.x, 0, prop.z]) < CYCLONE.radius + C.PROP_TYPES[prop.type].r) breakProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z]);
+    }
+    for (const g of goats) {
+      if (Math.hypot(g.x - p.p[0], g.z - p.p[2]) > CYCLONE.radius + C.GOAT.radius) continue;
+      // A goat already rearing or charging gets spun dizzy; any other goat is now angry at the caster.
+      if (!Goats.dizzyGoat?.(g, goatCtx)) angerGoat(g, p.id, goatCtx);
+    }
+  }
+  broadcast({ t: 'cyclonePulse', id: p.id, p: p.p, hits });
 }
 
 function breakProp(prop, at) {
@@ -238,6 +310,14 @@ function simulate(dt) {
     }
     // a stun interrupts charging
     if (p.charging && isStunned(p)) { p.charging = false; broadcast({ t: 'chargeCancel', id: p.id }); }
+    if (p.cyclone) {
+      if (!p.cyclone.pulsed && isStunned(p)) cancelCyclone(p);
+      else if (!p.cyclone.pulsed && t >= p.cyclone.pulseAt) cyclonePulse(p);
+      else if (t >= p.cyclone.endAt) p.cyclone = null;
+    }
+    // Skyward Flash: the flight ends when the wizard reports touching down, or when time runs out
+    if (p.flightUntil && (t >= p.flightUntil || (p.p[1] <= 0.01 && t > p.flightStart + 0.3))) { p.flightUntil = 0; p.p[1] = 0; }
+    flushPendingLoadout(p);
   }
 
   // projectiles
@@ -336,8 +416,17 @@ function handle(p, msg) {
       if (p.dead) break;
       if (!Array.isArray(msg.p) || msg.p.length !== 3 || !msg.p.every(Number.isFinite)) break;
       // loose anti-cheat: clamp to arena and to a plausible speed
-      const np = [clamp(msg.p[0], -C.ARENA_RADIUS, C.ARENA_RADIUS), clamp(msg.p[1], 0, 3), clamp(msg.p[2], -C.ARENA_RADIUS, C.ARENA_RADIUS)];
       const dt = Math.max(0.016, t - (p.lastStateAt || t));
+      // Feet stay on the ground except inside a Skyward Flash, where the height may only fall
+      // (never faster than a drop, never slower than the slowest hover).
+      let y = 0;
+      if (isAirborne(p)) {
+        const e = t - p.flightStart;
+        const ceil = clamp(SKY.height + 0.5 - Math.max(0, e - 0.3) * SKY.slowFallSpeed * 0.9, 0, SKY.maxHeight);
+        const floor = clamp(p.p[1] - (SKY.dropSpeed * dt * 1.5 + 0.4), 0, ceil);
+        y = clamp(msg.p[1], floor, ceil);
+      }
+      const np = [clamp(msg.p[0], -C.ARENA_RADIUS, C.ARENA_RADIUS), y, clamp(msg.p[2], -C.ARENA_RADIUS, C.ARENA_RADIUS)];
       const maxStep = (C.MOVE_SPEED + C.SPELLS.heavy.knockback + 2) * dt + 0.6;
       const d = dist2D(np, p.p);
       if (p.lastStateAt && d > maxStep && !p.justTeleported) {
@@ -356,13 +445,13 @@ function handle(p, msg) {
     }
     case 'block': {
       const on = !!msg.on;
-      if (on && (!canAct(p) || p.st <= 2 || p.charging)) break;
+      if (on && (!canAct(p) || p.st <= 2 || p.charging || p.cyclone || isAirborne(p))) break;
       if (p.blocking && !on) p.blockReleasedAt = t;
       p.blocking = on;
       break;
     }
     case 'cast': {
-      if (!canAct(p) || p.blocking || p.charging || p.carrying) break;
+      if (!canAct(p) || p.blocking || p.charging || p.cyclone || p.carrying) break;
       if (msg.kind !== 'fast') break;
       if (t < p.cd.fast) break;
       p.cd.fast = t + C.SPELLS.fast.cooldown;
@@ -371,8 +460,9 @@ function handle(p, msg) {
       break;
     }
     case 'chargeStart': {
-      if (!canAct(p) || p.blocking || p.charging || p.carrying) break;
-      if (t < p.cd.heavy) break;
+      if (p.loadout.power !== 'meteor') break;
+      if (!canAct(p) || p.blocking || p.charging || p.cyclone || p.carrying || isAirborne(p)) break;
+      if (t < p.cd.power) break;
       p.charging = true; p.chargeStart = t;
       broadcast({ t: 'chargeStart', id: p.id });
       break;
@@ -385,26 +475,53 @@ function handle(p, msg) {
         broadcast({ t: 'chargeCancel', id: p.id });
         break;
       }
-      p.cd.heavy = t + C.SPELLS.heavy.cooldown;
+      p.cd.power = t + C.SPELLS.heavy.cooldown;
       const origin = sanitizeOrigin(p, msg.origin);
       spawnProjectile(p, 'heavy', origin, sanitizeDir(msg.dir, p));
       break;
     }
+    case 'cyclone': {
+      const ok = p.loadout.power === 'cyclone' && canAct(p) && !p.blocking && !p.charging && !p.cyclone
+        && !p.carrying && !isAirborne(p) && t >= p.cd.power;
+      // tell a refused caster, so its client drops the wind-up it predicted
+      if (!ok) { if (!p.cyclone) send(p.id, { t: 'cycloneCancel', id: p.id }); break; }
+      p.cyclone = { start: t, pulseAt: t + CYCLONE.windup, endAt: t + CYCLONE.windup + CYCLONE.spin, pulsed: false };
+      broadcast({ t: 'cycloneStart', id: p.id, p: p.p });
+      break;
+    }
+    case 'skyward': {
+      // tell a refused flier, so its client comes back down from the flight it predicted
+      if (p.loadout.mobility !== 'skyward' || !canAct(p) || p.charging || p.cyclone || isAirborne(p) || t < p.cd.mobility) {
+        if (!isAirborne(p)) send(p.id, { t: 'skywardCancel', id: p.id });
+        break;
+      }
+      p.cd.mobility = t + SKY.cooldown;
+      p.flightStart = t; p.flightUntil = t + C.FLIGHT_MAX_TIME;
+      p.p = [p.p[0], SKY.height, p.p[2]];
+      if (p.blocking) { p.blocking = false; p.blockReleasedAt = t; }
+      broadcast({ t: 'skyward', id: p.id, p: [p.p[0], 0, p.p[2]], top: SKY.height });
+      break;
+    }
+    case 'loadout': {
+      setLoadout(p, msg);
+      break;
+    }
     case 'teleport': {
-      if (!canAct(p) || p.charging) break;
-      if (t < p.cd.tp) break;
+      if (p.loadout.mobility !== 'blink') break;
+      if (!canAct(p) || p.charging || p.cyclone) break;
+      if (t < p.cd.mobility) break;
       const dir = sanitizeDir([msg.dir?.[0] ?? 0, 0, msg.dir?.[2] ?? 1], p);
       // The client predicts the same landing spot, so its next position report lines up.
       const from = Array.isArray(msg.from) && msg.from.length === 3 && msg.from.every(Number.isFinite) && dist2D(msg.from, p.p) < 3 ? msg.from : p.p;
       const to = C.computeTeleport(from, dir);
-      p.cd.tp = t + C.TELEPORT.cooldown;
+      p.cd.mobility = t + C.TELEPORT.cooldown;
       p.p = to; p.justTeleported = true;
       if (p.blocking) { p.blocking = false; p.blockReleasedAt = t; }
       broadcast({ t: 'tp', id: p.id, from, to });
       break;
     }
     case 'pickup': {
-      if (!canAct(p) || p.carrying || p.charging || p.blocking) break;
+      if (!canAct(p) || p.carrying || p.charging || p.cyclone || p.blocking) break;
       const best = tkTarget(p, msg.aimOrigin, msg.aimDir);
       if (!best) break;
       best.state = 'lifting'; best.carrier = p.id; best.liftUntil = t + C.TK.liftTime;
@@ -440,7 +557,7 @@ function handle(p, msg) {
       if (p.bot) break;
       const n = [...players.values()].filter(q => q.bot).length;
       if (n >= BOT_LIMIT) break;
-      addBot(['easy', 'normal', 'hard'].includes(msg.difficulty) ? msg.difficulty : 'normal');
+      addBot(['easy', 'normal', 'hard'].includes(msg.difficulty) ? msg.difficulty : 'normal', msg.loadout);
       break;
     }
     case 'removeBots': {
@@ -455,7 +572,8 @@ function handle(p, msg) {
 // Bots are ordinary players without a socket. Their AI (server/bots.js) acts through handle(),
 // so they obey exactly the same rules and cooldowns as everyone else.
 const BOT_NAMES = ['Zaltar', 'Morgra', 'Ebonyx', 'Vexlith', 'Grimble', 'Oswin', 'Thistle', 'Pipsqueak', 'Quillon', 'Sorrow'];
-function addBot(difficulty) {
+// `loadout` (optional) pins some of its spells; anything missing or unknown is rolled at random.
+function addBot(difficulty, loadout = null) {
   const id = nextId++;
   const taken = new Set([...players.values()].map(q => q.name));
   const name = BOT_NAMES.find(n => !taken.has(n)) || `Bot${id}`;
@@ -463,9 +581,10 @@ function addBot(difficulty) {
   const sp = C.SPAWN_POINTS[Math.floor(Math.random() * C.SPAWN_POINTS.length)];
   p.p = [sp[0], 0, sp[2]];
   p.bot = createBot(difficulty);
+  p.loadout = C.sanitizeLoadout(loadout, C.sanitizeLoadout(p.bot.loadout));
   players.set(id, p);
   broadcast({ t: 'joined', player: playerPublic(p) });
-  console.log(`[+] bot ${name} (${difficulty}) joined. ${players.size} online`);
+  console.log(`[+] bot ${name} (${difficulty}, ${p.loadout.power}/${p.loadout.mobility}) joined. ${players.size} online`);
 }
 
 function removePlayer(id) {
@@ -476,7 +595,8 @@ function removePlayer(id) {
   broadcast({ t: 'leave', id });
 }
 
-const world = { players, props, projectiles, goats, handle, now };
+// cycloneStopsGoats: the goat module can knock a charging goat dizzy (bots then answer a charge with a cyclone)
+const world = { players, props, projectiles, goats, handle, now, cycloneStopsGoats: !!Goats.dizzyGoat };
 const goatCtx = {
   players, props, now, broadcast, breakProp, killPlayer,
   // humans apply goat knockback themselves from the goatRam message
@@ -516,7 +636,7 @@ function sanitizeDir(d, p) {
   return [Math.sin(p.yaw), 0, Math.cos(p.yaw)];
 }
 function sanitizeOrigin(p, o) {
-  if (Array.isArray(o) && o.length === 3 && o.every(Number.isFinite) && dist2D(o, p.p) < 2.5 && o[1] > 0 && o[1] < 3) return o;
+  if (Array.isArray(o) && o.length === 3 && o.every(Number.isFinite) && dist2D(o, p.p) < 2.5 && o[1] > p.p[1] - 1 && o[1] < p.p[1] + 3) return o;
   return [p.p[0], p.p[1] + 1.3, p.p[2]];
 }
 
@@ -537,7 +657,7 @@ wss.on('connection', (ws) => {
       if (msg.t !== 'join') return;
       id = nextId++;
       const name = String(msg.name || 'Wizard').replace(/[^\w \-'!?.]/g, '').trim().slice(0, C.MAX_NAME_LEN) || `Wizard${id}`;
-      const p = newPlayer(id, name);
+      const p = newPlayer(id, name, msg.loadout);
       players.set(id, p);
       sockets.set(id, ws);
       ws.send(JSON.stringify({

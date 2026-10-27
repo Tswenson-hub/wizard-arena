@@ -134,6 +134,67 @@ export class Effects {
     }
   }
 
+  // ---------------------------------------------------------------- spellbook
+  // Arcane Cyclone pulse: a flat shockwave ring racing out to the radius, a low swirling wall and
+  // motes flung outward.
+  cyclonePulse(p, radius) {
+    const pos = new THREE.Vector3(p[0], p[1], p[2]);
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.82, 1, 64).rotateX(-Math.PI / 2),
+      this.mat(0xc890ff, { opacity: 0.9, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
+    ring.position.copy(pos).setY(p[1] + 0.12); ring.scale.setScalar(0.6);
+    this.scene.add(ring);
+    const life = 0.32;
+    this.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0, maxLife: life, grav: 0, grow: (radius - 0.6) / life, still: true });
+    const wall = new THREE.Mesh(new THREE.CylinderGeometry(1, 0.9, 0.8, 40, 1, true),
+      this.mat(0x7a3cdf, { opacity: 0.3, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
+    wall.position.copy(pos).setY(p[1] + 0.4); wall.scale.setScalar(0.6);
+    this.scene.add(wall);
+    this.particles.push({ mesh: wall, vel: new THREE.Vector3(), life: 0, maxLife: life, grav: 0, growXZ: (radius - 0.6) / life, still: true, spinY: 9 });
+    // motes: outward and around, like debris caught in the spin
+    for (let i = 0; i < 36; i++) {
+      const a = Math.random() * Math.PI * 2, sp = 7 + Math.random() * 9;
+      const m = new THREE.Mesh(this.particleGeo, this.mat(i % 3 ? 0xc890ff : 0xffffff, { opacity: 1 }));
+      m.position.set(pos.x + Math.sin(a) * 0.8, p[1] + 0.3 + Math.random() * 1.6, pos.z + Math.cos(a) * 0.8);
+      m.scale.setScalar(0.35 + Math.random() * 0.5);
+      this.scene.add(m);
+      const vel = new THREE.Vector3(Math.sin(a) * sp + Math.cos(a) * sp * 0.6, 1 + Math.random() * 2.5, Math.cos(a) * sp - Math.sin(a) * sp * 0.6);
+      this.particles.push({ mesh: m, vel, life: 0, maxLife: 0.35 + Math.random() * 0.25, grav: 3, shrink: true });
+    }
+    this.burst(pos.clone().setY(p[1] + 1), 0xb46cff, 10, 3, 0.5, 0);
+  }
+
+  // Skyward Flash launch: a light streak from the ground up to the wizard, a ring on the ground.
+  skyward(p, top) {
+    const base = new THREE.Vector3(p[0], 0, p[2]);
+    const streak = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.45, top + 1.5, 10, 1, true),
+      this.mat(0xd8b8ff, { opacity: 0.85, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
+    streak.position.copy(base).setY((top + 1.5) / 2);
+    this.scene.add(streak);
+    this.particles.push({ mesh: streak, vel: new THREE.Vector3(), life: 0, maxLife: 0.45, grav: 0, growXZ: -0.8, still: true });
+    const core = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.12, top + 1.5, 6, 1, true), this.mat(0xffffff, { opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false }));
+    core.position.copy(streak.position);
+    this.scene.add(core);
+    this.particles.push({ mesh: core, vel: new THREE.Vector3(), life: 0, maxLife: 0.3, grav: 0, still: true });
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.7, 1, 40).rotateX(-Math.PI / 2),
+      this.mat(0xc890ff, { opacity: 0.9, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
+    ring.position.copy(base).setY(0.12); ring.scale.setScalar(0.5);
+    this.scene.add(ring);
+    this.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0, maxLife: 0.5, grav: 0, grow: 6, still: true });
+    this.burst(base.clone().setY(0.4), 0xb48cff, 14, 3, 0.4, -2);
+    this.burst(base.clone().setY(top + 1), 0xe6d0ff, 12, 3, 0.35, 0);
+    for (let i = 0; i < 4; i++) this.dust(base, 2);
+  }
+
+  // Touching down after a Skyward Flash.
+  land(p) {
+    const pos = new THREE.Vector3(p[0], 0, p[2]);
+    for (let i = 0; i < 6; i++) this.dust(pos, 2);
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.8, 1, 32).rotateX(-Math.PI / 2), this.mat(0xb59a72, { opacity: 0.6, depthWrite: false }));
+    ring.position.copy(pos).setY(0.12); ring.scale.setScalar(0.4);
+    this.scene.add(ring);
+    this.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0, maxLife: 0.35, grav: 0, grow: 4, still: true });
+  }
+
   death(pos) {
     const p = new THREE.Vector3(pos[0], pos[1] + 1, pos[2]);
     this.burst(p, 0xff3b4e, 30, 5, 0.5);
@@ -152,6 +213,7 @@ export class Effects {
       });
     }
     this.burst(pos, C.PROP_TYPES[type].color, 8, 2.5, 0.3);
+    if (type === 'hay') { this.burst(pos, 0xe8d27a, 22, 4.5, 0.35, 3); this.burst(pos, 0xc9a94a, 12, 2.5, 0.3, 1); }   // straw puff
     if (type === 'potion') { this.burst(pos, 0x5cf0b0, 22, 5, 0.45); this.burst(pos, 0xd98cff, 14, 3.5, 0.4, -1); }   // potion splash
   }
 
@@ -187,11 +249,13 @@ export class Effects {
       p.vel.y -= (p.grav || 0) * dt;
       p.mesh.position.addScaledVector(p.vel, dt);
       if (p.grow) p.mesh.scale.addScalar(p.grow * dt);
+      else if (p.growXZ) { p.mesh.scale.x = Math.max(0.01, p.mesh.scale.x + p.growXZ * dt); p.mesh.scale.z = Math.max(0.01, p.mesh.scale.z + p.growXZ * dt); }
       else if (p.shrink) p.mesh.scale.multiplyScalar(Math.max(0, 1 - dt * 3));
-      p.mesh.rotation.x += dt * 5; p.mesh.rotation.y += dt * 7;
+      if (p.spinY) p.mesh.rotation.y += dt * p.spinY;
+      else if (!p.still) { p.mesh.rotation.x += dt * 5; p.mesh.rotation.y += dt * 7; }
       // materials are shared; per-particle opacity needs its own copy (cloned once, lazily)
       if (!p.ownMat) { p.mesh.material = p.mesh.material.clone(); p.ownMat = true; }
-      p.mesh.material.opacity = (1 - k) * (p.grow ? 0.6 : 1);
+      p.mesh.material.opacity = (1 - k) * (p.grow || p.growXZ ? 0.6 : 1) * (p.still ? 1.4 : 1);
     }
 
     for (let i = this.debris.length - 1; i >= 0; i--) {

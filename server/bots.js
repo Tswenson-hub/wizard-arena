@@ -34,6 +34,8 @@ const DIFFICULTY = {
   },
 };
 
+const CYC = C.SPELLBOOK.cyclone, SKY = C.SPELLBOOK.skyward;
+const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const rand = (a, b) => a + Math.random() * (b - a);
 const dist2D = (a, b) => Math.hypot(a[0] - b[0], a[2] - b[2]);
 const gauss = () => (Math.random() + Math.random() + Math.random() - 1.5) / 0.75;   // ~N(0,1), cheap
@@ -42,6 +44,9 @@ export function createBot(difficulty) {
   return {
     difficulty,
     cfg: DIFFICULTY[difficulty] || DIFFICULTY.normal,
+    // every bot rolls its own spellbook
+    loadout: { primary: 'spark', power: pick(C.spellsFor('power')).id, mobility: pick(C.spellsFor('mobility')).id },
+    slowFall: false,             // "holding E" during the current Skyward Flash
     acc: Math.random() * THINK_DT,
     vel: [0, 0],                 // movement velocity (x, z), includes knockback
     nextThink: 0,
@@ -68,13 +73,17 @@ const tracks = new Map();   // id -> { p, v, t }
 function trackVelocities(players, t) {
   for (const q of players.values()) {
     let tr = tracks.get(q.id);
-    if (!tr) { tracks.set(q.id, { p: q.p.slice(), v: [0, 0], t }); continue; }
+    if (!tr) { tracks.set(q.id, { p: q.p.slice(), v: [0, 0], vy: 0, t }); continue; }
     const dt = t - tr.t;
     if (dt < 0.03) continue;
     let vx = (q.p[0] - tr.p[0]) / dt, vz = (q.p[2] - tr.p[2]) / dt;
     const sp = Math.hypot(vx, vz);
     if (sp > C.MOVE_SPEED * 1.6) { vx = 0; vz = 0; }   // a blink or respawn, not real movement
     tr.v[0] += (vx - tr.v[0]) * 0.45; tr.v[1] += (vz - tr.v[1]) * 0.45;
+    // airborne wizards fall at a known rate; a launch or a landing isn't a fall
+    let vy = (q.p[1] - tr.p[1]) / dt;
+    if (vy > 0 || vy < -SKY.dropSpeed * 1.5 || q.p[1] < 0.05) vy = 0;
+    tr.vy += (vy - tr.vy) * 0.5;
     tr.p = q.p.slice(); tr.t = t;
   }
   for (const id of tracks.keys()) if (!players.has(id)) tracks.delete(id);
@@ -97,6 +106,9 @@ export function updateBots(dt, world) {
 const chest = (q) => [q.p[0], q.p[1] + C.HIT_CENTER_Y, q.p[2]];
 const isStunned = (q, t) => q.stunUntil > t;
 const canAct = (q, t) => !q.dead && !isStunned(q, t);
+const airborne = (q, t) => q.flightUntil > t || q.p[1] > 0.05;
+const cycloneWindingUp = (q) => q.cyclone && !q.cyclone.pulsed;
+const mobilityReady = (me, t) => t >= me.cd.mobility && !airborne(me, t);
 
 // Where to aim a projectile of `speed` (and `gravity`) so it meets `target`, leading by `lead`.
 function aimAt(me, from, target, speed, gravity, cfg) {
@@ -116,7 +128,9 @@ function aimAt(me, from, target, speed, gravity, cfg) {
     if (Number.isFinite(best)) ti = best;
   }
   const lead = cfg.lead * ti;
-  let aim = [c[0] + v[0] * lead, c[1], c[2] + v[1] * lead];
+  // a falling target: predict its height, but it can't sink below the ground
+  const vy = tr ? tr.vy : 0;
+  let aim = [c[0] + v[0] * lead, Math.max(C.HIT_CENTER_Y, c[1] + vy * lead), c[2] + v[1] * lead];
   // keep a led point inside the arena
   const r = Math.hypot(aim[0], aim[2]);
   if (r > C.ARENA_RADIUS) { aim[0] *= C.ARENA_RADIUS / r; aim[2] *= C.ARENA_RADIUS / r; }
@@ -184,7 +198,7 @@ function think(me, world, t) {
     b.goatDanger = t + 0.3;
     if (rec.handled || rec.ignore || reacted || t < rec.seenAt + rec.react) continue;
     rec.handled = true; reacted = true;
-    respondGoat(me, g, [vx, 0, vz], tc, t, act);
+    respondGoat(me, world, g, [vx, 0, vz], tc, t, act);
   }
   for (const id of b.threats.keys()) if (typeof id === 'number' && !world.projectiles.has(id)) b.threats.delete(id);
   for (const proj of world.projectiles.values()) {
@@ -197,6 +211,16 @@ function think(me, world, t) {
     rec.handled = true; reacted = true;
     respond(me, world, t, proj, th, act);
   }
+  // an enemy spinning up a cyclone close by: get out of the radius (or up, out of reach)
+  for (const q of world.players.values()) {
+    const key = 'cyc' + q.id;
+    if (q === me || q.dead || !cycloneWindingUp(q) || airborne(me, t) || dist2D(me.p, q.p) > CYC.radius + 0.5) { b.threats.delete(key); continue; }
+    let rec = b.threats.get(key);
+    if (!rec) { rec = { seenAt: t, react: cfg.react * rand(0.8, 1.3), handled: false, ignore: Math.random() > cfg.dodge }; b.threats.set(key, rec); }
+    if (rec.handled || rec.ignore || reacted || t < rec.seenAt + rec.react) continue;
+    rec.handled = true; reacted = true;
+    respondCyclone(me, q, t, act);
+  }
 
   // ---- maintain ongoing actions
   if (me.blocking && (t >= b.blockUntil || (me.st < 15 && !b.faceGoat))) { act({ t: 'block', on: false }); b.faceGoat = null; }
@@ -206,12 +230,13 @@ function think(me, world, t) {
     const tgt = target && !target.dead ? target : null;
     act({ t: 'chargeRelease', dir: tgt ? aimAt(me, from, tgt, C.SPELLS.heavy.speed, 0, cfg) : [Math.sin(me.yaw), 0, Math.cos(me.yaw)] });
   }
-  if (!free || !target || me.blocking || me.charging || t < (b.goatDanger || 0)) return;
+  if (!free || !target || me.blocking || me.charging || me.cyclone || t < (b.goatDanger || 0)) return;
+  const meAir = airborne(me, t);
 
   const carried = me.carrying ? world.props.get(me.carrying) : null;
 
-  // ---- punish a meteor wind-up with a spark (interrupts it)
-  if (target.charging && los && d < 26) {
+  // ---- punish a meteor or cyclone wind-up with a spark (interrupts it)
+  if ((target.charging || cycloneWindingUp(target)) && los && d < 26) {
     if (!b.chargeSeen.has(target.id)) b.chargeSeen.set(target.id, { at: t, go: Math.random() < cfg.punish });
     const seen = b.chargeSeen.get(target.id);
     if (seen.go && t >= seen.at + cfg.react) {
@@ -219,6 +244,15 @@ function think(me, world, t) {
       if (!me.carrying && t >= me.cd.fast) return spark(me, target, act, cfg, world);
     }
   } else b.chargeSeen.delete(target.id);
+
+  // ---- cyclone: spin as soon as they're inside the radius (a ward facing us blocks it, so
+  // prefer them stunned, busy or turned away)
+  const targetAir = airborne(target, t);
+  if (me.loadout.power === 'cyclone' && t >= me.cd.power && !airborne(me, t) && !me.carrying && !targetAir && d < 4.5 && los) {
+    const busy = isStunned(target, t) || target.charging || cycloneWindingUp(target);
+    const warded = target.blocking && target.st > CYC.staminaCost && facing(target, me.p);
+    if ((busy || !warded) && Math.random() < cfg.aggression * 0.3) { act({ t: 'cyclone' }); b.diveUntil = 0; return; }
+  }
 
   if (t < b.nextThink) return;
   b.nextThink = t + cfg.think * rand(0.7, 1.3);
@@ -250,19 +284,30 @@ function think(me, world, t) {
 
   if (!los) {
     // No shot: blink around the pillar sometimes, otherwise the movement code flanks.
-    if (cfg.blinkDodge && t >= me.cd.tp && Math.random() < 0.15) blinkSideways(me, target.p, act);
+    if (cfg.blinkDodge && me.loadout.mobility === 'blink' && mobilityReady(me, t) && Math.random() < 0.15) blinkSideways(me, target.p, act);
     return;
   }
 
   const targetStunned = isStunned(target, t);
   const targetWarded = target.blocking && target.st > 30 && facing(target, me.p);
-  const heavyReady = t >= me.cd.heavy, fastReady = t >= me.cd.fast;
+  const powerReady = t >= me.cd.power && !meAir, fastReady = t >= me.cd.fast;
 
-  // Meteor: when they can't easily dodge or block it, or from long range with time to spare.
-  const meteorWindow = targetStunned || (target.charging) || (d > 13 && Math.random() < 0.35) || (!targetWarded && Math.random() < 0.18);
-  if (heavyReady && d > 5 && d < 24 && meteorWindow && !targetWarded) {
-    act({ t: 'chargeStart' });
-    if (me.charging) b.chargeFireAt = t + C.SPELLS.heavy.chargeTime + 0.02;
+  if (me.loadout.power === 'meteor') {
+    // Meteor: when they can't easily dodge or block it, or from long range with time to spare.
+    const meteorWindow = targetStunned || (target.charging) || (d > 13 && Math.random() < 0.35) || (!targetWarded && Math.random() < 0.18);
+    if (powerReady && !targetAir && d > 5 && d < 24 && meteorWindow && !targetWarded) {
+      act({ t: 'chargeStart' });
+      if (me.charging) b.chargeFireAt = t + C.SPELLS.heavy.chargeTime + 0.02;
+      return;
+    }
+  } else if (me.loadout.power === 'cyclone' && powerReady && !targetAir && !me.carrying) {
+    // Cyclone ready: rush in to spin range (the check above fires it)
+    if (d < 14 && !targetWarded && me.hp > 30 && Math.random() < cfg.aggression * 0.6) b.diveUntil = t + 2.5;
+  }
+
+  // Skyward Flash: sometimes take the high ground and rain sparks down.
+  if (me.loadout.mobility === 'skyward' && cfg.blinkDodge && mobilityReady(me, t) && d > 7 && d < 18 && me.hp > 40 && Math.random() < 0.06) {
+    act({ t: 'skyward' });
     return;
   }
   // Sparks: the bread and butter. Against a raised ward they still drain stamina.
@@ -293,11 +338,15 @@ function lineBlocked(from, dir, range, radius, goats = null) {
     || (goats || []).some(g => segDist(from, to, g) < C.GOAT.radius + radius + 0.3);
 }
 
-// A goat is charging at us: ward facing it if we can afford it, else blink or dive aside.
-function respondGoat(me, g, vel, tc, t, act) {
+// A goat is charging at us: flash up out of reach, spin it dizzy if the cyclone lands first, ward
+// facing it if we can afford it, else blink or dive aside.
+function respondGoat(me, world, g, vel, tc, t, act) {
   const b = me.bot;
   if (me.charging) act({ t: 'chargeRelease', dir: [Math.sin(me.yaw), 0, Math.cos(me.yaw)] });   // abandon the meteor
-  if (!canAct(me, t)) return;
+  if (!canAct(me, t) || airborne(me, t) || me.cyclone) return;
+  if (me.loadout.mobility === 'skyward' && b.cfg.blinkDodge && mobilityReady(me, t)) return act({ t: 'skyward' });
+  if (world.cycloneStopsGoats && me.loadout.power === 'cyclone' && t >= me.cd.power && !me.carrying
+      && tc > CYC.windup + 0.05 && tc * C.GOAT.chargeSpeed < CYC.windup * C.GOAT.chargeSpeed + CYC.radius) return act({ t: 'cyclone' });
   if (me.st >= C.GOAT.blockCost + 5) {
     me.yaw = Math.atan2(g.x - me.p[0], g.z - me.p[2]);
     act({ t: 'block', on: true });
@@ -305,7 +354,7 @@ function respondGoat(me, g, vel, tc, t, act) {
     b.faceGoat = g.id;
     return;
   }
-  if (t >= me.cd.tp) return blinkSideways(me, null, act, vel);
+  if (me.loadout.mobility === 'blink' && mobilityReady(me, t)) return blinkSideways(me, null, act, vel);
   const l = Math.hypot(vel[0], vel[2]) || 1;
   b.dodgeVec = [-vel[2] / l * b.strafe, vel[0] / l * b.strafe];
   b.dodgeUntil = t + 0.6;
@@ -360,6 +409,36 @@ function blinkSideways(me, awayFrom, act, along = null) {
   me.bot.vel = [0, 0];
 }
 
+// An enemy cyclone is winding up near us: flash up, blink clear, or run out of the radius.
+// Hard bots with stamina to spare turn and ward it instead when they can't get out in time.
+function respondCyclone(me, caster, t, act) {
+  const b = me.bot, cfg = b.cfg;
+  if (me.charging) act({ t: 'chargeRelease', dir: [Math.sin(me.yaw), 0, Math.cos(me.yaw)] });
+  if (!canAct(me, t) || me.cyclone) return;
+  const left = caster.cyclone.pulseAt - t;
+  const d = dist2D(me.p, caster.p);
+  const need = CYC.radius + C.PLAYER_RADIUS + 0.4 - d;
+  if (cfg.blinkDodge && mobilityReady(me, t)) {
+    if (me.loadout.mobility === 'skyward') return act({ t: 'skyward' });
+    return blinkSideways(me, caster.p, act, [me.p[0] - caster.p[0], 0, me.p[2] - caster.p[2]]);
+  }
+  if (need > left * C.MOVE_SPEED * cfg.speed && me.st >= CYC.staminaCost + 5 && !me.carrying && cfg.dodge > 0.8) {
+    me.yaw = Math.atan2(caster.p[0] - me.p[0], caster.p[2] - me.p[2]);
+    act({ t: 'block', on: true });
+    b.blockUntil = caster.cyclone.pulseAt + 0.15;
+    return;
+  }
+  const l = d || 1;
+  b.dodgeVec = [(me.p[0] - caster.p[0]) / l, (me.p[2] - caster.p[2]) / l];
+  b.dodgeUntil = caster.cyclone.pulseAt + 0.15;
+}
+
+// Use the mobility spell to get off a projectile's line: blink sideways, or flash straight up.
+function evade(me, act, along) {
+  if (me.loadout.mobility === 'skyward') return act({ t: 'skyward' });
+  blinkSideways(me, null, act, along);
+}
+
 function respond(me, world, t, proj, th, act) {
   const b = me.bot, cfg = b.cfg;
   const spec = C.SPELLS[proj.kind];
@@ -371,9 +450,9 @@ function respond(me, world, t, proj, th, act) {
     if (cfg.dodge < 0.5) return;
     act({ t: 'chargeRelease', dir: [Math.sin(me.yaw), 0, Math.cos(me.yaw)] });   // too early: cancels
   }
-  if (!canAct(me, t)) return;
+  if (!canAct(me, t) || me.cyclone) return;
 
-  const canWard = me.st >= Math.min(spec.staminaCost + 5, 60) && !me.carrying;
+  const canWard = me.st >= Math.min(spec.staminaCost + 5, 60) && !me.carrying && !airborne(me, t);
   const sidestep = () => {
     const vx = proj.v[0], vz = proj.v[2];
     const l = Math.hypot(vx, vz) || 1;
@@ -386,7 +465,7 @@ function respond(me, world, t, proj, th, act) {
   };
 
   if (proj.kind === 'heavy') {
-    if (cfg.blinkDodge && t >= me.cd.tp && th.tc < 0.9) return blinkSideways(me, null, act, proj.v);
+    if (cfg.blinkDodge && mobilityReady(me, t) && th.tc < 0.9) return evade(me, act, proj.v);
     if (canWard && th.tc < 0.7) { faceIt(); act({ t: 'block', on: true }); b.blockUntil = t + th.tc + 0.25; return; }
     return sidestep();
   }
@@ -403,6 +482,15 @@ function moveBot(me, dt, world, t) {
   if (me.dead) { b.vel = [0, 0]; b.threats.clear(); return; }
   const target = world.players.get(b.targetId);
   const stunned = isStunned(me, t);
+  const flying = airborne(me, t);
+
+  // Skyward Flash descent, the same physics a client runs: float (slowly, if "holding E"), then drop.
+  if (flying) {
+    if (b.flightStart !== me.flightStart) { b.flightStart = me.flightStart; b.slowFall = Math.random() < (cfg.lead > 0.5 ? 0.6 : 0.3); }
+    const e = t - me.flightStart;
+    const rate = e >= SKY.floatTime ? SKY.dropSpeed : b.slowFall ? SKY.slowFallSpeed : SKY.fallSpeed;
+    me.p[1] = Math.max(0, me.p[1] - rate * dt);
+  }
 
   let wx = 0, wz = 0;
   if (!stunned) {
@@ -413,6 +501,7 @@ function moveBot(me, dt, world, t) {
       const fx = dx / d, fz = dz / d;
       const los = hasLOS(me.p, target.p);
       const lowHp = me.hp < 35 && me.hp < target.hp;
+      const diving = t < (b.diveUntil || 0) && t >= me.cd.power && !me.carrying;
       let fwd = 0;
       if (lowHp && los) {
         // retreat to the far side of the nearest pillar
@@ -420,10 +509,11 @@ function moveBot(me, dt, world, t) {
         if (cover) { const cx = cover[0] - me.p[0], cz = cover[1] - me.p[2]; const cl = Math.hypot(cx, cz) || 1; wx = cx / cl; wz = cz / cl; }
         else fwd = -1;
       } else if (!los) fwd = d > 6 ? 0.6 : 0;            // flank around the obstruction
+      else if (diving) fwd = d > 3 ? 1 : 0;              // closing in for a cyclone
       else if (d > cfg.range[1]) fwd = 1;
       else if (d < cfg.range[0]) fwd = -0.8;
       if (t >= b.strafeUntil) { if (Math.random() < 0.6) b.strafe *= -1; b.strafeUntil = t + rand(0.5, 1.8) / (cfg.dodge + 0.4); }
-      const strafe = los ? 0.9 : 1;
+      const strafe = diving ? 0.35 : los ? 0.9 : 1;
       if (!(lowHp && los && wx)) { wx = fx * fwd + fz * strafe * b.strafe; wz = fz * fwd - fx * strafe * b.strafe; }
       const fg = me.blocking && b.faceGoat ? world.goats.find(g => g.id === b.faceGoat) : null;
       if (fg) me.yaw = Math.atan2(fg.x - me.p[0], fg.z - me.p[2]);
@@ -439,9 +529,10 @@ function moveBot(me, dt, world, t) {
   }
   const wl = Math.hypot(wx, wz);
   let speed = C.MOVE_SPEED * cfg.speed;
-  if (me.charging) speed = C.CHARGE_MOVE_SPEED;
+  if (me.charging || me.cyclone) speed = C.CHARGE_MOVE_SPEED;
   else if (me.blocking) speed = C.BLOCK_MOVE_SPEED;
-  if (t < b.dodgeUntil) speed = Math.max(speed, C.MOVE_SPEED * 0.95);
+  else if (flying) speed = SKY.airSpeed;
+  if (t < b.dodgeUntil && !me.cyclone && !flying) speed = Math.max(speed, C.MOVE_SPEED * 0.95);
   const tx = wl > 0.01 ? wx / wl * speed : 0, tz = wl > 0.01 ? wz / wl * speed : 0;
   const k = Math.min(1, dt * 12);
   b.vel[0] += (tx - b.vel[0]) * k; b.vel[1] += (tz - b.vel[1]) * k;
@@ -454,10 +545,12 @@ function moveBot(me, dt, world, t) {
     const dd = Math.hypot(dx, dz);
     if (dd < rr + pr && dd > 1e-4) { const kk = (rr + pr - dd) / dd; me.p[0] += dx * kk; me.p[2] += dz * kk; }
   };
-  for (const c of C.COLLIDERS) pushOut(c.x, c.z, c.r);
-  for (const prop of world.props.values()) if (prop.state === 'idle') pushOut(prop.x, prop.z, C.PROP_TYPES[prop.type].r * 0.8);
-  for (const q of world.players.values()) if (q !== me && !q.dead) pushOut(q.p[0], q.p[2], pr);
-  for (const g of world.goats) pushOut(g.x, g.z, C.GOAT.radius);
+  // airborne, we pass over anything lower than our feet
+  const y = me.p[1];
+  for (const c of C.COLLIDERS) if (y < c.h) pushOut(c.x, c.z, c.r);
+  if (y < 1) for (const prop of world.props.values()) if (prop.state === 'idle') pushOut(prop.x, prop.z, C.PROP_TYPES[prop.type].r * 0.8);
+  for (const q of world.players.values()) if (q !== me && !q.dead && Math.abs(q.p[1] - y) < C.PLAYER_HEIGHT) pushOut(q.p[0], q.p[2], pr);
+  if (y < 1) for (const g of world.goats) pushOut(g.x, g.z, C.GOAT.radius);
   const r = Math.hypot(me.p[0], me.p[2]);
   if (r > C.ARENA_RADIUS) { me.p[0] *= C.ARENA_RADIUS / r; me.p[2] *= C.ARENA_RADIUS / r; }
 
@@ -467,7 +560,7 @@ function moveBot(me, dt, world, t) {
   b.lastPos = me.p.slice();
 
   const moving = Math.hypot(b.vel[0], b.vel[1]) > 0.6;
-  me.anim = me.charging ? 'charge' : me.blocking ? 'block' : moving ? 'run' : 'idle';
+  me.anim = me.charging || cycloneWindingUp(me) ? 'charge' : me.blocking ? 'block' : moving ? 'run' : 'idle';
 }
 
 function coverPoint(me, target) {

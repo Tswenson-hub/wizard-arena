@@ -4,7 +4,7 @@ import * as C from '../shared/constants.js';
 import { Net } from './net.js';
 import { Input } from './input.js';
 import { Sfx } from './audio.js';
-import { buildWorld, makePropMesh, spinners, loadModels } from './world.js';
+import { buildWorld, makePropMesh, spinners, loadModels, trampleCrops } from './world.js';
 import { GoatView } from './goats.js';
 import { Wizard, registerModel } from './wizard.js';
 import { Effects } from './effects.js';
@@ -42,6 +42,7 @@ const ui = {
   feed: $('#feed'), hint: $('#hint'), status: $('#status'), death: $('#deathScreen'), vignette: $('#vignette'),
   scoreboard: $('#scoreboard'), scoreBody: $('#scoreboard tbody'), clickToPlay: $('#clickToPlay'),
   botCount: $('#botCount'), botDiff: $('#botDiff'), botTally: $('#botTally'), volume: $('#volume'), mute: $('#mute'),
+  books: [$('#joinBook'), $('#pauseBook')],
   ab: Object.fromEntries([...document.querySelectorAll('.ab')].map(el => [el.dataset.ab, el])),
 };
 
@@ -55,8 +56,11 @@ let myId = null;
 const local = {
   pos: new THREE.Vector3(), vel: new THREE.Vector3(),
   yaw: 0, pitch: 0.25,
-  cd: { fast: 0, heavy: 0, tp: 0, throw: 0 },
+  cd: { fast: 0, power: 0, mobility: 0, throw: 0 },   // per slot, like the server
   charging: false, chargeStart: 0, chargeSent: false,
+  cyclone: null,               // { start, pulsed } during our own Arcane Cyclone
+  flight: null,                // { start, drop } during our own Skyward Flash
+  spaceHeld: false,            // Space was used to drop out of a flight: don't ward until it's released
   blocking: false,
   anim: 'idle',
   lastSend: 0,
@@ -64,6 +68,44 @@ const local = {
 };
 let now = 0;
 const tmp = { v1: new THREE.Vector3(), v2: new THREE.Vector3(), v3: new THREE.Vector3() };
+const CYC = C.SPELLBOOK.cyclone, SKY = C.SPELLBOOK.skyward;
+
+// ---------------------------------------------------------------- spellbook
+// The loadout we want (saved in localStorage). The server's copy (me.loadout) is what casts use;
+// it differs only while a slot is mid-cast and the change is waiting.
+let wantLoadout = C.DEFAULT_LOADOUT;
+try { wantLoadout = C.sanitizeLoadout(JSON.parse(localStorage.getItem('wizardLoadout') || 'null')); } catch {}
+
+function renderBooks() {
+  const html = Object.entries(C.LOADOUT_SLOTS).map(([slot, info]) => {
+    const spells = C.spellsFor(slot);
+    const cards = spells.map(sp => {
+      const sel = wantLoadout[slot] === sp.id;
+      const pending = sel && me && me.loadout[slot] !== sp.id;
+      return `<div class="spell-card${sel ? ' selected' : ''}${spells.length === 1 ? ' only' : ''}${pending ? ' pending' : ''}" role="button" tabindex="0" data-slot="${slot}" data-spell="${sp.id}" aria-pressed="${sel}">
+        <span class="sc-key">${info.key}</span><span class="sc-name">${esc(sp.name)}</span><span class="sc-blurb">${esc(sp.blurb)}</span></div>`;
+    }).join('');
+    return `<div class="book-slot"><div class="slot-label">${info.label}<kbd>${info.key}</kbd></div><div class="book-cards">${cards}</div></div>`;
+  }).join('');
+  for (const el of ui.books) el.innerHTML = html;
+}
+function chooseSpell(slot, id) {
+  if (wantLoadout[slot] === id) return;
+  wantLoadout = C.sanitizeLoadout({ ...wantLoadout, [slot]: id }, wantLoadout);
+  try { localStorage.setItem('wizardLoadout', JSON.stringify(wantLoadout)); } catch {}
+  sfx.click();
+  if (me) net.send({ t: 'loadout', power: wantLoadout.power, mobility: wantLoadout.mobility, primary: wantLoadout.primary });
+  renderBooks();
+}
+for (const el of ui.books) {
+  el.addEventListener('click', (e) => { const c = e.target.closest('.spell-card'); if (c) chooseSpell(c.dataset.slot, c.dataset.spell); });
+  el.addEventListener('keydown', (e) => {
+    const c = e.target.closest('.spell-card');
+    if (c && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); chooseSpell(c.dataset.slot, c.dataset.spell); }
+  });
+}
+renderBooks();
+const spellName = (id) => C.SPELLBOOK[id]?.name || id;
 
 // ---------------------------------------------------------------- loading
 try {
@@ -97,7 +139,7 @@ ui.form.addEventListener('submit', async (e) => {
   ui.joinBtn.disabled = true; ui.loadStatus.textContent = 'Connecting…';
   sfx.init(); sfx.resume();
   try {
-    const welcome = await net.connect(name);
+    const welcome = await net.connect(name, wantLoadout);
     onWelcome(welcome);
     for (let i = 0; i < +ui.botCount.value; i++) net.send({ t: 'addBot', difficulty: ui.botDiff.value });
   } catch (err) {
@@ -135,6 +177,7 @@ function onWelcome(msg) {
   for (const g of msg.goats || []) goats.set(g.id, new GoatView(g, scene));
   me = players.get(myId);
   local.pos.set(me.targetPos.x, 0, me.targetPos.z);
+  renderBooks();
   ui.join.classList.add('hidden');
   ui.hud.classList.remove('hidden');
   input.enabled = true;
@@ -158,6 +201,7 @@ function applySnapshot(w, s) {
   }
   w.hp = s.hp; w.st = s.st; w.kills = s.kills; w.deaths = s.deaths;
   w.blocking = s.blocking; w.charging = s.charging; w.stunned = s.stun;
+  if (s.loadout) w.loadout = s.loadout;
   if (s.dead !== w.dead) w.dead = s.dead;
   if (w === me) {
     if (!s.blocking && local.blocking) { local.blocking = false; }   // server cancelled the ward
@@ -257,7 +301,7 @@ function handleMessage(msg) {
       effects.endProjectile(msg);
       if (msg.hit && pr) {
         const d = Math.hypot(msg.p[0] - local.pos.x, msg.p[2] - local.pos.z);
-        if (pr.kind === 'heavy') { sfx.bigImpact(msg.p); shake(0.5 / (1 + d * 0.15)); }
+        if (pr.kind === 'heavy') { sfx.bigImpact(msg.p); shake(0.5 / (1 + d * 0.15)); trampleCrops(msg.p[0], msg.p[2], 2.5); }
         else if (msg.surface !== 'player' && pr.kind === 'fast') sfx.impact(msg.p);
       }
       break;
@@ -274,12 +318,13 @@ function handleMessage(msg) {
       }
       if (target === me) {
         if (!msg.blocked) {
-          sfx.hurt(); flashVignette(); shake(msg.kind === 'heavy' ? 0.6 : 0.25);
-          local.stunUntil = now + (C.SPELLS[msg.kind]?.stun || 0.4);
+          sfx.hurt(); flashVignette(); shake(msg.kind === 'heavy' || msg.kind === 'cyclone' ? 0.6 : 0.25);
+          local.stunUntil = now + (C.hitSpec(msg.kind)?.stun || 0.4);
         }
         // knockback
         local.vel.x += msg.dir[0] * msg.kb; local.vel.z += msg.dir[2] * msg.kb;
         if (!msg.blocked && local.charging) local.charging = false;
+        if (!msg.blocked && local.cyclone && !local.cyclone.pulsed) { local.cyclone = null; me.cancelCyclone(); }
       }
       if (msg.attacker === myId && msg.dmg > 0) hitmarker();
       break;
@@ -301,6 +346,53 @@ function handleMessage(msg) {
     case 'chargeCancel': {
       const w = players.get(msg.id);
       if (w) { w.charging = false; if (w === me) { local.charging = false; } }
+      break;
+    }
+    case 'cycloneStart': {
+      const w = players.get(msg.id);
+      if (!w) break;
+      if (w !== me || w.cycloneT < 0) w.startCyclone();   // our own was started locally
+      sfx.cycloneWindup(wpos(w));
+      break;
+    }
+    case 'cycloneCancel': {
+      const w = players.get(msg.id);
+      if (!w) break;
+      w.cancelCyclone();
+      if (w === me) local.cyclone = null;
+      break;
+    }
+    case 'cyclonePulse': {
+      const w = players.get(msg.id);
+      const p = w === me ? [local.pos.x, local.pos.y, local.pos.z] : msg.p;
+      effects.cyclonePulse(p, CYC.radius);
+      trampleCrops(p[0], p[2], CYC.radius);
+      sfx.cyclonePulse(p);
+      if (w) w.spin();
+      if (w === me && local.cyclone) { local.cyclone.pulsed = true; local.cd.power = now + CYC.cooldown; }
+      // everyone inside the radius feels it
+      if (Math.hypot(p[0] - local.pos.x, p[2] - local.pos.z) < CYC.radius + 1 && Math.abs(p[1] - local.pos.y) < CYC.height) shake(w === me ? 0.35 : 0.7);
+      for (const h of msg.hits) if (h.id === myId && !h.blocked) feed(`Caught in <b>${esc(w?.name || '?')}</b>'s cyclone`);
+      break;
+    }
+    case 'skyward': {
+      const w = players.get(msg.id);
+      if (!w) break;
+      const p = w === me ? [local.pos.x, 0, local.pos.z] : msg.p;
+      effects.skyward(p, msg.top);
+      sfx.skyward([p[0], 1, p[2]]);
+      w.oneShot('dash', 0.5, 2.5, 2.2);
+      if (w !== me) { w.targetPos.set(msg.p[0], msg.top, msg.p[2]); w.group.position.copy(w.targetPos); }
+      break;
+    }
+    case 'skywardCancel':
+      if (msg.id === myId && local.flight) { local.flight = null; local.pos.y = 0; }
+      break;
+    case 'loadout': {
+      const w = players.get(msg.id);
+      if (w) w.loadout = msg.loadout;
+      if (w === me) renderBooks();
+      if (scoreVisible) updateScoreboard();
       break;
     }
     case 'tp': {
@@ -338,6 +430,7 @@ function handleMessage(msg) {
       if (w === me) {
         ui.death.querySelector('.big').textContent = msg.cause === 'goat' ? 'Rammed by a goat' : 'You were vanquished';
         ui.death.classList.remove('hidden'); local.charging = false; local.blocking = false;
+        local.cyclone = null; local.flight = null; local.pos.y = 0;
       }
       if (msg.cause === 'goat') feed(`<b>${esc(w.name)}</b> was rammed by a goat${k && k !== w ? ` (thanks, <b>${esc(k.name)}</b>)` : ''}`);
       else if (k && k !== w) feed(`<b>${esc(k.name)}</b> vanquished <b>${esc(w.name)}</b>`);
@@ -376,7 +469,7 @@ function hitmarker() {
 let scoreVisible = false, scoreT = 0;
 function updateScoreboard() {
   const rows = [...players.values()].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
-  ui.scoreBody.innerHTML = rows.map(w => `<tr class="${w === me ? 'me' : ''}"><td style="color:#${w.color.toString(16).padStart(6, '0')}">${esc(w.name)}${w.bot ? `<span class="bot">${w.bot} bot</span>` : ''}</td><td>${w.kills}</td><td>${w.deaths}</td></tr>`).join('');
+  ui.scoreBody.innerHTML = rows.map(w => `<tr class="${w === me ? 'me' : ''}"><td style="color:#${w.color.toString(16).padStart(6, '0')}">${esc(w.name)}${w.bot ? `<span class="bot">${w.bot} bot</span>` : ''}</td><td class="spells">${esc(spellName(w.loadout.power))} · ${esc(spellName(w.loadout.mobility))}</td><td>${w.kills}</td><td>${w.deaths}</td></tr>`).join('');
 }
 
 // ---------------------------------------------------------------- local player update
@@ -466,38 +559,75 @@ function updateLocal(dt) {
     local.pitch = THREE.MathUtils.clamp(local.pitch + input.mouseDY * 0.0022, -0.6, 1.1);
   }
 
+  const lo = me.loadout;
+  if (!input.down('Space')) local.spaceHeld = false;
+
+  // ---- Skyward Flash: float down (slower holding E), drop after floatTime or on Space
+  if (local.flight) {
+    if (input.justPressed('Space')) { local.flight.drop = true; local.spaceHeld = true; }
+    const dropping = local.flight.drop || now - local.flight.start >= SKY.floatTime;
+    const rate = dropping ? SKY.dropSpeed : input.down('KeyE') ? SKY.slowFallSpeed : SKY.fallSpeed;
+    // real elapsed time, not the frame-clamped dt: the server checks the height against its clock
+    local.pos.y -= rate * Math.min(0.25, now - local.flight.last);
+    local.flight.last = now;
+    if (local.pos.y <= 0 || me.dead) {
+      local.pos.y = 0; local.flight = null;
+      if (!me.dead) { effects.land([local.pos.x, 0, local.pos.z]); sfx.land([local.pos.x, 0.2, local.pos.z]); }
+    }
+  }
+  const airborne = !!local.flight;
+
+  // ---- Arcane Cyclone timing (the server pulses; this keeps our controls honest meanwhile)
+  if (local.cyclone && now - local.cyclone.start > CYC.windup + CYC.spin + 0.3) local.cyclone = null;
+  const winding = !!local.cyclone && !local.cyclone.pulsed;
+  const busy = local.charging || !!local.cyclone;
+
   // ---- actions
   if (canAct) {
     // block
-    const wantBlock = input.down('Space') && me.st > 2 && !local.charging;
+    const wantBlock = input.down('Space') && me.st > 2 && !busy && !airborne && !local.spaceHeld;
     if (wantBlock !== local.blocking) { local.blocking = wantBlock; net.send({ t: 'block', on: wantBlock }); }
 
     // fast bolt
-    if (input.lmbPressed && !local.blocking && !local.charging && !me.carrying && now >= local.cd.fast) {
+    if (input.lmbPressed && !local.blocking && !busy && !me.carrying && now >= local.cd.fast) {
       computeAim();
       local.cd.fast = now + C.SPELLS.fast.cooldown;
       net.send({ t: 'cast', kind: 'fast', origin: aimOrigin.toArray(), dir: aimDir.toArray() });
     }
-    // heavy wind-up: press to start, fires automatically when fully charged
-    if (input.rmbPressed && !local.blocking && !local.charging && !me.carrying && now >= local.cd.heavy) {
-      local.charging = true; local.chargeStart = now; local.chargeSent = false;
-      net.send({ t: 'chargeStart' });
+    // power slot
+    if (input.rmbPressed && !local.blocking && !busy && !airborne && !me.carrying && now >= local.cd.power) {
+      if (lo.power === 'meteor') {
+        // wind-up: press to start, fires automatically when fully charged
+        local.charging = true; local.chargeStart = now; local.chargeSent = false;
+        net.send({ t: 'chargeStart' });
+      } else if (lo.power === 'cyclone') {
+        local.cyclone = { start: now, pulsed: false };
+        me.startCyclone();
+        net.send({ t: 'cyclone' });
+      }
     }
     if (local.charging && !local.chargeSent && now - local.chargeStart >= C.SPELLS.heavy.chargeTime) {
       computeAim();
       local.chargeSent = true;
-      local.cd.heavy = now + C.SPELLS.heavy.cooldown;
+      local.cd.power = now + C.SPELLS.heavy.cooldown;
       net.send({ t: 'chargeRelease', origin: aimOrigin.toArray(), dir: aimDir.toArray() });
       setTimeout(() => { local.charging = false; }, 150);
     }
-    // blink
-    if (input.justPressed('KeyE') && !local.charging && now >= local.cd.tp) {
-      const dir = [Math.sin(local.yaw), 0, Math.cos(local.yaw)];
-      const from = [local.pos.x, 0, local.pos.z];
-      const to = C.computeTeleport(from, dir);
-      local.cd.tp = now + C.TELEPORT.cooldown;
-      net.send({ t: 'teleport', dir, from });
-      local.pos.set(to[0], 0, to[2]); local.vel.set(0, 0, 0);
+    // mobility slot
+    if (input.justPressed('KeyE') && !busy && !airborne && now >= local.cd.mobility) {
+      if (lo.mobility === 'blink') {
+        const dir = [Math.sin(local.yaw), 0, Math.cos(local.yaw)];
+        const from = [local.pos.x, 0, local.pos.z];
+        const to = C.computeTeleport(from, dir);
+        local.cd.mobility = now + C.TELEPORT.cooldown;
+        net.send({ t: 'teleport', dir, from });
+        local.pos.set(to[0], 0, to[2]); local.vel.set(0, 0, 0);
+      } else if (lo.mobility === 'skyward') {
+        local.cd.mobility = now + SKY.cooldown;
+        local.flight = { start: now, last: now, drop: false };
+        local.pos.y = SKY.height;
+        net.send({ t: 'skyward' });
+      }
       if (local.blocking) { local.blocking = false; }
     }
     // telekinesis: lift / hurl / set down
@@ -508,7 +638,7 @@ function updateLocal(dt) {
           local.cd.throw = now + C.THROW_COOLDOWN;
           net.send({ t: 'throw', dir: aimDir.toArray(), target: aimPoint() });
         }
-      } else if (!local.charging && !local.blocking && tkHover) {
+      } else if (!busy && !local.blocking && tkHover) {
         camera.getWorldDirection(camDir);
         net.send({ t: 'pickup', aimOrigin: camera.position.toArray(), aimDir: camDir.toArray() });
       }
@@ -526,8 +656,9 @@ function updateLocal(dt) {
   if (input.down('KeyD')) mx += 1;
   const moving = (mx || mz) && canAct;
   let speed = C.MOVE_SPEED;
-  if (local.charging) speed = C.CHARGE_MOVE_SPEED;
+  if (local.charging || local.cyclone) speed = C.CHARGE_MOVE_SPEED;
   else if (local.blocking) speed = C.BLOCK_MOVE_SPEED;
+  else if (local.flight) speed = SKY.airSpeed;
   const fwd = tmp.v1.set(Math.sin(local.yaw), 0, Math.cos(local.yaw));
   const right = tmp.v2.set(-Math.cos(local.yaw), 0, Math.sin(local.yaw));   // forward × up
   const wish = tmp.v3.set(0, 0, 0);
@@ -545,10 +676,12 @@ function updateLocal(dt) {
     const d = Math.hypot(dx, dz);
     if (d < r + pr && d > 0.0001) { const k = (r + pr - d) / d; local.pos.x += dx * k; local.pos.z += dz * k; }
   };
-  for (const c of C.COLLIDERS) pushOut(c.x, c.z, c.r);
-  for (const e of props.values()) if (e.data.state === 'idle') pushOut(e.data.x, e.data.z, C.PROP_TYPES[e.data.type].r * 0.8);
-  for (const w of players.values()) if (w !== me && !w.dead) pushOut(w.group.position.x, w.group.position.z, pr);
-  for (const g of goats.values()) if (g.state !== 'charge') pushOut(g.group.position.x, g.group.position.z, C.GOAT.radius);
+  // airborne, we pass over anything lower than our feet
+  const y = local.pos.y;
+  for (const c of C.COLLIDERS) if (y < c.h) pushOut(c.x, c.z, c.r);
+  if (y < 1) for (const e of props.values()) if (e.data.state === 'idle') pushOut(e.data.x, e.data.z, C.PROP_TYPES[e.data.type].r * 0.8);
+  for (const w of players.values()) if (w !== me && !w.dead && Math.abs(w.group.position.y - y) < C.PLAYER_HEIGHT) pushOut(w.group.position.x, w.group.position.z, pr);
+  if (y < 1) for (const g of goats.values()) if (g.state !== 'charge') pushOut(g.group.position.x, g.group.position.z, C.GOAT.radius);
   const r = Math.hypot(local.pos.x, local.pos.z);
   if (r > C.ARENA_RADIUS) { local.pos.x *= C.ARENA_RADIUS / r; local.pos.z *= C.ARENA_RADIUS / r; }
 
@@ -558,12 +691,12 @@ function updateLocal(dt) {
   me.blocking = local.blocking;
   me.charging = local.charging;
   me.updateAnimation(!!moving, dt);
-  local.anim = me.dead ? 'dead' : local.charging ? 'charge' : local.blocking ? 'block' : moving ? 'run' : 'idle';
+  local.anim = me.dead ? 'dead' : local.charging || winding ? 'charge' : local.blocking ? 'block' : moving ? 'run' : 'idle';
 
   // ---- send state (20 Hz)
   if (now - local.lastSend > 1 / 20) {
     local.lastSend = now;
-    net.send({ t: 'state', p: [local.pos.x, 0, local.pos.z], yaw: local.yaw, anim: local.anim });
+    net.send({ t: 'state', p: [local.pos.x, local.pos.y, local.pos.z], yaw: local.yaw, anim: local.anim });
   }
 
   // ---- camera: over-the-shoulder orbit
@@ -596,26 +729,32 @@ function updateHud(dt) {
   const stShown = me.st;
   if (Math.abs(stShown - lastHud.st) > 0.5) { ui.st.style.width = `${stShown}%`; lastHud.st = stShown; ui.stBar.classList.toggle('low', stShown < 25); }
 
-  // charge ring
-  if (local.charging) {
-    const k = Math.min(1, (now - local.chargeStart) / C.SPELLS.heavy.chargeTime);
-    ui.charge.classList.add('on'); ui.charge.classList.toggle('ready', k >= 1);
+  // charge ring: the meteor's wind-up, or the cyclone's (purple)
+  const windup = local.charging ? [local.chargeStart, C.SPELLS.heavy.chargeTime] : local.cyclone && !local.cyclone.pulsed ? [local.cyclone.start, CYC.windup] : null;
+  if (windup) {
+    const k = Math.min(1, (now - windup[0]) / windup[1]);
+    ui.charge.classList.add('on'); ui.charge.classList.toggle('ready', k >= 1); ui.charge.classList.toggle('cyclone', !local.charging);
     ui.chargeFg.style.strokeDashoffset = 163.4 * (1 - k);
   } else ui.charge.classList.remove('on');
 
-  // ability cooldown fills
+  // ability bar: the equipped spell's name and its slot's cooldown
+  const lo = me.loadout;
+  const setName = (key, text) => { const el = ui.ab[key].querySelector('.name'); if (el.textContent !== text) el.textContent = text; };
+  setName('power', lo.power === 'cyclone' ? 'Cyclone' : spellName(lo.power));
+  setName('mobility', lo.mobility === 'skyward' ? 'Skyward' : spellName(lo.mobility));
   const cdFill = (key, until, total) => { const k = Math.max(0, Math.min(1, (until - now) / total)); ui.ab[key].querySelector('.cd').style.height = `${k * 100}%`; };
   cdFill('fast', local.cd.fast, C.SPELLS.fast.cooldown);
-  cdFill('heavy', local.cd.heavy, C.SPELLS.heavy.cooldown);
-  cdFill('tp', local.cd.tp, C.TELEPORT.cooldown);
+  cdFill('power', local.cd.power, C.SPELLBOOK[lo.power].cooldown);
+  cdFill('mobility', local.cd.mobility, C.SPELLBOOK[lo.mobility].cooldown);
   cdFill('throw', local.cd.throw, C.THROW_COOLDOWN);
   ui.ab.block.classList.toggle('active', local.blocking);
-  ui.ab.heavy.classList.toggle('active', local.charging);
-  ui.ab.block.classList.toggle('disabled', me.st < 3);
+  ui.ab.power.classList.toggle('active', local.charging || !!local.cyclone);
+  ui.ab.mobility.classList.toggle('active', !!local.flight);
+  ui.ab.block.classList.toggle('disabled', me.st < 3 || !!local.flight);
   ui.ab.throw.querySelector('.name').textContent = me.carrying ? 'Hurl' : 'Lift';
   ui.ab.throw.classList.toggle('active', !!me.carrying);
   ui.ab.fast.classList.toggle('disabled', !!me.carrying);
-  ui.ab.heavy.classList.toggle('disabled', !!me.carrying);
+  ui.ab.power.classList.toggle('disabled', !!me.carrying || !!local.flight);
 
   // hint
   let hint = '';
@@ -629,6 +768,7 @@ function updateHud(dt) {
   } else tkMarker.visible = false;
   const hunted = !me.dead && [...goats.values()].some(g => g.tgt === myId && (g.state === 'windup' || g.state === 'charge'));
   if (hunted) hint = 'A goat is charging you! Ward (Space) facing it, or blink away';
+  else if (local.flight) hint = 'Hold E to hover · Space to drop';
   else if (me.carrying) hint = 'F hurl · G set down';
   else if (now < local.stunUntil) hint = 'Stunned!';
   else if (tkHover) hint = 'F lift';
@@ -681,6 +821,10 @@ function frame(t) {
       w.interpolate(dt);
       const moving = w.netAnim === 'run';
       w.updateAnimation(moving, dt);
+      // a remote wizard touching down after a Skyward Flash
+      const air = w.targetPos.y > 0.3;
+      if (w.wasAir && !air && !w.dead) { effects.land([w.targetPos.x, 0, w.targetPos.z]); sfx.land([w.targetPos.x, 0.2, w.targetPos.z]); }
+      w.wasAir = air;
     }
     for (const w of players.values()) w.faceCamera(camera);
     updateHud(dt);

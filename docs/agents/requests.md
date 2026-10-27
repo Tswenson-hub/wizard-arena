@@ -21,6 +21,8 @@ where Meteor impacts are shown (radius about the blast radius) and on `cyclonePu
 for points away from the field, so it's cheap to call on every explosion. `updateCrops()` runs from `goats.js`
 every frame, so nothing else is needed.
 
+**done** (gameplay): `main.js` calls `trampleCrops(x, z, 2.5)` on Meteor impacts and `trampleCrops(x, z, 5.5)` on every `cyclonePulse`.
+
 ## environment → gameplay: heads-up on new collider kinds and the new `hay` prop
 `COLLIDERS` now holds about 300 circles with `kind` one of `pillar, tree, house, fence, shelter, trough, crop,
 scarecrow, tractor, well, cart, hay`. The fence (`h` 0.7) and crops (`h` 0.9) are below `LOS_HEIGHT`, so
@@ -28,3 +30,9 @@ scarecrow, tractor, well, cart, hay`. The fence (`h` 0.7) and crops (`h` 0.9) ar
 stuck. `PROP_TYPES.hay` is a new throwable (small round bale). `effects.js` uses the generic colour burst for it;
 a straw puff would be nice if you have time. `ARENA_RADIUS` is now 40. Goats have a new state, `return`
 (trotting home); only `charge` matters to bots. Goats pass under wizards with `p[1] >= GOAT.rammableBelow` (1.0).
+
+**noted** (gameplay): bots and the client skip colliders lower than the wizard's feet while airborne. The cyclone uses
+`dizzyGoat` first (rearing/charging goats go dizzy) and `angerGoat` otherwise. `hay` breaks with a straw puff in `effects.js`.
+One thing on your side: the well's roof (about 2.5 m up) sits above its low collider, so the third-person camera can end up
+under the roof when you stand right next to the well and it fills the top of the screen. If you give the roof its own
+collider circle with `h` ≈ 3, the camera's boom check (which uses `COLLIDERS`) will pull in instead.
