@@ -46,7 +46,13 @@ export const GOAT = {
 // ------------------------------------------------------------ farmhouse
 // The Meshy farmhouse (models/farmhouse.glb), front door facing the courtyard.
 export const FARMHOUSE = { x: 0, z: 26, height: 11, yaw: Math.PI };
-const HOUSE_BLOCKS = [[-3.3, 23.4], [0, 23.0], [3.3, 23.4], [-3.4, 27.8], [0, 28.2], [3.4, 27.8]];
+// Footprint as circles [dx, dz, r] from the house centre, fitted to the model's walls at this yaw
+// (body x -4..5, z 22.5..30.5 in world space, plus the porch on the -x front corner).
+const HOUSE_BLOCKS = [
+  [3.3, -1.4, 2.2], [0.5, -1.4, 2.2], [-2.3, -1.4, 2.2],
+  [3.3, 2.4, 2.2], [0.5, 2.4, 2.2], [-2.3, 2.4, 2.2],
+  [-4.1, -2.8, 1.5],
+];
 
 // ------------------------------------------------------------ goat pen (west, +x)
 // An axis-aligned fenced rectangle. The gate is a gap in the courtyard-facing side (x = x0).
@@ -171,7 +177,7 @@ const along = (o, len, n, r, h, kind) => Array.from({ length: n }, (_, i) => {
 export const COLLIDERS = [
   ...PILLARS.map(p => ({ x: p.x, z: p.z, r: p.r, h: p.h, kind: 'pillar' })),
   ...TREES.map(t => ({ x: t.x, z: t.z, r: t.r, h: 6, kind: 'tree' })),
-  ...HOUSE_BLOCKS.map(([x, z]) => ({ x: FARMHOUSE.x + x, z: FARMHOUSE.z - 26 + z, r: 2.55, h: 9, kind: 'house' })),
+  ...HOUSE_BLOCKS.map(([dx, dz, r]) => ({ x: FARMHOUSE.x + dx, z: FARMHOUSE.z + dz, r, h: 9, kind: 'house' })),
   ...FENCE_POSTS.map(([x, z]) => ({ x, z, r: PEN.postR, h: PEN.postH, kind: 'fence' })),
   ...along({ ...SHELTER, yaw: SHELTER.yaw + Math.PI / 2 }, SHELTER.w - 1.6, 2, 1.25, 2.4, 'shelter'),   // spread along its width
   ...along(TROUGH, TROUGH.len - 0.9, 2, 0.5, 0.75, 'trough'),
