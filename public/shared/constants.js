@@ -45,13 +45,13 @@ export const SPELLS = {
     staminaCost: 45,
     knockback: 6.5,
   },
-  prop: {                // a thrown environment object
+  prop: {                // an environment object hurled with telekinesis
     damage: 22,
     stun: 0.4,
-    speed: 17,
+    speed: 24,
     radius: 0.55,
-    life: 4.0,
-    gravity: 14,
+    life: 3.0,
+    gravity: 6,
     staminaCost: 25,
     knockback: 4,
   },
@@ -62,8 +62,45 @@ export const TELEPORT = {
   cooldown: 4.0,
 };
 
-export const PICKUP_RANGE = 2.6;
+export const PICKUP_RANGE = 2.6;      // grab the nearest prop at point-blank range, wherever you aim
 export const THROW_COOLDOWN = 0.6;
+export const SPARK_STUN_IMMUNITY = 0.6; // after a spark stun ends, further sparks don't re-stun for this long
+
+// Telekinesis: aim at a prop and lift it from range; it floats beside you until thrown.
+export const TK = {
+  range: 16,
+  aimConeDeg: 12,
+  liftTime: 0.35,
+  hold: { fwd: 1.25, side: -0.75, up: 1.75 },  // hold point relative to the caster (side < 0 = left)
+};
+
+// Where a carried prop floats for a wizard at `p` facing `yaw`.
+export function holdPoint(p, yaw) {
+  const fx = Math.sin(yaw), fz = Math.cos(yaw);       // forward
+  const rx = Math.cos(yaw), rz = -Math.sin(yaw);      // right
+  return [p[0] + fx * TK.hold.fwd + rx * TK.hold.side, p[1] + TK.hold.up, p[2] + fz * TK.hold.fwd + rz * TK.hold.side];
+}
+
+// Launch direction for a projectile of `speed` under `gravity` so it passes through `target`.
+// Straight-line travel time is close enough for the flat, fast arcs used here.
+export function ballisticDir(origin, target, speed, gravity) {
+  const dx = target[0] - origin[0], dy = target[1] - origin[1], dz = target[2] - origin[2];
+  const t = Math.hypot(dx, dy, dz) / speed;
+  const vx = dx / (t || 1), vy = dy / (t || 1) + 0.5 * gravity * t, vz = dz / (t || 1);
+  const l = Math.hypot(vx, vy, vz) || 1;
+  return [vx / l, vy / l, vz / l];
+}
+
+// Does the 2D segment a→b pass through any pillar? (pillars are taller than anything thrown at them)
+export function pillarBlocks(a, b, pad = 0) {
+  const sx = b[0] - a[0], sz = b[2] - a[2];
+  const ll = sx * sx + sz * sz || 1;
+  for (const pil of PILLARS) {
+    const k = Math.max(0, Math.min(1, ((pil.x - a[0]) * sx + (pil.z - a[2]) * sz) / ll));
+    if (Math.hypot(a[0] + sx * k - pil.x, a[2] + sz * k - pil.z) < pil.r + pad) return pil;
+  }
+  return null;
+}
 export const PROP_RESPAWN_TIME = 18;
 
 // Prop archetypes. `r` is the collision radius, `h` the height used for the hit sphere.

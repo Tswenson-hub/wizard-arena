@@ -8,11 +8,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import * as C from './public/shared/constants.js';
+import { createBot, updateBots, botKnockback, BOT_LIMIT } from './server/bots.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
 
 const app = express();
+app.get('/healthz', (req, res) => res.type('text').send('ok'));
 app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1h' }));
 // three.js is served from node_modules so the game has no CDN dependency.
 app.use('/vendor/three', express.static(path.join(__dirname, 'node_modules', 'three'), { maxAge: '7d' }));
@@ -37,12 +39,13 @@ let nextProjId = 1;
 // ---------------------------------------------------------------- props
 C.PROP_SPAWNS.forEach(([type, x, z], i) => {
   const id = i + 1;
-  props.set(id, { id, type, x, z, state: 'idle', carrier: null, respawnAt: 0 });
+  props.set(id, { id, type, x, z, state: 'idle', carrier: null, respawnAt: 0, liftUntil: 0 });
 });
 
 function propPublic(p) {
   return { id: p.id, type: p.type, x: p.x, z: p.z, state: p.state, carrier: p.carrier };
 }
+const isHeld = (prop) => prop.state === 'lifting' || prop.state === 'carried';
 
 // ---------------------------------------------------------------- players
 function newPlayer(id, name) {
@@ -53,7 +56,7 @@ function newPlayer(id, name) {
     p: [sp[0], 0, sp[2]], yaw: 0, anim: 'idle',
     hp: C.MAX_HP, st: C.MAX_STAMINA,
     blocking: false, blockReleasedAt: -10,
-    stunUntil: 0, dead: false, respawnAt: 0,
+    stunUntil: 0, stunImmuneUntil: 0, dead: false, respawnAt: 0,
     kills: 0, deaths: 0,
     cd: { fast: 0, heavy: 0, tp: 0, throw: 0 },
     charging: false, chargeStart: 0,
@@ -71,6 +74,7 @@ function playerPublic(p) {
     blocking: p.blocking, charging: p.charging,
     stun: p.stunUntil > now(), dead: p.dead,
     carrying: p.carrying, kills: p.kills, deaths: p.deaths,
+    bot: p.bot ? p.bot.difficulty : undefined,
   };
 }
 
@@ -145,13 +149,18 @@ function applyHit(target, proj) {
       broadcast({ t: 'blockBreak', id: target.id });
     }
   } else {
-    target.stunUntil = Math.max(target.stunUntil, t + spec.stun);
+    // Sparks can't chain-stun: once a spark stun ends there's a short window where sparks only sting.
+    if (proj.kind !== 'fast' || t >= target.stunImmuneUntil) {
+      target.stunUntil = Math.max(target.stunUntil, t + spec.stun);
+      if (proj.kind === 'fast') target.stunImmuneUntil = target.stunUntil + C.SPARK_STUN_IMMUNITY;
+    }
     // Being hit cancels a heavy wind-up.
     if (target.charging) { target.charging = false; broadcast({ t: 'chargeCancel', id: target.id }); }
   }
 
   target.hp -= dmg;
   if (dmg > 0) target.lastHitBy = proj.owner;
+  if (target.bot) botKnockback(target, norm3([proj.v[0], 0, proj.v[2]]), blocked ? spec.knockback * 0.3 : spec.knockback);
 
   broadcast({
     t: 'hit', target: target.id, attacker: proj.owner, kind: proj.kind, dmg, blocked,
@@ -189,8 +198,9 @@ function dropProp(p, destroy) {
   if (destroy) {
     breakProp(prop, [p.p[0], 1, p.p[2]]);
   } else {
+    const hp = C.holdPoint(p.p, p.yaw);
     prop.state = 'idle';
-    prop.x = p.p[0]; prop.z = p.p[2];
+    prop.x = clamp(hp[0], -C.ARENA_RADIUS, C.ARENA_RADIUS); prop.z = clamp(hp[2], -C.ARENA_RADIUS, C.ARENA_RADIUS);
     broadcast({ t: 'prop', prop: propPublic(prop) });
   }
 }
@@ -205,6 +215,7 @@ function breakProp(prop, at) {
 // ---------------------------------------------------------------- simulation
 function simulate(dt) {
   const t = now();
+  updateBots(dt, world);
 
   for (const p of players.values()) {
     if (p.dead) {
@@ -254,10 +265,24 @@ function simulate(dt) {
     }
     if (done) continue;
 
+    // a prop held by telekinesis shields its holder (it takes the hit and shatters)
+    for (const pl of players.values()) {
+      if (pl.dead || !pl.carrying || pl.id === proj.owner) continue;
+      const prop = props.get(pl.carrying);
+      if (!prop || prop.state !== 'carried') continue;
+      const hp = C.holdPoint(pl.p, pl.yaw);
+      if (Math.hypot(proj.p[0] - hp[0], proj.p[1] - hp[1], proj.p[2] - hp[2]) < C.PROP_TYPES[prop.type].r + proj.radius) {
+        pl.carrying = null;
+        breakProp(prop, hp);
+        endProjectile(proj, true, { surface: 'prop' });
+        done = true; break;
+      }
+    }
+    if (done) continue;
+
     // players
     for (const pl of players.values()) {
       if (pl.dead || pl.id === proj.owner) continue;
-      // Thrown props can't hurt you until they've left the thrower's hands a moment
       const c = [pl.p[0], pl.p[1] + C.HIT_CENTER_Y, pl.p[2]];
       const d = Math.hypot(proj.p[0] - c[0], proj.p[1] - c[1], proj.p[2] - c[2]);
       if (d < C.HIT_RADIUS + proj.radius) {
@@ -281,8 +306,12 @@ function simulate(dt) {
     }
   }
 
-  // prop respawns
+  // prop respawns / lifts finishing
   for (const prop of props.values()) {
+    if (prop.state === 'lifting' && t >= prop.liftUntil) {
+      prop.state = 'carried';
+      broadcast({ t: 'prop', prop: propPublic(prop) });
+    }
     if (prop.state === 'broken' && t >= prop.respawnAt) {
       const occupied = [...players.values()].some(pl => !pl.dead && dist2D(pl.p, [prop.x, 0, prop.z]) < 1.5);
       if (occupied) { prop.respawnAt = t + 2; continue; }
@@ -369,15 +398,9 @@ function handle(p, msg) {
     }
     case 'pickup': {
       if (!canAct(p) || p.carrying || p.charging || p.blocking) break;
-      // nearest idle prop in range
-      let best = null, bd = C.PICKUP_RANGE;
-      for (const prop of props.values()) {
-        if (prop.state !== 'idle') continue;
-        const d = dist2D(p.p, [prop.x, 0, prop.z]);
-        if (d < bd) { bd = d; best = prop; }
-      }
+      const best = tkTarget(p, msg.aimOrigin, msg.aimDir);
       if (!best) break;
-      best.state = 'carried'; best.carrier = p.id;
+      best.state = 'lifting'; best.carrier = p.id; best.liftUntil = t + C.TK.liftTime;
       p.carrying = best.id;
       broadcast({ t: 'prop', prop: propPublic(best) });
       break;
@@ -386,25 +409,94 @@ function handle(p, msg) {
       if (!canAct(p) || !p.carrying) break;
       if (t < p.cd.throw) break;
       const prop = props.get(p.carrying);
+      if (prop && prop.state !== 'carried') break;   // still rising
       p.carrying = null;
       p.cd.throw = t + C.THROW_COOLDOWN;
       if (!prop) break;
       // The prop leaves the world as a standing object and becomes a projectile.
       prop.state = 'thrown'; prop.carrier = null;
       broadcast({ t: 'prop', prop: propPublic(prop) });
-      const dir = sanitizeDir(msg.dir, p);
-      dir[1] += 0.18; // a little arc
-      const origin = [p.p[0] + dir[0] * 0.8, p.p[1] + 2.1, p.p[2] + dir[2] * 0.8];
+      const origin = C.holdPoint(p.p, p.yaw);
+      const target = validVec(msg.target) && dist2D(msg.target, p.p) < 80 ? msg.target : null;
+      const dir = target ? C.ballisticDir(origin, target, C.SPELLS.prop.speed, C.SPELLS.prop.gravity) : sanitizeDir(msg.dir, p);
       const proj = spawnProjectile(p, 'prop', origin, dir, prop.type);
       proj.propId = prop.id;
       break;
     }
     case 'drop': {
       if (!p.carrying) break;
+      if (props.get(p.carrying)?.state === 'lifting') break;
       dropProp(p, false);
       break;
     }
+    case 'addBot': {
+      if (p.bot) break;
+      const n = [...players.values()].filter(q => q.bot).length;
+      if (n >= BOT_LIMIT) break;
+      addBot(['easy', 'normal', 'hard'].includes(msg.difficulty) ? msg.difficulty : 'normal');
+      break;
+    }
+    case 'removeBots': {
+      if (p.bot) break;
+      for (const q of [...players.values()]) if (q.bot) removePlayer(q.id);
+      break;
+    }
   }
+}
+
+// ---------------------------------------------------------------- bots
+// Bots are ordinary players without a socket. Their AI (server/bots.js) acts through handle(),
+// so they obey exactly the same rules and cooldowns as everyone else.
+const BOT_NAMES = ['Zaltar', 'Morgra', 'Ebonyx', 'Vexlith', 'Grimble', 'Oswin', 'Thistle', 'Pipsqueak', 'Quillon', 'Sorrow'];
+function addBot(difficulty) {
+  const id = nextId++;
+  const taken = new Set([...players.values()].map(q => q.name));
+  const name = BOT_NAMES.find(n => !taken.has(n)) || `Bot${id}`;
+  const p = newPlayer(id, name);
+  const sp = C.SPAWN_POINTS[Math.floor(Math.random() * C.SPAWN_POINTS.length)];
+  p.p = [sp[0], 0, sp[2]];
+  p.bot = createBot(difficulty);
+  players.set(id, p);
+  broadcast({ t: 'joined', player: playerPublic(p) });
+  console.log(`[+] bot ${name} (${difficulty}) joined. ${players.size} online`);
+}
+
+function removePlayer(id) {
+  const p = players.get(id);
+  if (!p) return;
+  if (p.carrying) dropProp(p, false);
+  players.delete(id); sockets.delete(id);
+  broadcast({ t: 'leave', id });
+}
+
+const world = { players, props, projectiles, handle, now };
+
+const validVec = (v) => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite);
+
+// The idle prop a telekinesis cast grabs: the one closest to the aim ray within range and cone,
+// else anything at point-blank range. Pillars block the line of sight.
+function tkTarget(p, aimOrigin, aimDir) {
+  const chest = [p.p[0], p.p[1] + 1.3, p.p[2]];
+  const o = validVec(aimOrigin) && dist2D(aimOrigin, p.p) < 6 ? aimOrigin : chest;
+  const dir = validVec(aimDir) && len3(aimDir) > 0.01 ? norm3(aimDir) : [Math.sin(p.yaw), 0, Math.cos(p.yaw)];
+  const cone = C.TK.aimConeDeg * Math.PI / 180;
+  let best = null, bestScore = -Infinity, near = null, nd = C.PICKUP_RANGE;
+  for (const prop of props.values()) {
+    if (prop.state !== 'idle') continue;
+    const d2 = dist2D(p.p, [prop.x, 0, prop.z]);
+    if (d2 < nd) { nd = d2; near = prop; }
+    if (d2 > C.TK.range) continue;
+    const c = [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z];
+    const v = [c[0] - o[0], c[1] - o[1], c[2] - o[2]];
+    const l = len3(v) || 1;
+    const cos = (v[0] * dir[0] + v[1] * dir[1] + v[2] * dir[2]) / l;
+    // the cone widens by the prop's apparent size, so big or close props are easier to catch
+    if (Math.acos(clamp(cos, -1, 1)) - Math.atan2(C.PROP_TYPES[prop.type].r, l) > cone) continue;
+    if (C.pillarBlocks(p.p, [prop.x, 0, prop.z], 0.1)) continue;
+    const score = cos - l * 0.002;
+    if (score > bestScore) { bestScore = score; best = prop; }
+  }
+  return best || near;
 }
 
 function sanitizeDir(d, p) {
@@ -428,6 +520,8 @@ wss.on('connection', (ws) => {
     if (!msg || typeof msg.t !== 'string') return;
 
     if (id === null) {
+      // `node bot.js` manages bots without entering the arena itself
+      if (msg.t === 'addBot' || msg.t === 'removeBots') { handle({ bot: null }, msg); return; }
       if (msg.t !== 'join') return;
       id = nextId++;
       const name = String(msg.name || 'Wizard').replace(/[^\w \-'!?.]/g, '').trim().slice(0, C.MAX_NAME_LEN) || `Wizard${id}`;
@@ -450,10 +544,9 @@ wss.on('connection', (ws) => {
 
   ws.on('close', () => {
     if (id === null) return;
-    const p = players.get(id);
-    if (p?.carrying) dropProp(p, false);
-    players.delete(id); sockets.delete(id);
-    broadcast({ t: 'leave', id });
+    removePlayer(id);
+    // Nobody left to practise against the bots: clear them out.
+    if (![...players.values()].some(q => !q.bot)) for (const q of [...players.values()]) removePlayer(q.id);
     console.log(`[-] #${id} left. ${players.size} online`);
   });
 });
