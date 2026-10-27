@@ -53,6 +53,17 @@ wind-ups with sparks, and use telekinesis.
 Crates, barrels, pumpkins, rocks and pots can be lifted with telekinesis and hurled (22 damage,
 shatters on impact) and are destroyed by any spell that hits them. They respawn after ~18 s.
 Spark stuns can't be chained: after one wears off, you're immune to spark stuns for 0.6 s.
+Purple potion barrels are thrown the same way and burst in a splash.
+
+### Goats
+
+Four meadow goats graze around the arena. Hit one with anything (a spark, a meteor, a hurled
+object) and it rears up for 0.7 s, then charges whoever hit it at 12.5 m/s, curving after them.
+**A goat that reaches you kills you in one hit** unless your ward faces it; a ward stops it but costs
+50 stamina, and an empty ward shatters. Charging goats smash through objects, get knocked dizzy by
+pillars and trees, and ram anyone in their way. If a goat you angered rams someone else, the kill
+is yours. Blink sideways late to dodge one. Normal and Hard bots won't shoot through goats; Easy
+bots anger them by accident.
 
 Append `?low` to the URL to disable shadows on weak GPUs.
 
@@ -70,6 +81,10 @@ public/js/net.js           WebSocket wrapper.      public/js/input.js   Keyboard
 public/js/audio.js         3D positional sound (HRTF panners, reverb, compressor) over the CC0
                            samples in public/sounds (see CREDITS.md there); synth fallback.
 public/models/wizard.glb   The Meshy wizard with all animation clips merged into one 1.4 MB file.
+public/models/*.glb        Meshy goat, potion barrel and farmhouse, shrunk for the web with
+                           tools/optimize-models.sh (the farmhouse went from 222 MB to 5.5 MB).
+public/js/goats.js         Goat visuals (procedural grazing / rearing / galloping / dizzy).
+server/goats.js            Goat state machine: graze, wander, windup, charge, ram, dizzy.
 server/bots.js             Server-side AI wizards (Easy / Normal / Hard).
 bot.js                     CLI to add or clear bots on a running server.
 ```

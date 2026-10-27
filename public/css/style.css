@@ -78,6 +78,7 @@ kbd {
 
 #hint { position: absolute; left: 50%; bottom: 120px; transform: translateX(-50%); padding: 6px 12px; border-radius: 8px; background: rgba(0,0,0,0.5); font-size: 14px; opacity: 0; transition: opacity .2s; }
 #hint.on { opacity: 1; }
+#hint.danger { background: rgba(170, 20, 35, 0.85); color: #fff; font-weight: 700; font-size: 16px; }
 #status { position: absolute; left: 24px; top: 20px; font-size: 13px; color: var(--dim); text-shadow: 0 1px 2px #000; }
 
 #deathScreen { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(60,0,10,0.35); }

@@ -4,7 +4,8 @@ import * as C from '../shared/constants.js';
 import { Net } from './net.js';
 import { Input } from './input.js';
 import { Sfx } from './audio.js';
-import { buildWorld, makePropMesh, spinners } from './world.js';
+import { buildWorld, makePropMesh, spinners, loadModels } from './world.js';
+import { GoatView } from './goats.js';
 import { Wizard, registerModel } from './wizard.js';
 import { Effects } from './effects.js';
 
@@ -47,6 +48,7 @@ const ui = {
 // ---------------------------------------------------------------- game state
 const players = new Map();   // id -> Wizard
 const props = new Map();     // id -> { data, mesh }
+const goats = new Map();     // id -> GoatView
 let me = null;               // local Wizard
 let myId = null;
 
@@ -72,16 +74,16 @@ try {
 ui.joinBtn.disabled = true;
 
 const loader = new GLTFLoader();
-loader.load('/models/wizard.glb', (gltf) => {
-  registerModel(gltf);
+const wizardLoaded = new Promise((res, rej) => loader.load('/models/wizard.glb', (gltf) => { registerModel(gltf); res(); }, (ev) => {
+  if (ev.total) ui.loadStatus.textContent = `Loading wizard… ${Math.round(ev.loaded / ev.total * 100)}%`;
+}, rej));
+Promise.all([wizardLoaded, loadModels(loader, scene)]).then(() => {
   ui.loadStatus.textContent = 'Ready. Pick a name and enter.';
   ui.joinBtn.disabled = false;
   if (!ui.name.value) ui.name.value = 'Wizard' + Math.floor(Math.random() * 900 + 100);
   ui.name.focus();
-}, (ev) => {
-  if (ev.total) ui.loadStatus.textContent = `Loading wizard… ${Math.round(ev.loaded / ev.total * 100)}%`;
 }, (err) => {
-  ui.loadStatus.textContent = 'Failed to load the wizard model: ' + (err?.message || err);
+  ui.loadStatus.textContent = 'Failed to load the models: ' + (err?.message || err);
 });
 
 ui.form.addEventListener('submit', async (e) => {
@@ -130,6 +132,7 @@ function onWelcome(msg) {
   for (const p of msg.players) addPlayer(p);
   for (const pr of msg.props) setProp(pr, true);
   for (const pj of msg.projectiles) effects.spawnProjectile(pj);
+  for (const g of msg.goats || []) goats.set(g.id, new GoatView(g, scene));
   me = players.get(myId);
   local.pos.set(me.targetPos.x, 0, me.targetPos.z);
   ui.join.classList.add('hidden');
@@ -204,7 +207,30 @@ function handleMessage(msg) {
         const w = players.get(s.id) || addPlayer(s);
         applySnapshot(w, s);
       }
+      for (const g of msg.goats || []) (goats.get(g.id) || goats.set(g.id, new GoatView(g, scene)).get(g.id)).apply(g);
       break;
+    case 'goatAngry': {
+      const g = goats.get(msg.id);
+      if (g) { g.apply({ p: [g.target.x, g.target.z], yaw: g.targetYaw, s: 'windup', tgt: msg.target }); sfx.bleat(g.group.position.clone().setY(1)); }
+      if (msg.target === myId) feed('You angered a goat! <b>Ward (Space) facing it</b> or get out of the way');
+      break;
+    }
+    case 'goatRam': {
+      const target = players.get(msg.target);
+      effects.ram(msg.p, msg.blocked);
+      sfx.goatRam(msg.p, msg.blocked);
+      if (target === me) {
+        shake(msg.blocked ? 0.5 : 1.0);
+        if (msg.blocked) { local.vel.x += msg.dir[0] * C.GOAT.blockKnockback; local.vel.z += msg.dir[2] * C.GOAT.blockKnockback; feed('Your ward stopped the goat!'); }
+      } else if (Math.hypot(msg.p[0] - local.pos.x, msg.p[2] - local.pos.z) < 12) shake(0.3);
+      if (target && msg.blocked) target.oneShot('stun', 0.45, 3.0, 0.3);
+      break;
+    }
+    case 'goatBonk': {
+      sfx.goatBonk(msg.p);
+      effects.burst(new THREE.Vector3(msg.p[0], msg.p[1], msg.p[2]), 0xffe066, 12, 3, 0.35);
+      break;
+    }
     case 'joined': {
       const w = addPlayer(msg.player);
       if (w !== me) feed(`<b>${esc(w.name)}</b> entered the arena${w.bot ? ` <span style="opacity:.6">(${w.bot} bot)</span>` : ''}`);
@@ -309,8 +335,12 @@ function handleMessage(msg) {
       w.dead = true;
       effects.death([w.group.position.x, 0, w.group.position.z]);
       sfx.death(wpos(w));
-      if (w === me) { ui.death.classList.remove('hidden'); local.charging = false; local.blocking = false; }
-      if (k && k !== w) feed(`<b>${esc(k.name)}</b> vanquished <b>${esc(w.name)}</b>`);
+      if (w === me) {
+        ui.death.querySelector('.big').textContent = msg.cause === 'goat' ? 'Rammed by a goat' : 'You were vanquished';
+        ui.death.classList.remove('hidden'); local.charging = false; local.blocking = false;
+      }
+      if (msg.cause === 'goat') feed(`<b>${esc(w.name)}</b> was rammed by a goat${k && k !== w ? ` (thanks, <b>${esc(k.name)}</b>)` : ''}`);
+      else if (k && k !== w) feed(`<b>${esc(k.name)}</b> vanquished <b>${esc(w.name)}</b>`);
       else feed(`<b>${esc(w.name)}</b> perished`);
       break;
     }
@@ -404,6 +434,7 @@ function aimPoint() {
     if (t > 4.5 && t < best) best = t;       // ignore anything between the camera and us
   };
   for (const w of players.values()) if (w !== me && !w.dead) hitSphere(tmp.v1.copy(w.group.position).setY(w.group.position.y + C.HIT_CENTER_Y), C.HIT_RADIUS + 0.3);
+  for (const g of goats.values()) hitSphere(tmp.v1.copy(g.group.position).setY(C.GOAT.hitY), C.GOAT.radius + 0.2);
   // pillars and trees as vertical cylinders (2D ray vs circle)
   const hx = camDir.x, hz = camDir.z, hl = Math.hypot(hx, hz) || 1;
   for (const c of [...C.PILLARS, ...C.TREES]) {
@@ -518,6 +549,7 @@ function updateLocal(dt) {
   for (const t of C.TREES) pushOut(t.x, t.z, t.r);
   for (const e of props.values()) if (e.data.state === 'idle') pushOut(e.data.x, e.data.z, C.PROP_TYPES[e.data.type].r * 0.8);
   for (const w of players.values()) if (w !== me && !w.dead) pushOut(w.group.position.x, w.group.position.z, pr);
+  for (const g of goats.values()) if (g.state !== 'charge') pushOut(g.group.position.x, g.group.position.z, C.GOAT.radius);
   const r = Math.hypot(local.pos.x, local.pos.z);
   if (r > C.ARENA_RADIUS) { local.pos.x *= C.ARENA_RADIUS / r; local.pos.z *= C.ARENA_RADIUS / r; }
 
@@ -596,10 +628,12 @@ function updateHud(dt) {
     tkMarker.scale.setScalar(spec.r + 0.3 + Math.sin(now * 6) * 0.04);
     tkMarker.rotation.y += dt * 1.5;
   } else tkMarker.visible = false;
-  if (me.carrying) hint = 'F hurl · G set down';
+  const hunted = !me.dead && [...goats.values()].some(g => g.tgt === myId && (g.state === 'windup' || g.state === 'charge'));
+  if (hunted) hint = 'A goat is charging you! Ward (Space) facing it, or blink away';
+  else if (me.carrying) hint = 'F hurl · G set down';
   else if (now < local.stunUntil) hint = 'Stunned!';
   else if (tkHover) hint = 'F lift';
-  ui.hint.textContent = hint; ui.hint.classList.toggle('on', !!hint);
+  ui.hint.textContent = hint; ui.hint.classList.toggle('on', !!hint); ui.hint.classList.toggle('danger', hunted);
 
   if (vignetteT > 0) { vignetteT -= dt; if (vignetteT <= 0) ui.vignette.classList.remove('hit'); }
 
@@ -661,6 +695,8 @@ function frame(t) {
     camera.lookAt(0, 2, 0);
   }
 
+  for (const g of goats.values()) g.update(dt, effects, sfx);
+
   // prop pop-in + spinning crystals
   for (const e of props.values()) {
     if (e.spawnT !== undefined) { e.spawnT += dt; const s = Math.min(1, e.spawnT * 4); e.mesh.scale.setScalar(s); if (s >= 1) delete e.spawnT; }
@@ -674,4 +710,4 @@ function frame(t) {
 requestAnimationFrame(frame);
 
 // Debug handle (used by the automated smoke test; harmless in production).
-window.__wa = { input, net, local, players, props, effects, scene, camera, sfx };
+window.__wa = { input, net, local, players, props, goats, effects, scene, camera, sfx };

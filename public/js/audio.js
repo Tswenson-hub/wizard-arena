@@ -160,6 +160,40 @@ export class Sfx {
   footstep(pos, vol = 0.35) { this.play('footstep', { pos, vol, jitter: 0.12 }); }
   hurt() { this.play('hurt', { vol: 0.5 }); }
   click() { this.play('ui_click', { vol: 0.5, jitter: 0.02 }); }
+  hoof(pos) { this.play('footstep', { pos, vol: 0.7, rate: 0.75, jitter: 0.15 }); }
+  goatRam(pos, blocked) {
+    this.play(blocked ? 'ward_block' : 'impact_big', { pos, vol: 1.1, rate: blocked ? 0.7 : 1 });
+    if (!blocked) this.play('hit_body', { pos, vol: 1, rate: 0.8 });
+  }
+  goatBonk(pos) { this.play('impact_small', { pos, vol: 1, rate: 0.55 }); }
+
+  // Synthesized goat bleat: a buzzy tone with a fast wobble, shaped by a nasal formant filter.
+  bleat(pos, angry = true) {
+    if (!this.ctx) return;
+    const ctx = this.ctx, t = ctx.currentTime, dur = angry ? 0.75 : 0.55;
+    const base = (angry ? 330 : 400) * (0.92 + Math.random() * 0.16);
+    const o = ctx.createOscillator(); o.type = 'sawtooth';
+    o.frequency.setValueAtTime(base, t);
+    o.frequency.linearRampToValueAtTime(base * 1.12, t + dur * 0.3);
+    o.frequency.linearRampToValueAtTime(base * 0.85, t + dur);
+    const lfo = ctx.createOscillator(); lfo.frequency.value = 26;
+    const lfoGain = ctx.createGain(); lfoGain.gain.value = base * 0.06;
+    lfo.connect(lfoGain).connect(o.frequency);
+    const amp = ctx.createGain();
+    const trem = ctx.createGain(); trem.gain.value = 0.35;     // the "eh-eh-eh" flutter
+    lfo.connect(trem).connect(amp.gain);
+    const f1 = ctx.createBiquadFilter(); f1.type = 'bandpass'; f1.frequency.value = 1100; f1.Q.value = 3;
+    const f2 = ctx.createBiquadFilter(); f2.type = 'bandpass'; f2.frequency.value = 2500; f2.Q.value = 5;
+    const env = ctx.createGain();
+    env.gain.setValueAtTime(0.0001, t);
+    env.gain.exponentialRampToValueAtTime(0.7, t + 0.04);
+    env.gain.setValueAtTime(0.7, t + dur * 0.6);
+    env.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(amp); amp.connect(f1); amp.connect(f2);
+    f1.connect(env); f2.connect(env);
+    env.connect(this.panner(pos)).connect(this.sfxBus);
+    o.start(t); lfo.start(t); o.stop(t + dur + 0.05); lfo.stop(t + dur + 0.05);
+  }
   stun() { this.tone({ type: 'sine', f0: 1200, f1: 900, dur: 0.3, vol: 0.18 }); }
 
   // ---------------------------------------------------------------- synthesized fallbacks

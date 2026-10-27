@@ -147,6 +147,42 @@ export function buildWorld(scene) {
 
 export const spinners = [];
 
+// ------------------------------------------------------------ Meshy models
+// Optimised copies of the Meshy exports (see tools/optimize-models.sh). Each is a single textured
+// mesh centred on the origin, about one unit tall, facing +z.
+export const models = { goat: null, potion: null, farmhouse: null };
+
+// Scale a model to `height` metres with its base on y = 0.
+function fitModel(gltf, height) {
+  const root = gltf.scene;
+  root.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  const box = new THREE.Box3().setFromObject(root);
+  const k = height / (box.max.y - box.min.y);
+  root.scale.setScalar(k);
+  root.position.y = -box.min.y * k;
+  const holder = new THREE.Group();
+  holder.add(root);
+  return holder;
+}
+
+export function loadModels(loader, scene) {
+  const load = (url) => new Promise((res, rej) => loader.load(url, res, undefined, rej));
+  return Promise.all([
+    load('/models/goat.glb').then(g => { models.goat = fitModel(g, 1.25); }),
+    load('/models/potion.glb').then(g => { models.potion = fitModel(g, C.PROP_TYPES.potion.h); }),
+    load('/models/farmhouse.glb').then(g => {
+      // The wizard's farmhouse sits on the hillside just past the rim, front door facing the arena.
+      const house = fitModel(g, 17);
+      const x = 9, z = 48;
+      house.position.set(x, groundHeight(x * 0.86, z * 0.86) - 0.4, z);
+      house.rotation.y = Math.atan2(-x, -z);
+      house.traverse(o => { if (o.isMesh) o.receiveShadow = false; });
+      scene.add(house);
+      models.farmhouse = house;
+    }),
+  ]);
+}
+
 // ------------------------------------------------------------ props
 const propMats = {};
 function mat(color) { return propMats[color] ??= flat(color); }
@@ -184,6 +220,11 @@ export function makePropMesh(type) {
     case 'rock': {
       m = new THREE.Mesh(jitterGeometry(new THREE.DodecahedronGeometry(0.6, 0), 0.2), mat(spec.color));
       m.position.y = 0.5; m.rotation.set(0.3, 0.6, 0.1); g.add(m);
+      break;
+    }
+    case 'potion': {
+      g.add(models.potion ? models.potion.clone() : new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, spec.h, 8), mat(spec.color)));
+      if (!models.potion) g.children[0].position.y = spec.h / 2;
       break;
     }
     case 'pot': {

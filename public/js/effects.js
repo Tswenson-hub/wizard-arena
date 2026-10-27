@@ -96,6 +96,25 @@ export class Effects {
     this.particles.push({ mesh: flash, vel: new THREE.Vector3(), life: 0, maxLife: 0.22, grav: 0, grow: size * 6 });
   }
 
+  // Kicked-up dirt at `pos` (a goat's hooves).
+  dust(pos, count = 2) {
+    for (let i = 0; i < count; i++) {
+      const m = new THREE.Mesh(this.particleGeo, this.mat(0xb59a72, { opacity: 0.8 }));
+      m.position.set(pos.x + (Math.random() - 0.5) * 0.6, 0.1, pos.z + (Math.random() - 0.5) * 0.6);
+      m.scale.setScalar(0.6 + Math.random() * 0.9);
+      this.scene.add(m);
+      this.particles.push({ mesh: m, vel: new THREE.Vector3((Math.random() - 0.5) * 1.5, 1 + Math.random() * 1.5, (Math.random() - 0.5) * 1.5), life: 0, maxLife: 0.5 + Math.random() * 0.3, grav: 3, shrink: true });
+    }
+  }
+
+  // A goat ram: a big shockwave of dirt and stars.
+  ram(pos, blocked) {
+    const p = new THREE.Vector3(pos[0], pos[1], pos[2]);
+    if (blocked) this.blockFlash(p);
+    else { this.burst(p, 0xffe066, 24, 6, 0.5); this.burst(p, 0xb59a72, 20, 5, 0.6); }
+    for (let i = 0; i < 10; i++) this.dust(p, 2);
+  }
+
   blockFlash(pos) {
     const flash = new THREE.Mesh(new THREE.IcosahedronGeometry(1.3, 1), this.mat(0x9ae4ff, { opacity: 0.6, wireframe: true }));
     flash.position.copy(pos);
@@ -133,6 +152,7 @@ export class Effects {
       });
     }
     this.burst(pos, C.PROP_TYPES[type].color, 8, 2.5, 0.3);
+    if (type === 'potion') { this.burst(pos, 0x5cf0b0, 22, 5, 0.45); this.burst(pos, 0xd98cff, 14, 3.5, 0.4, -1); }   // potion splash
   }
 
   // ---------------------------------------------------------------- update
