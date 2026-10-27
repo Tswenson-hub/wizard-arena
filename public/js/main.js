@@ -498,7 +498,7 @@ function updateLocal(dt) {
   if (local.charging) speed = C.CHARGE_MOVE_SPEED;
   else if (local.blocking) speed = C.BLOCK_MOVE_SPEED;
   const fwd = tmp.v1.set(Math.sin(local.yaw), 0, Math.cos(local.yaw));
-  const right = tmp.v2.set(Math.cos(local.yaw), 0, -Math.sin(local.yaw));
+  const right = tmp.v2.set(-Math.cos(local.yaw), 0, Math.sin(local.yaw));   // forward × up
   const wish = tmp.v3.set(0, 0, 0);
   if (moving) { wish.addScaledVector(fwd, mz).addScaledVector(right, mx).normalize().multiplyScalar(speed); }
   // accelerate toward wish velocity; knockback lives in local.vel too
