@@ -69,7 +69,7 @@ doesn't reset them. The scoreboard shows everyone's spells.
 ### The farmstead
 
 **+z is north.** The wizard's farmhouse stands on the north side of the yard; facing it, the goat pen
-is on your left (east) and the crop field on your right (west).
+is on your left and the crop field on your right.
 
 - **Courtyard**: open ground in front of the house around a stone well, with hay stacks, a hand cart
   and four rune pillars as cover. The south meadow is open for long-range duels.
