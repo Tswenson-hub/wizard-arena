@@ -529,6 +529,7 @@ export class Wizard {
 
   updateCarry(dt) {
     const c = this.carry;
+    if (!c && this.beamTo && !this.dead) { this.drawBeam(this.beamTo); return; }   // a held goat
     if (!c || this.dead) { this.beam.visible = false; if (c) c.holder.visible = !this.dead; return; }
     const now = performance.now() / 1000;
     c.t = Math.min(1, c.t + dt / C.TK.liftTime);
@@ -544,9 +545,13 @@ export class Wizard {
     c.shell.rotation.y += dt * 2; c.shell.rotation.x += dt * 1.3;
     c.shell.material.opacity = 0.25 + Math.sin(now * 6) * 0.08;
 
-    // beam: motes along a curve from the staff hand to the prop, drifting outward
+    this.drawBeam(c.holder.position);
+  }
+
+  // Telekinesis beam: motes along a curve from the staff hand to `to`, drifting outward.
+  drawBeam(to) {
+    const now = performance.now() / 1000;
     const hand = new THREE.Vector3(); this.hand.getWorldPosition(hand);
-    const to = c.holder.position;
     const mid = hand.clone().lerp(to, 0.5); mid.y += 0.35;
     this.beam.visible = true;
     this.beam.children.forEach((m, i) => {

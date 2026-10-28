@@ -264,6 +264,7 @@ function applySnapshot(w, s) {
     }
   }
   if (s.carrying !== w.carrying) startCarry(w, s.carrying);
+  w.carryingGoat = s.carryingGoat || null;
 }
 
 // Show wizard `w` holding prop `id` (or nothing). A prop still rising lifts from where it stood.
@@ -517,6 +518,16 @@ function handleMessage(msg) {
       removeDecoy(msg.id);
       break;
     }
+    case 'goatLift': {
+      const w = players.get(msg.id);
+      if (w) { w.carryingGoat = msg.goat; sfx.pickup(wpos(w)); }
+      break;
+    }
+    case 'goatThrow': {
+      const w = players.get(msg.id);
+      if (w) { w.carryingGoat = null; w.oneShot('cast_fast', 0.4, 2.6, 0.3); sfx.throw_(msg.p); }
+      break;
+    }
     case 'veil': {
       const w = players.get(msg.id);
       if (!w) break;
@@ -631,7 +642,8 @@ function handleMessage(msg) {
         local.slowUntil = local.rootUntil = local.silenceUntil = local.frozenUntil = 0; local.frostAim = false;
       }
       if (msg.killer === myId && msg.id !== myId) sfx.killSting();   // our kill (goat kills credited to us too)
-      if (msg.cause === 'goat') feed(`<b>${esc(w.name)}</b> was rammed by a goat${k && k !== w ? ` (thanks, <b>${esc(k.name)}</b>)` : ''}`);
+      if (msg.cause === 'goated' && k) feed(`<b>${esc(k.name)}</b> goated <b>${esc(w.name)}</b>`);
+      else if (msg.cause === 'goat') feed(`<b>${esc(w.name)}</b> was rammed by a goat${k && k !== w ? ` (thanks, <b>${esc(k.name)}</b>)` : ''}`);
       else if (k && k !== w) feed(`<b>${esc(k.name)}</b> vanquished <b>${esc(w.name)}</b>`);
       else feed(`<b>${esc(w.name)}</b> perished`);
       break;
@@ -769,8 +781,24 @@ function tkTarget() {
     const score = cos - l * 0.002;
     if (score > bestScore) { bestScore = score; best = e; }
   }
+  // liftable goats compete with props (server: tkTarget). A goat comes back as { goat }.
+  for (const g of goats.values()) {
+    if (!LIFTABLE_GOAT.has(g.state)) continue;
+    const gp = g.group.position;
+    const d2 = Math.hypot(gp.x - p[0], gp.z - p[2]);
+    if (d2 < nd) { nd = d2; near = { goat: g }; }
+    if (d2 > C.TK.range) continue;
+    const vx = gp.x - o.x, vy = gp.y + C.GOAT.hitY - o.y, vz = gp.z - o.z;
+    const l = Math.hypot(vx, vy, vz) || 1;
+    const cos = (vx * camDir.x + vy * camDir.y + vz * camDir.z) / l;
+    if (Math.acos(THREE.MathUtils.clamp(cos, -1, 1)) - Math.atan2(C.GOAT.radius, l) > cone) continue;
+    if (C.pillarBlocks(p, [gp.x, 0, gp.z], 0.1)) continue;
+    const score = cos - l * 0.002;
+    if (score > bestScore) { bestScore = score; best = { goat: g }; }
+  }
   return best || near;
 }
+const LIFTABLE_GOAT = new Set(['graze', 'wander', 'return', 'recover', 'dizzy', 'stumble']);
 
 // What the crosshair is pointing at (wizard, pillar, tree or ground), for aiming hurled props.
 function aimPoint() {
@@ -788,7 +816,7 @@ function aimPoint() {
   };
   for (const w of players.values()) if (w !== me && !w.dead) hitSphere(tmp.v1.copy(w.group.position).setY(w.group.position.y + C.HIT_CENTER_Y), C.HIT_RADIUS + 0.3);
   for (const d of decoys.values()) if (d.owner !== myId) hitSphere(tmp.v1.copy(d.wiz.group.position).setY(C.HIT_CENTER_Y), C.HIT_RADIUS + 0.3);
-  for (const g of goats.values()) hitSphere(tmp.v1.copy(g.group.position).setY(C.GOAT.hitY), C.GOAT.radius + 0.2);
+  for (const g of goats.values()) if (!(g.state === 'held' && me.carryingGoat === g.id)) hitSphere(tmp.v1.copy(g.group.position).setY(g.group.position.y + C.GOAT.hitY), C.GOAT.radius + 0.2);
   // pillars and trees as vertical cylinders (2D ray vs circle)
   const hx = camDir.x, hz = camDir.z, hl = Math.hypot(hx, hz) || 1;
   for (const c of C.COLLIDERS) {
@@ -894,7 +922,8 @@ function updateLocal(dt) {
     const startReload = () => { local.ammo = 0; local.reloadUntil = now + MAG.reload; };
     if (!local.reloadUntil && local.ammo > 0 && local.ammo < MAG.magazine && now - local.lastShot > MAG.idleReload) startReload();
     if (input.justPressed('KeyR') && !local.reloadUntil && local.ammo < MAG.magazine) { startReload(); net.send({ t: 'reload' }); }
-    if (input.lmbPressed && !local.blocking && !busy && !me.carrying && now >= local.cd.fast && !local.reloadUntil && local.ammo > 0) {
+    const holding = !!(me.carrying || me.carryingGoat);
+    if (input.lmbPressed && !local.blocking && !busy && !holding && now >= local.cd.fast && !local.reloadUntil && local.ammo > 0) {
       computeAim();
       local.ammo--; local.lastShot = now;
       if (!local.ammo) local.reloadUntil = now + MAG.reload;
@@ -907,7 +936,7 @@ function updateLocal(dt) {
       }
     }
     // power slot
-    if (input.rmbPressed && !local.blocking && !busy && (!airborne || SPELL[K.power].airCast) && !me.carrying && now >= local.cd.power) {
+    if (input.rmbPressed && !local.blocking && !busy && (!airborne || SPELL[K.power].airCast) && !holding && now >= local.cd.power) {
       if (K.power === 'meteor') {
         // wind-up: press to start, fires automatically when fully charged
         local.charging = true; local.chargeStart = now; local.chargeSent = false;
@@ -925,7 +954,7 @@ function updateLocal(dt) {
       }
     }
     if (local.frostAim) {
-      if (busy || me.carrying || local.blocking || K.power !== 'frostfall') local.frostAim = false;   // fine from the air
+      if (busy || holding || local.blocking || K.power !== 'frostfall') local.frostAim = false;   // fine from the air
       else if (!input.rmb) {
         local.frostAim = false;
         local.cd.power = now + FROST.cooldown;
@@ -977,23 +1006,30 @@ function updateLocal(dt) {
     // utility: lift / hurl / set down; with Trapped Relic, holding F on an object curses it instead
     const relic = K.utility === 'trapped_relic';
     if (input.justPressed('KeyF')) {
-      if (me.carrying) {
+      if (me.carryingGoat) {
+        // hurl the goat: like a prop, toward what the crosshair is on
+        if (now >= local.cd.throw) {
+          computeAim();
+          local.cd.throw = now + C.THROW_COOLDOWN;
+          net.send({ t: 'throw', dir: aimDir.toArray(), target: aimPoint() });
+        }
+      } else if (me.carrying) {
         if (now >= local.cd.throw && props.get(me.carrying)?.data.state === 'carried') {
           computeAim();
           local.cd.throw = now + C.THROW_COOLDOWN;
           net.send({ t: 'throw', dir: aimDir.toArray(), target: aimPoint() });
         }
       } else if (!busy && !local.blocking && tkHover) {
-        if (relic) local.fHold = { start: now };
+        if (relic && !tkHover.goat) local.fHold = { start: now };   // goats can't be cursed: they just lift
         else sendPickup();
       }
     }
     if (local.fHold) {
-      if (me.carrying || busy || local.blocking || !tkHover) local.fHold = null;
+      if (holding || busy || local.blocking || !tkHover || tkHover.goat) local.fHold = null;
       else if (now - local.fHold.start >= RELIC.hold) { local.fHold = null; camera.getWorldDirection(camDir); net.send({ t: 'curse', aimOrigin: camera.position.toArray(), aimDir: camDir.toArray() }); }
       else if (!input.down('KeyF')) { local.fHold = null; sendPickup(); }
     }
-    if (input.justPressed('KeyG') && me.carrying) net.send({ t: 'drop' });
+    if (input.justPressed('KeyG') && holding) net.send({ t: 'drop' });
   } else {
     if (local.blocking) { local.blocking = false; net.send({ t: 'block', on: false }); }
     local.fHold = null; local.frostAim = false;
@@ -1048,7 +1084,7 @@ function updateLocal(dt) {
   for (const c of C.COLLIDERS) if (y < c.h) pushOut(c.x, c.z, c.r);
   if (y < 1) for (const e of props.values()) if (e.data.state === 'idle') pushOut(e.data.x, e.data.z, C.PROP_TYPES[e.data.type].r * 0.8);
   for (const w of players.values()) if (w !== me && !w.dead && Math.abs(w.group.position.y - y) < C.PLAYER_HEIGHT) pushOut(w.group.position.x, w.group.position.z, pr);
-  if (y < 1) for (const g of goats.values()) if (g.state !== 'charge') pushOut(g.group.position.x, g.group.position.z, C.GOAT.radius);
+  if (y < 1) for (const g of goats.values()) if (g.state !== 'charge' && g.group.position.y < 0.5) pushOut(g.group.position.x, g.group.position.z, C.GOAT.radius);
   if (y < 1) for (const d of decoys.values()) if (d.owner !== myId) pushOut(d.wiz.group.position.x, d.wiz.group.position.z, pr);
   const r = Math.hypot(local.pos.x, local.pos.z);
   if (r > C.ARENA_RADIUS) { local.pos.x *= C.ARENA_RADIUS / r; local.pos.z *= C.ARENA_RADIUS / r; }
@@ -1116,7 +1152,8 @@ function updateHud(dt) {
   setName('power', shortName(K.power));
   setName('mobility', shortName(K.mobility));
   setName('block', shortName(K.guard));
-  setName('throw', me.carrying ? 'Hurl' : shortName(K.utility));
+  const holdingNow = !!(me.carrying || me.carryingGoat);
+  setName('throw', holdingNow ? 'Hurl' : shortName(K.utility));
   const cdFill = (key, until, total) => { const k = total ? Math.max(0, Math.min(1, (until - now) / total)) : 0; ui.ab[key].querySelector('.cd').style.height = `${k * 100}%`; };
   // primary: ammo pips, and the reload sweeping down over the slot
   const MAG = C.primaryMag(K.primary);
@@ -1131,10 +1168,10 @@ function updateHud(dt) {
   ui.ab.power.classList.toggle('active', local.charging || !!local.cyclone || !!local.lash || local.frostAim);
   ui.ab.mobility.classList.toggle('active', !!local.flight);
   ui.ab.block.classList.toggle('disabled', bound || (K.guard === 'ward' && me.st < 3) || !!local.flight);
-  ui.ab.throw.classList.toggle('active', !!me.carrying || !!local.fHold);
+  ui.ab.throw.classList.toggle('active', holdingNow || !!local.fHold);
   ui.ab.throw.classList.toggle('disabled', bound);
-  ui.ab.fast.classList.toggle('disabled', !!me.carrying || bound);
-  ui.ab.power.classList.toggle('disabled', !!me.carrying || (!!local.flight && !SPELL[K.power].airCast) || bound);
+  ui.ab.fast.classList.toggle('disabled', holdingNow || bound);
+  ui.ab.power.classList.toggle('disabled', holdingNow || (!!local.flight && !SPELL[K.power].airCast) || bound);
   ui.ab.mobility.classList.toggle('disabled', bound || (now < local.rootUntil && K.mobility !== 'skyward'));
 
   // our cursed prop: a faint red glyph above it
@@ -1147,8 +1184,14 @@ function updateHud(dt) {
 
   // hint
   let hint = '';
-  tkHover = !me.dead && !me.carrying ? tkTarget() : null;
-  if (tkHover) {
+  tkHover = !me.dead && !holdingNow ? tkTarget() : null;
+  if (tkHover?.goat) {
+    const gp = tkHover.goat.group.position;
+    tkMarker.visible = true;
+    tkMarker.position.set(gp.x, gp.y + C.GOAT.hitY, gp.z);
+    tkMarker.scale.setScalar(C.GOAT.radius + 0.45 + Math.sin(now * 6) * 0.04);
+    tkMarker.rotation.y += dt * 1.5;
+  } else if (tkHover) {
     const spec = C.PROP_TYPES[tkHover.data.type];
     tkMarker.visible = true;
     tkMarker.position.set(tkHover.data.x, spec.h * 0.5, tkHover.data.z);
@@ -1165,9 +1208,11 @@ function updateHud(dt) {
   else if (local.frostAim) hint = 'Release RMB to drop the ice';
   else if (rooted) hint = 'Recovering…';
   else if (local.flight) hint = 'Hold E to hover · Space to drop';
+  else if (me.carryingGoat) hint = 'F hurl goat · G set down';
   else if (me.carrying) hint = 'F hurl · G set down';
   else if (now < local.stunUntil) hint = 'Stunned!';
   else if (local.fHold) hint = 'Cursing…';
+  else if (tkHover?.goat) hint = 'F lift goat';
   else if (tkHover) hint = K.utility === 'trapped_relic' ? (tkHover.data.id === cursedProp ? 'Your relic · F lift (removes the curse)' : 'F lift · hold F to curse') : 'F lift';
   else if (slowed) hint = 'Slowed by frost';
   else if (local.reloadUntil && now - local.lastShot < 1) hint = 'Reloading…';
@@ -1233,6 +1278,11 @@ function frame(t) {
       d.wiz.interpolate(dt);
       d.wiz.updateAnimation(true, dt);
       d.wiz.faceCamera(camera);
+    }
+    // telekinesis beam to a held goat (goats.js draws the goat itself)
+    for (const w of players.values()) {
+      const g = w.carryingGoat && goats.get(w.carryingGoat);
+      w.beamTo = g && g.state === 'held' ? g.group.position.clone().setY(g.group.position.y + C.GOAT.hitY) : null;
     }
     updateSmokeHiding(dt);
     for (const w of players.values()) w.faceCamera(camera);

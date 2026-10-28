@@ -260,7 +260,12 @@ function think(me, world, t) {
     respondGoat(me, world, g, [vx, 0, vz], tc, t, act);
   }
   for (const id of b.threats.keys()) if (typeof id === 'number' && !world.projectiles.has(id)) b.threats.delete(id);
-  for (const proj of world.projectiles.values()) {
+  // a hurled goat comes at us like a thrown prop
+  const flyingGoats = world.goats.filter(g => g.state === 'flying' && g.thrower !== me.id).map(g => ({
+    id: 'fg' + g.id, kind: 'prop', owner: g.thrower, radius: C.GOAT.radius, g: C.GOAT.throwGravity,
+    p: [g.x, (g.y || 0) + C.GOAT.hitY, g.z], v: [g.vx || 0, g.vy || 0, g.vz || 0] }));
+  for (const id of b.threats.keys()) if (typeof id === 'string' && id.startsWith('fg') && !flyingGoats.some(f => f.id === id)) b.threats.delete(id);
+  for (const proj of [...world.projectiles.values(), ...flyingGoats]) {
     if (proj.owner === me.id) continue;
     const th = threatOf(me, proj);
     if (!th || th.tc > 1.6 || th.miss > C.HIT_RADIUS + proj.radius + 0.5) continue;
@@ -357,6 +362,21 @@ function think(me, world, t) {
   if (t < b.nextThink) return;
   b.nextThink = t + cfg.think * rand(0.7, 1.3);
 
+  // ---- holding a goat: hurl it at them (it hits like a thrown prop), or set it down if there's no shot
+  if (me.carryingGoat) {
+    const g = world.goats.find(x => x.id === me.carryingGoat);
+    if (!g || g.state !== 'held' || t < me.cd.throw) return;
+    if (!b.holdSince) b.holdSince = t;
+    if (d < 18 && throwLOS(me, target)) {
+      me.yaw = yawTo(me.p, target.p);
+      const from = C.holdPoint(me.p, me.yaw);
+      b.holdSince = 0;
+      return act({ t: 'throw', dir: aimAt(me, from, target, C.GOAT.throwSpeed, C.GOAT.throwGravity, cfg) });
+    }
+    if (t - b.holdSince > 3) { b.holdSince = 0; act({ t: 'drop' }); }
+    return;
+  }
+
   // ---- holding a prop: throw when they're busy, or after a moment
   if (carried) {
     if (carried.state !== 'carried' || t < me.cd.throw) return;
@@ -385,6 +405,19 @@ function think(me, world, t) {
     if (!mine || mine.state !== 'idle' || dist2D([mine.x, 0, mine.z], target.p) > 9) {
       const prop = curseCandidate(me, target, world);
       if (prop) { b.cursing = { prop: prop.id, at: t + RELIC.hold }; b.nextCurse = t + rand(8, 14); me.yaw = yawTo(me.p, [prop.x, 0, prop.z]); return; }
+    }
+  }
+
+  // ---- telekinesis: Normal and Hard bots sometimes grab a calm goat close by to hurl at the target
+  if (cfg.goatAware && !me.carrying && d < 18 && Math.random() < cfg.tk * 0.5) {
+    const g = world.goats.find(x => ['graze', 'wander', 'return', 'recover', 'dizzy', 'stumble'].includes(x.state) && !x.holder
+      && Math.hypot(x.x - me.p[0], x.z - me.p[2]) < C.TK.range - 1 && hasLOS(me.p, [x.x, 0, x.z]));
+    if (g) {
+      const from = [me.p[0], me.p[1] + 1.3, me.p[2]];
+      const c = [g.x, (g.y || 0) + C.GOAT.hitY, g.z];
+      me.yaw = yawTo(me.p, c);
+      act({ t: 'pickup', aimOrigin: from, aimDir: [c[0] - from[0], c[1] - from[1], c[2] - from[2]] });
+      if (me.carryingGoat) return;
     }
   }
 
@@ -889,7 +922,7 @@ function moveBot(me, dt, world, t) {
   for (const c of C.COLLIDERS) if (y < c.h) pushOut(c.x, c.z, c.r);
   if (y < 1) for (const prop of world.props.values()) if (prop.state === 'idle') pushOut(prop.x, prop.z, C.PROP_TYPES[prop.type].r * 0.8);
   for (const q of world.players.values()) if (q !== me && !q.dead && Math.abs(q.p[1] - y) < C.PLAYER_HEIGHT) pushOut(q.p[0], q.p[2], pr);
-  if (y < 1) for (const g of world.goats) pushOut(g.x, g.z, C.GOAT.radius);
+  if (y < 1) for (const g of world.goats) if ((g.y || 0) < 0.5) pushOut(g.x, g.z, C.GOAT.radius);
   const r = Math.hypot(me.p[0], me.p[2]);
   if (r > C.ARENA_RADIUS) { me.p[0] *= C.ARENA_RADIUS / r; me.p[2] *= C.ARENA_RADIUS / r; }
 

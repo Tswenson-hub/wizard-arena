@@ -83,6 +83,9 @@ export const SPELLS = {
   },
 };
 
+// A goat hurled by telekinesis hits exactly like a thrown prop (Ty), it just doesn't break.
+SPELLS.goat = { ...SPELLS.prop };
+
 export const TELEPORT = {
   distance: 9,
   cooldown: 4.0,

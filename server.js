@@ -11,6 +11,9 @@ import * as C from './public/shared/constants.js';
 import { createBot, updateBots, botKnockback, botNoteRelic, botDash, BOT_LIMIT } from './server/bots.js';
 import * as Goats from './server/goats.js';
 const { createGoats, updateGoats, angerGoat, goatPublic } = Goats;
+// Throwable goats (goats.js, environment): called defensively so either side can land first
+const goatTK = typeof Goats.liftGoat === 'function' && typeof Goats.throwGoat === 'function';
+const goatById = (id) => goats.find(g => g.id === id);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -91,7 +94,7 @@ function playerPublic(p) {
     hp: Math.round(p.hp), st: Math.round(p.st),
     blocking: p.blocking, charging: p.charging,
     stun: p.stunUntil > now(), dead: p.dead,
-    carrying: p.carrying, kills: p.kills, deaths: p.deaths,
+    carrying: p.carrying, carryingGoat: p.carryingGoat || null, kills: p.kills, deaths: p.deaths,
     wizard: p.wizard, lashing: !!p.lash,
     veil: p.veilUntil > now(),
     ammo: p.ammo, reload: p.reloadUntil > now() ? +(p.reloadUntil - now()).toFixed(2) : 0,
@@ -110,6 +113,7 @@ const CYCLONE = C.SPELLBOOK.cyclone, SKY = C.SPELLBOOK.skyward, LASH = C.SPELLBO
 const MIRROR = C.SPELLBOOK.mirror_step, BULWARK = C.SPELLBOOK.glacial_bulwark, RELIC = C.SPELLBOOK.trapped_relic;
 const SKIM = C.SPELLBOOK.glacial_skim, FROST = C.SPELLBOOK.frostfall, SMOKE = C.SPELLBOOK.smoke_screen, VEIL = C.SPELLBOOK.tempest_veil;
 const isVeiled = (p) => p.veilUntil > now();
+const holding = (p) => !!(p.carrying || p.carryingGoat);   // a prop or a goat floats beside us
 
 // ---------------------------------------------------------------- wizard choice
 // A switch applies at once if the player is alive and not mid-cast, else when the cast ends or at respawn.
@@ -257,7 +261,7 @@ function applyHit(target, proj) {
     ...(!blocked && spec.bind ? { bind: spec.bind } : {}),
   });
 
-  if (target.hp <= 0 && !target.dead) killPlayer(target, attacker);
+  if (target.hp <= 0 && !target.dead) killPlayer(target, attacker, proj.kind === 'goat' ? 'goated' : null);
   return { dmg, blocked };
 }
 
@@ -275,6 +279,7 @@ function killPlayer(target, attacker, cause = null) {
   target.deaths++;
   target.respawnAt = now() + C.RESPAWN_TIME;
   if (target.carrying) dropProp(target, true);
+  if (target.carryingGoat) { const g = goatById(target.carryingGoat); target.carryingGoat = null; if (g && g.holder === target.id) Goats.releaseGoat?.(g, goatCtx); }
   if (attacker && attacker.id !== target.id) attacker.kills++;
   broadcast({ t: 'death', id: target.id, killer: attacker ? attacker.id : null, cause });
 }
@@ -337,7 +342,7 @@ function cyclonePulse(p) {
       if (dist2D(p.p, [prop.x, 0, prop.z]) < CYCLONE.radius + C.PROP_TYPES[prop.type].r) breakProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z]);
     }
     for (const g of goats) {
-      if (Math.hypot(g.x - p.p[0], g.z - p.p[2]) > CYCLONE.radius + C.GOAT.radius) continue;
+      if (g.holder === p.id || Math.hypot(g.x - p.p[0], g.z - p.p[2]) > CYCLONE.radius + C.GOAT.radius) continue;
       // A goat already rearing or charging gets spun dizzy; any other goat is now angry at the caster.
       if (!Goats.dizzyGoat?.(g, goatCtx)) angerGoat(g, p.id, goatCtx);
     }
@@ -444,7 +449,7 @@ function frostfallImpact(f) {
     if (dist2D(at, [prop.x, 0, prop.z]) < FROST.radius + C.PROP_TYPES[prop.type].r * 0.5) breakProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z]);
   }
   for (const g of goats) {
-    if (Math.hypot(g.x - f.x, g.z - f.z) > FROST.radius + C.GOAT.radius * 0.5) continue;
+    if (g.holder === f.owner || Math.hypot(g.x - f.x, g.z - f.z) > FROST.radius + C.GOAT.radius * 0.5) continue;
     // a rearing or charging goat is knocked dizzy; any other goat is now angry at the caster
     if (!Goats.dizzyGoat?.(g, goatCtx)) angerGoat(g, f.owner, goatCtx);
   }
@@ -523,6 +528,8 @@ function simulate(dt) {
     // Skyward Flash: the flight ends when the wizard reports touching down, or when time runs out
     if (p.flightUntil && (t >= p.flightUntil || (p.p[1] <= 0.01 && t > p.flightStart + 0.3))) { p.flightUntil = 0; p.p[1] = 0; }
     flushPendingWizard(p);
+    // goats.js drops a held goat itself (holder dead, stunned or gone); forget it when it's no longer ours
+    if (p.carryingGoat) { const g = goatById(p.carryingGoat); if (!g || g.state !== 'held' || g.holder !== p.id) p.carryingGoat = null; }
     if (p.veilUntil && t >= p.veilUntil) { p.veilUntil = 0; broadcast({ t: 'veilEnd', id: p.id }); }
     // primary magazine: a finished reload refills it; a partial one reloads after idling
     const mag = C.primaryMag(kit(p).primary);
@@ -569,6 +576,18 @@ function simulate(dt) {
     }
     if (done) continue;
 
+    // goats: no damage, but a spell makes it angry at its caster. A goat in the air is hit at its height;
+    // a held one takes the hit for its holder (it drops and charges the caster). Not by its own holder's shots.
+    for (const g of goats) {
+      if (g.holder && g.holder === proj.owner) continue;
+      if (Math.hypot(proj.p[0] - g.x, proj.p[1] - ((g.y || 0) + C.GOAT.hitY), proj.p[2] - g.z) < C.GOAT.radius + proj.radius) {
+        angerGoat(g, proj.owner, goatCtx);
+        endProjectile(proj, true, { surface: 'goat', goat: g.id });
+        done = true; break;
+      }
+    }
+    if (done) continue;
+
     // players (a lash pierces: it hits each wizard on its path once, unless a ward stops it)
     for (const pl of players.values()) {
       if (pl.dead || pl.id === proj.owner) continue;
@@ -593,16 +612,6 @@ function simulate(dt) {
       endDecoy(dec, true);
       if (!proj.pierce) { endProjectile(proj, true, { surface: 'decoy' }); continue; }
     }
-
-    // goats: no damage, but now it's angry at whoever cast or threw this
-    for (const g of goats) {
-      if (Math.hypot(proj.p[0] - g.x, proj.p[1] - C.GOAT.hitY, proj.p[2] - g.z) < C.GOAT.radius + proj.radius) {
-        angerGoat(g, proj.owner, goatCtx);
-        endProjectile(proj, true, { surface: 'goat', goat: g.id });
-        done = true; break;
-      }
-    }
-    if (done) continue;
 
     // props (standing ones get destroyed)
     for (const prop of props.values()) {
@@ -683,7 +692,7 @@ function handle(p, msg) {
       break;
     }
     case 'cast': {
-      if (!canAct(p) || p.blocking || p.charging || p.cyclone || p.lash || p.carrying) break;
+      if (!canAct(p) || p.blocking || p.charging || p.cyclone || p.lash || holding(p)) break;
       const primary = kit(p).primary;
       if (t < p.cd.fast || t < p.reloadUntil || p.ammo <= 0) break;   // reloading: refused
       const wanted = (msg.kind === 'fast' && primary === 'spark') || (msg.kind === 'skim' && primary === 'glacial_skim');
@@ -711,7 +720,7 @@ function handle(p, msg) {
     }
     case 'chargeStart': {
       if (kit(p).power !== 'meteor') break;
-      if (!canAct(p) || p.blocking || p.charging || p.cyclone || p.lash || p.carrying || isAirborne(p)) break;
+      if (!canAct(p) || p.blocking || p.charging || p.cyclone || p.lash || holding(p) || isAirborne(p)) break;
       if (t < p.cd.power) break;
       p.charging = true; p.chargeStart = t;
       broadcast({ t: 'chargeStart', id: p.id });
@@ -732,7 +741,7 @@ function handle(p, msg) {
     }
     case 'cyclone': {
       const ok = kit(p).power === 'cyclone' && canAct(p) && !p.blocking && !p.charging && !p.cyclone && !p.lash
-        && !p.carrying && !isAirborne(p) && t >= p.cd.power;
+        && !holding(p) && !isAirborne(p) && t >= p.cd.power;
       // tell a refused caster, so its client drops the wind-up it predicted
       if (!ok) { if (!p.cyclone) send(p.id, { t: 'cycloneCancel', id: p.id }); break; }
       p.cyclone = { start: t, pulseAt: t + CYCLONE.windup, endAt: t + CYCLONE.windup + CYCLONE.spin, pulsed: false };
@@ -741,7 +750,7 @@ function handle(p, msg) {
     }
     case 'lashStart': {
       const ok = kit(p).power === 'sanguine_lash' && canAct(p) && !p.blocking && !p.charging && !p.cyclone && !p.lash
-        && !p.carrying && !isAirborne(p) && t >= p.cd.power;
+        && !holding(p) && !isAirborne(p) && t >= p.cd.power;
       if (!ok) { if (!p.lash) send(p.id, { t: 'lashCancel', id: p.id }); break; }
       p.lash = { start: t };
       broadcast({ t: 'lashStart', id: p.id });
@@ -758,7 +767,7 @@ function handle(p, msg) {
     }
     case 'frostfall': {
       // the one power spell allowed during a Skyward Flash; range is measured flat from the caster
-      if (kit(p).power !== 'frostfall' || !canAct(p) || p.blocking || p.charging || p.cyclone || p.lash || p.carrying || t < p.cd.power) break;
+      if (kit(p).power !== 'frostfall' || !canAct(p) || p.blocking || p.charging || p.cyclone || p.lash || holding(p) || t < p.cd.power) break;
       if (!Array.isArray(msg.at) || msg.at.length < 2 || !Number.isFinite(msg.at[0]) || !Number.isFinite(msg.at[msg.at.length - 1])) break;
       let x = msg.at[0], z = msg.at[msg.at.length - 1];
       // at most `range` from the caster, inside the arena
@@ -822,7 +831,7 @@ function handle(p, msg) {
       break;
     }
     case 'curse': {
-      if (kit(p).utility !== 'trapped_relic' || !canAct(p) || p.carrying || p.blocking) break;
+      if (kit(p).utility !== 'trapped_relic' || !canAct(p) || holding(p) || p.blocking) break;
       const prop = tkTarget(p, msg.aimOrigin, msg.aimDir);
       if (!prop) break;
       clearCurse(p);
@@ -868,9 +877,16 @@ function handle(p, msg) {
       break;
     }
     case 'pickup': {
-      if (!canAct(p) || p.carrying || p.charging || p.cyclone || p.lash || p.blocking) break;
-      const best = tkTarget(p, msg.aimOrigin, msg.aimDir);
+      if (!canAct(p) || holding(p) || p.charging || p.cyclone || p.lash || p.blocking) break;
+      const best = tkTarget(p, msg.aimOrigin, msg.aimDir, goatTK);
       if (!best) break;
+      if (best.goat) {
+        // a goat: it floats at our hold point (goats.js places it each tick); lifting doesn't anger it
+        if (Goats.liftGoat(best.goat, p.id, goatCtx) === false) break;
+        p.carryingGoat = best.goat.id;
+        broadcast({ t: 'goatLift', id: p.id, goat: best.goat.id });
+        break;
+      }
       // a Trapped Relic: its curser just lifts it (and the curse is gone); anyone else sets it off
       if (best.cursedBy === p.id) clearCurse(p);
       else if (best.cursedBy) best.trap = p.id;
@@ -880,8 +896,20 @@ function handle(p, msg) {
       break;
     }
     case 'throw': {
-      if (!canAct(p) || !p.carrying) break;
-      if (t < p.cd.throw) break;
+      if (!canAct(p) || t < p.cd.throw) break;
+      if (p.carryingGoat) {
+        // hurled like a prop (same speed and gravity); goats.js flies it, and calls goatHitPlayer on a hit
+        const g = goatById(p.carryingGoat);
+        p.carryingGoat = null;
+        if (!g || g.state !== 'held' || g.holder !== p.id) break;
+        p.cd.throw = t + C.THROW_COOLDOWN;
+        const origin = C.holdPoint(p.p, p.yaw);
+        const target = validVec(msg.target) && dist2D(msg.target, p.p) < 80 ? msg.target : null;
+        const dir = target ? C.ballisticDir(origin, target, C.GOAT.throwSpeed, C.GOAT.throwGravity) : sanitizeDir(msg.dir, p);
+        if (Goats.throwGoat(g, p.id, origin, dir, goatCtx) !== false) broadcast({ t: 'goatThrow', id: p.id, goat: g.id, p: origin });
+        break;
+      }
+      if (!p.carrying) break;
       const prop = props.get(p.carrying);
       if (prop && prop.state !== 'carried') break;   // still rising
       p.carrying = null;
@@ -898,6 +926,7 @@ function handle(p, msg) {
       break;
     }
     case 'drop': {
+      if (p.carryingGoat) { const g = goatById(p.carryingGoat); p.carryingGoat = null; if (g && g.holder === p.id) Goats.releaseGoat?.(g, goatCtx); break; }
       if (!p.carrying) break;
       if (props.get(p.carrying)?.state === 'lifting') break;
       dropProp(p, false);
@@ -941,6 +970,7 @@ function removePlayer(id) {
   const p = players.get(id);
   if (!p) return;
   if (p.carrying) dropProp(p, false);
+  if (p.carryingGoat) { const g = goatById(p.carryingGoat); p.carryingGoat = null; if (g && g.holder === p.id) Goats.releaseGoat?.(g, goatCtx); }
   clearCurse(p);
   for (const d of [...decoys.values()]) if (d.owner === id) endDecoy(d, false);
   players.delete(id); sockets.delete(id);
@@ -955,13 +985,20 @@ const goatCtx = {
   killPlayer: (p, attacker, cause) => { if (cause === 'goat' && isVeiled(p)) return; killPlayer(p, attacker, cause); },
   // humans apply goat knockback themselves from the goatRam message
   knockback: (p, dir, kb) => { if (p.bot) botKnockback(p, dir, kb); },
+  // a hurled goat hits a wizard exactly like a thrown prop (kind 'goat'), credited to the thrower
+  goatHitPlayer: (g, target, throwerId) => {
+    if (target.dead) return;
+    applyHit(target, { kind: 'goat', owner: throwerId, v: [g.vx || 0, g.vy || 0, g.vz || 0] });
+  },
 };
 
 const validVec = (v) => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite);
 
 // The idle prop a telekinesis cast grabs: the one closest to the aim ray within range and cone,
 // else anything at point-blank range. Pillars block the line of sight.
-function tkTarget(p, aimOrigin, aimDir) {
+// Props and (if `withGoats`) liftable goats compete: the one closest to the aim ray wins. A goat comes
+// back as { goat }.
+function tkTarget(p, aimOrigin, aimDir, withGoats = false) {
   const chest = [p.p[0], p.p[1] + 1.3, p.p[2]];
   const o = validVec(aimOrigin) && dist2D(aimOrigin, p.p) < 6 ? aimOrigin : chest;
   const dir = validVec(aimDir) && len3(aimDir) > 0.01 ? norm3(aimDir) : [Math.sin(p.yaw), 0, Math.cos(p.yaw)];
@@ -981,6 +1018,21 @@ function tkTarget(p, aimOrigin, aimDir) {
     if (C.pillarBlocks(p.p, [prop.x, 0, prop.z], 0.1)) continue;
     const score = cos - l * 0.002;
     if (score > bestScore) { bestScore = score; best = prop; }
+  }
+  if (withGoats) {
+    for (const g of goats) {
+      if (!Goats.canLift?.(g)) continue;
+      const d2 = Math.hypot(g.x - p.p[0], g.z - p.p[2]);
+      if (d2 < nd) { nd = d2; near = { goat: g }; }
+      if (d2 > C.TK.range) continue;
+      const v = [g.x - o[0], (g.y || 0) + C.GOAT.hitY - o[1], g.z - o[2]];
+      const l = len3(v) || 1;
+      const cos = (v[0] * dir[0] + v[1] * dir[1] + v[2] * dir[2]) / l;
+      if (Math.acos(clamp(cos, -1, 1)) - Math.atan2(C.GOAT.radius, l) > cone) continue;
+      if (C.pillarBlocks(p.p, [g.x, 0, g.z], 0.1)) continue;
+      const score = cos - l * 0.002;
+      if (score > bestScore) { bestScore = score; best = { goat: g }; }
+    }
   }
   return best || near;
 }
