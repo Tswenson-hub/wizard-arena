@@ -119,6 +119,6 @@ and objective following) copied to `/tmp/wa-modes/wip`.
 - **Hard-bot TDM** took 463 s of the 480 s cap. Some hard matches will end on time, when the higher score wins.
 - **TEAM_SPAWNS** is still requested from the environment agent (see requests.md). The fallback points work.
 - **In team modes, bots people add are trimmed back to 3v3**, and "Remove all" is refilled. The spells agent disables those buttons in team modes.
-- **The relic hint text in main.js** ("F hurl") is requested from the spells agent: F actually sets the relic down.
+- **The relic hint text in main.js** now says F / G set down (the spells agent did it in 11a69d7).
 - **Goats can still kill anyone in team modes.** Goat kills don't score in TDM. A thrown goat is credited to its thrower through `applyHit`, so it follows `isEnemy`.
 - **The server keeps the last mode** after everyone leaves, so the next visitor starts in that mode.
