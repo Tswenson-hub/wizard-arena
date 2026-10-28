@@ -1,4 +1,131 @@
-# Spells hand-off (round 4): wizards with fixed kits, five new spells, Frostfall
+# Spells hand-off
+
+## Round 5: ultimates (Q) and the game-mode hooks
+
+Files: `public/shared/constants.js` (`ULT_CHARGE`, four `SPELLBOOK` ultimates, `eye_burst`, `SLOT_INFO.ultimate`), the
+`kit.ultimate` field in `public/shared/wizards.js`, `server.js`, `server/bots.js`, `public/js/{main,effects,wizard,net}.js`,
+`public/index.html`, `public/css/style.css`.
+
+### Charge (server-authoritative, `p.ult` 0–100, snapshot `ult`)
+| Source | Rate |
+|---|---|
+| Damage dealt to an enemy | +1 % per 3 damage (`ULT_CHARGE.perDamage`); an ultimate's own damage (`ult: true`) never charges |
+| Passive, while alive | +0.5 %/s (`passive`) |
+| Kill | +5 % (`kill`) |
+| Game modes | `ctx.addUltCharge(p, pct)` (clamped to 0–100); `ctx.resetUlt(p)` sets 0 |
+
+Kept through death, reset to 0 on cast. A refused cast (`ultRefused`) keeps it. The HUD has a round Q button: a ring fills
+with the charge in the wizard's spark colour, shows the %, and pulses with "READY" when full. A charge cheat,
+`{t:'debugCharge'}`, works only when the server runs with `WA_DEBUG=1` (tests).
+
+### The four ultimates (`{t:'ult', at?}`)
+- **Cinder, Cataclysm:** hold Q to aim a 10 m circle (max 26 m away, the Frostfall aim), release. 8 meteors land on
+  random, spread-out spots inside it (each spot is the farthest of 12 random tries from the others; minimum gap measured
+  4.4 m), one every 3/7 s over 3 s. Each shows an ember shadow 1.1 s before it lands and a falling fireball for the last
+  0.45 s. Each meteor does 30 damage + knockback 7 within 2.3 m. It's unblockable (from above), breaks props, pops decoys
+  and stirs goats. Messages: `cataclysm {id, p, strikes:[{id,p,left}]}`, `meteorHit {id, p, hits}`. `welcome.strikes`.
+- **Gale, Eye of the Storm:** 3 s tornado (`eyeStart/eyeEnd`). Gale moves at 1.3× and can't be interrupted (no stun,
+  cancel, bind, slow or knockback; she still takes damage) and can't cast anything else. Enemies within 7 m are pulled in
+  at 3.4 m/s: bots by the server (`botPull`), humans by `eyePull {pulls:[{id, v}]}` at 10 Hz, which their client adds to
+  its movement (the speed check allows it). They take 12 damage per 0.5 s (6 ticks; a ward facing her soaks one for 10
+  stamina; an ice wall in between blocks it). On the final burst, `eye_burst` does 15 damage, stun 0.6 and knockback 8
+  outward, and `hit.launch` makes clients play a 0.8 s visual hop. Visuals: a violet wind funnel with streaks, motes
+  spiralling in, and the pull circle. Gale repeats her `spin` clip throughout.
+- **Rime, Absolute Zero:** a 1 s rune flare (`zeroStart`): Rime is rooted and can't be interrupted. A frost rune grows to
+  12 m, a cold column rises and motes are drawn in. Then the blast (`zeroBlast`): every enemy within 12 m (3D) **in line of
+  sight** (`pillarBlocks`, so pillars, trees, buildings and Bulwark walls, his own included, block it) takes 40 and is
+  **frozen 2.5 s** (Frostfall's freeze; `hit.freeze`). Wards don't block it; a Tempest Veil does. Not from the air.
+  `zeroCancel` if Rime dies during the flare.
+- **Vesper, Crimson Eclipse:** tethers the nearest 3 enemies within 12 m in sight (`eclipse {id, targets}`); refused,
+  keeping the charge, if there are none. For 4 s each loses 5 HP per 0.5 s (10/s) and Vesper heals what they lose (to
+  100). It never interrupts. A tether snaps beyond 14 m or out of sight (`eclipseBreak`). Vesper can move and cast
+  meanwhile. Visuals: pulsing crimson beams from her hand to each chest, with blood motes running toward her.
+
+Cast poses use existing clips (`cast_heavy`, Gale's `spin`), so no new clip requests.
+
+### `isEnemy` everywhere
+`applyHit` already refused friendly hits. Now projectiles fly *through* teammates (no hit, no stop), teammates' held
+props don't block them, and decoys only pop for enemies. Cyclone, Frostfall, relic blasts (an ally lifting your relic
+doesn't set it off), Cataclysm, Eye, Absolute Zero and Eclipse all skip non-enemies. Bots never target, dodge or fear
+teammates: they ignore teammates' projectiles, cyclones, lashes, Frostfalls, meteors and ultimates.
+
+### Mode hooks (modes agent's requests, all wired)
+`match.protectProp?.(prop)` is asked before every hit that would shatter a prop: protected props (the relic) are knocked
+loose and land idle instead (`hitProp`). Also `ctx.resetUlt`, `ctx.resetGoats`, `join.difficulty` → `p.botPref`,
+`teamColor ?? color` for the ring and nameplate (`Wizard.setColor`), and bot buttons disabled while `snap.match.teams`.
+**Bots** follow `objectiveFor(bot, world)` each think: `focus` overrides the target, `lift` walks to the prop and lifts it in
+range, and `guard` (stay within 7 m) and `moveTo` override movement until close (combat continues from there). A bot never
+throws a prop that `canThrow` refuses, so a relic holder keeps it.
+
+### Bots and ultimates
+- **When to fire** (rolled against aggression each think, once the charge is full):
+  - Cataclysm: at the spot covering the most grounded enemies within 6 m (led a little), with 2+ there.
+  - Eye: 2+ enemies within 6.5 m.
+  - Absolute Zero: 2+ in sight within 11 m.
+  - Eclipse: 2+ in sight within 10.5 m, or 1 when below 45 HP.
+  - After 12 s on a full charge, they settle for one target (Eye: one within 4.5 m).
+- **Getting out of the way** (after their reaction delay; whether they dodge at all uses the difficulty's dodge roll):
+  - Cataclysm: walk out of the circle (centre sent as `cx, cz` on each strike); veil or mobility out from under a meteor about to land.
+  - Eye of the Storm: run away while within 11 m; veil, flash up or use mobility once inside 7.5 m.
+  - Absolute Zero: veil, raise a Bulwark toward Rime, walk to cover behind a pillar or out of range if there's time, else mobility.
+  - Crimson Eclipse: mobility away, or walk to nearby cover, or run.
+
+### Verification (port 4101; harnesses in `/tmp/wa-spells/`)
+**Rules** (`t_ult.mjs`, raw sockets, `WA_DEBUG=1`):
+- **Charge:** starts at 0; `ult` is refused without a full charge, and the charge is 0 after a cast.
+- **Cataclysm:** 8 strikes inside the circle, landing from 1.10 to 4.10 s, minimum gap 4.4 m. Dummies in the cluster took
+  30 each with knockback 7; one 25 m away took nothing. An aim 60 m out is clamped to 26.00 m.
+- **Absolute Zero:** Rime is rooted (moved 0.00 m) and a spark during the flare doesn't interrupt (`int:false`). In
+  sight at 6 m: 40, bind 2.5, frozen (snapshot `frozen` from 1.08 s to 3.55 s, measured at 50 ms). Nothing reaches a
+  dummy behind a pillar, one at 13.5 m, or a veiled Gale (absorbed).
+- **Eye of the Storm:** `eyePull` at 10 Hz with v = 3.4 m/s toward Gale for a dummy 5 m out, none for one at 10 m. Ticks
+  of 12 ×6 on those inside, then the burst (15, kb 8, `launch` 2.2). Sparks on Gale do damage but `int:false`.
+- **Crimson Eclipse:** tethers the 3 nearest. Ticks of 5, never interrupting. The tether to a dummy moved to 16 m snapped
+  (`eclipseBreak`). Vesper went from 82 to 100 HP. A cast with nobody near is refused and keeps the charge.
+
+**Teams** (a scratch copy with a stub `match.js` that splits teams by id parity, 6 Hard bots, 90 s): **0 friendly hits**
+out of 179 enemy hits (sparks, skim, props, cyclone, Absolute Zero, Eye, relic, goats). With a stub `objectiveFor`,
+`moveTo (10,10)` bots spent 64–73 % of snapshots within 8 m of it, and `guard` bots kept a median 5.3–5.9 m from their mate.
+
+**Browser** (`t_ults.py`, `t_dbg2.py`; Playwright, no console errors):
+- The HUD Q button shows the % then a pulsing READY ring in the wizard's colour (`ult_hud_ready.png`), and holding Q shows
+  the 10 m aim circle (`ult_cata_aim.png`).
+- Watcher views: meteor shadows and falling fireballs (`ult_cata_meteors.png`), impacts (`ult_cata_impact.png`), the
+  tornado (`ult_eye.png`, `ult_eye_self.png`), the burst (`ult_eye_burst.png`), the rune flare and the frost blast
+  (`ult_zero_flare.png`, `ult_zero_blast.png`, `ult_zero_frozen.png`), and the Eclipse beams (`ult_eclipse.png`).
+- On a watcher: Gale plays `spin` throughout the Eye, and Vesper's tether map is live while tethered.
+- Under swiftshader, the first use of each new effect stalls the page for 1–3 s while its shaders compile, so timed
+  readings in the browser lag. The test warms them up first. On a real GPU this doesn't happen.
+
+**Balance** (4 Hard bots, one per wizard, FFA, 3 × 120 s, `ultmatch.mjs`):
+| Wizard | K/D (3 runs) | Ultimates fired | First at (s) | Ult damage | Ult kills |
+|---|---|---|---|---|---|
+| Cinder | 7 / 8 | 3 | 94, 68, 88 | 90 | 1 |
+| Gale | 8 / 12 | 2 | 76, 79, – | 36 | 1 |
+| Rime | 14 / 10 | 6 | 41, 62, 53 | 160 | 1 |
+| Vesper | 9 / 8 | 3 | 66, 79, 70 | 35 | 1 |
+
+- **No ultimate dominates.** Against Hard bots, which dodge them well, a cast averages 30 damage (Cataclysm), 18 (Eye),
+  27 (Absolute Zero) or 12 (Eclipse: tethers are pulled out of sight quickly). That's one ultimate kill per wizard across 3
+  runs. Hard bots are a harsh test: the 2+ targets the bots wait for rarely line up in a 4-bot FFA, and 3v3 clusters more.
+- Rime fires twice as often because Glacial Skim's steady damage charges him faster (he dealt about 700 damage a run).
+- Charge takes 40–95 s, so an 8-minute match gives about 5–8 ultimates per player.
+- Difficulty spread (`botmatch 90 s hard normal easy`): Hard 2/2 with 321 damage, Normal 4/2 with 418, Easy 1/4 with 72.
+
+### Notes for Ty and the other agents
+- Judgement calls:
+  - Cataclysm and Absolute Zero are unblockable; Eye ticks can be warded (10 stamina each).
+  - The Tempest Veil absorbs every ultimate.
+  - Eye and Absolute Zero lock the caster out of other spells.
+  - Vesper may move and cast during Eclipse.
+  - Absolute Zero can't be cast from the air; Eclipse can.
+  - Eye of the Storm can deal 72 + 15 to someone who can't escape. That's the brief's numbers; watch it with humans.
+- The Eye pull on humans is applied by their own client (the server allows the extra speed). A modified client could ignore it.
+- README (coordinator) needs: the Q key, the `ultimate` kit slot, `ULT_CHARGE`, and the new messages (`ult`, `ultRefused`,
+  `cataclysm`, `meteorHit`, `eyeStart/eyePull/eyeTick/eyeBurst/eyeEnd`, `zeroStart/zeroBlast/zeroCancel`,
+  `eclipse/eclipseBreak/eclipseEnd`), the snapshot fields `ult, eye, zero, eclipse`, and `hit.freeze` / `hit.launch`.
+
+## Round 4: wizards with fixed kits, five new spells, Frostfall
 
 Commits: `eb16956` (kits and the five spells), `275d33b` (bot fixes, walls on join), `d1eb78d` (death, float, lash and
 spin clips; Frostfall client), `08650c2` (Frostfall server and bots), `49b7511` (wizards.js kits: Rime power = Frostfall,
