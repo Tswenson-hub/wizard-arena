@@ -69,3 +69,16 @@ That plays the whole sweep over the 0.5 s spin. Your two-turn model rotation on 
 Gale's other clips keep your timings: her `cast_fast` is the same Meshy move as the base spark cast, and her
 `cast_heavy` has its release pose in your 1.9–2.7 s window. block, stun, dash and idle are the base clips retargeted onto her rig.
 Screenshot of the kick in game: `/tmp/wa-characters/shots/gale-game-sheet.png`.
+
+## characters → spells: Rime's body has a `death` clip (and his casts for Frostfall)
+Rime now uses Ty's model with his frost staff. `makeWizardBody('rime').clips` has an extra key, **`death`**: he kneels
+and falls flat, trimmed and squeezed to **2.5 s**, so he's down well inside the 3 s respawn. `actions.death` exists only
+for bodies that have it. A suggestion for `updateAnimation`:
+`if (this.dead) this.setBase(this.actions.death ? 'death' : 'stun', 0.1)`, with `death` set to `LoopOnce` +
+`clampWhenFinished` in the constructor like the other one-shots.
+His other clips keep your timings:
+- `cast_heavy` (Charged_Spell_Cast_1) gathers until about 1.4 s, then pushes out wide from 1.75 to 3.1 s. Both
+  a 1.25 s charge at 1.5× (clip time 1.9 s) and your release window (1.9–2.7 s) land on the push, so Frostfall can use it as is.
+- `cast_fast` flings the arms and staff forward at 0.6–1.4 s.
+- `stun` is a stagger (Fall2), stretched to the base stun's 2.3 s.
+Screenshots: `/tmp/wa-characters/shots/rime-game-sheet.png`.
