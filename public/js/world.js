@@ -118,8 +118,9 @@ export function buildWorld(scene) {
   cobble.position.set(C.WELL.x, 0.05, C.WELL.z); cobble.receiveShadow = true;
   scene.add(cobble);
 
-  // Arena rim: a ring of low stones.
+  // Arena rim: a ring of low stones (procedural until the Meshy rocks load, see SCATTER).
   const rimMat = flat(0x7d8792);
+  const rim = standin('rimStones', new THREE.Group(), { x: 0, z: 0 }, scene);
   for (let i = 0; i < 52; i++) {
     const a = (i / 52) * Math.PI * 2;
     const r = C.ARENA_RADIUS + 1.2;
@@ -128,7 +129,7 @@ export function buildWorld(scene) {
     stone.position.set(Math.cos(a) * r, s * 0.4, Math.sin(a) * r);
     stone.rotation.set(Math.random(), Math.random(), Math.random());
     stone.castShadow = stone.receiveShadow = true;
-    scene.add(stone);
+    rim.add(stone);
   }
 
   buildRunePillars(scene);
@@ -138,6 +139,8 @@ export function buildWorld(scene) {
   standin('tractor', makeTractor(), C.TRACTOR, scene);
   standin('well', makeWell(), C.WELL, scene);
   standin('cart', makeCart(), C.CART, scene);
+  standin('archway', makeArchway(), C.ARCHWAY, scene);
+  standin('obelisk', makeObelisk(), C.OBELISK, scene);
   standin('scarecrow', makeScarecrow(), C.SCARECROW, scene);
   standin('barn', makeBarn(), C.BARN, scene);
   standin('silo', makeSilo(), C.SILO, scene);
@@ -191,28 +194,25 @@ function swapModel(name, model) {
 
 function buildRunePillars(scene) {
   const pillarMat = flat(0xa9b0b8), pillarTop = flat(0x8d949c);
-  const runeMat = new THREE.MeshStandardMaterial({ color: 0x9d6bff, emissive: 0x6a35ff, emissiveIntensity: 1.2, flatShading: true });
   for (const p of C.PILLARS) {
+    // procedural stand-in until models/rune_pillar.glb loads
     const g = new THREE.Group();
-    const body = cyl(p.r * 0.85, p.r, p.h, 7, pillarMat, 0, p.h / 2);
-    const cap = cyl(p.r * 1.1, p.r * 0.85, 0.5, 7, pillarTop, 0, p.h + 0.25);
-    const base = cyl(p.r * 1.15, p.r * 1.25, 0.4, 7, pillarTop, 0, 0.2);
-    // glowing rune band
-    const band = cyl(p.r * 0.93, p.r * 0.95, 0.18, 7, runeMat, 0, p.h * 0.62);
-    g.add(body, cap, base, band);
-    g.position.set(p.x, 0, p.z);
-    g.rotation.y = Math.random() * Math.PI;
-    scene.add(shadowy(g));
+    g.add(cyl(p.r * 0.7, p.r * 0.85, p.h, 7, pillarMat, 0, p.h / 2), cyl(p.r * 1.1, p.r * 1.2, 0.4, 7, pillarTop, 0, 0.2));
+    g.add(cyl(p.r * 0.75, p.r * 0.78, 0.18, 7, runeMat, 0, p.h * 0.62));
+    standin('pillar', g, { x: p.x, z: p.z, yaw: p.x * 1.7 + p.z }, scene);
     const crystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.45, 0), runeMat);
-    crystal.position.set(p.x, p.h + 1.3, p.z);
+    crystal.position.set(p.x, C.PILLAR_HEIGHT + 0.9, p.z);
     scene.add(crystal);
     spinners.push(crystal);
   }
 }
+const runeMat = new THREE.MeshStandardMaterial({ color: 0x9d6bff, emissive: 0x6a35ff, emissiveIntensity: 1.2, flatShading: true });
 
+// Procedural trees, shown only until the Meshy trees load (they become instanced meshes, see SCATTER).
 function buildTrees(scene) {
   const trunkMat = flat(0x7a5230);
   const leafMats = [flat(0x3f8f4f), flat(0x4ea35a), flat(0x2f7a45)];
+  const all = standin('treeStandins', new THREE.Group(), { x: 0, z: 0 }, scene);
   for (const t of C.TREES) {
     const g = new THREE.Group();
     g.add(cyl(0.25, 0.4, 2.2, 6, trunkMat, 0, 1.1));
@@ -225,9 +225,9 @@ function buildTrees(scene) {
       y += 1.3;
     }
     g.position.set(t.x, 0, t.z);
-    g.rotation.y = Math.random() * Math.PI * 2;
-    g.scale.setScalar(0.9 + Math.random() * 0.4);
-    scene.add(shadowy(g));
+    g.rotation.y = t.yaw;
+    g.scale.setScalar(t.h / 7);
+    all.add(shadowy(g));
   }
 }
 
@@ -438,6 +438,20 @@ function makeHayStack() {
   return g;
 }
 
+function makeArchway() {
+  const g = new THREE.Group(), stone = flat(0x7f868c);
+  for (const x of [-2.13, 1.85]) g.add(box(1.3, 6.2, 1.6, stone, x, 3.1, 0));
+  g.add(box(5.6, 1.2, 1.6, stone, -0.14, 6.8, 0));
+  g.add(box(0.5, 0.5, 1.65, runeMat, -0.14, 6.8, 0));
+  return g;
+}
+function makeObelisk() {
+  const g = new THREE.Group(), stone = flat(0x6f767d);
+  g.add(cyl(0.45, 0.8, 5.4, 4, stone, 0, 2.7), cyl(0.0, 0.45, 0.6, 4, stone, 0, 5.7));
+  g.add(box(0.12, 3, 0.9, runeMat, 0, 2.6, 0.2));
+  return g;
+}
+
 // Stand-ins in model space (see C.BARN / C.SILO): long along x, arch at -x, side door in the +z wall.
 function makeBarn() {
   const g = new THREE.Group();
@@ -475,10 +489,86 @@ function fitModel(gltf, height, yaw = 0) {
   return holder;
 }
 
+// ------------------------------------------------------------ instanced scenery
+// Seeded so every client draws the same scatter.
+function seeded(seed) { return () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }; }
+// [x, z, yaw, height] per instance, by model.
+// Trees outside the arena use the *_far models (about 1-1.6k triangles, sloppy-simplified, no shadows).
+const SCATTER = { pine: [], oak: [], birch: [], pine_far: [], oak_far: [], birch_far: [], rock_jagged: [], rock_table: [] };
+const SCATTER_STANDINS = { pine: ['treeStandins'], rock_jagged: ['rimStones'] };
+for (const t of C.TREES) SCATTER[t.kind].push([t.x, t.z, t.yaw, t.h]);
+for (const [x, z, yaw, h] of C.TABLE_ROCKS) SCATTER.rock_table.push([x, z, yaw, h]);
+{
+  // the rim: jagged rocks with a table rock every fourth stone
+  const rnd = seeded(7);
+  for (let i = 0; i < 52; i++) {
+    const a = (i / 52) * Math.PI * 2, r = C.ARENA_RADIUS + 1.2 + rnd() * 0.6;
+    if (i % 4 === 2) SCATTER.rock_table.push([Math.cos(a) * r, Math.sin(a) * r, rnd() * 6.3, 0.7 + rnd() * 0.5]);
+    else SCATTER.rock_jagged.push([Math.cos(a) * r, Math.sin(a) * r, rnd() * 6.3, 1.0 + rnd() * 1.1]);
+  }
+  // outside the arena: a few oaks and birches near the rim, pines thickening toward the hills
+  const out = seeded(42);
+  for (let i = 0; i < 90; i++) {
+    const a = out() * Math.PI * 2, r = C.ARENA_RADIUS + 5 + Math.pow(out(), 0.7) * 45;
+    const near = r < C.ARENA_RADIUS + 16, pick = out();
+    const kind = near ? (pick < 0.4 ? 'oak' : pick < 0.75 ? 'birch' : 'pine') : (pick < 0.85 ? 'pine' : 'birch');
+    const x = Math.cos(a) * r, z = Math.sin(a) * r;
+    SCATTER[kind + '_far'].push([x, z, out() * 6.3, C.TREE_KINDS[kind].h * (0.8 + out() * 0.5)]);
+  }
+  for (let i = 0; i < 24; i++) {
+    const a = out() * Math.PI * 2, r = C.ARENA_RADIUS + 4 + out() * 30;
+    SCATTER[out() < 0.6 ? 'rock_jagged' : 'rock_table'].push([Math.cos(a) * r, Math.sin(a) * r, out() * 6.3, 0.8 + out() * 1.6]);
+  }
+}
+
+// One InstancedMesh per mesh in the model, normalised like fitModel (base on y = 0, centred on x/z,
+// 1 m tall) and scaled to each instance's height. Sits on the terrain outside the flat arena.
+function instanced(gltf, items, shadows = true) {
+  gltf.scene.updateMatrixWorld(true);
+  const bb = new THREE.Box3().setFromObject(gltf.scene);
+  const norm = new THREE.Matrix4().makeScale(1 / (bb.max.y - bb.min.y), 1 / (bb.max.y - bb.min.y), 1 / (bb.max.y - bb.min.y))
+    .multiply(new THREE.Matrix4().makeTranslation(-(bb.min.x + bb.max.x) / 2, -bb.min.y, -(bb.min.z + bb.max.z) / 2));
+  const group = new THREE.Group(), m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
+  gltf.scene.traverse(o => {
+    if (!o.isMesh) return;
+    const geo = o.geometry.clone().applyMatrix4(new THREE.Matrix4().multiplyMatrices(norm, o.matrixWorld));
+    const im = new THREE.InstancedMesh(geo, o.material, items.length);
+    items.forEach(([x, z, yaw, h], i) => {
+      m.compose(new THREE.Vector3(x, groundHeight(x, z) - 0.05 * h, z), q.setFromAxisAngle(up, yaw), new THREE.Vector3(h, h, h));
+      im.setMatrixAt(i, m);
+    });
+    im.castShadow = shadows; im.receiveShadow = true;
+    im.computeBoundingSphere();
+    group.add(im);
+  });
+  return group;
+}
+
+// The Meshy landmarks glow cyan; the farm's magic is purple. Swap glowing cyan texels for violet and make them glow.
+function purpleRunes(root) {
+  root.traverse(o => {
+    if (!o.isMesh) return;
+    o.material.onBeforeCompile = (sh) => {
+      sh.fragmentShader = sh.fragmentShader
+        .replace('void main() {', 'float runeGlow = 0.0;\nvoid main() {')
+        .replace('#include <map_fragment>', `#include <map_fragment>
+          runeGlow = smoothstep(0.35, 0.7, diffuseColor.g + diffuseColor.b - 2.0 * diffuseColor.r) * step(0.3, diffuseColor.b);
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.62, 0.38, 1.0) * max(diffuseColor.g, diffuseColor.b), runeGlow);`)
+        .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+          totalEmissiveRadiance += vec3(0.42, 0.2, 1.0) * runeGlow * 0.9;`);
+    };
+    o.material.needsUpdate = true;
+  });
+}
+
 // Farm pieces with a Meshy model: [stand-in name, url, height in metres, yaw that turns it to face +z].
 // A model that fails to load leaves its procedural stand-in in place.
 const FARM_MODELS = [
   ['tractor', '/models/tractor.glb', 3.0, Math.PI / 2],     // exported nose toward -x
+  ['cart', '/models/horse_cart.glb', C.CART.height],          // model space as measured for its colliders in map.js
+  ['pillar', '/models/rune_pillar.glb', C.PILLAR_HEIGHT, 0, true],
+  ['archway', '/models/archway.glb', C.ARCHWAY.height, 0, true],
+  ['obelisk', '/models/obelisk.glb', C.OBELISK.height, 0, true],
   ['scarecrow', '/models/scarecrow.glb', 2.4],
   ['barn', '/models/barn.glb', C.BARN.height],               // model space as measured for the colliders in map.js
   ['silo', '/models/silo.glb', C.SILO.height],
@@ -498,7 +588,16 @@ export function loadModels(loader, scene) {
       scene.add(house);
       models.farmhouse = house;
     }),
-    ...FARM_MODELS.map(([name, url, h, yaw]) => load(url).then(g => { models[name] = fitModel(g, h, yaw); swapModel(name, models[name]); }, () => {})),
+    ...FARM_MODELS.map(([name, url, h, yaw, runes]) => load(url).then(g => {
+      if (runes) purpleRunes(g.scene);
+      models[name] = fitModel(g, h, yaw); swapModel(name, models[name]);
+    }, () => {})),
+    // Trees and rocks repeat dozens of times: one InstancedMesh per model.
+    ...Object.entries(SCATTER).map(([name, items]) => load(`/models/${name}.glb`).then(g => {
+      scene.add(instanced(g, items, !name.endsWith('_far')));
+      for (const s of SCATTER_STANDINS[name] || []) swapModel(s, new THREE.Group());
+      if (name === 'rock_jagged') models.rockProp = fitModel({ scene: g.scene.clone() }, C.PROP_TYPES.rock.h);
+    }, () => {})),
     // One round bale, two sizes: the throwable prop and the big courtyard cover stacks.
     load('/models/hay.glb').then(g => {
       models.haystack = fitModel({ scene: g.scene.clone() }, 1.7);
@@ -543,6 +642,7 @@ export function makePropMesh(type) {
       break;
     }
     case 'rock': {
+      if (models.rockProp) { g.add(models.rockProp.clone()); break; }
       m = new THREE.Mesh(jitterGeometry(new THREE.DodecahedronGeometry(0.6, 0), 0.2), mat(spec.color));
       m.position.y = 0.5; m.rotation.set(0.3, 0.6, 0.1); g.add(m);
       break;

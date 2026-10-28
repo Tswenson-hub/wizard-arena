@@ -132,6 +132,60 @@ Pre-existing, not new: a goat sparked near the trough bonks on it (the trough is
   spells side wasn't in yet. Botmatch 4102 90 s: 5 kills, goats penned, none angered. I couldn't test the full loop (F lift → hurl) until the spells side lands.
   Contract notes for spells are in `requests.md` ("environment → spells: throwable goats").
 
+## Meshy scenery: trees, rocks, rune pillars, archway, obelisk, horse cart (round 4)
+| Model | File | Triangles | Where |
+|---|---|---|---|
+| pine / oak / birch | `pine.glb` 0.23 MB, `oak.glb` 0.26, `birch.glb` 0.25 (512 px) | 3.9k / 5.3k / 3.9k | The 12 arena `TREES` (oaks and birches round the farm and meadow, pines on the north and east edges), instanced |
+| pine_far / oak_far / birch_far | 0.03 / 0.22 / 0.04 MB (256 px) | 1.0k / 1.6k / 1.3k | Outside scatter, 90 trees (oaks and birches near the rim, pines toward the hills), instanced, no shadows |
+| rock_jagged / rock_table | 0.03 / 0.06 MB | 0.9k / 1.1k | Rim ring (52, every 4th a table rock), 24 outside, the throwable `rock` prop mesh, and 4 table rocks as low meadow cover |
+| rune_pillar | 0.45 MB (1024 px) | 4.1k | Replaces the 4 procedural rune pillars, 6 m tall, with the purple crystal kept above |
+| archway | 0.59 MB | 8.7k | (0.14, −16.5), 7.5 m, over the path into the south meadow |
+| obelisk | 0.55 MB | 7.8k | (3.5, −35), 6 m, the meadow's far end, just off the path so it shows past the (0, −25) pillar |
+| horse_cart | 0.60 MB | 9.6k | Replaces the hand cart, now at (−12.5, −15.5) by the SW yard edge, shafts toward the well |
+
+New models add 3.3 MB in total. `du -sh public/models` is 26 MB, and most of that is the characters' `wizards/`.
+
+- **Instancing:** `world.js` `SCATTER` holds per-model `[x, z, yaw, height]` lists. `instanced()` builds one InstancedMesh per model
+  (normalised like `fitModel`), so 8 draw calls cover about 180 trees and rocks. The scatter uses a seeded RNG, so all clients match.
+  Procedural trees and rim stones stay as stand-ins until the models load.
+- **Purple runes:** the Meshy landmarks glow cyan. `purpleRunes()` patches their shader (`onBeforeCompile`) to swap cyan texels for violet
+  and add them to the emissive term. Applied to the pillar, arch and obelisk (`FARM_MODELS` 5th field).
+- **Colliders** were fitted from raycast sections (`section.py`):
+  - **Trees:** `TREE_KINDS` trunk circles, scaled per tree with a minimum r of 0.35. Oaks are r ~1.0. Yaw is fixed per tree (not random) because the trunk offset depends on it.
+  - **Arch:** only the two legs (4 × r 0.75, h 7), leaving a 2.48 m gap centred on the path.
+  - **Obelisk:** r 0.9, h 6.
+  - **Cart:** 3 × r 1.2, h 2, on the bed only. The shafts are walk-through.
+  - **Table rocks:** r ~1.0, h at their real 0.9–1.2 m, so spells fly over them and bots see across them.
+  - **Pillars:** refit to r 0.9, h 5. The model's base rubble is r ~0.95, and its body is only r ~0.45 above 1 m.
+- **Moves:** the tree (0, −36) is gone (the obelisk took its place), the arena now has pines at (−33, 8) and (33.5, 14), the spawn at (0, −32) went to (−3.5, −30),
+  the barrel at (−0.5, −14) moved out of the arch mouth to (−3.2, −12.8), the rock prop moved to (−16.5, −11.5), and the 4th table rock was kept off the pen fence.
+- **`tools/optimize-models.sh`** has two new optional arguments: a simplify error, and a target triangle count. With a target it runs meshoptimizer's *sloppy*
+  simplifier through an embedded node step, installing its npm deps in a temp dir. Meshy exports have so many UV seams that the regular simplifier stalls around
+  4k triangles whatever ratio you ask for. The exact commands are in the script header.
+
+**Performance:** per-frame WebGL counts, all passes including the shadow map, measured by hooking `draw*` in `/tmp/wa-environment/perf.py`
+(`renderer.info` isn't reachable from my files):
+
+| view | draw calls before → after | triangles before → after |
+|---|---|---|
+| courtyard (player eye) | 400 → 271 | 0.76M → 1.16M |
+| meadow (player eye) | 329 → 198 | 0.56M → 0.98M |
+| aerial | 631 → 421 | 0.90M → 1.35M |
+
+Scene meshes went from 511 to 395, with 11 InstancedMeshes. Draw calls fell by about a third. Triangles rose about 50%, because the map gained
+about 180 textured trees and rocks plus 7 detailed landmarks, where before it had cones and dodecahedrons. The first cut was 2.3M, before the far trees,
+the sloppy rocks and the simpler pillar. Further levers, if needed: fewer outside trees, no shadows on the rim rocks, or a ~2k arena oak.
+
+**Verified (server 4102):**
+- Screenshots, all looked at: `o_n_courtyard`, `o_n_meadow` (the arch frames the path to the pillar), `o_n_rim`, `o_n_aerial`,
+  `o_n_pillar`, `o_n_cart`, `o_n_obelisk`, `o_n_trees`, `o_n_tablerock`, `c_south` (collider overlay of the arch, cart, pillars,
+  table rocks and trees), and lineups `lu_*`. No page errors.
+- Botmatch 90 s: 8 kills, goats fine.
+- Three 180 s stuckwatch runs with 5 bots: 21, 36 and 32 kills. Stalls ran 6.5–12 s. Most were at old spots (tractor ×3, crop field, pen fence); one was beside an oak
+  and one at the obelisk, probably low-HP bots hiding behind them as cover, since both now pass `coverPoint`'s r ≥ 0.8 rule.
+- `homesim.mjs`: goats get home from every spot, including 6 new ones by the arch, obelisk, cart and table rock (7.5–26 s, no ghosting).
+- `goatthrow_test.mjs` still passes.
+
 ## For the gameplay agent / Ty
 - Requests filed in `requests.md`:
   - optional: call `trampleCrops(x, z, r)` from `world.js` on Meteor impacts and cyclone pulses

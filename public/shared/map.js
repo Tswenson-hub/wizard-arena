@@ -162,23 +162,51 @@ export const SILO = { x: -16, z: -27, yaw: 0.35, height: 4 };
 const SILO_BLOCKS = [-4, -2.7, -1.4, -0.1, 1.2, 2.5, 3.6].map(lx => place(SILO, [lx, -0.25]));
 
 export const WELL = { x: 0, z: 2, r: 1.25, h: 2.6 };
-export const CART = { x: -4, z: -16, yaw: 0.5 };
+// Horse-drawn cart (models/horse_cart.glb, 2.6 m tall) parked at the south-west edge of the yard, shafts toward
+// the well. Model space: the bed is x -0.75..3.75 (wheels at z ±1.5), the shafts run off toward -x.
+export const CART = { x: -12.5, z: -15.5, yaw: 3 * Math.PI / 4, height: 2.6 };
+const CART_BLOCKS = [0.4, 1.6, 2.8].map(lx => place(CART, [lx, 0]));
 // Big round bales standing on end: courtyard cover. [x, z]
 export const HAY_STACKS = [[-6, 4], [-6.9, 5.4], [5.6, -5], [6.9, -5.6], [-14, -2], [13, 3.2], [13.6, 4.6]];
 
-// Fixed obstacles in the arena (not pickable). Rune pillars with floating crystals.
+// Fixed obstacles in the arena (not pickable). Floating rune pillars (models/rune_pillar.glb, 6 m) with a
+// purple crystal above; `r` is fitted to the rubble at the foot, `h` to where the stone stops blocking.
+export const PILLAR_HEIGHT = 6;
 export const PILLARS = [
-  { x: 10, z: 9.5, r: 1.2, h: 5 },
-  { x: -9, z: -11, r: 1.2, h: 5 },
-  { x: 9.5, z: -12.5, r: 1.2, h: 5 },
-  { x: 0, z: -25, r: 1.3, h: 5 },
+  { x: 10, z: 9.5, r: 0.9, h: 5 },
+  { x: -9, z: -11, r: 0.9, h: 5 },
+  { x: 9.5, z: -12.5, r: 0.9, h: 5 },
+  { x: 0, z: -25, r: 0.9, h: 5 },
 ];
 
+// Mystical archway (models/archway.glb, 7.5 m) over the path into the south meadow: you walk and shoot
+// through it; only its two legs are solid. Model space at 6.5 m: legs at x -1.85 and 1.6, 1.8 m deep.
+export const ARCHWAY = { x: 0.14, z: -16.5, yaw: 0, height: 7.5 };
+const ARCH_LEGS = [[-1.85, -0.35], [-1.85, 0.35], [1.6, -0.35], [1.6, 0.35]].map(([lx, lz]) => place(ARCHWAY, [lx * 7.5 / 6.5, lz * 7.5 / 6.5]));
+// The obelisk (models/obelisk.glb, 6 m) at the meadow's far end, just off the path so it shows past the rune pillar.
+export const OBELISK = { x: 3.5, z: -35, yaw: 0, height: 6, r: 0.9 };
+
+// Flat table rocks: low cover in the south-east meadow (models/rock_table.glb). [x, z, yaw, height]
+// Model space at 1.2 m tall: a round slab about 2.5 m across, centred on x -0.25.
+export const TABLE_ROCKS = [[17.5, -29, 0.4, 1.2], [8.5, -25.5, 2.1, 1.0], [-5.5, -34.5, 4.0, 1.1], [24, -17.5, 1.2, 0.9]];
+
+// Meshy trees (models/pine|oak|birch.glb): oaks and birches round the farm and meadow, pines toward the
+// hills. Trunk circles [dx, dz, r] in model space at the reference height, measured from a section at 1.5 m.
+export const TREE_KINDS = {
+  pine:  { h: 9,   trunk: [0.1, 0, 0.25] },
+  oak:   { h: 7.5, trunk: [-0.25, 0.1, 1.0] },
+  birch: { h: 8,   trunk: [0, -0.2, 0.25] },
+};
+// [kind, x, z, height]; yaw is fixed per tree (server and clients must agree on the trunk offsets).
 export const TREES = [
-  { x: 22, z: -20, r: 0.6 }, { x: -20, z: -20, r: 0.6 }, { x: -11, z: -33.5, r: 0.6 }, { x: 12, z: -31, r: 0.6 },
-  { x: 30, z: -21, r: 0.6 }, { x: -30, z: -19, r: 0.6 }, { x: -13, z: 31, r: 0.6 }, { x: 13, z: 32, r: 0.6 },
-  { x: 24, z: 22, r: 0.6 }, { x: -24, z: 23, r: 0.6 }, { x: 0, z: -36, r: 0.6 },
-];
+  ['oak', 22, -20, 7], ['birch', -20, -20, 8.5], ['birch', -11, -33.5, 7.5], ['oak', 12, -31, 7.5],
+  ['birch', 30, -21, 8], ['oak', -30, -19, 7.5], ['oak', -13, 31, 8], ['pine', 13, 32, 10],
+  ['birch', 24, 22, 8.5], ['pine', -24, 23, 10.5], ['pine', -33, 8, 11], ['pine', 33.5, 14, 10],
+].map(([kind, x, z, h], i) => {
+  const k = TREE_KINDS[kind], s = h / k.h, yaw = (i * 2.39996) % (Math.PI * 2);
+  const [cx, cz] = place({ x, z, yaw }, [k.trunk[0] * s, k.trunk[1] * s]);
+  return { kind, x, z, h, yaw, cx, cz, r: Math.max(0.35, k.trunk[2] * s) };
+});
 
 // Initial prop placement: [type, x, z]
 export const PROP_SPAWNS = [
@@ -192,13 +220,13 @@ export const PROP_SPAWNS = [
   // courtyard: pots around the well, a few crates and barrels
   ['pot', 2.4, 0], ['pot', -2.4, 0.8], ['pot', 1, 4.6], ['crate', 3, -12], ['barrel', -3, 11], ['barrel', 3.5, 12],
   // south meadow: rocks and a crate or two
-  ['rock', 15, -18], ['rock', -15, -16], ['rock', 6, -29], ['rock', -7, -27], ['crate', 20, -26], ['crate', -24, -21.5],
-  ['barrel', -0.5, -14], ['pumpkin', -6, -18.5],
+  ['rock', 15, -18], ['rock', -16.5, -11.5], ['rock', 6, -29], ['rock', -7, -27], ['crate', 20, -26], ['crate', -24, -21.5],
+  ['barrel', -3.2, -12.8], ['pumpkin', -6, -18.5],
 ];
 
 // Nobody spawns in the pen, the field or the house.
 export const SPAWN_POINTS = [
-  [0, 0, -6], [6, 0, -19], [-6, 0, -20], [14, 0, -22], [-14, 0, -22], [0, 0, -32],
+  [0, 0, -6], [6, 0, -19], [-6, 0, -20], [14, 0, -22], [-14, 0, -22], [-3.5, 0, -30],
   [8, 0, 4], [-9, 0, 8], [-12, 0, -8], [13, 0, -6], [4, 0, 14], [-5, 0, 14.5],
 ];
 
@@ -214,7 +242,7 @@ const along = (o, len, n, r, h, kind) => Array.from({ length: n }, (_, i) => {
 });
 export const COLLIDERS = [
   ...PILLARS.map(p => ({ x: p.x, z: p.z, r: p.r, h: p.h, kind: 'pillar' })),
-  ...TREES.map(t => ({ x: t.x, z: t.z, r: t.r, h: 6, kind: 'tree' })),
+  ...TREES.map(t => ({ x: t.cx, z: t.cz, r: t.r, h: 6, kind: 'tree' })),
   ...HOUSE_BLOCKS.map(([dx, dz, r]) => ({ x: FARMHOUSE.x + dx, z: FARMHOUSE.z + dz, r, h: 9, kind: 'house' })),
   ...FENCE_POSTS.map(([x, z]) => ({ x, z, r: PEN.postR, h: PEN.postH, kind: 'fence' })),
   ...along({ ...SHELTER, yaw: SHELTER.yaw + Math.PI / 2 }, SHELTER.w - 1.6, 2, 1.25, 2.4, 'shelter'),   // spread along its width
@@ -223,7 +251,10 @@ export const COLLIDERS = [
   { x: SCARECROW.x, z: SCARECROW.z, r: 0.35, h: 2.4, kind: 'scarecrow' },
   ...TRACTOR_BLOCKS.map(([k, r]) => ({ x: TRACTOR.x + Math.sin(TRACTOR.yaw) * k, z: TRACTOR.z + Math.cos(TRACTOR.yaw) * k, r, h: 3.0, kind: 'tractor' })),
   { x: WELL.x, z: WELL.z, r: WELL.r, h: WELL.h, kind: 'well' },
-  ...along(CART, 1.0, 2, 0.8, 1.7, 'cart'),
+  ...CART_BLOCKS.map(([x, z]) => ({ x, z, r: 1.2, h: 2.0, kind: 'cart' })),
+  ...ARCH_LEGS.map(([x, z]) => ({ x, z, r: 0.75, h: 7, kind: 'arch' })),
+  { x: OBELISK.x, z: OBELISK.z + 0.2, r: OBELISK.r, h: OBELISK.height, kind: 'obelisk' },
+  ...TABLE_ROCKS.map(([x, z, yaw, h]) => { const [cx, cz] = place({ x, z, yaw }, [-0.25 * h / 1.2, 0]); return { x: cx, z: cz, r: 1.25 * h / 1.2, h, kind: 'rock' }; }),
   ...HAY_STACKS.map(([x, z]) => ({ x, z, r: 0.85, h: 1.7, kind: 'hay' })),
   ...BARN_POSTS.map(([x, z]) => ({ x, z, r: 0.45, h: 4, kind: 'barn' })),
   ...SILO_BLOCKS.map(([x, z]) => ({ x, z, r: 1.8, h: 3.6, kind: 'silo' })),

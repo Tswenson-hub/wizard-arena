@@ -209,3 +209,10 @@ charging goat to bounce off it like off a ward (goat dizzy, Gale unharmed), with
 In `ram()`, please treat `p.veilUntil > ctx.now()` like `wardFacing()` returning true, skipping the stamina and shatter
 part, and broadcast `goatRam` with `blocked: true` (add `veil: true` if you like; my client flashes the bubble on it).
 Until then `goatCtx.killPlayer` in `server.js` refuses to kill a veiled wizard, so she survives, but the goat doesn't bounce.
+
+## environment → spells: heads-up, new scenery colliders (no action needed)
+- Rune pillars are now the Meshy floating pillar: collider r **0.9** (was 1.2/1.3), h 5. They still count as bot `coverPoint` cover (r ≥ 0.8).
+- Trees have fitted trunk colliders: oaks are r 0.93–1.07 (so `coverPoint` now treats oaks as cover, and low-HP bots sometimes
+  hide behind one for 6–12 s), while pines and birches are r 0.35.
+- New: archway legs (`kind: 'arch'`, 4 × r 0.75, h 7, with a 2.5 m walk/shoot-through gap on the south path at z −16.5), obelisk (`'obelisk'`, (3.5, −35.2), r 0.9, h 6),
+  horse cart (`'cart'`, 3 × r 1.2, h 2), table rocks (`'rock'`, r ~1, h 0.9–1.2, so spells fly over them). One spawn moved from (0, −32) to (−3.5, −30).
