@@ -24,7 +24,7 @@ export const WIZARDS = {
   },
   vesper: {
     id: 'vesper', name: 'Vesper', title: 'the Hemomancer', role: 'Trickster · decoys, binds, traps',
-    color: 0xd8203c, tint: 0x8a1024, model: null,
+    color: 0xd8203c, tint: 0x8a1024, model: '/models/wizards/vesper.glb',
     kit: { primary: 'spark', power: 'sanguine_lash', mobility: 'mirror_step', guard: 'ward', utility: 'trapped_relic' },
   },
 };

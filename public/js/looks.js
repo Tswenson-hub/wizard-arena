@@ -57,7 +57,8 @@ function clipsFrom(animations) {
 
 // Per-wizard picks from a model's own clips, chosen by watching them (contact sheets in the hand-off).
 // A string is a clip name; [name, from, to] is the part of a clip between two times (seconds), and
-// [name, from, to, duration] also stretches that part to `duration` seconds.
+// [name, from, to, duration] also stretches that part to `duration` seconds. { clip, warp } retimes a clip
+// through [[clipTime, newTime], ...] (piecewise linear), to land its key moment on the game's timing.
 // main.js plays the casts from fixed offsets tuned to the base clips (spark: 0.25 s at 2.6x; meteor
 // release: 1.9 s at 1.5x), so a pick must have its key moment at about the same time as the base clip.
 // Keys without a pick come from the model's Meshy-named clips, or are retargeted from the base wizard.
@@ -75,13 +76,37 @@ const MODEL_CLIPS = {
     stun: ['Fall2', 0, 0.67, 2.3],             // a knocked-back flinch, stretched to the base stun's length (main.js plays 0.3-1.65 s)
     death: ['Strangled_and_Fall_Forward', 3.6, 7.3, 2.5],  // kneels and falls flat, squeezed to 2.5 s (respawn is 3 s); extra key
   },
+  vesper: {
+    run: 'Running', walk: 'Walking',
+    cast_fast: ['mage_soell_cast_5', 9.9, 11.36],     // the arm rises overhead, then flings forward and down (the spark window)
+    death: 'Dead',                                     // staggers and lands flat by about 2.2 s
+    // Sanguine Lash: extra key. The slash strikes at about 0.7-0.85 s; retimed so the crouched wind-up fills the
+    // 1.5 s wind-up and the strike lands on the release, then the follow-through. Play it from the wind-up's start at 1x.
+    lash: { clip: 'Right_Hand_Sword_Slash', warp: [[0, 0], [0.55, 1.3], [0.85, 1.55], [1.5, 2.1]] },
+  },
 };
+
+// Retime a clip through piecewise-linear [[clipTime, newTime], ...] points.
+function warpClip(clip, key, points) {
+  const c = clip.clone(); c.name = key;
+  const map = (t) => {
+    for (let i = 1; i < points.length; i++) {
+      const [a0, b0] = points[i - 1], [a1, b1] = points[i];
+      if (t <= a1 || i === points.length - 1) return b0 + (t - a0) * (b1 - b0) / (a1 - a0);
+    }
+    return t;
+  };
+  for (const tr of c.tracks) for (let i = 0; i < tr.times.length; i++) tr.times[i] = map(tr.times[i]);
+  c.duration = points[points.length - 1][1];
+  return c;
+}
 
 // Props a wizard's own model holds in its right hand. The model is scaled to `length` (m) along its long
 // axis (y) and gripped `grip` m from its bottom end. It is fitted once, in the model's idle pose: upright,
 // with its top leaning `lean` radians forward and `out` radians away from the body, then it follows the hand.
 const PROPS = {
   rime: { url: '/models/wizards/rime-wand.glb', length: 1.5, grip: 0.6, lean: 0.12, out: 0.1 },
+  vesper: { url: '/models/wizards/vesper-wand.glb', length: 1.5, grip: 0.6, lean: 0.12, out: 0.1 },
 };
 
 function subclipByTime(clip, key, from, to, duration) {
@@ -208,10 +233,11 @@ function ownClips(id, scene, animations) {
   const picks = MODEL_CLIPS[id] || {};
   const out = {};
   for (const [key, pick] of Object.entries(picks)) {
-    const [name, from, to, duration] = Array.isArray(pick) ? pick : [pick];
+    const [name, from, to, duration] = Array.isArray(pick) ? pick : typeof pick === 'object' ? [pick.clip] : [pick];
     const clip = animations.find(a => a.name === name);
     if (!clip) { console.warn(`[looks] ${id}: no clip '${name}' for ${key}`); continue; }
-    out[key] = from != null ? stripRootMotion(subclipByTime(clip, key, from, to, duration)) : asKey(clip, key);
+    out[key] = pick.warp ? stripRootMotion(warpClip(clip, key, pick.warp))
+      : from != null ? stripRootMotion(subclipByTime(clip, key, from, to, duration)) : asKey(clip, key);
   }
   for (const [key, names] of Object.entries(CLIP_NAMES)) {
     if (out[key]) continue;
@@ -470,13 +496,14 @@ const FLAIR = {
     } }));
   },
   // Vesper: a dark crimson aura: smoky wisps rising in a spiral, a few blood-red sparks, a dark pool underfoot.
-  vesper(model) {
+  vesper(model, own) {
     model.add(motes(7, { size: 1.1, color: 0x8a0a22, place: (i, t, p) => {   // faint crimson halo
       const a = i / 7 * 6.283 + t * 0.3;
       p.set(Math.cos(a) * 0.22, 0.35 + (i % 4) * 0.4, Math.sin(a) * 0.22);
       return 0.26 + 0.07 * Math.sin(t * 2 + i);
     } }));
-    model.add(motes(16, { size: 0.45, color: 0x2a0410, additive: false, place: (i, t, p) => {
+    // smoke wisps read as grey blotches next to a real model, so only the stand-in gets them
+    if (!own) model.add(motes(16, { size: 0.45, color: 0x2a0410, additive: false, place: (i, t, p) => {
       const k = fract(t * 0.35 + rand(i, 1));
       const a = rand(i, 2) * 6.283 + k * 2.5, r = 0.35 + rand(i, 3) * 0.2 + k * 0.15;
       p.set(Math.cos(a) * r, 0.1 + k * 1.9, Math.sin(a) * r);
