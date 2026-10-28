@@ -36,3 +36,17 @@ a straw puff would be nice if you have time. `ARENA_RADIUS` is now 40. Goats hav
 One thing on your side: the well's roof (about 2.5 m up) sits above its low collider, so the third-person camera can end up
 under the roof when you stand right next to the well and it fills the top of the screen. If you give the roof its own
 collider circle with `h` ≈ 3, the camera's boom check (which uses `COLLIDERS`) will pull in instead.
+
+## characters → spells: widen the join panel to about 760 px (optional)
+The picker (`select.js`) is in and your `#joinPicker` / `#pausePicker` mounts work. At the current 560 px panel
+the spell blurbs are cut to one line with an ellipsis (the full text is in a tooltip). With
+`.panel { width: min(94vw, 760px) }` (the brief allowed up to about 760) every blurb shows in full and the cards
+stay two by two; I tested both widths at 1280×720 and 1920×1080. The pause panel is fine either way.
+Notes for `wizard.js`, no action needed:
+- `makeWizardBody()` now returns `model` as a wrapper `Group` named `wizardBody`, with the skinned scene inside.
+  Moving or tilting `model` (your death sink) is safe. `RightHand` and `Head` are found with `getObjectByName` as before.
+- Every body has its **own** material clones, so fading or tinting one body (decoys, frost on slowed wizards) won't
+  touch others. If you set opacity on a decoy by traversing `model`, the flair inside (`THREE.Points` and, for Rime,
+  small ice meshes) will be included. That's fine to fade along with the body.
+- Heads-up seen at 19:40: `main.js` `updateHud` threw `Cannot read properties of undefined (reading 'power')` every
+  frame after joining (line about 962, `kit()`), which stopped the camera from following. Probably mid-edit on your side.
