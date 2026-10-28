@@ -134,6 +134,18 @@ const PROPS = {
   vesper: { url: '/models/wizards/vesper-wand.glb', length: 1.5, grip: 0.6, lean: 0.12, out: 0.1 },
 };
 
+// Vesper's whips (Ty's models). The coil hangs flat on her left hip at all times; the straight whip is held by
+// its handle (the gem end, +y) in her right fist and only shows during Sanguine Lash. body.setWhip('out' |
+// 'coiled') swaps them (the wand hides while the whip is out); body.setWhipGlow(0..1) makes both glow crimson.
+// Both are also on body.model.userData. Bodies without whips don't have them.
+const WHIPS = {
+  vesper: {
+    coil: { url: '/models/wizards/vesper-whip-coil.glb', diameter: 0.34, out: 0.1, drop: 0.02, turn: 0.6 },
+    whip: { url: '/models/wizards/vesper-whip.glb', length: 1.6, grip: 1.54, lean: -0.5, out: 0.15, thick: 1.6 },
+  },
+};
+const WHIP_GLOW = new THREE.Color(0xff1a3a);
+
 function subclipByTime(clip, key, from, to, duration) {
   const fps = 30;
   const c = THREE.AnimationUtils.subclip(clip, key, Math.round(from * fps), Math.round(to * fps), fps);
@@ -305,13 +317,40 @@ function fitProp(cfg, propScene, scene, idle, modelScale) {
   propScene.traverse(o => { if (o.isMesh) o.castShadow = true; });
   const box = new THREE.Box3().setFromObject(propScene);
   const k = cfg.length / modelScale / (box.max.y - box.min.y);
-  propScene.scale.setScalar(k);
+  propScene.scale.set(k * (cfg.thick || 1), k, k * (cfg.thick || 1));   // `thick`: fatter than modelled, to read at range
   propScene.position.set(-(box.min.x + box.max.x) / 2 * k, -box.min.y * k - cfg.grip / modelScale, -(box.min.z + box.max.z) / 2 * k);
   const prop = new THREE.Group(); prop.name = 'heldProp'; prop.add(propScene);
   // upright, leaning forward (+z) and out to the body's right (-x); world here is the model's root space
   const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(cfg.lean, 0, cfg.out));
   const want = new THREE.Matrix4().compose(grip, q, new THREE.Vector3(1, 1, 1));
   const local = new THREE.Matrix4().copy(hand.matrixWorld).invert().multiply(new THREE.Matrix4().copy(body.matrixWorld)).multiply(want);
+  const t = { p: new THREE.Vector3(), q: new THREE.Quaternion(), s: new THREE.Vector3() };
+  local.decompose(t.p, t.q, t.s);
+  return { prop, t };
+}
+
+// Fit the coiled whip flat against the left hip of `scene` (unscaled, rest pose): a disc of `diameter` m,
+// `out` m outside the left thigh and `drop` m below the top of it, parented to the Hips bone so it rides the
+// pelvis rather than swinging with the leg. Returns the template and its transform relative to Hips, or null.
+function fitHip(cfg, coilScene, scene, modelScale) {
+  const body = skeletonClone(scene);
+  body.updateMatrixWorld(true);
+  const hips = body.getObjectByName('Hips'), thigh = body.getObjectByName('LeftUpLeg');
+  if (!hips || !thigh) return null;
+  prepareMeshes(coilScene);
+  const box = new THREE.Box3().setFromObject(coilScene);
+  const k = cfg.diameter / modelScale / Math.max(box.max.x - box.min.x, box.max.y - box.min.y);
+  coilScene.scale.setScalar(k);
+  const c = box.getCenter(new THREE.Vector3());
+  coilScene.position.set(-c.x * k, -c.y * k, -c.z * k);
+  const prop = new THREE.Group(); prop.name = 'whipCoil'; prop.add(coilScene);
+  const at = thigh.getWorldPosition(new THREE.Vector3());
+  const side = Math.sign(at.x - hips.getWorldPosition(new THREE.Vector3()).x) || 1;
+  at.x += side * cfg.out / modelScale; at.y -= cfg.drop / modelScale;
+  // the disc's face (its z) turned to point out of the hip, `turn` rad back towards the front so it reads from both
+  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, side * (Math.PI / 2 - (cfg.turn || 0)), 0));
+  const want = new THREE.Matrix4().compose(at, q, new THREE.Vector3(1, 1, 1));
+  const local = new THREE.Matrix4().copy(hips.matrixWorld).invert().multiply(new THREE.Matrix4().copy(body.matrixWorld)).multiply(want);
   const t = { p: new THREE.Vector3(), q: new THREE.Quaternion(), s: new THREE.Vector3() };
   local.decompose(t.p, t.q, t.s);
   return { prop, t };
@@ -400,6 +439,10 @@ export async function loadWizardModels(loader) {
       const cfg = PROPS[id];
       if (cfg) await loader.loadAsync(cfg.url).then(g => { models[id].prop = fitProp(cfg, g.scene, scene, clips.idle, scale); })
         .catch(err => console.warn(`[looks] ${id}: prop ${cfg.url} not used (${err?.message || err})`));
+      const wh = WHIPS[id];
+      if (wh) await Promise.all([loader.loadAsync(wh.coil.url), loader.loadAsync(wh.whip.url)]).then(([c, w]) => {
+        models[id].whips = { coil: fitHip(wh.coil, c.scene, scene, scale), whip: fitProp(wh.whip, w.scene, scene, clips.idle, scale) };
+      }).catch(err => console.warn(`[looks] ${id}: whips not used (${err?.message || err})`));
     } catch (err) { console.warn(`[looks] ${id}: ${WIZARDS[id].model} not used (${err?.message || err}); using the base model`); }
   }));
   readyResolve();
@@ -625,17 +668,38 @@ export function makeWizardBody(id) {
   const model = new THREE.Group();
   model.name = 'wizardBody';
   let inner, clips;
+  const extra = {};
   if (own) {
     inner = skeletonClone(own.scene);
     inner.scale.setScalar(own.scale);
     inner.position.y = own.offsetY;
     inner.traverse(o => { if (o.isMesh) o.material = o.material.clone(); });
     clips = own.clips;
-    const hand = own.prop && inner.getObjectByName('RightHand');
-    if (hand) {
-      const prop = own.prop.prop.clone();     // shares geometry and materials with the template
-      prop.position.copy(own.prop.t.p); prop.quaternion.copy(own.prop.t.q); prop.scale.copy(own.prop.t.s);
-      hand.add(prop);
+    const place = (fit, bone, ownMaterials) => {
+      const node = inner.getObjectByName(bone);
+      if (!fit || !node) return null;
+      const o = fit.prop.clone();             // shares geometry, and materials unless this body needs its own
+      if (ownMaterials) o.traverse(m => { if (m.isMesh) m.material = m.material.clone(); });
+      o.position.copy(fit.t.p); o.quaternion.copy(fit.t.q); o.scale.copy(fit.t.s);
+      node.add(o);
+      return o;
+    };
+    const wand = place(own.prop, 'RightHand');
+    if (own.whips) {
+      const coil = place(own.whips.coil, 'Hips', true), whip = place(own.whips.whip, 'RightHand', true);
+      if (whip) whip.visible = false;
+      const mats = [];
+      for (const o of [coil, whip]) o?.traverse(m => { if (m.isMesh) mats.push(m.material); });
+      extra.setWhip = (mode) => {
+        const out = mode === 'out';
+        if (whip) whip.visible = out;
+        if (coil) coil.visible = !out;
+        if (wand) wand.visible = !out;
+      };
+      extra.setWhipGlow = (k) => {
+        k = Math.max(0, Math.min(1, k || 0));
+        for (const m of mats) { m.emissive.copy(WHIP_GLOW); m.emissiveIntensity = 1.6 * k; }
+      };
     }
   } else {
     inner = skeletonClone(baseModel);
@@ -644,5 +708,6 @@ export function makeWizardBody(id) {
   }
   model.add(inner);
   FLAIR[id]?.(model, !!own);
-  return { model, clips };
+  Object.assign(model.userData, extra);     // the same functions, for code that only keeps `model`
+  return { model, clips, ...extra };
 }
