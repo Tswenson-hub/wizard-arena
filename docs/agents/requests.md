@@ -132,3 +132,46 @@ His casts keep your timings:
 - `cast_heavy` (Charged_Upward_Slash) gathers low, then slashes upward with its peak at clip time 1.9–2.1 s. That's the
   1.25 s wind-up at 1.5×, so the release lands on it as is. block, stun, dash and idle are the base clips retargeted.
 Screenshots: `/tmp/wa-characters/shots/cinder-game-sheet.png`.
+
+## coordinator → environment + spells: throwable goats (Ty: "make the goats throwable")
+Shared contract. Environment owns the goat side (`server/goats.js`, `public/js/goats.js`); spells owns the
+telekinesis side (`server.js`, `server/bots.js`, `main.js`, `wizard.js`, `effects.js`, `audio.js`).
+
+**Behaviour**
+- **Lifting:** telekinesis (F) can lift a goat in `graze`, `wander`, `return`, `recover` or `dizzy`. Not one that is
+  rearing or charging. Lifting doesn't anger it. While held it floats at the holder's hold point, bleating and flailing.
+- **Hurling:** F again throws it like a prop (speed about 18, gravity about 9, gravity-compensated toward the aim point).
+- **A flying goat that hits a wizard** (not the thrower):
+  - the wizard takes **30 damage**, a 0.6 s stun and knockback 6, credited to the thrower. A ward facing it blocks it, like a thrown prop.
+  - the goat drops beside them, is dizzy for 1.0 s, then **charges the wizard it hit**. The ram kill is credited to the thrower.
+- **A flying goat that hits ground, a collider or a Bulwark wall:** it lands dizzy for 1.2 s, then **charges the thrower**,
+  because it's angry at whoever threw it.
+- **A held goat absorbs a spell** aimed at the holder, like a held prop. It drops dizzy, then charges the caster of that spell.
+- **Releases:** G drops it gently (dizzy 1.0 s, not angry), and so do the holder's death or stun. A goat dropped or
+  landed outside the pen later trots home as usual.
+
+**Interface: `server/goats.js` (environment)**
+- `canLift(goat) → bool`
+- `liftGoat(goat, holderId, ctx)`: state `held`. Each tick goats.js places it at
+  `C.holdPoint(holder.p, holder.yaw)` (with x, y, z). If the holder is gone or dead it calls `releaseGoat` itself.
+- `releaseGoat(goat, ctx)`: a gentle drop at its current spot (dizzy, not angry).
+- `throwGoat(goat, throwerId, origin, dir, ctx)`: state `flying`. goats.js simulates the arc, collides with `COLLIDERS`,
+  players (not the thrower) and ground, and on a wizard hit calls **`ctx.goatHitPlayer(goat, player, throwerId)`**
+  (implemented in server.js), then does the landing and anger behaviour above.
+- `angerGoatAt(goat, targetId, creditId, ctx)`: charge `targetId`, with any ram kill credited to `creditId`. `angerGoat` is
+  unchanged. `angerGoat` on a `held` goat means "absorbed a spell": drop it, then charge the caster.
+- `goatPublic` gains `y` (height above ground, 0 on the ground) and `holder`; states gain `held` and `flying`.
+  `ram()` ignores held and flying goats.
+
+**Spells side**
+- **Targeting:** `tkTarget` (server and client) considers liftable goats as well as idle props (closest to the aim ray wins).
+  A goat target sends `pickup` as usual, and the server calls `liftGoat`.
+- **Tracking:** track a held goat as `p.carryingGoat = goatId`, separate from `p.carrying` (prop ids). `throw` with a
+  goat calls `throwGoat`, and `drop` calls `releaseGoat`. Death or stun releases it.
+- **Collision:** the projectile-vs-goat test uses the goat's height: centre `(g.y||0) + GOAT.hitY`.
+- **`ctx.goatHitPlayer`:** applies the hit through `applyHit`-style rules (ward cone, damage 30, stun 0.6, knockback 6,
+  kind `goat`), and the kill feed reads "X goated Y".
+- **Client:** draw the telekinesis beam from the holder's hand to the goat (goats.js draws the goat itself from `y`) and
+  show the hint "F hurl goat".
+- **Bots:** Hard and Normal bots sometimes lift a goat and hurl it at an enemy within about 18 m. Every bot treats a
+  flying goat like a thrown prop.
