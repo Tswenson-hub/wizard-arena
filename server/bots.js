@@ -133,6 +133,8 @@ const rooted = (q, t) => q.rootUntil > t;
 const airborne = (q, t) => q.flightUntil > t || q.p[1] > 0.05;
 const cycloneWindingUp = (q) => q.cyclone && !q.cyclone.pulsed;
 const mobilityReady = (me, t) => t >= me.cd.mobility && !airborne(me, t) && !rooted(me, t);
+const veiled = (q, t) => q.veilUntil > t;
+const veilReady = (me, t) => kit(me).guard === 'tempest_veil' && t >= me.cd.guard && !veiled(me, t);
 const wallReady = (me, t) => kit(me).guard === 'glacial_bulwark' && t >= me.cd.guard && !airborne(me, t);
 const busyCasting = (q) => q.charging || !!q.lash || cycloneWindingUp(q);
 // the primary can fire now (cooldown, and the magazine isn't reloading)
@@ -330,6 +332,9 @@ function think(me, world, t) {
 
   const carried = me.carrying ? world.props.get(me.carrying) : null;
 
+  // a veiled Gale swallows everything for 3 s: don't waste shots, wait it out (movement backs off)
+  if (veiled(target, t)) return;
+
   // ---- punish a meteor, lash or cyclone wind-up with a spark (interrupts it)
   if (busyCasting(target) && los && d < 26) {
     if (!b.chargeSeen.has(target.id)) b.chargeSeen.set(target.id, { at: t, go: Math.random() < cfg.punish });
@@ -414,8 +419,11 @@ function think(me, world, t) {
       return;
     }
   } else if (K.power === 'cyclone' && powerReady && !targetAir && !me.carrying) {
-    // Cyclone ready: rush in to spin range (the check above fires it)
-    if (d < 14 && !targetWarded && me.hp > 30 && Math.random() < cfg.aggression * 0.6) b.diveUntil = t + 2.5;
+    // Cyclone ready: rush in to spin range (the check above fires it), behind a Tempest Veil if we have one
+    if (d < 14 && !targetWarded && me.hp > 30 && Math.random() < cfg.aggression * 0.6) {
+      b.diveUntil = t + 2.5;
+      if (veilReady(me, t) && d > 4.5 && d < 11 && cfg.blinkDodge) { act({ t: 'veil' }); return; }
+    }
   } else if (K.power === 'sanguine_lash' && powerReady && !targetAir && !me.carrying) {
     // Lash: best when they're stuck in place, or when it can pierce two of them
     const window = targetStunned || rooted(target, t) || busyCasting(target) || linedUp(me, target, world, t) || Math.random() < 0.2;
@@ -527,6 +535,8 @@ function respondGoat(me, world, g, vel, tc, t, act) {
   if (K.mobility === 'skyward' && b.cfg.blinkDodge && mobilityReady(me, t)) return act({ t: 'skyward' });
   if (world.cycloneStopsGoats && K.power === 'cyclone' && t >= me.cd.power && !me.carrying
       && tc > CYC.windup + 0.05 && tc * C.GOAT.chargeSpeed < CYC.windup * C.GOAT.chargeSpeed + CYC.radius) return act({ t: 'cyclone' });
+  if (veiled(me, t)) return;   // it bounces off the veil
+  if (veilReady(me, t)) return act({ t: 'veil' });
   if (wallReady(me, t) && Math.hypot(g.x - me.p[0], g.z - me.p[2]) > BULWARK.dist + 1.2) return raiseWall(me, [g.x, 0, g.z], act);
   if (K.guard === 'ward' && me.st >= C.GOAT.blockCost + 5) {
     me.yaw = Math.atan2(g.x - me.p[0], g.z - me.p[2]);
@@ -659,6 +669,8 @@ function respondCyclone(me, caster, t, act) {
     if (K.mobility === 'smoke_screen') return smokeAway(me, away, act);
     return blinkSideways(me, caster.p, act, away);
   }
+  if (veiled(me, t)) return;
+  if (veilReady(me, t)) return act({ t: 'veil' });
   if (wallReady(me, t) && d > BULWARK.dist + 0.6) return raiseWall(me, caster.p, act);
   if (K.guard === 'ward' && need > left * C.MOVE_SPEED * cfg.speed && me.st >= CYC.staminaCost + 5 && !me.carrying && cfg.dodge > 0.8) {
     me.yaw = Math.atan2(caster.p[0] - me.p[0], caster.p[2] - me.p[2]);
@@ -687,6 +699,8 @@ function respondFrostfall(me, f, df, t, act) {
   const b = me.bot, cfg = b.cfg, K = kit(me);
   if (!canAct(me, t) && rooted(me, t)) return;
   const left = f.at - t;
+  if (veiled(me, t) && me.veilUntil > f.at + 0.05) return;
+  if (veilReady(me, t) && left < C.SPELLBOOK.tempest_veil.duration - 0.2) return act({ t: 'veil' });
   const need = FROST.radius + C.PLAYER_RADIUS + 0.3 - df;
   const out = df > 0.05 ? [(me.p[0] - f.x) / df, 0, (me.p[2] - f.z) / df] : [Math.sin(me.yaw), 0, Math.cos(me.yaw)];
   if (need > left * C.MOVE_SPEED * cfg.speed * (me.slowUntil > t ? 1 - SKIM.slow : 1) && cfg.blinkDodge && mobilityReady(me, t) && canAct(me, t)) {
@@ -744,6 +758,7 @@ function respond(me, world, t, proj, th, act) {
   const incoming = [-proj.v[0], 0, -proj.v[2]];
   const faceIt = () => { me.yaw = Math.atan2(incoming[0], incoming[2]); };
   const big = proj.kind === 'heavy' || proj.kind === 'lash';
+  if (veiled(me, t)) return;   // nothing gets through the veil: keep casting
 
   // Mid wind-up we can't ward or move well; a smart bot abandons a cast that's about to be stuffed.
   if (me.charging || me.lash) {
@@ -754,6 +769,8 @@ function respond(me, world, t, proj, th, act) {
 
   // Glacial Bulwark: an ice wall in its path, if it's still far enough out to land behind the wall
   const projDist = Math.hypot(proj.p[0] - me.p[0], proj.p[2] - me.p[2]);
+  if (veiled(me, t)) return;   // nothing gets through
+  if (big && veilReady(me, t)) return act({ t: 'veil' });
   if (big && wallReady(me, t) && projDist > BULWARK.dist + 1.2 && th.tc > 0.1) {
     return raiseWall(me, [me.p[0] + incoming[0], 0, me.p[2] + incoming[2]], act);
   }
@@ -826,6 +843,7 @@ function moveBot(me, dt, world, t) {
         else fwd = -1;
       } else if (!los) fwd = d > 6 ? 0.6 : 0;            // flank around the obstruction
       else if (diving) fwd = d > 3 ? 1 : 0;              // closing in for a cyclone
+      else if (veiled(target, t)) fwd = d < 12 ? -1 : 0;  // a veiled Gale is coming: keep away until it drops
       else if (d > cfg.range[1]) fwd = 1;
       else if (d < cfg.range[0]) fwd = -0.8;
       if (t >= b.strafeUntil) { if (Math.random() < 0.6) b.strafe *= -1; b.strafeUntil = t + rand(0.5, 1.8) / (cfg.dodge + 0.4); }

@@ -197,6 +197,12 @@ export const SPELLBOOK = {
     blurb: 'Hold to block spells from the front. Drains stamina.',
     cooldown: 0,
   },
+  tempest_veil: {
+    id: 'tempest_veil', slot: 'guard', name: 'Tempest Veil', short: 'Veil',
+    blurb: 'Tap: a wind bubble wraps you for 3 s and swallows every spell, from any side. Move and cast freely.',
+    duration: 3,
+    cooldown: 10,        // from activation; it can't be refreshed while up
+  },
   glacial_bulwark: {
     id: 'glacial_bulwark', slot: 'guard', name: 'Glacial Bulwark', short: 'Bulwark',
     blurb: 'Tap to raise an ice wall ahead that blocks everything. 10 s or 120 damage.',

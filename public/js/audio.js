@@ -204,6 +204,9 @@ export class Sfx {
   }
   // Smoke Screen: a low whoosh and a puff.
   smoke(pos) { this.play('smoke_screen', { pos, vol: 0.85, jitter: 0.04 }); }
+  // Tempest Veil: a rushing gust up, a soft puff down (the ward hum plays while it's up).
+  veilUp(pos) { this.play('tk_throw', { pos, vol: 0.9, rate: 0.8, jitter: 0.04 }); this.play('blink', { pos, vol: 0.35, rate: 0.7, delay: 0.03 }); }
+  veilDown(pos) { this.play('tk_throw', { pos, vol: 0.5, rate: 1.4, jitter: 0.05 }); }
   // A kill of ours: a flat reward sting for the killer only. A new kill restarts it rather than stacking.
   killSting() {
     try { this.sting?.stop(); } catch {}

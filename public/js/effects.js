@@ -435,6 +435,34 @@ export class Effects {
     return sp;
   }
 
+  // ---------------------------------------------------------------- Tempest Veil
+  // A gust bursting outward when the veil goes up; a soft pop when it ends.
+  veilGust(p) {
+    const pos = new THREE.Vector3(p[0], 1, p[2]);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(1, 0.05, 6, 40).rotateX(Math.PI / 2),
+      this.mat(0xe8dcff, { opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }));
+    ring.position.copy(pos); ring.scale.setScalar(0.4);
+    this.scene.add(ring);
+    this.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0, maxLife: 0.35, grav: 0, grow: 9, still: true });
+    for (let i = 0; i < 18; i++) {
+      const a = i / 18 * Math.PI * 2;
+      const m = new THREE.Mesh(this.particleGeo, this.mat(i % 2 ? 0xffffff : 0xb98cff, { opacity: 1 }));
+      m.position.set(p[0] + Math.sin(a) * 0.6, 0.3 + Math.random() * 1.6, p[2] + Math.cos(a) * 0.6);
+      m.scale.setScalar(0.4);
+      this.scene.add(m);
+      this.particles.push({ mesh: m, vel: new THREE.Vector3(Math.sin(a) * 7 + Math.cos(a) * 3, 0.5, Math.cos(a) * 7 - Math.sin(a) * 3), life: 0, maxLife: 0.4, grav: 0, shrink: true });
+    }
+    for (let i = 0; i < 4; i++) this.dust(pos, 2);
+  }
+  veilPop(p) {
+    const pos = new THREE.Vector3(p[0], 1, p[2]);
+    this.burst(pos, 0xe8dcff, 16, 4, 0.3, 0);
+    const shell = new THREE.Mesh(this.sphereGeo, this.mat(0xd8c8ff, { opacity: 0.5, depthWrite: false }));
+    shell.position.copy(pos); shell.scale.setScalar(1.35);
+    this.scene.add(shell);
+    this.particles.push({ mesh: shell, vel: new THREE.Vector3(), life: 0, maxLife: 0.2, grav: 0, grow: 4, still: true });
+  }
+
   // ---------------------------------------------------------------- Smoke Screen
   // A dense grey-brown cloud of layered billboard puffs that drift and churn, a few ember-lit ones low
   // down, for `left` seconds, then a SMOKE.fade fade. Timed on the real clock.

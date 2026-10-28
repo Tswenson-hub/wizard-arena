@@ -76,6 +76,7 @@ function newPlayer(id, name, wizard = C.DEFAULT_WIZARD) {
     rootUntil: 0, silenceUntil: 0,   // Sanguine Lash bind (both), or a missed lash's recovery (root only)
     frozenUntil: 0,               // Frostfall: the bind above, shown as ice
     ammo: 3, reloadUntil: 0, lastShotAt: 0,   // primary magazine (constants: primaryMag)
+    veilUntil: 0,                 // Tempest Veil: every hit is absorbed until then
     flightStart: 0, flightUntil: 0,   // Skyward Flash window: y may exceed 0 only inside it
     carrying: null,
     lastHitBy: null,
@@ -92,6 +93,7 @@ function playerPublic(p) {
     stun: p.stunUntil > now(), dead: p.dead,
     carrying: p.carrying, kills: p.kills, deaths: p.deaths,
     wizard: p.wizard, lashing: !!p.lash,
+    veil: p.veilUntil > now(),
     ammo: p.ammo, reload: p.reloadUntil > now() ? +(p.reloadUntil - now()).toFixed(2) : 0,
     slow: p.slowUntil > now(), bound: p.silenceUntil > now(), rooted: p.rootUntil > now(), frozen: p.frozenUntil > now(),
     bot: p.bot ? p.bot.difficulty : undefined,
@@ -106,7 +108,8 @@ const isAirborne = (p) => p.flightUntil > now();
 const kit = (p) => C.kitOf(p.wizard);
 const CYCLONE = C.SPELLBOOK.cyclone, SKY = C.SPELLBOOK.skyward, LASH = C.SPELLBOOK.sanguine_lash;
 const MIRROR = C.SPELLBOOK.mirror_step, BULWARK = C.SPELLBOOK.glacial_bulwark, RELIC = C.SPELLBOOK.trapped_relic;
-const SKIM = C.SPELLBOOK.glacial_skim, FROST = C.SPELLBOOK.frostfall, SMOKE = C.SPELLBOOK.smoke_screen;
+const SKIM = C.SPELLBOOK.glacial_skim, FROST = C.SPELLBOOK.frostfall, SMOKE = C.SPELLBOOK.smoke_screen, VEIL = C.SPELLBOOK.tempest_veil;
+const isVeiled = (p) => p.veilUntil > now();
 
 // ---------------------------------------------------------------- wizard choice
 // A switch applies at once if the player is alive and not mid-cast, else when the cast ends or at respawn.
@@ -186,6 +189,13 @@ function applyHit(target, proj) {
   const interrupt = (proj.kind !== 'fast' && proj.kind !== 'skim') || !!proj.fin;
   const t = now();
 
+  // Tempest Veil: swallowed whole, from any side. No damage, stun, slow, bind or knockback, and the
+  // target's own cast carries on (that's the point: Gale dives in and spins).
+  if (isVeiled(target)) {
+    broadcast({ t: 'hit', target: target.id, attacker: proj.owner, kind: proj.kind, dmg: 0, blocked: true, veil: true, kb: 0, dir: norm3([proj.v[0], 0, proj.v[2]]), int: false });
+    return { dmg: 0, blocked: true };
+  }
+
   // Is the target blocking and facing the incoming projectile?
   let blocked = false;
   if (target.blocking && target.st > 0 && !spec.unblockable) {
@@ -258,6 +268,7 @@ function killPlayer(target, attacker, cause = null) {
   cancelCyclone(target);
   cancelLash(target);
   target.slowUntil = target.rootUntil = target.silenceUntil = target.frozenUntil = 0;
+  if (target.veilUntil) { target.veilUntil = 0; broadcast({ t: 'veilEnd', id: target.id }); }
   for (const d of [...decoys.values()]) if (d.owner === target.id) endDecoy(d, false);
   target.flightUntil = 0; target.p[1] = 0;
   target.blocking = false;
@@ -512,6 +523,7 @@ function simulate(dt) {
     // Skyward Flash: the flight ends when the wizard reports touching down, or when time runs out
     if (p.flightUntil && (t >= p.flightUntil || (p.p[1] <= 0.01 && t > p.flightStart + 0.3))) { p.flightUntil = 0; p.p[1] = 0; }
     flushPendingWizard(p);
+    if (p.veilUntil && t >= p.veilUntil) { p.veilUntil = 0; broadcast({ t: 'veilEnd', id: p.id }); }
     // primary magazine: a finished reload refills it; a partial one reloads after idling
     const mag = C.primaryMag(kit(p).primary);
     if (p.reloadUntil && t >= p.reloadUntil) { p.ammo = mag.magazine; p.reloadUntil = 0; }
@@ -796,6 +808,13 @@ function handle(p, msg) {
       broadcast({ t: 'mirror', id: p.id, from, to: p.p, yaw: Math.atan2(paths[mine].dir[0], paths[mine].dir[2]), decoys: out });
       break;
     }
+    case 'veil': {
+      if (kit(p).guard !== 'tempest_veil' || !canAct(p) || isVeiled(p) || t < p.cd.guard) break;
+      p.cd.guard = t + VEIL.cooldown;
+      p.veilUntil = t + VEIL.duration;
+      broadcast({ t: 'veil', id: p.id, left: VEIL.duration });
+      break;
+    }
     case 'bulwark': {
       if (kit(p).guard !== 'glacial_bulwark' || !canAct(p) || p.charging || p.cyclone || p.lash || isAirborne(p) || t < p.cd.guard) break;
       p.cd.guard = t + BULWARK.cooldown;
@@ -931,7 +950,9 @@ function removePlayer(id) {
 // cycloneStopsGoats: the goat module can knock a charging goat dizzy (bots then answer a charge with a cyclone)
 const world = { players, props, projectiles, goats, decoys, walls, frostfalls, smokes, handle, now, cycloneStopsGoats: !!Goats.dizzyGoat };
 const goatCtx = {
-  players, props, now, broadcast, breakProp, killPlayer,
+  players, props, now, broadcast, breakProp,
+  // a Tempest Veil survives a ram (goats.js treats the veil as a ward once that request is in; this is the fallback)
+  killPlayer: (p, attacker, cause) => { if (cause === 'goat' && isVeiled(p)) return; killPlayer(p, attacker, cause); },
   // humans apply goat knockback themselves from the goatRam message
   knockback: (p, dir, kb) => { if (p.bot) botKnockback(p, dir, kb); },
 };

@@ -231,7 +231,7 @@ function rebuildWizard(w, wizard, color) {
   stopWizardAudio(w);
   w.dispose(scene);
   const n = new Wizard(info, scene, w === me);
-  for (const k of ['hp', 'st', 'kills', 'deaths', 'dead', 'blocking', 'charging', 'stunned', 'netAnim', 'targetYaw', 'bound', 'slowed', 'lashing', 'frozen']) n[k] = w[k];
+  for (const k of ['hp', 'st', 'kills', 'deaths', 'dead', 'blocking', 'charging', 'stunned', 'netAnim', 'targetYaw', 'bound', 'slowed', 'lashing', 'frozen', 'veiled']) n[k] = w[k];
   n.targetPos.copy(w.targetPos);
   players.set(w.id, n);
   if (w.carrying) startCarry(n, w.carrying);
@@ -250,6 +250,7 @@ function applySnapshot(w, s) {
   w.hp = s.hp; w.st = s.st; w.kills = s.kills; w.deaths = s.deaths;
   w.blocking = s.blocking; w.charging = s.charging; w.stunned = s.stun;
   w.slowed = !!s.slow; w.bound = !!s.bound; w.lashing = !!s.lashing; w.frozen = !!s.frozen;
+  if (s.veil !== undefined && !!s.veil !== w.veiled) w.veiled = !!s.veil;
   if (!s.lashing && w.lashT >= 0 && w !== me) w.endLash();
   if (s.dead !== w.dead) w.dead = s.dead;
   if (w === me) {
@@ -373,7 +374,8 @@ function handleMessage(msg) {
       const target = players.get(msg.target);
       if (!target) break;
       const c = target.group.position.clone(); c.y += 1;
-      if (msg.blocked) { effects.blockFlash(c); sfx.block(c); }
+      if (msg.veil) { target.veilFlash(); effects.burst(c, 0xe8dcff, 8, 3, 0.25, 0); sfx.block(c); }
+      else if (msg.blocked) { effects.blockFlash(c); sfx.block(c); }
       else {
         effects.burst(c, msg.kind === 'skim' ? 0xbfeaff : 0xff3b4e, 10, 3, 0.35);
         if (C.hitSpec(msg.kind)?.stun !== 0 && msg.int !== false) target.oneShot('stun', msg.kind === 'heavy' ? 0.5 : 0.55, 3.0, 0.3);
@@ -513,6 +515,23 @@ function handleMessage(msg) {
       effects.decoyPuff(msg.p, d.wiz.color, msg.popped);
       if (msg.popped) sfx.decoyPop([msg.p[0], 1, msg.p[2]]);
       removeDecoy(msg.id);
+      break;
+    }
+    case 'veil': {
+      const w = players.get(msg.id);
+      if (!w) break;
+      w.veiled = true;
+      const g = w.group.position;
+      effects.veilGust([g.x, g.y, g.z]);
+      sfx.veilUp([g.x, g.y + 1, g.z]);
+      break;
+    }
+    case 'veilEnd': {
+      const w = players.get(msg.id);
+      if (!w) break;
+      w.veiled = false;
+      const g = w.group.position;
+      if (!w.dead) { effects.veilPop([g.x, g.y, g.z]); sfx.veilDown([g.x, g.y + 1, g.z]); }
       break;
     }
     case 'smoke': {
@@ -860,6 +879,10 @@ function updateLocal(dt) {
     // guard: hold to ward, or tap for Rime's ice wall (Space while airborne drops instead)
     const wantBlock = K.guard === 'ward' && input.down('Space') && me.st > 2 && !busy && !airborne && !local.spaceHeld;
     if (wantBlock !== local.blocking) { local.blocking = wantBlock; net.send({ t: 'block', on: wantBlock }); }
+    if (K.guard === 'tempest_veil' && input.justPressed('Space') && !airborne && !local.spaceHeld && now >= local.cd.guard && !me.veiled) {
+      local.cd.guard = now + SPELL.tempest_veil.cooldown;   // tap: the bubble goes up for its duration, no holding
+      net.send({ t: 'veil' });
+    }
     if (K.guard === 'glacial_bulwark' && input.justPressed('Space') && !airborne && !local.spaceHeld && !busy && now >= local.cd.guard) {
       local.cd.guard = now + BULWARK.cooldown;
       net.send({ t: 'bulwark', yaw: local.yaw });
@@ -1104,7 +1127,7 @@ function updateHud(dt) {
   cdFill('mobility', local.cd.mobility, SPELL[K.mobility].cooldown);
   cdFill('block', local.cd.guard, SPELL[K.guard].cooldown);
   cdFill('throw', local.cd.throw, C.THROW_COOLDOWN);
-  ui.ab.block.classList.toggle('active', local.blocking || [...walls.values()].some(w => w.data.owner === myId));
+  ui.ab.block.classList.toggle('active', local.blocking || me.veiled || [...walls.values()].some(w => w.data.owner === myId));
   ui.ab.power.classList.toggle('active', local.charging || !!local.cyclone || !!local.lash || local.frostAim);
   ui.ab.mobility.classList.toggle('active', !!local.flight);
   ui.ab.block.classList.toggle('disabled', bound || (K.guard === 'ward' && me.st < 3) || !!local.flight);
@@ -1166,7 +1189,7 @@ function updateHud(dt) {
 // Charge hum (rising in pitch), ward hum and footsteps follow each wizard around.
 function updateWizardAudio(w, dt) {
   const pos = wpos(w);
-  const charging = (w.charging || w.lashT >= 0) && !w.dead, warding = w.blocking && !w.dead;
+  const charging = (w.charging || w.lashT >= 0) && !w.dead, warding = (w.blocking || w.veiled) && !w.dead;   // Ty's shield hum for both
   if (charging && !w.sndCharge) w.sndCharge = sfx.loop('charge_loop', { pos, vol: 0.55, rate: 0.6 });
   else if (!charging && w.sndCharge) { w.sndCharge.stop(0.08); w.sndCharge = null; }
   // the lash hum sits lower and rises over its longer wind-up

@@ -217,6 +217,25 @@ export class Wizard {
     }
     this.ice.visible = false;
     this.group.add(this.ice);
+    // Tempest Veil: a translucent wind sphere with violet-white streaks whirling around it
+    this.veil = new THREE.Group();
+    this.veilShell = new THREE.Mesh(new THREE.IcosahedronGeometry(1.35, 2),
+      new THREE.MeshBasicMaterial({ color: 0xd8c8ff, transparent: true, opacity: 0.14, depthWrite: false, side: THREE.DoubleSide }));
+    this.veil.add(this.veilShell);
+    this.veilStreaks = [];
+    for (let i = 0; i < 7; i++) {
+      const arc = new THREE.Mesh(new THREE.TorusGeometry(1.25 + (i % 3) * 0.06, 0.022, 4, 36, 1.4 + (i % 2) * 0.8),
+        new THREE.MeshBasicMaterial({ color: i % 2 ? 0xf2ecff : 0xb98cff, transparent: true, opacity: 0.75, blending: THREE.AdditiveBlending, depthWrite: false }));
+      const pivot = new THREE.Group();
+      pivot.rotation.set((i * 0.9) % Math.PI, i * 1.3, (i * 0.5) % 1.2);
+      pivot.add(arc);
+      this.veil.add(pivot);
+      this.veilStreaks.push({ arc, speed: 3 + (i % 3) * 1.5 });
+    }
+    this.veil.position.y = 1.0;
+    this.veil.visible = false;
+    this.group.add(this.veil);
+    this.veiled = false; this.veilFlashT = 0;
     this.frozen = false;
     this.bound = false; this.slowed = false; this.lashing = false;
 
@@ -312,6 +331,9 @@ export class Wizard {
     if (this.carry) this.carry.holder.visible = this.group.visible;
     if (!this.group.visible) this.beam.visible = false;
   }
+
+  // an absorbed hit makes the veil flash
+  veilFlash() { this.veilFlashT = 0.25; }
 
   startLash() { this.lashT = 0; if (this.actions.lash) this.oneShot('lash', LASH.windup + 0.6, 1, 0); }
   endLash() {
@@ -438,6 +460,14 @@ export class Wizard {
       if (this.lashT > LASH.windup + 0.6) this.lashT = -1;   // missed the release message
     } else this.coil.visible = false;
     this.chains.visible = this.bound && !this.frozen && !this.dead;
+    this.veil.visible = this.veiled && !this.dead;
+    if (this.veil.visible) {
+      for (const st of this.veilStreaks) st.arc.rotation.z += dt * st.speed;
+      this.veil.rotation.y += dt * 1.2;
+      this.veilFlashT = Math.max(0, this.veilFlashT - dt);
+      this.veilShell.material.opacity = 0.14 + this.veilFlashT * 1.6;
+      this.veil.scale.setScalar(1 + this.veilFlashT * 0.4 + Math.sin(now * 9) * 0.015);
+    }
     this.ice.visible = this.frozen && !this.dead;
     if (this.chains.visible) {
       this.chains.children.forEach((c, i) => { if (i < 3) c.rotation.z += dt * (i % 2 ? -2.2 : 2.6); });
