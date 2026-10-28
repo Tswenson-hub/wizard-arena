@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import * as C from './public/shared/constants.js';
-import { createBot, updateBots, botKnockback, botNoteRelic, botDash, BOT_LIMIT } from './server/bots.js';
+import { createBot, updateBots, botKnockback, botNoteRelic, botDash, botPull, BOT_LIMIT } from './server/bots.js';
 import * as Goats from './server/goats.js';
 import { createMatch } from './server/match.js';
 const { createGoats, updateGoats, angerGoat, goatPublic } = Goats;
@@ -46,6 +46,7 @@ const decoys = new Map();    // Mirror Step decoys: id -> { id, owner, p, dir, y
 const walls = new Map();     // Glacial Bulwark walls: id -> { id, owner, x, z, yaw, hp, until }
 const frostfalls = new Map(); // Frostfall ice on its way down: id -> { id, owner, x, z, at }
 const smokes = new Map();     // Smoke Screen clouds: id -> { id, owner, x, z, until }
+const strikes = new Map();    // Cataclysm meteors on their way down: id -> { id, owner, x, z, at }
 let nextFxId = 1;            // ids for decoys and walls
 
 // ---------------------------------------------------------------- props
@@ -81,6 +82,10 @@ function newPlayer(id, name, wizard = C.DEFAULT_WIZARD) {
     frozenUntil: 0,               // Frostfall: the bind above, shown as ice
     ammo: 3, reloadUntil: 0, lastShotAt: 0,   // primary magazine (constants: primaryMag)
     veilUntil: 0,                 // Tempest Veil: every hit is absorbed until then
+    ult: 0,                       // ultimate charge, 0–100 (C.ULT_CHARGE); kept through death
+    eye: null,                    // Eye of the Storm: { until, nextTick, nextPull }
+    zero: null,                   // Absolute Zero's flare: { at }
+    eclipse: null,                // Crimson Eclipse: { until, nextTick, targets: Set }
     flightStart: 0, flightUntil: 0,   // Skyward Flash window: y may exceed 0 only inside it
     carrying: null,
     lastHitBy: null,
@@ -101,6 +106,7 @@ function playerPublic(p) {
     veil: p.veilUntil > now(), liftCd: p.cd.lift > now() ? +(p.cd.lift - now()).toFixed(2) : 0,
     ammo: p.ammo, reload: p.reloadUntil > now() ? +(p.reloadUntil - now()).toFixed(2) : 0,
     slow: p.slowUntil > now(), bound: p.silenceUntil > now(), rooted: p.rootUntil > now(), frozen: p.frozenUntil > now(),
+    ult: Math.floor(p.ult), eye: !!p.eye, zero: !!p.zero, eclipse: !!p.eclipse,
     bot: p.bot ? p.bot.difficulty : undefined,
   };
 }
@@ -116,10 +122,16 @@ const MIRROR = C.SPELLBOOK.mirror_step, BULWARK = C.SPELLBOOK.glacial_bulwark, R
 const SKIM = C.SPELLBOOK.glacial_skim, FROST = C.SPELLBOOK.frostfall, SMOKE = C.SPELLBOOK.smoke_screen, VEIL = C.SPELLBOOK.tempest_veil;
 const isVeiled = (p) => p.veilUntil > now();
 const holding = (p) => !!(p.carrying || p.carryingGoat);   // a prop or a goat floats beside us
+const CATA = C.SPELLBOOK.cataclysm, EYE = C.SPELLBOOK.eye_of_storm, ZERO = C.SPELLBOOK.absolute_zero, ECLIPSE = C.SPELLBOOK.crimson_eclipse;
+// Eye of the Storm and Absolute Zero's flare can't be interrupted (no stun, cancel, bind, slow or knockback)
+const unstoppable = (p) => !!p.eye || !!p.zero;
+// May `a` hurt `b`? Game modes: no friendly fire. A missing owner (left the game) still hurts.
+const enemies = (a, b) => !a || !b || (a.id !== b.id && match.isEnemy(a, b));
+const enemyOf = (ownerId, q) => enemies(players.get(ownerId), q);
 
 // ---------------------------------------------------------------- wizard choice
 // A switch applies at once if the player is alive and not mid-cast, else when the cast ends or at respawn.
-const midCast = (p) => p.charging || !!p.cyclone || !!p.lash || isAirborne(p);
+const midCast = (p) => p.charging || !!p.cyclone || !!p.lash || isAirborne(p) || unstoppable(p);
 function requestWizard(p, id) {
   if (!C.isWizard(id)) return;
   p.pendingWizard = id === p.wizard ? null : id;
@@ -136,6 +148,7 @@ function applyWizard(p, id) {
   p.color = C.WIZARDS[id].color;
   if (p.blocking && kit(p).guard !== 'ward') { p.blocking = false; p.blockReleasedAt = now(); }
   if (kit(p).utility !== 'trapped_relic') clearCurse(p);
+  endEclipse(p);
   broadcast({ t: 'wizard', id: p.id, wizard: id, color: p.color });
 }
 
@@ -194,7 +207,9 @@ function applyHit(target, proj) {
   // game modes: no friendly fire
   if (attacker && attacker !== target && !match.isEnemy(attacker, target)) return { dmg: 0, blocked: false, friendly: true };
   // primary fire only interrupts (stun, cancel) with the last shot of a magazine
-  const interrupt = (proj.kind !== 'fast' && proj.kind !== 'skim') || !!proj.fin;
+  // (an ultimate's drain never interrupts; Gale's tornado and Rime's flare can't be interrupted)
+  const steady = unstoppable(target);
+  const interrupt = ((proj.kind !== 'fast' && proj.kind !== 'skim') || !!proj.fin) && !spec.noInterrupt && !steady;
   const t = now();
 
   // Tempest Veil: swallowed whole, from any side. No damage, stun, slow, bind or knockback, and the
@@ -214,7 +229,7 @@ function applyHit(target, proj) {
     blocked = cos >= Math.cos((C.BLOCK_CONE_DEG / 2) * Math.PI / 180);
   }
 
-  let dmg = spec.damage;
+  let dmg = proj.dmg ?? spec.damage;
   if (blocked) {
     const cost = spec.staminaCost;
     if (target.st >= cost) {
@@ -226,7 +241,7 @@ function applyHit(target, proj) {
       target.st = 0;
       target.blocking = false;
       target.blockReleasedAt = t;
-      target.stunUntil = Math.max(target.stunUntil, t + C.BLOCK_BREAK_STUN);
+      if (!steady) target.stunUntil = Math.max(target.stunUntil, t + C.BLOCK_BREAK_STUN);
       broadcast({ t: 'blockBreak', id: target.id });
     }
   } else if (interrupt) {
@@ -242,27 +257,34 @@ function applyHit(target, proj) {
     const lifting = target.carrying && props.get(target.carrying);
     if (lifting && lifting.state === 'lifting') { target.carrying = null; lifting.state = 'idle'; lifting.carrier = null; lifting.trap = null; broadcast({ t: 'prop', prop: propPublic(lifting) }); }
   }
-  if (!blocked) {
+  const freeze = !blocked && !steady && spec.bind && (proj.kind === 'frostfall' || spec.freeze);
+  if (!blocked && !steady) {
     // Glacial Skim slows (refreshed, never stacked); Sanguine Lash binds: rooted and silenced.
     if (spec.slow) target.slowUntil = t + spec.slowTime;
     if (spec.bind) {
       target.rootUntil = Math.max(target.rootUntil, t + spec.bind);
       target.silenceUntil = Math.max(target.silenceUntil, t + spec.bind);
       if (target.blocking) { target.blocking = false; target.blockReleasedAt = t; }
-      if (proj.kind === 'frostfall') target.frozenUntil = t + spec.bind;
+      if (freeze) target.frozenUntil = t + spec.bind;   // Frostfall, Absolute Zero: the bind, shown as ice
     }
   }
 
   target.hp -= dmg;
-  if (dmg > 0) { target.lastHitBy = proj.owner; match.onDamage(target, attacker, dmg); }
-  const kb = isRooted(target) ? 0 : blocked ? spec.knockback * 0.3 : spec.knockback;
+  if (dmg > 0) {
+    target.lastHitBy = proj.owner; match.onDamage(target, attacker, dmg);
+    // damage dealt charges the attacker's ultimate (not an ultimate's own damage)
+    if (attacker && attacker !== target && !spec.ult) addUltCharge(attacker, dmg * C.ULT_CHARGE.perDamage);
+  }
+  const kb = isRooted(target) || steady ? 0 : blocked ? spec.knockback * 0.3 : spec.knockback;
   if (target.bot && kb) botKnockback(target, norm3([proj.v[0], 0, proj.v[2]]), kb);
 
   broadcast({
     t: 'hit', target: target.id, attacker: proj.owner, kind: proj.kind, dmg, blocked,
     kb, dir: norm3([proj.v[0], 0, proj.v[2]]), int: interrupt,
     ...(!blocked && spec.slow ? { slow: spec.slowTime } : {}),
-    ...(!blocked && spec.bind ? { bind: spec.bind } : {}),
+    ...(!blocked && !steady && spec.bind ? { bind: spec.bind } : {}),
+    ...(freeze ? { freeze: true } : {}),
+    ...(!blocked && !steady && spec.launch ? { launch: spec.launch } : {}),
   });
 
   if (target.hp <= 0 && !target.dead) killPlayer(target, attacker, proj.kind === 'goat' ? 'goated' : null);
@@ -276,6 +298,7 @@ function killPlayer(target, attacker, cause = null) {
   cancelCyclone(target);
   cancelLash(target);
   target.slowUntil = target.rootUntil = target.silenceUntil = target.frozenUntil = 0;
+  endUltimates(target);
   if (target.veilUntil) { target.veilUntil = 0; broadcast({ t: 'veilEnd', id: target.id }); }
   for (const d of [...decoys.values()]) if (d.owner === target.id) endDecoy(d, false);
   target.flightUntil = 0; target.p[1] = 0;
@@ -284,7 +307,7 @@ function killPlayer(target, attacker, cause = null) {
   target.respawnAt = now() + C.RESPAWN_TIME;
   if (target.carrying) dropProp(target, true);
   if (target.carryingGoat) { const g = goatById(target.carryingGoat); target.carryingGoat = null; if (g && g.holder === target.id) Goats.releaseGoat?.(g, goatCtx); }
-  if (attacker && attacker.id !== target.id) attacker.kills++;
+  if (attacker && attacker.id !== target.id) { attacker.kills++; addUltCharge(attacker, C.ULT_CHARGE.kill); }
   match.onKill(target, attacker, cause);
   broadcast({ t: 'death', id: target.id, killer: attacker ? attacker.id : null, cause });
 }
@@ -296,6 +319,7 @@ function respawn(p) {
   p.dead = false; p.stunUntil = 0; p.blocking = false; p.charging = false; p.cyclone = null; p.lash = null; p.flightUntil = 0;
   p.slowUntil = p.rootUntil = p.silenceUntil = p.frozenUntil = 0;
   p.ammo = 3; p.reloadUntil = 0;
+  endUltimates(p);
   if (p.pendingWizard) applyWizard(p, p.pendingWizard);
   broadcast({ t: 'respawn', id: p.id, p: p.p });
 }
@@ -331,7 +355,7 @@ function cyclonePulse(p) {
   const hits = [];
   const wallsHit = new Set();
   for (const q of players.values()) {
-    if (q === p || q.dead) continue;
+    if (q === p || q.dead || !enemies(p, q)) continue;
     const d = dist2D(q.p, p.p);
     if (d > CYCLONE.radius + C.PLAYER_RADIUS || Math.abs(q.p[1] - p.p[1]) > CYCLONE.height) continue;
     const wall = wallBetween(p.p, q.p);
@@ -341,11 +365,11 @@ function cyclonePulse(p) {
     hits.push({ id: q.id, dmg, blocked });
   }
   for (const id of wallsHit) damageWall(id, CYCLONE.damage);
-  for (const d of [...decoys.values()]) if (d.owner !== p.id && dist2D(d.p, p.p) < CYCLONE.radius + C.PLAYER_RADIUS && p.p[1] < CYCLONE.height) endDecoy(d, true);
+  for (const d of [...decoys.values()]) if (enemyOf(d.owner, p) && dist2D(d.p, p.p) < CYCLONE.radius + C.PLAYER_RADIUS && p.p[1] < CYCLONE.height) endDecoy(d, true);
   if (p.p[1] < 1) {
     for (const prop of props.values()) {
       if (prop.state !== 'idle') continue;
-      if (dist2D(p.p, [prop.x, 0, prop.z]) < CYCLONE.radius + C.PROP_TYPES[prop.type].r) breakProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z]);
+      if (dist2D(p.p, [prop.x, 0, prop.z]) < CYCLONE.radius + C.PROP_TYPES[prop.type].r) hitProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z]);
     }
     for (const g of goats) {
       if (g.holder === p.id || Math.hypot(g.x - p.p[0], g.z - p.p[2]) > CYCLONE.radius + C.GOAT.radius) continue;
@@ -354,6 +378,17 @@ function cyclonePulse(p) {
     }
   }
   broadcast({ t: 'cyclonePulse', id: p.id, p: p.p, hits });
+}
+
+// A spell or a hit shatters a prop, unless the game mode protects it (the Sacred Relic): then it is knocked
+// loose instead, landing idle where it was hit. Breaking for any other reason (holder death) uses breakProp.
+function hitProp(prop, at) {
+  if (!match.protectProp?.(prop)) return breakProp(prop, at);
+  const holder = prop.carrier != null && players.get(prop.carrier);
+  if (holder && holder.carrying === prop.id) { holder.carrying = null; match.onDrop(holder, prop, 'dropped'); }
+  prop.state = 'idle'; prop.carrier = null; prop.trap = null;
+  prop.x = clamp(at[0], -C.ARENA_RADIUS, C.ARENA_RADIUS); prop.z = clamp(at[2], -C.ARENA_RADIUS, C.ARENA_RADIUS);
+  broadcast({ t: 'prop', prop: propPublic(prop) });
 }
 
 function breakProp(prop, at) {
@@ -398,7 +433,7 @@ function updateDecoys(dt, t) {
 // The decoy (not owned by `ownerId`) a sphere at `pos` with radius `r` touches, if any.
 function decoyAt(pos, r, ownerId) {
   for (const d of decoys.values()) {
-    if (d.owner === ownerId) continue;
+    if (d.owner === ownerId || !enemyOf(ownerId, players.get(d.owner))) continue;
     if (Math.hypot(pos[0] - d.p[0], pos[1] - C.HIT_CENTER_Y, pos[2] - d.p[2]) < C.HIT_RADIUS + r) return d;
   }
   return null;
@@ -446,15 +481,15 @@ function frostfallImpact(f) {
   const at = [f.x, 0, f.z];
   const hits = [];
   for (const q of players.values()) {
-    if (q.dead || q.id === f.owner || q.p[1] > FROST.height || dist2D(q.p, at) > FROST.radius) continue;
+    if (q.dead || q.id === f.owner || !enemyOf(f.owner, q) || q.p[1] > FROST.height || dist2D(q.p, at) > FROST.radius) continue;
     const dx = q.p[0] - f.x, dz = q.p[2] - f.z, l = Math.hypot(dx, dz);
     const { dmg } = applyHit(q, { kind: 'frostfall', owner: f.owner, v: l > 0.05 ? [dx / l, 0, dz / l] : [0, 0, 1] });
     hits.push({ id: q.id, dmg });
   }
-  for (const d of [...decoys.values()]) if (d.owner !== f.owner && dist2D(d.p, at) < FROST.radius) endDecoy(d, true);
+  for (const d of [...decoys.values()]) if (d.owner !== f.owner && enemyOf(f.owner, players.get(d.owner)) && dist2D(d.p, at) < FROST.radius) endDecoy(d, true);
   for (const prop of props.values()) {
     if (prop.state !== 'idle') continue;
-    if (dist2D(at, [prop.x, 0, prop.z]) < FROST.radius + C.PROP_TYPES[prop.type].r * 0.5) breakProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z]);
+    if (dist2D(at, [prop.x, 0, prop.z]) < FROST.radius + C.PROP_TYPES[prop.type].r * 0.5) hitProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z]);
   }
   for (const g of goats) {
     if (g.holder === f.owner || Math.hypot(g.x - f.x, g.z - f.z) > FROST.radius + C.GOAT.radius * 0.5) continue;
@@ -475,14 +510,14 @@ function clearCurse(p) {
 function relicBlast(prop, victim) {
   const curserId = prop.cursedBy;
   const at = C.holdPoint(victim.p, victim.yaw);
-  if (victim.carrying === prop.id) victim.carrying = null;
   broadcast({ t: 'relicBlast', p: at, by: curserId, victim: victim.id });
-  breakProp(prop, at);
+  if (match.protectProp?.(prop)) { prop.cursedBy = null; send(curserId, { t: 'curse', id: null }); hitProp(prop, at); }
+  else { if (victim.carrying === prop.id) victim.carrying = null; breakProp(prop, at); }
   if (victim.bot) botNoteRelic(victim, prop.id, now());
   const hits = [];
   const wallsHit = new Set();
   for (const q of players.values()) {
-    if (q.dead || q.id === curserId) continue;
+    if (q.dead || q.id === curserId || !enemyOf(curserId, q)) continue;
     const c = [q.p[0], q.p[1] + C.HIT_CENTER_Y, q.p[2]];
     const d = Math.hypot(c[0] - at[0], c[1] - at[1], c[2] - at[2]);
     if (d > RELIC.radius + C.HIT_RADIUS * 0.5) continue;
@@ -498,6 +533,187 @@ function relicBlast(prop, victim) {
   return hits;
 }
 
+// ---------------------------------------------------------------- ultimates (Q)
+// Charge is server-authoritative (C.ULT_CHARGE): damage dealt, a passive trickle, kills, and whatever a game
+// mode adds (match.js calls ctx.addUltCharge; a negative amount takes charge away, e.g. a reset).
+function addUltCharge(p, pct) {
+  if (!p || !Number.isFinite(pct)) return;
+  p.ult = clamp(p.ult + pct, 0, C.ULT_CHARGE.max);
+}
+// An ultimate in progress ends early (death, respawn, a wizard switch). Cataclysm meteors already falling still land.
+function endUltimates(p) {
+  if (p.eye) { p.eye = null; broadcast({ t: 'eyeEnd', id: p.id }); }
+  if (p.zero) { p.zero = null; broadcast({ t: 'zeroCancel', id: p.id }); }
+  endEclipse(p);
+}
+function endEclipse(p) {
+  if (!p.eclipse) return;
+  p.eclipse = null;
+  broadcast({ t: 'eclipseEnd', id: p.id });
+}
+const strikePublic = (s) => ({ id: s.id, p: [s.x, 0, s.z], left: Math.max(0, s.at - now()) });
+// Everyone in sight of `from` (pillars, trees, buildings and ice walls block it).
+const inSight = (from, q) => !C.pillarBlocks(from, q.p, 0);
+const outward = (from, q) => { const dx = q.p[0] - from[0], dz = q.p[2] - from[2], l = Math.hypot(dx, dz); return l > 0.05 ? [dx / l, 0, dz / l] : [Math.sin(q.yaw), 0, Math.cos(q.yaw)]; };
+
+// Spells and ultimates that crush an area break the props in it, pop enemy decoys and stir the goats.
+function crushArea(ownerId, x, z, r) {
+  const owner = players.get(ownerId);
+  for (const d of [...decoys.values()]) if (d.owner !== ownerId && enemies(owner, players.get(d.owner)) && Math.hypot(d.p[0] - x, d.p[2] - z) < r) endDecoy(d, true);
+  for (const prop of props.values()) {
+    if (prop.state !== 'idle') continue;
+    if (Math.hypot(prop.x - x, prop.z - z) < r + C.PROP_TYPES[prop.type].r * 0.5) hitProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z]);
+  }
+  for (const g of goats) {
+    if (g.holder === ownerId || Math.hypot(g.x - x, g.z - z) > r + C.GOAT.radius * 0.5) continue;
+    if (!Goats.dizzyGoat?.(g, goatCtx)) angerGoat(g, ownerId, goatCtx);
+  }
+}
+
+// Cinder, Cataclysm: meteors on random, spread-out spots inside the circle, landing one after another.
+function castCataclysm(p, at) {
+  const t = now();
+  let [x, z] = at;
+  const d = Math.hypot(x - p.p[0], z - p.p[2]);
+  if (d > CATA.range) { x = p.p[0] + (x - p.p[0]) * CATA.range / d; z = p.p[2] + (z - p.p[2]) * CATA.range / d; }
+  const r = Math.hypot(x, z);
+  if (r > C.ARENA_RADIUS) { x *= C.ARENA_RADIUS / r; z *= C.ARENA_RADIUS / r; }
+  const spots = [];
+  for (let i = 0; i < CATA.meteors; i++) {
+    let best = null, bestGap = -1;
+    for (let k = 0; k < 12; k++) {   // the candidate farthest from the others: spread out, but random
+      const a = Math.random() * Math.PI * 2, rr = Math.sqrt(Math.random()) * (CATA.radius - CATA.impact * 0.5);
+      const c = [x + Math.sin(a) * rr, z + Math.cos(a) * rr];
+      const gap = Math.min(Infinity, ...spots.map(s => Math.hypot(s[0] - c[0], s[1] - c[1])));
+      if (gap > bestGap) { bestGap = gap; best = c; }
+    }
+    spots.push(best);
+  }
+  const out = spots.map(([sx, sz], i) => {
+    const s = { id: nextFxId++, owner: p.id, x: sx, z: sz, cx: x, cz: z, at: t + CATA.warn + i * CATA.spread / (CATA.meteors - 1) };
+    strikes.set(s.id, s);
+    return strikePublic(s);
+  });
+  broadcast({ t: 'cataclysm', id: p.id, p: [x, 0, z], strikes: out });
+}
+function meteorImpact(s) {
+  strikes.delete(s.id);
+  const at = [s.x, 0, s.z];
+  const hits = [];
+  for (const q of players.values()) {
+    if (q.dead || q.id === s.owner || !enemyOf(s.owner, q) || q.p[1] > CATA.height || dist2D(q.p, at) > CATA.impact + C.PLAYER_RADIUS) continue;
+    const { dmg } = applyHit(q, { kind: 'cataclysm', owner: s.owner, v: outward(at, q) });
+    hits.push({ id: q.id, dmg });
+  }
+  crushArea(s.owner, s.x, s.z, CATA.impact);
+  broadcast({ t: 'meteorHit', id: s.id, p: at, hits });
+}
+
+// Gale, Eye of the Storm: a tornado for EYE.duration. Ticks damage and pulls enemies in; the end flings them out.
+function eyeVictims(p) {
+  return [...players.values()].filter(q => q !== p && !q.dead && enemies(p, q)
+    && dist2D(q.p, p.p) < EYE.radius + C.PLAYER_RADIUS && Math.abs(q.p[1] - p.p[1]) < EYE.height && !wallBetween(p.p, q.p));
+}
+function updateEye(p, t) {
+  const e = p.eye;
+  if (t >= e.nextPull) {
+    // the pull: bots are moved by the server, clients move themselves along the vector they're sent
+    e.nextPull = t + 0.1;
+    const pulls = [];
+    for (const q of eyeVictims(p)) {
+      if (isVeiled(q) || isRooted(q)) continue;
+      const dx = p.p[0] - q.p[0], dz = p.p[2] - q.p[2], l = Math.hypot(dx, dz);
+      if (l < 1.2) continue;   // already in the eye
+      const v = [dx / l * EYE.pull, dz / l * EYE.pull];
+      q.pulledUntil = t + 0.3;
+      if (q.bot) botPull(q, v, t + 0.15); else pulls.push({ id: q.id, v });
+    }
+    if (pulls.length) broadcast({ t: 'eyePull', id: p.id, pulls });
+  }
+  if (t >= e.nextTick && t < e.until) {
+    e.nextTick += EYE.tick;
+    const hits = [];
+    for (const q of eyeVictims(p)) { const { dmg } = applyHit(q, { kind: 'eye_of_storm', owner: p.id, v: outward(p.p, q) }); hits.push({ id: q.id, dmg }); }
+    crushArea(p.id, p.p[0], p.p[2], 2.2);
+    if (hits.length) broadcast({ t: 'eyeTick', id: p.id, hits });
+  }
+  if (t >= e.until) {
+    p.eye = null;
+    const hits = [];
+    for (const q of eyeVictims(p)) { const { dmg } = applyHit(q, { kind: 'eye_burst', owner: p.id, v: outward(p.p, q) }); hits.push({ id: q.id, dmg }); }
+    crushArea(p.id, p.p[0], p.p[2], EYE.radius * 0.6);
+    broadcast({ t: 'eyeBurst', id: p.id, p: p.p, hits });
+    broadcast({ t: 'eyeEnd', id: p.id });
+  }
+}
+
+// Rime, Absolute Zero: after the flare, everyone in sight within the radius is crushed and frozen.
+function zeroBlast(p) {
+  p.zero = null;
+  const from = [p.p[0], p.p[1] + C.HIT_CENTER_Y, p.p[2]];
+  const hits = [];
+  for (const q of players.values()) {
+    if (q === p || q.dead || !enemies(p, q)) continue;
+    const c = [q.p[0], q.p[1] + C.HIT_CENTER_Y, q.p[2]];
+    if (Math.hypot(c[0] - from[0], c[1] - from[1], c[2] - from[2]) > ZERO.radius + C.PLAYER_RADIUS || !inSight(p.p, q)) continue;
+    const { dmg } = applyHit(q, { kind: 'absolute_zero', owner: p.id, v: outward(p.p, q) });
+    hits.push({ id: q.id, dmg });
+  }
+  for (const d of [...decoys.values()]) if (enemyOf(p.id, players.get(d.owner)) && dist2D(d.p, p.p) < ZERO.radius && !C.pillarBlocks(p.p, d.p, 0)) endDecoy(d, true);
+  for (const g of goats) if (Math.hypot(g.x - p.p[0], g.z - p.p[2]) < ZERO.radius && !C.pillarBlocks(p.p, [g.x, 0, g.z], 0)) Goats.dizzyGoat?.(g, goatCtx);
+  broadcast({ t: 'zeroBlast', id: p.id, p: p.p, hits });
+}
+
+// Vesper, Crimson Eclipse: drain tethered enemies, heal by what they lose. A tether snaps out of sight or range.
+function updateEclipse(p, t) {
+  const e = p.eclipse;
+  for (const id of [...e.targets]) {
+    const q = players.get(id);
+    if (!q || q.dead || dist2D(q.p, p.p) > ECLIPSE.breakRange || !inSight(p.p, q)) { e.targets.delete(id); broadcast({ t: 'eclipseBreak', id: p.id, target: id }); }
+  }
+  if (t >= e.nextTick) {
+    e.nextTick += ECLIPSE.tick;
+    let healed = 0;
+    for (const id of e.targets) {
+      const q = players.get(id);
+      const { dmg } = applyHit(q, { kind: 'crimson_eclipse', owner: p.id, v: outward(p.p, q) });
+      healed += dmg;
+      if (p.dead) return;
+    }
+    if (healed > 0) p.hp = Math.min(C.MAX_HP, p.hp + healed);
+  }
+  if (t >= e.until || !e.targets.size) endEclipse(p);
+}
+
+// Q: cast the wizard's ultimate. Needs a full charge; spends all of it.
+function castUltimate(p, msg) {
+  const t = now();
+  const U = kit(p).ultimate;
+  const free = canAct(p) && !p.charging && !p.cyclone && !p.lash && !holding(p) && !unstoppable(p) && !p.eclipse;
+  const refuse = () => send(p.id, { t: 'ultRefused' });
+  if (!U || p.ult < C.ULT_CHARGE.max || !free || (isAirborne(p) && U !== 'crimson_eclipse')) return refuse();
+  if (U === 'cataclysm') {
+    if (!Array.isArray(msg.at) || msg.at.length < 2 || !Number.isFinite(msg.at[0]) || !Number.isFinite(msg.at[msg.at.length - 1])) return refuse();
+    castCataclysm(p, [msg.at[0], msg.at[msg.at.length - 1]]);
+  } else if (U === 'eye_of_storm') {
+    p.eye = { until: t + EYE.duration, nextTick: t + EYE.tick * 0.5, nextPull: t };
+    broadcast({ t: 'eyeStart', id: p.id, left: EYE.duration });
+  } else if (U === 'absolute_zero') {
+    p.zero = { at: t + ZERO.windup };
+    p.rootUntil = Math.max(p.rootUntil, p.zero.at);
+    broadcast({ t: 'zeroStart', id: p.id, p: p.p, left: ZERO.windup });
+  } else if (U === 'crimson_eclipse') {
+    const near = [...players.values()].filter(q => q !== p && !q.dead && enemies(p, q) && dist2D(q.p, p.p) < ECLIPSE.radius && inSight(p.p, q))
+      .sort((a, b) => dist2D(a.p, p.p) - dist2D(b.p, p.p)).slice(0, ECLIPSE.targets);
+    if (!near.length) return refuse();   // nobody to tether: the charge is kept
+    p.eclipse = { until: t + ECLIPSE.duration, nextTick: t + ECLIPSE.tick, targets: new Set(near.map(q => q.id)) };
+    broadcast({ t: 'eclipse', id: p.id, targets: near.map(q => q.id), left: ECLIPSE.duration });
+  } else return refuse();
+  p.ult = 0;
+  if (p.blocking) { p.blocking = false; p.blockReleasedAt = t; }
+  broadcast({ t: 'ult', id: p.id, ult: U });
+}
+
 // ---------------------------------------------------------------- simulation
 function simulate(dt) {
   const t = now();
@@ -508,12 +724,18 @@ function simulate(dt) {
   for (const w of [...walls.values()]) if (t >= w.until) wallDown(w, true);
   for (const f of [...frostfalls.values()]) if (t >= f.at) frostfallImpact(f);
   for (const c of [...smokes.values()]) if (t >= c.until) smokes.delete(c.id);   // clients fade it on their own clock
+  for (const st of [...strikes.values()]) if (t >= st.at) meteorImpact(st);
 
   for (const p of players.values()) {
     if (p.dead) {
       if (t >= p.respawnAt) respawn(p);
       continue;
     }
+    // ultimates: the passive charge, and whichever one is running
+    p.ult = Math.min(C.ULT_CHARGE.max, p.ult + C.ULT_CHARGE.passive * dt);
+    if (p.eye) updateEye(p, t);
+    if (p.zero && t >= p.zero.at) zeroBlast(p);
+    if (p.eclipse) updateEclipse(p, t);
     // stamina
     if (p.blocking) {
       p.st -= C.STAMINA_DRAIN_BLOCKING * dt;
@@ -575,14 +797,15 @@ function simulate(dt) {
     if (done) continue;
 
     // a prop held by telekinesis shields its holder (it takes the hit and shatters)
+    const shooter = players.get(proj.owner);
     for (const pl of players.values()) {
-      if (pl.dead || !pl.carrying || pl.id === proj.owner) continue;
+      if (pl.dead || !pl.carrying || pl.id === proj.owner || !enemies(shooter, pl)) continue;
       const prop = props.get(pl.carrying);
       if (!prop || prop.state !== 'carried') continue;
       const hp = C.holdPoint(pl.p, pl.yaw);
       if (Math.hypot(proj.p[0] - hp[0], proj.p[1] - hp[1], proj.p[2] - hp[2]) < C.PROP_TYPES[prop.type].r + proj.radius) {
-        pl.carrying = null;
-        breakProp(prop, hp);
+        if (match.protectProp?.(prop)) hitProp(prop, hp);
+        else { pl.carrying = null; breakProp(prop, hp); }
         endProjectile(proj, true, { surface: 'prop' });
         done = true; break;
       }
@@ -603,7 +826,7 @@ function simulate(dt) {
 
     // players (a lash pierces: it hits each wizard on its path once, unless a ward stops it)
     for (const pl of players.values()) {
-      if (pl.dead || pl.id === proj.owner) continue;
+      if (pl.dead || pl.id === proj.owner || !enemies(shooter, pl)) continue;   // teammates: it flies through
       if (proj.pierce && proj.hitIds.has(pl.id)) continue;
       const c = [pl.p[0], pl.p[1] + C.HIT_CENTER_Y, pl.p[2]];
       const d = Math.hypot(proj.p[0] - c[0], proj.p[1] - c[1], proj.p[2] - c[2]);
@@ -632,7 +855,7 @@ function simulate(dt) {
       const pt = C.PROP_TYPES[prop.type];
       const d = Math.hypot(proj.p[0] - prop.x, proj.p[1] - pt.h * 0.5, proj.p[2] - prop.z);
       if (d < pt.r + proj.radius) {
-        breakProp(prop, [prop.x, pt.h * 0.5, prop.z]);
+        hitProp(prop, [prop.x, pt.h * 0.5, prop.z]);
         endProjectile(proj, true, { surface: 'prop' });
         done = true; break;
       }
@@ -659,9 +882,21 @@ function simulate(dt) {
 }
 
 // ---------------------------------------------------------------- messages
+// Gale's tornado and Rime's flare: nothing else can be cast meanwhile (Gale can still move).
+const ULT_LOCKED = new Set(['block', 'cast', 'chargeStart', 'cyclone', 'lashStart', 'frostfall', 'smoke', 'mirror', 'veil', 'bulwark', 'curse', 'skyward', 'teleport', 'pickup', 'throw', 'reload']);
 function handle(p, msg) {
   const t = now();
+  if (unstoppable(p) && ULT_LOCKED.has(msg.t)) return;
   switch (msg.t) {
+    case 'ult': {
+      castUltimate(p, msg);
+      break;
+    }
+    case 'debugCharge': {
+      // tests only (WA_DEBUG=1): a full ultimate charge
+      if (process.env.WA_DEBUG) p.ult = C.ULT_CHARGE.max;
+      break;
+    }
     case 'state': {
       if (p.dead) break;
       if (!Array.isArray(msg.p) || msg.p.length !== 3 || !msg.p.every(Number.isFinite)) break;
@@ -683,7 +918,8 @@ function handle(p, msg) {
       const dashing = p.dashUntil > t;   // Smoke Screen's dash is much faster than running
       const d = dist2D(np, p.p);
       // the fastest this wizard can go this way: its run speed, the backpedal cap against its facing, or a dash
-      const run = C.backpedalSpeed(C.speedOf(p.wizard), np[0] - p.p[0], np[2] - p.p[2], Number.isFinite(msg.yaw) ? msg.yaw : p.yaw);
+      const run = C.backpedalSpeed(C.speedOf(p.wizard) * (p.eye ? EYE.speedMul : 1), np[0] - p.p[0], np[2] - p.p[2], Number.isFinite(msg.yaw) ? msg.yaw : p.yaw)
+        + (p.pulledUntil > t ? EYE.pull : 0);   // dragged by an Eye of the Storm
       const maxStep = ((dashing ? SMOKE.distance / SMOKE.dashTime : run) + C.SPELLS.heavy.knockback + 2) * dt + 0.6;
       if (p.lastStateAt && d > maxStep && !p.justTeleported) {
         // Moving faster than any legitimate wizard can: let the server's copy catch up at the
@@ -905,7 +1141,7 @@ function handle(p, msg) {
       }
       // a Trapped Relic: its curser just lifts it (and the curse is gone); anyone else sets it off
       if (best.cursedBy === p.id) clearCurse(p);
-      else if (best.cursedBy) best.trap = p.id;
+      else if (best.cursedBy && enemyOf(best.cursedBy, p)) best.trap = p.id;   // a teammate's trap doesn't go off on us
       best.state = 'lifting'; best.carrier = p.id; best.liftUntil = t + C.TK.liftTime;
       p.carrying = best.id;
       broadcast({ t: 'prop', prop: propPublic(best) });
@@ -1002,16 +1238,22 @@ function removePlayer(id) {
 }
 
 // cycloneStopsGoats: the goat module can knock a charging goat dizzy (bots then answer a charge with a cyclone)
-const world = { players, props, projectiles, goats, decoys, walls, frostfalls, smokes, handle, now, cycloneStopsGoats: !!Goats.dizzyGoat };
+const world = { players, props, projectiles, goats, decoys, walls, frostfalls, smokes, strikes, handle, now, cycloneStopsGoats: !!Goats.dizzyGoat };
 // Game modes (server/match.js, modes agent). addUltCharge is the spells agent's to implement.
 const match = createMatch({
   players, props, now, broadcast, send, propPublic,
   addBot: (...a) => addBot(...a), removePlayer: (id) => removePlayer(id), respawn: (p) => respawn(p),
-  addUltCharge: (p, pct) => {},
+  addUltCharge: (p, pct) => addUltCharge(p, pct),
+  resetUlt: (p) => { p.ult = 0; },
+  // goats back in the pen, calm (nobody holds one any more)
+  resetGoats: () => {
+    for (const p of players.values()) p.carryingGoat = null;
+    goats.splice(0, goats.length, ...createGoats());
+  },
 });
 world.match = match;
 const goatCtx = {
-  players, props, now, broadcast, breakProp,
+  players, props, now, broadcast, breakProp: (prop, at) => hitProp(prop, at),   // a charging goat knocks the Sacred Relic loose rather than shattering it
   // a Tempest Veil survives a ram (goats.js treats the veil as a ward once that request is in; this is the fallback)
   killPlayer: (p, attacker, cause) => { if (cause === 'goat' && isVeiled(p)) return; killPlayer(p, attacker, cause); },
   // humans apply goat knockback themselves from the goatRam message
@@ -1095,6 +1337,7 @@ wss.on('connection', (ws) => {
       id = nextId++;
       const name = String(msg.name || 'Wizard').replace(/[^\w \-'!?.]/g, '').trim().slice(0, C.MAX_NAME_LEN) || `Wizard${id}`;
       const p = newPlayer(id, name, msg.wizard);
+      if (['easy', 'normal', 'hard'].includes(msg.difficulty)) p.botPref = msg.difficulty;   // team modes fill bots at this
       players.set(id, p);
       sockets.set(id, ws);
       match.onJoin(p);
@@ -1108,6 +1351,7 @@ wss.on('connection', (ws) => {
         walls: [...walls.values()].map(wallPublic),
         frostfalls: [...frostfalls.values()].map(frostPublic),
         smokes: [...smokes.values()].map(smokePublic),
+        strikes: [...strikes.values()].map(strikePublic),
         decoys: [...decoys.values()].map(decoyPublic),
         ...match.welcomeExtras(p),
       }));

@@ -4,6 +4,7 @@
 // a client sends, so every cooldown, stamina cost and rule applies to it unchanged.
 
 import * as C from '../public/shared/constants.js';
+import { objectiveFor } from './objectives.js';
 
 export const BOT_LIMIT = 6;
 const THINK_DT = 1 / 20;   // AI update rate
@@ -42,7 +43,14 @@ const DIFFICULTY = {
 const CYC = C.SPELLBOOK.cyclone, SKY = C.SPELLBOOK.skyward, LASH = C.SPELLBOOK.sanguine_lash;
 const BULWARK = C.SPELLBOOK.glacial_bulwark, SKIM = C.SPELLS.skim, RELIC = C.SPELLBOOK.trapped_relic, FROST = C.SPELLBOOK.frostfall;
 const SMOKE = C.SPELLBOOK.smoke_screen;
+const CATA = C.SPELLBOOK.cataclysm, EYE = C.SPELLBOOK.eye_of_storm, ZERO = C.SPELLBOOK.absolute_zero, ECLIPSE = C.SPELLBOOK.crimson_eclipse;
 let clouds = [];   // Smoke Screen clouds this tick: nobody sees into, out of or through them
+let match = null;  // game modes (server/match.js): who is an enemy
+let players = null;
+// Game modes: may `a` hurt `b`? Bots never target, fear or dodge teammates.
+const foe = (a, b) => !!a && !!b && a !== b && a.id !== b.id && (!match || match.isEnemy(a, b));
+// The owner of something (a projectile, a meteor) is a foe, or gone (which still hurts).
+const foeId = (me, id) => { const o = players?.get(id); return !o || foe(me, o); };
 const kit = (q) => C.kitOf(q.wizard);
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -80,6 +88,11 @@ export function botKnockback(p, dir, kb) {
   p.bot.vel[1] += dir[2] * kb;
 }
 
+// Eye of the Storm drags this bot toward Gale at `v` (x, z m/s) until `until` (clients get it as eyePull).
+export function botPull(p, v, until) {
+  p.bot.pull = { v, until };
+}
+
 // Smoke Screen: the server moves a bot through its backward dash (clients do this themselves).
 export function botDash(p, dir, until) {
   p.bot.dash = { dir, until };
@@ -114,6 +127,7 @@ function trackVelocities(players, t) {
 export function updateBots(dt, world) {
   const t = world.now();
   clouds = [...(world.smokes?.values() || [])].filter(c => t < c.until);
+  match = world.match || null; players = world.players;
   let any = false;
   for (const p of world.players.values()) {
     if (!p.bot) continue;
@@ -211,7 +225,7 @@ function think(me, world, t) {
   if (t >= b.retargetAt || !world.players.get(b.targetId) || world.players.get(b.targetId).dead) {
     let best = null, bs = Infinity;
     for (const q of world.players.values()) {
-      if (q === me || q.dead || smokeHides(me.p, q.p)) continue;
+      if (q === me || q.dead || !foe(me, q) || smokeHides(me.p, q.p)) continue;
       let s = dist2D(me.p, q.p) + q.hp * 0.06;
       if (q.id === me.lastHitBy) s -= 7;
       if (!q.bot) s -= 3;
@@ -222,6 +236,11 @@ function think(me, world, t) {
     b.targetId = best ? best.id : null;
     b.retargetAt = t + rand(1.5, 3);
   }
+  // game-mode objective hints (server/objectives.js): focus a player, guard one, go somewhere, lift something
+  const obj = b.obj = objectiveFor(me, world) || null;
+  const focus = obj?.focus != null ? world.players.get(obj.focus) : null;
+  if (focus && !focus.dead && foe(me, focus) && !smokeHides(me.p, focus.p)) { if (b.targetId !== focus.id) b.decoyId = null; b.targetId = focus.id; }
+  if (b.targetId != null && !foe(me, world.players.get(b.targetId))) b.targetId = null;   // teams changed
   let target = world.players.get(b.targetId) || null;
 
   // ---- Mirror Step: when our target splits three ways we may go after a decoy instead
@@ -261,12 +280,12 @@ function think(me, world, t) {
   }
   for (const id of b.threats.keys()) if (typeof id === 'number' && !world.projectiles.has(id)) b.threats.delete(id);
   // a hurled goat comes at us like a thrown prop
-  const flyingGoats = world.goats.filter(g => g.state === 'flying' && g.thrower !== me.id).map(g => ({
+  const flyingGoats = world.goats.filter(g => g.state === 'flying' && g.thrower !== me.id && foeId(me, g.thrower)).map(g => ({
     id: 'fg' + g.id, kind: 'prop', owner: g.thrower, radius: C.GOAT.radius, g: C.GOAT.throwGravity,
     p: [g.x, (g.y || 0) + C.GOAT.hitY, g.z], v: [g.vx || 0, g.vy || 0, g.vz || 0] }));
   for (const id of b.threats.keys()) if (typeof id === 'string' && id.startsWith('fg') && !flyingGoats.some(f => f.id === id)) b.threats.delete(id);
   for (const proj of [...world.projectiles.values(), ...flyingGoats]) {
-    if (proj.owner === me.id) continue;
+    if (proj.owner === me.id || !foeId(me, proj.owner)) continue;   // a teammate's flies through us
     const th = threatOf(me, proj);
     if (!th || th.tc > 1.6 || th.miss > C.HIT_RADIUS + proj.radius + 0.5) continue;
     let rec = b.threats.get(proj.id);
@@ -278,7 +297,7 @@ function think(me, world, t) {
   // an enemy spinning up a cyclone close by: get out of the radius (or up, out of reach)
   for (const q of world.players.values()) {
     const key = 'cyc' + q.id;
-    if (q === me || q.dead || !cycloneWindingUp(q) || airborne(me, t) || dist2D(me.p, q.p) > CYC.radius + 0.5) { b.threats.delete(key); continue; }
+    if (q === me || q.dead || !foe(me, q) || !cycloneWindingUp(q) || airborne(me, t) || dist2D(me.p, q.p) > CYC.radius + 0.5) { b.threats.delete(key); continue; }
     let rec = b.threats.get(key);
     if (!rec) { rec = newThreat(cfg, t); b.threats.set(key, rec); }
     if (rec.handled || rec.ignore || reacted || t < rec.seenAt + rec.react) continue;
@@ -288,7 +307,7 @@ function think(me, world, t) {
   // an enemy Sanguine Lash winding up, pointed at us: wall it, ward it, or step off the line as it fires
   for (const q of world.players.values()) {
     const key = 'lash' + q.id;
-    if (q === me || q.dead || !q.lash) { b.threats.delete(key); continue; }
+    if (q === me || q.dead || !q.lash || !foe(me, q)) { b.threats.delete(key); continue; }
     const dq = dist2D(me.p, q.p);
     if (dq > LASH_RANGE + 2 || !facingWithin(q, me.p, 25) || !hasLOS(q.p, me.p)) continue;
     let rec = b.threats.get(key);
@@ -303,13 +322,16 @@ function think(me, world, t) {
   for (const f of world.frostfalls?.values() || []) {
     const key = 'frost' + f.id;
     const df = Math.hypot(me.p[0] - f.x, me.p[2] - f.z);
-    if (f.owner === me.id || df > FROST.radius + 0.6) { b.threats.delete(key); continue; }
+    if (f.owner === me.id || !foeId(me, f.owner) || df > FROST.radius + 0.6) { b.threats.delete(key); continue; }
     let rec = b.threats.get(key);
     if (!rec) { rec = newThreat(cfg, t); b.threats.set(key, rec); }
     if (rec.handled || rec.ignore || t < rec.seenAt + rec.react) continue;
     rec.handled = true;
     respondFrostfall(me, f, df, t, act);
   }
+
+  // ---- enemy ultimates: meteors falling, a tornado, a rune flare, a tether
+  reactToUltimates(me, world, t, act);
 
   // ---- maintain ongoing actions
   if (me.blocking && (t >= b.blockUntil || (me.st < 15 && !b.faceGoat))) { act({ t: 'block', on: false }); b.faceGoat = null; }
@@ -332,6 +354,25 @@ function think(me, world, t) {
     else if (t >= b.cursing.at) { b.cursing = null; aimProp(me, prop, (from, dir) => act({ t: 'curse', aimOrigin: from, aimDir: dir })); }
     return;
   }
+  if (me.eye || me.zero) return;   // our tornado or flare: nothing else can be cast (moveBot steers the tornado)
+
+  // ---- objective: lift the prop the mode wants lifted (the Sacred Relic)
+  if (obj?.lift != null && free && !me.carrying && !me.carryingGoat && !me.blocking && !busyCasting(me) && t >= me.cd.lift) {
+    const prop = world.props.get(obj.lift);
+    if (prop && prop.state === 'idle' && dist2D(me.p, [prop.x, 0, prop.z]) < C.TK.range - 1.5 && hasLOS(me.p, [prop.x, 0, prop.z])) {
+      aimProp(me, prop, (from, dir) => act({ t: 'pickup', aimOrigin: from, aimDir: dir }));
+      if (me.carrying) return;
+    }
+  }
+
+  // ---- our ultimate, when it's worth it
+  if (b.ultFullAt == null && me.ult >= C.ULT_CHARGE.max) b.ultFullAt = t;
+  if (me.ult < C.ULT_CHARGE.max) b.ultFullAt = null;
+  if (free && b.ultFullAt != null && !me.blocking && !busyCasting(me) && !me.carrying && !me.carryingGoat && t >= (b.nextUltCheck || 0)) {
+    b.nextUltCheck = t + cfg.think * rand(0.7, 1.3);
+    if (Math.random() < cfg.aggression && tryUltimate(me, world, t, act, target)) return;
+  }
+
   if (!free || !target || me.blocking || me.charging || me.cyclone || me.lash || t < (b.goatDanger || 0)) return;
   const meAir = airborne(me, t);
 
@@ -345,7 +386,7 @@ function think(me, world, t) {
     if (!b.chargeSeen.has(target.id)) b.chargeSeen.set(target.id, { at: t, go: Math.random() < cfg.punish });
     const seen = b.chargeSeen.get(target.id);
     if (seen.go && t >= seen.at + cfg.react) {
-      if (carried?.state === 'carried' && t >= me.cd.throw && throwLOS(me, target)) return throwProp(me, target, act, cfg, world);
+      if (carried?.state === 'carried' && t >= me.cd.throw && throwLOS(me, target) && (!match || match.canThrow(me, carried) !== false)) return throwProp(me, target, act, cfg, world);
       if (!me.carrying && primaryReady(me, t)) return primary(me, target, act, cfg, world, t);   // shots 1–2, then the finisher
     }
   } else b.chargeSeen.delete(target.id);
@@ -380,6 +421,7 @@ function think(me, world, t) {
   // ---- holding a prop: throw when they're busy, or after a moment
   if (carried) {
     if (carried.state !== 'carried' || t < me.cd.throw) return;
+    if (match && match.canThrow(me, carried) === false) return;   // the Sacred Relic: keep holding it
     if (!b.holdSince) b.holdSince = t;
     const busy = busyCasting(target) || target.blocking || isStunned(target, t) || rooted(target, t);
     if (d < 22 && throwLOS(me, target) && (busy || t - b.holdSince > rand(0.4, 1.4))) { b.holdSince = 0; return throwProp(me, target, act, cfg, world); }
@@ -491,6 +533,147 @@ function think(me, world, t) {
   if (fastReady && !savingFinisher && (!targetWarded || Math.random() < 0.5)) return primary(me, target, act, cfg, world, t);
 }
 
+// ---------------------------------------------------------------- ultimates
+// Visible enemies (no smoke between us) within `r` of `at`, on the ground (`ground`) or anywhere.
+function foesNear(me, world, at, r, t, { ground = false, sight = false } = {}) {
+  return [...world.players.values()].filter(q => foe(me, q) && !q.dead && dist2D(q.p, at) < r && !smokeHides(me.p, q.p)
+    && (!ground || !airborne(q, t)) && (!sight || !C.pillarBlocks(me.p, q.p, 0)));
+}
+
+// Fire the ultimate if the moment is right: clustered enemies, or (after holding a full charge for a while)
+// a single good target. Returns true if cast.
+function tryUltimate(me, world, t, act, target) {
+  const b = me.bot, cfg = b.cfg, U = kit(me).ultimate;
+  const patient = t - b.ultFullAt > 12;   // sitting on a full charge: settle for one target
+  const lowHp = me.hp < 45;
+  if (U === 'cataclysm') {
+    // the spot that covers the most enemies (each enemy is a candidate centre), led a little
+    let best = null, bn = 0;
+    for (const q of foesNear(me, world, me.p, CATA.range + 4, t, { ground: true })) {
+      const n = foesNear(me, world, q.p, 6, t, { ground: true });
+      const stuck = rooted(q, t) || isStunned(q, t) || busyCasting(q);
+      const score = n.length + (stuck ? 0.6 : 0);
+      if (score > bn) { bn = score; best = n; }
+    }
+    if (!best || !(bn >= 2 || (patient && bn >= 1))) return false;
+    let x = 0, z = 0;
+    for (const q of best) { const tr = tracks.get(q.id); x += q.p[0] + (tr ? tr.v[0] : 0) * 0.6 * cfg.lead; z += q.p[2] + (tr ? tr.v[1] : 0) * 0.6 * cfg.lead; }
+    x /= best.length; z /= best.length;
+    if (Math.hypot(x - me.p[0], z - me.p[2]) < CATA.radius * 0.6) return false;   // not on our own head
+    me.yaw = yawTo(me.p, [x, 0, z]);
+    act({ t: 'ult', at: [x, z] });
+  } else if (U === 'eye_of_storm') {
+    const n = foesNear(me, world, me.p, EYE.radius - 0.5, t, { ground: true }).length;
+    if (!(n >= 2 || (n >= 1 && (patient || lowHp) && dist2D(me.p, target?.p || [1e9, 0, 1e9]) < 4.5))) return false;
+    act({ t: 'ult' });
+  } else if (U === 'absolute_zero') {
+    if (airborne(me, t)) return false;
+    const n = foesNear(me, world, me.p, ZERO.radius - 1, t, { sight: true }).length;
+    if (!(n >= 2 || (n >= 1 && (patient || lowHp)))) return false;
+    act({ t: 'ult' });
+  } else if (U === 'crimson_eclipse') {
+    const n = foesNear(me, world, me.p, ECLIPSE.radius - 1.5, t, { sight: true }).length;
+    if (!(n >= 2 || (n >= 1 && (lowHp || patient)))) return false;
+    act({ t: 'ult' });
+  } else return false;
+  return me.ult < C.ULT_CHARGE.max;
+}
+
+// Enemy ultimates: walk (or blink) out of a Cataclysm and its meteors, run from a tornado, break line
+// of sight before Absolute Zero goes off, and pull a Crimson Eclipse tether out of range or sight.
+function reactToUltimates(me, world, t, act) {
+  const b = me.bot, cfg = b.cfg, K = kit(me);
+  if (me.eye || me.zero) return;
+  const run = C.speedOf(me.wizard) * cfg.speed * (me.slowUntil > t ? 1 - SKIM.slow : 1);
+  const canMove = !rooted(me, t) && !isStunned(me, t);
+  const mobOut = (dir) => {
+    if (!cfg.blinkDodge || !mobilityReady(me, t) || !canAct(me, t)) return false;
+    if (K.mobility === 'mirror_step') mirrorStep(me, dir, act);
+    else if (K.mobility === 'blink') blinkAway(me, dir, act);
+    else if (K.mobility === 'smoke_screen') smokeAway(me, dir, act);
+    else return false;
+    return true;
+  };
+  const threat = (key) => { let rec = b.threats.get(key); if (!rec) { rec = newThreat(cfg, t); b.threats.set(key, rec); } return rec; };
+  for (const k of b.threats.keys()) if (typeof k === 'string' && /^(cata|eye|zero|ecl)/.test(k) && t > (b.threats.get(k).until ?? Infinity)) b.threats.delete(k);
+
+  // Cataclysm: the circle (meteors already falling, grouped by caster)
+  const circles = new Map();
+  for (const s of world.strikes?.values() || []) {
+    if (!foeId(me, s.owner)) continue;
+    const c = circles.get(s.owner) || { x: s.cx, z: s.cz, last: 0, next: [] };
+    c.last = Math.max(c.last, s.at); c.next.push(s);
+    circles.set(s.owner, c);
+  }
+  for (const [owner, c] of circles) {
+    const rec = threat('cata' + owner); rec.until = c.last + 0.2;
+    if (rec.ignore || t < rec.seenAt + rec.react || airborne(me, t)) continue;
+    const dc = Math.hypot(me.p[0] - c.x, me.p[2] - c.z);
+    if (dc > CATA.radius + 1) continue;
+    const out = dc > 0.05 ? [(me.p[0] - c.x) / dc, 0, (me.p[2] - c.z) / dc] : [Math.sin(me.yaw), 0, Math.cos(me.yaw)];
+    // a meteor about to land on us: that's the one to get out from under
+    const soon = c.next.filter(s => s.at - t < CATA.warn && Math.hypot(me.p[0] - s.x, me.p[2] - s.z) < CATA.impact + 0.8).sort((a, b2) => a.at - b2.at)[0];
+    if (soon && !rec.mob && (CATA.impact + 1 - Math.hypot(me.p[0] - soon.x, me.p[2] - soon.z)) > (soon.at - t) * run) {
+      if (veilReady(me, t)) { act({ t: 'veil' }); rec.mob = true; continue; }
+      if (mobOut(out)) { rec.mob = true; continue; }
+    }
+    if (!canMove) continue;
+    b.dodgeVec = [out[0], out[2]];
+    b.dodgeUntil = t + 0.25;
+  }
+
+  for (const q of world.players.values()) {
+    if (q === me || q.dead || !foe(me, q)) continue;
+    // Eye of the Storm: keep well away from the tornado
+    if (q.eye) {
+      const rec = threat('eye' + q.id); rec.until = q.eye.until + 0.3;
+      const d = dist2D(me.p, q.p);
+      if (rec.ignore || t < rec.seenAt + rec.react || d > EYE.radius + 4) continue;
+      const out = d > 0.05 ? [(me.p[0] - q.p[0]) / d, 0, (me.p[2] - q.p[2]) / d] : [1, 0, 0];
+      if (d < EYE.radius + 0.5 && !rec.mob) {
+        if (veilReady(me, t)) { act({ t: 'veil' }); rec.mob = true; }
+        else if (K.mobility === 'skyward' && cfg.blinkDodge && mobilityReady(me, t) && canAct(me, t)) { act({ t: 'skyward' }); rec.mob = true; }
+        else if (mobOut(out)) rec.mob = true;
+      }
+      if (canMove) { b.dodgeVec = [out[0], out[2]]; b.dodgeUntil = t + 0.25; }
+    }
+    // Absolute Zero: break line of sight before the flare goes off (cover, a wall, a veil, or distance)
+    if (q.zero) {
+      const rec = threat('zero' + q.id); rec.until = q.zero.at + 0.2;
+      const d = Math.hypot(me.p[0] - q.p[0], me.p[1] - q.p[1], me.p[2] - q.p[2]);
+      if (rec.ignore || rec.handled || t < rec.seenAt + rec.react || d > ZERO.radius + 1.5 || C.pillarBlocks(q.p, me.p, 0)) continue;
+      rec.handled = true;
+      const left = q.zero.at - t;
+      const out = [me.p[0] - q.p[0], 0, me.p[2] - q.p[2]];
+      if (veilReady(me, t)) { act({ t: 'veil' }); continue; }
+      if (wallReady(me, t) && canAct(me, t) && dist2D(me.p, q.p) > BULWARK.dist + 0.6) { raiseWall(me, q.p, act); continue; }
+      const cover = coverPoint(me, q);
+      const coverTime = cover ? Math.hypot(cover[0] - me.p[0], cover[1] - me.p[2]) / run : Infinity;
+      const outTime = (ZERO.radius + 1.2 - dist2D(me.p, q.p)) / run;
+      if (canMove && Math.min(coverTime, outTime) < left - 0.05) {
+        const to = coverTime < outTime ? [cover[0] - me.p[0], cover[1] - me.p[2]] : [out[0], out[2]];
+        const l = Math.hypot(to[0], to[1]) || 1;
+        b.dodgeVec = [to[0] / l, to[1] / l]; b.dodgeUntil = q.zero.at + 0.1;
+        continue;
+      }
+      if (mobOut(out)) continue;
+      if (canMove) { const l = Math.hypot(out[0], out[2]) || 1; b.dodgeVec = [out[0] / l, out[2] / l]; b.dodgeUntil = q.zero.at + 0.1; }
+    }
+    // Crimson Eclipse tethered to us: pull the tether out of range or sight
+    if (q.eclipse?.targets?.has(me.id)) {
+      const rec = threat('ecl' + q.id); rec.until = q.eclipse.until + 0.2;
+      if (rec.ignore || t < rec.seenAt + rec.react) continue;
+      const out = [me.p[0] - q.p[0], 0, me.p[2] - q.p[2]];
+      if (!rec.mob && mobOut(out)) { rec.mob = true; continue; }
+      if (!canMove) continue;
+      const cover = coverPoint(me, q);
+      const to = cover && Math.hypot(cover[0] - me.p[0], cover[1] - me.p[2]) < 6 ? [cover[0] - me.p[0], cover[1] - me.p[2]] : [out[0], out[2]];
+      const l = Math.hypot(to[0], to[1]) || 1;
+      b.dodgeVec = [to[0] / l, to[1] / l]; b.dodgeUntil = t + 0.25;
+    }
+  }
+}
+
 const LASH_RANGE = C.SPELLS.lash.speed * C.SPELLS.lash.life;
 const newThreat = (cfg, t) => ({ seenAt: t, react: cfg.react * rand(0.8, 1.3), handled: false, ignore: Math.random() > cfg.dodge });
 
@@ -554,7 +737,7 @@ function lowLineBlocked(from, dir, range, radius) {
 function linedUp(me, target, world, t) {
   const dx = target.p[0] - me.p[0], dz = target.p[2] - me.p[2], l = Math.hypot(dx, dz) || 1;
   const end = [me.p[0] + dx / l * (LASH_RANGE - 1), 0, me.p[2] + dz / l * (LASH_RANGE - 1)];
-  return [...world.players.values()].some(q => q !== me && q.id !== target.id && !q.dead && !airborne(q, t)
+  return [...world.players.values()].some(q => q !== me && q.id !== target.id && !q.dead && foe(me, q) && !airborne(q, t)
     && segDist(me.p, end, { x: q.p[0], z: q.p[2] }) < 1 && dist2D(me.p, q.p) > 3);
 }
 
@@ -858,9 +1041,17 @@ function moveBot(me, dt, world, t) {
   } else b.dash = null;
 
   let wx = 0, wz = 0;
+  const goal = objectiveGoal(me, world);
   if (b.dash) { /* the dash carries us */ }
   else if (!stunned) {
     if (t < b.dodgeUntil && b.dodgeVec) { wx = b.dodgeVec[0]; wz = b.dodgeVec[1]; }
+    else if (goal && !me.eye) {
+      // a game-mode objective (go there, stay near a teammate, reach the relic); fight from wherever we are once close
+      const gx = goal[0] - me.p[0], gz = goal[1] - me.p[2], gl = Math.hypot(gx, gz) || 1;
+      wx = gx / gl; wz = gz / gl;
+      if (target && !target.dead && hasLOS(me.p, target.p)) me.yaw = yawTo(me.p, target.p);
+      else me.yaw = Math.atan2(wx, wz);
+    }
     else if (target && !target.dead) {
       const dx = target.p[0] - me.p[0], dz = target.p[2] - me.p[2];
       const d = Math.hypot(dx, dz) || 1;
@@ -869,7 +1060,8 @@ function moveBot(me, dt, world, t) {
       const lowHp = me.hp < 35 && me.hp < target.hp;
       const diving = t < (b.diveUntil || 0) && t >= me.cd.power && !me.carrying;
       let fwd = 0;
-      if (lowHp && los) {
+      if (me.eye) fwd = d > 1.2 ? 1 : 0;                 // the tornado goes for them
+      else if (lowHp && los) {
         // retreat to the far side of the nearest pillar
         const cover = coverPoint(me, target);
         if (cover) { const cx = cover[0] - me.p[0], cz = cover[1] - me.p[2]; const cl = Math.hypot(cx, cz) || 1; wx = cx / cl; wz = cz / cl; }
@@ -900,7 +1092,8 @@ function moveBot(me, dt, world, t) {
   const wl = Math.hypot(wx, wz);
   const run = C.speedOf(me.wizard);   // per wizard (wizards.js speed)
   let speed = run * cfg.speed;
-  if (me.charging || me.cyclone || me.lash) speed = C.chargeSpeedOf(me.wizard);
+  if (me.eye) speed = run * EYE.speedMul;
+  else if (me.charging || me.cyclone || me.lash) speed = C.chargeSpeedOf(me.wizard);
   else if (me.blocking) speed = C.blockSpeedOf(me.wizard);
   else if (flying) speed = SKY.airSpeed;
   if (t < b.dodgeUntil && !me.cyclone && !flying && !me.charging && !me.lash) speed = Math.max(speed, run * 0.95);
@@ -911,6 +1104,8 @@ function moveBot(me, dt, world, t) {
   const k = Math.min(1, dt * 12);
   if (!b.dash) { b.vel[0] += (tx - b.vel[0]) * k; b.vel[1] += (tz - b.vel[1]) * k; }
   me.p[0] += b.vel[0] * dt; me.p[2] += b.vel[1] * dt;
+  // dragged by an Eye of the Storm
+  if (b.pull && t < b.pull.until && !rooted(me, t)) { me.p[0] += b.pull.v[0] * dt; me.p[2] += b.pull.v[1] * dt; }
 
   // collisions, same as the client's
   const pr = C.PLAYER_RADIUS;
@@ -935,6 +1130,24 @@ function moveBot(me, dt, world, t) {
 
   const moving = Math.hypot(b.vel[0], b.vel[1]) > 0.6;
   me.anim = me.charging || me.lash || cycloneWindingUp(me) ? 'charge' : me.blocking ? 'block' : moving ? 'run' : 'idle';
+}
+
+// Where a game-mode objective wants us, as [x, z], or null when we're close enough (or there's none).
+function objectiveGoal(me, world) {
+  const o = me.bot.obj;
+  if (!o) return null;
+  if (o.lift != null && !me.carrying) {
+    const prop = world.props.get(o.lift);
+    if (prop && prop.state === 'idle') return dist2D(me.p, [prop.x, 0, prop.z]) > C.TK.range - 3 ? [prop.x, prop.z] : null;
+  }
+  if (o.guard != null) {
+    const g = world.players.get(o.guard);
+    if (g && !g.dead) return dist2D(me.p, g.p) > 7 ? [g.p[0], g.p[2]] : null;
+  }
+  if (Array.isArray(o.moveTo) && Number.isFinite(o.moveTo[0]) && Number.isFinite(o.moveTo[1])) {
+    return Math.hypot(me.p[0] - o.moveTo[0], me.p[2] - o.moveTo[1]) > 2 ? o.moveTo : null;
+  }
+  return null;
 }
 
 function coverPoint(me, target) {

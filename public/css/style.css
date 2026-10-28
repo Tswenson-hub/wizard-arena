@@ -146,3 +146,16 @@ kbd {
 .ab .ammo i.full.fin { background: #ffc94a; border-color: #ffe08a; box-shadow: 0 0 6px #ffc94a; }
 .ab[data-ab=fast] { justify-content: flex-start; padding-top: 10px; }
 .ab.reloading .name { color: #ffc94a; }
+
+/* Q: the ultimate. A ring fills with the charge; full, it glows in the wizard's colour (--ult). */
+.ab.ult { width: 72px; height: 72px; margin-top: -8px; border-radius: 50%; --ult: #ffc857; }
+.ab.ult .ring { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); }
+.ab.ult .ring circle { fill: none; stroke-width: 5; }
+.ab.ult .ring .bg { stroke: rgba(255,255,255,0.12); }
+.ab.ult .ring .fg { stroke: var(--ult); stroke-linecap: round; stroke-dasharray: 169.6; stroke-dashoffset: 169.6; transition: stroke-dashoffset 0.25s linear; opacity: 0.8; }
+.ab.ult .pct { font-size: 10px; color: var(--dim); z-index: 1; }
+.ab.ult.ready { border-color: var(--ult); box-shadow: 0 0 14px var(--ult), inset 0 0 12px var(--ult); animation: ultGlow 1.1s ease-in-out infinite; }
+.ab.ult.ready .fg { opacity: 1; }
+.ab.ult.ready .name { color: #fff; }
+.ab.ult.ready .pct { color: var(--ult); font-weight: 700; }
+@keyframes ultGlow { 50% { box-shadow: 0 0 26px var(--ult), inset 0 0 18px var(--ult); } }

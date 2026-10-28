@@ -48,6 +48,7 @@ const ui = {
   pickNote: $('#pickNote'),
   ammo: [...document.querySelectorAll('#abilities .ammo i')],
   ab: Object.fromEntries([...document.querySelectorAll('.ab')].map(el => [el.dataset.ab, el])),
+  ultFg: $('#abilities .ult .fg'), ultPct: $('#abilities .ult .pct'),
 };
 
 // ---------------------------------------------------------------- game state
@@ -72,6 +73,10 @@ const local = {
   ammo: 3, reloadUntil: 0, lastShot: 0,   // primary magazine (predicted; the server's copy wins)
   frostAim: false,             // RMB held with Frostfall: aiming the circle
   frozenUntil: 0,              // frozen by a Frostfall (the bind, shown as ice)
+  ult: 0,                      // ultimate charge (the server's, from snapshots)
+  cataAim: false,              // Q held with Cataclysm: aiming the circle
+  eyeUntil: 0, zeroUntil: 0,   // our own Eye of the Storm / Absolute Zero flare: nothing else can be cast
+  pull: null,                  // { v: [x, z], until } dragged by an enemy Eye of the Storm
   fHold: null,                 // { start } while F is held with nothing carried (Trapped Relic: hold to curse)
   flight: null,                // { start, drop } during our own Skyward Flash
   spaceHeld: false,            // Space was used to drop out of a flight: don't ward until it's released
@@ -92,6 +97,8 @@ try { const w = localStorage.getItem('wizardChoice'); if (C.isWizard(w)) wantWiz
 const kit = () => C.kitOf(me ? me.wizard : wantWizard);
 const SPELL = C.SPELLBOOK;
 const FROST = SPELL.frostfall, SMOKE = SPELL.smoke_screen;
+const CATA = SPELL.cataclysm, EYE = SPELL.eye_of_storm, ZERO = SPELL.absolute_zero, ECLIPSE = SPELL.crimson_eclipse;
+const ULT_KINDS = new Set(['cataclysm', 'eye_of_storm', 'eye_burst', 'absolute_zero', 'crimson_eclipse']);
 const LASH = SPELL.sanguine_lash, MIRROR = SPELL.mirror_step, BULWARK = SPELL.glacial_bulwark, RELIC = SPELL.trapped_relic, SKIM = SPELL.glacial_skim;
 
 function chooseWizard(id) {
@@ -168,7 +175,7 @@ ui.form.addEventListener('submit', async (e) => {
   ui.joinBtn.disabled = true; ui.loadStatus.textContent = 'Connecting…';
   sfx.init(); sfx.resume();
   try {
-    const welcome = await net.connect(name, wantWizard);
+    const welcome = await net.connect(name, wantWizard, ui.botDiff.value);   // game modes fill teams with bots at this difficulty
     onWelcome(welcome);
     for (let i = 0; i < +ui.botCount.value; i++) net.send({ t: 'addBot', difficulty: ui.botDiff.value });
   } catch (err) {
@@ -200,6 +207,7 @@ net.onClose = () => {
 // ---------------------------------------------------------------- network handlers
 // Game modes UI (public/js/match-ui.js, modes agent)
 const matchUI = mountMatchUI({ scene, camera, net, players, props, myId: () => myId });
+let teamBots = false;   // a team mode is on (snap.match.teams)
 
 function onWelcome(msg) {
   myId = msg.id;
@@ -211,6 +219,7 @@ function onWelcome(msg) {
   for (const w of msg.walls || []) wallUp(w);
   for (const f of msg.frostfalls || []) frosts.set(f.id, effects.frostfall(f.p, f.left));
   for (const c of msg.smokes || []) effects.smoke(c.p, c.left);
+  for (const st of msg.strikes || []) strikes.set(st.id, effects.meteorStrike(st.p, st.left));
   me = players.get(myId);
   for (const d of msg.decoys || []) spawnDecoy(d);
   local.pos.set(me.targetPos.x, 0, me.targetPos.z);
@@ -237,7 +246,7 @@ function rebuildWizard(w, wizard, color) {
   stopWizardAudio(w);
   w.dispose(scene);
   const n = new Wizard(info, scene, w === me);
-  for (const k of ['hp', 'st', 'kills', 'deaths', 'dead', 'blocking', 'charging', 'stunned', 'netAnim', 'targetYaw', 'bound', 'slowed', 'lashing', 'frozen', 'veiled']) n[k] = w[k];
+  for (const k of ['hp', 'st', 'kills', 'deaths', 'dead', 'blocking', 'charging', 'stunned', 'netAnim', 'targetYaw', 'bound', 'slowed', 'lashing', 'frozen', 'veiled', 'ult']) n[k] = w[k];
   n.targetPos.copy(w.targetPos);
   players.set(w.id, n);
   if (w.carrying) startCarry(n, w.carrying);
@@ -256,10 +265,17 @@ function applySnapshot(w, s) {
   w.hp = s.hp; w.st = s.st; w.kills = s.kills; w.deaths = s.deaths;
   w.blocking = s.blocking; w.charging = s.charging; w.stunned = s.stun;
   w.slowed = !!s.slow; w.bound = !!s.bound; w.lashing = !!s.lashing; w.frozen = !!s.frozen;
+  w.ult = s.ult ?? 0;
+  // game modes: the ring and nameplate wear the team colour (match.js), else the wizard's own
+  const shown = s.teamColor ?? s.color;
+  if (shown != null && shown !== w.shownColor) { w.setColor(shown); w.shownColor = shown; }
+  if (!s.eye && w.eyeFx) endEye(w);                  // missed the end message
+  if (!s.eclipse && w.tethers) endTethers(w);
   if (s.veil !== undefined && !!s.veil !== w.veiled) w.veiled = !!s.veil;
   if (!s.lashing && w.lashT >= 0 && w !== me) w.endLash();
   if (s.dead !== w.dead) w.dead = s.dead;
   if (w === me) {
+    local.ult = s.ult ?? 0;
     if (!s.blocking && local.blocking) { local.blocking = false; }   // server cancelled the ward
     if (!s.charging && local.charging && local.chargeSent) { local.charging = false; }
     if (!s.lashing && local.lash && local.lash.sent) { local.lash = null; me.endLash(); }
@@ -332,6 +348,11 @@ function handleMessage(msg) {
       updateDecoys(msg.decoys || []);
       for (const g of msg.goats || []) (goats.get(g.id) || goats.set(g.id, new GoatView(g, scene)).get(g.id)).apply(g);
       matchUI.onSnapshot(msg);
+      // team modes keep bots at 3v3 themselves: the practice-bot buttons don't apply
+      if (!!msg.match?.teams !== teamBots) {
+        teamBots = !!msg.match?.teams;
+        for (const b of document.querySelectorAll('[data-bot], #clearBots')) { b.disabled = teamBots; b.title = teamBots ? 'Team modes fill bots to 3v3 automatically' : ''; }
+      }
       break;
     case 'goatAngry': {
       const g = goats.get(msg.id);
@@ -406,18 +427,19 @@ function handleMessage(msg) {
         else if (C.hitSpec(msg.kind)?.stun !== 0 && msg.int !== false) target.oneShot('stun', msg.kind === 'heavy' ? 0.5 : 0.55, 3.0, 0.3);
         sfx.hitBody(c);
         if (msg.slow) target.slowed = true;
-        if (msg.bind && msg.kind === 'frostfall') { target.bound = true; target.frozen = true; target.endLash(); target.cancelCyclone(); target.oneShot('stun', 0.15, 3, 0.3); }
+        if (msg.launch) target.launch(msg.launch);
+        if (msg.bind && (msg.freeze || msg.kind === 'frostfall')) { target.bound = true; target.frozen = true; target.endLash(); target.cancelCyclone(); target.oneShot('stun', 0.15, 3, 0.3); }
         else if (msg.bind) { target.bound = true; target.endLash(); target.cancelCyclone(); effects.bind([c.x, c.y - 1, c.z]); sfx.bind(c); target.oneShot('stun', msg.bind, 0.6, 0.2); }
       }
       if (target === me) {
         if (!msg.blocked) {
-          sfx.hurt(); flashVignette(); shake(msg.kind === 'heavy' || msg.kind === 'cyclone' || msg.kind === 'trapped_relic' ? 0.6 : 0.25);
+          sfx.hurt(); flashVignette(); shake(msg.kind === 'heavy' || msg.kind === 'cyclone' || msg.kind === 'trapped_relic' || (ULT_KINDS.has(msg.kind) && msg.kind !== 'crimson_eclipse') ? 0.6 : 0.25);
           if (msg.int !== false) local.stunUntil = Math.max(local.stunUntil, now + (C.hitSpec(msg.kind)?.stun ?? 0.4));
           if (msg.slow) local.slowUntil = now + msg.slow;
           if (msg.bind) {
             local.rootUntil = Math.max(local.rootUntil, now + msg.bind); local.silenceUntil = Math.max(local.silenceUntil, now + msg.bind); local.vel.set(0, 0, 0);
             local.frostAim = false;
-            if (msg.kind === 'frostfall') { local.frozenUntil = now + msg.bind; feed(`Frozen by <b>${esc(players.get(msg.attacker)?.name || '?')}</b>'s Frostfall!`); }
+            if (msg.freeze || msg.kind === 'frostfall') { local.frozenUntil = now + msg.bind; feed(`Frozen by <b>${esc(players.get(msg.attacker)?.name || '?')}</b>'s ${esc(C.hitSpec(msg.kind)?.name || 'ice')}!`); }
             else feed(`Bound by <b>${esc(players.get(msg.attacker)?.name || '?')}</b>'s lash!`);
           }
         }
@@ -428,7 +450,7 @@ function handleMessage(msg) {
         if (breaks && local.charging) local.charging = false;
         if (breaks && local.lash) { local.lash = null; me.endLash(); }
         if (breaks && local.cyclone && !local.cyclone.pulsed) { local.cyclone = null; me.cancelCyclone(); }
-        if (breaks) local.frostAim = false;
+        if (breaks) { local.frostAim = false; local.cataAim = false; }
       }
       if (msg.attacker === myId && msg.dmg > 0) hitmarker();
       break;
@@ -664,6 +686,7 @@ function handleMessage(msg) {
         ui.death.classList.remove('hidden'); local.charging = false; local.blocking = false;
         local.cyclone = null; local.flight = null; local.pos.y = 0; local.lash = null; local.fHold = null;
         local.slowUntil = local.rootUntil = local.silenceUntil = local.frozenUntil = 0; local.frostAim = false;
+        local.cataAim = false; local.eyeUntil = local.zeroUntil = 0; local.pull = null;
       }
       if (msg.killer === myId && msg.id !== myId) sfx.killSting();   // our kill (goat kills credited to us too)
       if (msg.cause === 'goated' && k) feed(`<b>${esc(k.name)}</b> goated <b>${esc(w.name)}</b>`);
@@ -681,6 +704,123 @@ function handleMessage(msg) {
       else { w.targetPos.set(msg.p[0], 0, msg.p[2]); w.group.position.copy(w.targetPos); }
       effects.teleport(msg.p, msg.p);
       sfx.respawn([msg.p[0], 1, msg.p[2]]);
+      break;
+    }
+    // ---- ultimates
+    case 'ult': {
+      const w = players.get(msg.id);
+      if (!w) break;
+      if (w === me) { local.ult = 0; local.cataAim = false; }
+      feed(`<b>${esc(w.name)}</b> unleashes <b>${esc(SPELL[msg.ult]?.name || 'an ultimate')}</b>!`);
+      sfx.play('meteor_cast', { pos: wpos(w), vol: 0.7, rate: 0.6 });
+      break;
+    }
+    case 'ultRefused':
+      local.cataAim = false;
+      break;
+    case 'cataclysm': {
+      const w = players.get(msg.id);
+      effects.cataclysmZone(msg.p, CATA.warn + CATA.spread + 0.3);
+      for (const st of msg.strikes) strikes.set(st.id, effects.meteorStrike(st.p, st.left));
+      if (w) { w.oneShot('cast_heavy', CATA.castPose, 1.5, 1.9); sfx.play('meteor_cast', { pos: wpos(w), vol: 1, rate: 0.75 }); }
+      if (msg.id !== myId && Math.hypot(msg.p[0] - local.pos.x, msg.p[2] - local.pos.z) < CATA.radius + 1) feed('<b>Meteors incoming!</b> Get out of the circle');
+      break;
+    }
+    case 'meteorHit': {
+      effects.meteorImpact(strikes.get(msg.id), msg.p);
+      strikes.delete(msg.id);
+      sfx.play('impact_big', { pos: [msg.p[0], 0.5, msg.p[2]], vol: 1.1, rate: 0.8, jitter: 0.1 });
+      sfx.play('meteor_cast', { pos: [msg.p[0], 0.5, msg.p[2]], vol: 0.5, rate: 0.5, delay: 0.02 });
+      trampleCrops(msg.p[0], msg.p[2], CATA.impact);
+      const d = Math.hypot(msg.p[0] - local.pos.x, msg.p[2] - local.pos.z);
+      shake(d < CATA.impact + 1 ? 0.7 : 0.5 / (1 + d * 0.2));
+      break;
+    }
+    case 'eyeStart': {
+      const w = players.get(msg.id);
+      if (!w) break;
+      if (w.eyeFx) effects.stopEye(w.eyeFx);
+      w.eyeFx = effects.eyeStorm(w.group); w.eyeOn = true;
+      w.eyeSpin();
+      if (w === me) local.eyeUntil = now + msg.left;
+      sfx.cyclonePulse(wpos(w));
+      if (w !== me && Math.hypot(w.group.position.x - local.pos.x, w.group.position.z - local.pos.z) < EYE.radius + 3) feed('<b>A tornado!</b> Get away from it');
+      break;
+    }
+    case 'eyePull':
+      for (const pl of msg.pulls) if (pl.id === myId) local.pull = { v: pl.v, until: now + 0.2 };
+      break;
+    case 'eyeTick': {
+      const w = players.get(msg.id);
+      if (w) sfx.play('tk_throw', { pos: wpos(w), vol: 0.6, rate: 0.6 + Math.random() * 0.2 });
+      break;
+    }
+    case 'eyeBurst': {
+      const w = players.get(msg.id);
+      const p = w === me ? [local.pos.x, local.pos.y, local.pos.z] : msg.p;
+      effects.eyeBurst(p);
+      sfx.cyclonePulse(p);
+      trampleCrops(p[0], p[2], EYE.radius * 0.6);
+      if (Math.hypot(p[0] - local.pos.x, p[2] - local.pos.z) < EYE.radius + 1) shake(0.7);
+      break;
+    }
+    case 'eyeEnd': {
+      const w = players.get(msg.id);
+      if (w) endEye(w);
+      if (msg.id === myId) local.eyeUntil = 0;
+      break;
+    }
+    case 'zeroStart': {
+      const w = players.get(msg.id);
+      if (!w) break;
+      const p = w === me ? [local.pos.x, 0, local.pos.z] : msg.p;
+      if (w.zeroFx) effects.zeroCancel(w.zeroFx);
+      w.zeroFx = effects.zeroFlare(p, msg.left);
+      w.oneShot('cast_heavy', msg.left + 0.3, 0.9, 0.3);
+      sfx.frostCast(wpos(w));
+      sfx.play('tk_lift', { pos: wpos(w), vol: 0.9, rate: 0.5 });
+      if (w === me) { local.zeroUntil = now + msg.left; local.rootUntil = Math.max(local.rootUntil, now + msg.left); local.vel.set(0, 0, 0); }
+      else if (Math.hypot(p[0] - local.pos.x, p[2] - local.pos.z) < ZERO.radius + 1) feed('<b>Absolute Zero!</b> Break line of sight');
+      break;
+    }
+    case 'zeroBlast': {
+      const w = players.get(msg.id);
+      const p = w === me ? [local.pos.x, 0, local.pos.z] : msg.p;
+      effects.zeroBlast(w?.zeroFx, p);
+      if (w) { w.zeroFx = null; w.oneShot('cast_heavy', 0.5, 1.5, 1.9); }
+      if (msg.id === myId) local.zeroUntil = 0;
+      sfx.frostImpact([p[0], 1, p[2]]);
+      sfx.wallShatter([p[0], 1, p[2]]);
+      const d = Math.hypot(p[0] - local.pos.x, p[2] - local.pos.z);
+      shake(d < ZERO.radius ? 0.8 : 0.3);
+      break;
+    }
+    case 'zeroCancel': {
+      const w = players.get(msg.id);
+      if (w) { effects.zeroCancel(w.zeroFx); w.zeroFx = null; }
+      if (msg.id === myId) local.zeroUntil = 0;
+      break;
+    }
+    case 'eclipse': {
+      const w = players.get(msg.id);
+      if (!w) break;
+      endTethers(w);
+      w.tethers = new Map(msg.targets.map(id => [id, effects.tether()]));
+      w.oneShot('cast_heavy', 0.6, 1.5, 1.9);
+      sfx.bind(wpos(w));
+      sfx.play('meteor_cast', { pos: wpos(w), vol: 0.5, rate: 0.45 });
+      if (msg.targets.includes(myId)) feed(`<b>${esc(w.name)}</b>'s Crimson Eclipse drains you! Break line of sight or get ${ECLIPSE.breakRange} m away`);
+      break;
+    }
+    case 'eclipseBreak': {
+      const w = players.get(msg.id);
+      const e = w?.tethers?.get(msg.target);
+      if (e) { e.dispose(); w.tethers.delete(msg.target); sfx.play('ward_break', { pos: wpos(w), vol: 0.5, rate: 1.5 }); }
+      break;
+    }
+    case 'eclipseEnd': {
+      const w = players.get(msg.id);
+      if (w) endTethers(w);
       break;
     }
     default:
@@ -722,6 +862,27 @@ function updateDecoys(list) {
 const walls = new Map();     // id -> { data, fx }
 // Frostfall warnings on the ground (everyone sees them), and our own targeting circle.
 const frosts = new Map();    // id -> effects entry
+// Cataclysm meteors on their way down, and our Cataclysm targeting circle.
+const strikes = new Map();   // id -> effects entry
+const cataMark = effects.cataAim();
+function endEye(w) { effects.stopEye(w.eyeFx); w.eyeFx = null; w.eyeOn = false; }
+function endTethers(w) { for (const e of w.tethers?.values() || []) e.dispose(); w.tethers = null; }
+// Crimson Eclipse beams, chest to chest, and Gale's tornado spin, every frame.
+const tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3();
+function updateUltimates() {
+  for (const w of players.values()) {
+    if (w.eyeOn && !w.dead && (w.spinT < 0 || !w.inOneShot())) w.eyeSpin();
+    if (!w.tethers) continue;
+    w.hand.getWorldPosition(tmpA);
+    if (tmpA.distanceTo(w.group.position) > 2.5) tmpA.copy(w.group.position).setY(w.group.position.y + 1.3);
+    for (const [id, e] of w.tethers) {
+      const q = players.get(id);
+      if (!q || q.dead) { e.dispose(); w.tethers.delete(id); continue; }
+      tmpB.copy(q.group.position).setY(q.group.position.y + 1.1);
+      e.set(tmpA, tmpB);
+    }
+  }
+}
 let lastDashDir = [0, 0];
 const frostMark = effects.frostAim();
 function wallUp(w, fresh = false) {
@@ -857,15 +1018,16 @@ function aimPoint() {
   return [o.x + camDir.x * best, Math.max(0.3, o.y + camDir.y * best), o.z + camDir.z * best];
 }
 
-// Where the crosshair meets the ground, at most FROST.range from us and inside the arena.
-function frostTarget() {
+// Where the crosshair meets the ground, at most `range` from us and inside the arena.
+function frostTarget() { return groundTarget(FROST.range); }
+function groundTarget(range) {
   camera.getWorldDirection(camDir);
   const o = camera.position;
   let x, z;
   if (camDir.y < -0.02) { const t = -o.y / camDir.y; x = o.x + camDir.x * t; z = o.z + camDir.z * t; }
-  else { x = local.pos.x + Math.sin(local.yaw) * FROST.range; z = local.pos.z + Math.cos(local.yaw) * FROST.range; }
+  else { x = local.pos.x + Math.sin(local.yaw) * range; z = local.pos.z + Math.cos(local.yaw) * range; }
   const d = Math.hypot(x - local.pos.x, z - local.pos.z);
-  if (d > FROST.range) { x = local.pos.x + (x - local.pos.x) * FROST.range / d; z = local.pos.z + (z - local.pos.z) * FROST.range / d; }
+  if (d > range) { x = local.pos.x + (x - local.pos.x) * range / d; z = local.pos.z + (z - local.pos.z) * range / d; }
   const r = Math.hypot(x, z);
   if (r > C.ARENA_RADIUS) { x *= C.ARENA_RADIUS / r; z *= C.ARENA_RADIUS / r; }
   return [x, 0, z];
@@ -929,7 +1091,25 @@ function updateLocal(dt) {
   const right = tmp.v2.set(-Math.cos(local.yaw), 0, Math.sin(local.yaw));   // forward × up
 
   // ---- actions
+  // our own tornado or rune flare: nothing else can be cast meanwhile
+  const ultLock = now < local.eyeUntil || now < local.zeroUntil;
   if (canAct) {
+    // ultimate (Q): Cataclysm aims a circle (hold, release); the others go off at once
+    const U = K.ultimate, ultReady = local.ult >= C.ULT_CHARGE.max, holdingQ = !!(me.carrying || me.carryingGoat);
+    if (input.justPressed('KeyQ') && ultReady && !ultLock && !busy && !holdingQ && !local.cataAim) {
+      if (U === 'cataclysm') local.cataAim = true;
+      else if (!airborne || U === 'crimson_eclipse') net.send({ t: 'ult' });
+    }
+    if (local.cataAim) {
+      if (busy || holdingQ || !ultReady || U !== 'cataclysm') local.cataAim = false;
+      else if (!input.down('KeyQ')) {
+        local.cataAim = false;
+        const at = groundTarget(CATA.range);
+        net.send({ t: 'ult', at: [at[0], at[2]] });
+      }
+    }
+  }
+  if (canAct && !ultLock) {
     // guard: hold to ward, or tap for Rime's ice wall (Space while airborne drops instead)
     const wantBlock = K.guard === 'ward' && input.down('Space') && me.st > 2 && !busy && !airborne && !local.spaceHeld;
     if (wantBlock !== local.blocking) { local.blocking = wantBlock; net.send({ t: 'block', on: wantBlock }); }
@@ -1059,9 +1239,12 @@ function updateLocal(dt) {
     }
     if (input.justPressed('KeyG') && holding) net.send({ t: 'drop' });
   } else {
-    if (local.blocking) { local.blocking = false; net.send({ t: 'block', on: false }); }
+    if (local.blocking) { local.blocking = false; if (!ultLock) net.send({ t: 'block', on: false }); }
     local.fHold = null; local.frostAim = false;
+    if (!canAct) local.cataAim = false;
   }
+  cataMark.visible = local.cataAim;
+  if (local.cataAim) { const at = groundTarget(CATA.range); cataMark.position.set(at[0], 0, at[2]); }
   // the targeting circle follows the crosshair while aiming
   frostMark.visible = local.frostAim;
   if (local.frostAim) { const at = frostTarget(); frostMark.position.set(at[0], 0, at[2]); }
@@ -1073,6 +1256,7 @@ function updateLocal(dt) {
   else if (local.blocking) speed = C.blockSpeedOf(me.wizard);
   else if (local.flight) speed = SKY.airSpeed;
   if (now < local.slowUntil) speed *= 1 - C.SPELLS.skim.slow;     // Glacial Skim
+  if (now < local.eyeUntil) speed = C.speedOf(me.wizard) * EYE.speedMul;   // the tornado: fast, and nothing slows it
   const wish = tmp.v3.set(0, 0, 0);
   if (moving) {
     wish.addScaledVector(fwd, mz).addScaledVector(right, mx).normalize();
@@ -1095,6 +1279,8 @@ function updateLocal(dt) {
   }
   if (rooted) local.vel.set(0, 0, 0);
   if (!me.dead) local.pos.addScaledVector(local.vel, dt);
+  // dragged toward an enemy Eye of the Storm
+  if (local.pull && now < local.pull.until && !rooted && !me.dead) { local.pos.x += local.pull.v[0] * dt; local.pos.z += local.pull.v[1] * dt; }
 
   // ---- collisions (2D circles)
   const pr = C.PLAYER_RADIUS;
@@ -1206,6 +1392,18 @@ function updateHud(dt) {
   ui.ab.power.classList.toggle('disabled', holdingNow || (!!local.flight && !SPELL[K.power].airCast) || bound);
   ui.ab.mobility.classList.toggle('disabled', bound || (now < local.rootUntil && K.mobility !== 'skyward'));
 
+  // ultimate: the ring fills with the charge and glows in our colour when full
+  const pct = Math.floor(local.ult), ultEl = ui.ab.ult;
+  setName('ult', shortName(K.ultimate));
+  const off = `${169.6 * (1 - Math.min(100, pct) / 100)}`;
+  if (ui.ultFg.style.strokeDashoffset !== off) ui.ultFg.style.strokeDashoffset = off;
+  const pctText = pct >= C.ULT_CHARGE.max ? 'READY' : `${pct}%`;
+  if (ui.ultPct.textContent !== pctText) ui.ultPct.textContent = pctText;
+  ultEl.classList.toggle('ready', pct >= C.ULT_CHARGE.max);
+  ultEl.style.setProperty('--ult', `#${C.boltColor(me.wizard).toString(16).padStart(6, '0')}`);
+  ultEl.classList.toggle('active', local.cataAim || now < local.eyeUntil || now < local.zeroUntil || !!me.tethers);
+  ultEl.classList.toggle('disabled', bound || holdingNow);
+
   // our cursed prop: a faint red glyph above it
   const cp = cursedProp && props.get(cursedProp);
   curseMark.visible = !!cp && cp.data.state === 'idle';
@@ -1233,10 +1431,18 @@ function updateHud(dt) {
   const hunted = !me.dead && [...goats.values()].some(g => g.tgt === myId && (g.state === 'windup' || g.state === 'charge'));
   const rooted = now < local.rootUntil, slowed = now < local.slowUntil;
   const inFrost = !me.dead && [...frosts.values()].some(f => f.left > 0 && Math.hypot(f.group.position.x - local.pos.x, f.group.position.z - local.pos.z) < FROST.radius + 0.3);
+  const rn = performance.now() / 1000;
+  const inMeteor = !me.dead && [...strikes.values()].some(e => e.landAt - rn < CATA.warn && e.landAt > rn && Math.hypot(e.group.position.x - local.pos.x, e.group.position.z - local.pos.z) < CATA.impact + 0.3);
+  const tethered = !me.dead && [...players.values()].some(w => w.tethers?.has(myId));
   if (hunted) hint = K.guard === 'ward' ? 'A goat is charging you! Ward (Space) facing it, or get out of the way' : 'A goat is charging you! Wall it off (Space) or get out of the way';
   else if (bound && now < local.frozenUntil) hint = 'Frozen!';
   else if (bound) hint = 'Bound!';
   else if (inFrost) hint = 'Ice falling! Get out of the shadow';
+  else if (inMeteor) hint = 'Meteor! Get out of the shadow';
+  else if (tethered) hint = `Tethered! Break line of sight or get ${ECLIPSE.breakRange} m away`;
+  else if (local.cataAim) hint = 'Release Q to call down the meteors';
+  else if (now < local.eyeUntil) hint = 'Eye of the Storm! Run them down';
+  else if (now < local.zeroUntil) hint = 'Absolute Zero…';
   else if (local.frostAim) hint = 'Release RMB to drop the ice';
   else if (rooted) hint = 'Recovering…';
   else if (local.flight) hint = 'Hold E to hover · Space to drop';
@@ -1248,7 +1454,7 @@ function updateHud(dt) {
   else if (tkHover) hint = K.utility === 'trapped_relic' ? (tkHover.data.id === cursedProp ? 'Your relic · F lift (removes the curse)' : 'F lift · hold F to curse') : 'F lift';
   else if (slowed) hint = 'Slowed by frost';
   else if (local.reloadUntil && now - local.lastShot < 1) hint = 'Reloading…';
-  ui.hint.textContent = hint; ui.hint.classList.toggle('on', !!hint); ui.hint.classList.toggle('danger', hunted || (inFrost && !bound));
+  ui.hint.textContent = hint; ui.hint.classList.toggle('on', !!hint); ui.hint.classList.toggle('danger', hunted || ((inFrost || inMeteor || tethered) && !bound));
   ui.hint.classList.toggle('bound', !hunted && (bound || rooted)); ui.hint.classList.toggle('frost', !hunted && !bound && !rooted && slowed && hint === 'Slowed by frost');
 
   if (vignetteT > 0) { vignetteT -= dt; if (vignetteT <= 0) ui.vignette.classList.remove('hit'); }
@@ -1316,6 +1522,7 @@ function frame(t) {
       const g = w.carryingGoat && goats.get(w.carryingGoat);
       w.beamTo = g && g.state === 'held' ? g.group.position.clone().setY(g.group.position.y + C.GOAT.hitY) : null;
     }
+    updateUltimates();
     updateSmokeHiding(dt);
     for (const w of players.values()) w.faceCamera(camera);
     updateHud(dt);
@@ -1345,4 +1552,4 @@ function frame(t) {
 requestAnimationFrame(frame);
 
 // Debug handle (used by the automated smoke test; harmless in production).
-window.__wa = { input, net, local, players, props, goats, effects, scene, camera, sfx, decoys, walls, frosts, frostMark, C, get cursedProp() { return cursedProp; } };
+window.__wa = { input, net, local, players, props, goats, effects, scene, camera, sfx, decoys, walls, frosts, frostMark, strikes, cataMark, C, get cursedProp() { return cursedProp; } };

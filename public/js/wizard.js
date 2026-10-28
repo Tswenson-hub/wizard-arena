@@ -355,6 +355,26 @@ export class Wizard {
     this.nameplate.material.opacity = 0.4;
   }
 
+  // Game modes: the ring and nameplate switch to the team colour (or back to the wizard's own).
+  setColor(color) {
+    this.ring.material.color.setHex(color);
+    const old = this.nameplate;
+    const np = makeNameplate(this.bot ? `${this.name} · ${this.bot}` : this.name, color);
+    np.position.copy(old.position); np.visible = old.visible; np.material.opacity = old.material.opacity;
+    this.group.remove(old); old.material.map?.dispose(); old.material.dispose();
+    this.group.add(np);
+    this.nameplate = np;
+  }
+
+  // Eye of the Storm's fling: the body is thrown up and lands (visual only; the server keeps feet on the ground).
+  launch(h) { this.hopT = 0; this.hopH = h; }
+  // Eye of the Storm: Gale turns as a tornado. Each call is one more spin of the clip (main.js repeats it).
+  eyeSpin() {
+    this.spinT = 0;
+    if (this.actions.spin) this.oneShot('spin', CYC.spin * 1.4, this.actions.spin.getClip().duration / (CYC.spin * 1.4), 0);
+    else this.oneShot('dash', CYC.spin, 2.5, 2.2);
+  }
+
   startCyclone() { this.cycloneT = 0; }
   cancelCyclone() { this.cycloneT = -1; }
   // The pulse: two full turns over the spin, with the dash clip underneath.
@@ -453,7 +473,13 @@ export class Wizard {
     // death: sink into the ground
     const target = this.dead && !this.actions.death ? 1 : 0;   // a body with a death clip falls instead of sinking
     this.dissolve += (target - this.dissolve) * Math.min(1, dt * (this.dead ? 1.2 : 8));
-    this.model.position.y = -this.dissolve * 1.6;
+    let hop = 0;
+    if (this.hopT >= 0 && this.hopT !== undefined) {
+      this.hopT += dt;
+      const k = this.hopT / 0.8;
+      if (k >= 1 || this.dead) this.hopT = -1; else hop = 4 * k * (1 - k) * this.hopH;
+    }
+    this.model.position.y = -this.dissolve * 1.6 + hop;
     this.model.rotation.x = this.dissolve * 0.5;
   }
 

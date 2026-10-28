@@ -101,6 +101,16 @@ export const SLOT_INFO = {
   mobility: { key: 'E',     label: 'Mobility' },
   guard:    { key: 'Space', label: 'Guard' },
   utility:  { key: 'F',     label: 'Utility' },
+  ultimate: { key: 'Q',     label: 'Ultimate' },
+};
+
+// Ultimate charge (0–100 %, server-authoritative, kept through death, reset on use). Ultimates' own
+// damage doesn't charge. Game modes add more through ctx.addUltCharge (the Sacred Relic: +2 %/s).
+export const ULT_CHARGE = {
+  max: 100,
+  perDamage: 1 / 3,    // % per point of damage dealt to an enemy
+  passive: 0.5,        // % per second while alive
+  kill: 5,             // % per kill
 };
 
 export const SPELLBOOK = {
@@ -230,6 +240,56 @@ export const SPELLBOOK = {
     staminaCost: 40,     // a ward facing the blast blocks it
     cooldown: 0.6,
     liftCooldown: 3,     // as telekinesis; laying a curse starts it too
+  },
+
+  // ---- ultimates (Q). `ult: true` hits never charge the ultimate. Each one cannot be cancelled once cast.
+  cataclysm: {
+    id: 'cataclysm', slot: 'ultimate', name: 'Cataclysm', short: 'Cataclysm', ult: true,
+    blurb: 'Hold Q to aim a 10 m circle, release: 8 meteors rain down on it over 3 s. 30 damage each, with knockback.',
+    radius: 10,          // the area
+    range: 26,           // farthest centre from the caster
+    meteors: 8,
+    spread: 3,           // first to last impact
+    warn: 1.1,           // each meteor's shadow shows this long before it lands
+    fall: 0.45,          // the fireball is seen falling for this long
+    impact: 2.3,         // each meteor's blast radius
+    height: 2,           // feet higher than this are out of reach
+    castPose: 0.6,
+    damage: 30, stun: 0.3, knockback: 7, staminaCost: 0,
+    unblockable: true,   // from above, like Frostfall
+  },
+  eye_of_storm: {
+    id: 'eye_of_storm', slot: 'ultimate', name: 'Eye of the Storm', short: 'Eye', ult: true,
+    blurb: 'Become a tornado for 3 s: 1.3× speed, unstoppable, pulls enemies within 7 m in, 12 damage every 0.5 s, then flings them out.',
+    duration: 3,
+    speedMul: 1.3,
+    radius: 7,
+    pull: 3.4,           // m/s inward on enemies inside the radius
+    tick: 0.5, damage: 12, stun: 0, knockback: 0, staminaCost: 10,   // a ward facing her soaks a tick for 10
+    height: 3,           // vertical reach
+  },
+  eye_burst: {           // the final fling (a hit kind, not a spell in a kit)
+    id: 'eye_burst', name: 'Eye of the Storm', ult: true,
+    damage: 15, stun: 0.6, knockback: 8, staminaCost: 30, launch: 2.2,   // launch: visual hop height (m)
+  },
+  absolute_zero: {
+    id: 'absolute_zero', slot: 'ultimate', name: 'Absolute Zero', short: 'Zero', ult: true,
+    blurb: 'A 1 s rune flare, then a 12 m blast: every enemy in sight takes 40 and is frozen 2.5 s. Wards don\'t help; cover does.',
+    windup: 1,           // the flare: Rime is rooted and can't be interrupted
+    radius: 12,
+    damage: 40, stun: 0, knockback: 0, staminaCost: 0,
+    bind: 2.5, freeze: true,   // Frostfall's freeze
+    unblockable: true,
+  },
+  crimson_eclipse: {
+    id: 'crimson_eclipse', slot: 'ultimate', name: 'Crimson Eclipse', short: 'Eclipse', ult: true,
+    blurb: 'Tether up to 3 enemies within 12 m for 4 s: each loses 10 HP a second and you heal as much. Line of sight or 14 m breaks it.',
+    duration: 4,
+    targets: 3,
+    radius: 12,          // tether on cast
+    breakRange: 14,      // a tether snaps beyond this, or when line of sight is lost
+    tick: 0.5, damage: 5, stun: 0, knockback: 0, staminaCost: 0,   // 10 HP/s
+    unblockable: true, noInterrupt: true,
   },
 };
 

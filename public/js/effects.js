@@ -5,6 +5,60 @@ import { makePropMesh, makeFragments } from './world.js';
 
 const SPELL_COLORS = { fast: 0x7ad8ff, heavy: 0xff7a2a, prop: 0xb48cff, skim: 0xbfeaff, lash: 0xff2a3c };
 const BULWARK = C.SPELLBOOK.glacial_bulwark, FROST = C.SPELLBOOK.frostfall, SMOKE = C.SPELLBOOK.smoke_screen;
+const CATA = C.SPELLBOOK.cataclysm, EYE = C.SPELLBOOK.eye_of_storm, ZERO = C.SPELLBOOK.absolute_zero;
+const realNow = () => performance.now() / 1000;
+
+// A meteor's warning: a scorched shadow with a glowing ember rim, drawn once.
+let emberShadowTex = null;
+function emberShadowTexture() {
+  if (emberShadowTex) return emberShadowTex;
+  const S = 256, c = document.createElement('canvas'); c.width = c.height = S;
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  grad.addColorStop(0, 'rgba(30,8,0,0.85)'); grad.addColorStop(0.7, 'rgba(50,14,0,0.6)');
+  grad.addColorStop(0.88, 'rgba(255,120,30,0.65)'); grad.addColorStop(1, 'rgba(255,120,30,0)');
+  g.fillStyle = grad; g.fillRect(0, 0, S, S);
+  emberShadowTex = new THREE.CanvasTexture(c); emberShadowTex.colorSpace = THREE.SRGBColorSpace;
+  return emberShadowTex;
+}
+// Eye of the Storm's funnel walls: soft diagonal streaks of wind, drawn once.
+let windTex = null;
+function windTexture() {
+  if (windTex) return windTex;
+  const S = 256, c = document.createElement('canvas'); c.width = c.height = S;
+  const g = c.getContext('2d');
+  let seed = 3;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let i = 0; i < 34; i++) {
+    const y = rnd() * S, w = 3 + rnd() * 6, a = 0.5 + rnd() * 0.5;
+    const grad = g.createLinearGradient(0, 0, S, 0);
+    grad.addColorStop(0, 'rgba(255,255,255,0)'); grad.addColorStop(0.5, `rgba(255,255,255,${a})`); grad.addColorStop(1, 'rgba(255,255,255,0)');
+    g.strokeStyle = grad; g.lineWidth = w;
+    g.beginPath(); g.moveTo(0, y); g.bezierCurveTo(S * 0.3, y - 30, S * 0.7, y + 30, S, y - 10); g.stroke();
+  }
+  windTex = new THREE.CanvasTexture(c); windTex.colorSpace = THREE.SRGBColorSpace;
+  windTex.wrapS = windTex.wrapT = THREE.RepeatWrapping;
+  return windTex;
+}
+
+// Absolute Zero's rune: concentric rings, spokes and frost glyphs, drawn once.
+let zeroRuneTex = null;
+function zeroRuneTexture() {
+  if (zeroRuneTex) return zeroRuneTex;
+  const S = 512, c = document.createElement('canvas'); c.width = c.height = S;
+  const g = c.getContext('2d');
+  g.translate(S / 2, S / 2); g.strokeStyle = 'rgba(220,245,255,1)'; g.lineCap = 'round';
+  for (const [r, w] of [[0.48, 6], [0.44, 2], [0.3, 4], [0.12, 3]]) { g.lineWidth = w; g.beginPath(); g.arc(0, 0, S * r, 0, Math.PI * 2); g.stroke(); }
+  g.lineWidth = 3;
+  for (let i = 0; i < 12; i++) {
+    g.rotate(Math.PI / 6);
+    g.beginPath(); g.moveTo(0, S * 0.12); g.lineTo(0, S * 0.44); g.stroke();
+    // a little snowflake branch on each spoke
+    g.beginPath(); g.moveTo(0, S * 0.36); g.lineTo(-S * 0.03, S * 0.4); g.moveTo(0, S * 0.36); g.lineTo(S * 0.03, S * 0.4); g.stroke();
+  }
+  zeroRuneTex = new THREE.CanvasTexture(c); zeroRuneTex.colorSpace = THREE.SRGBColorSpace;
+  return zeroRuneTex;
+}
 
 // Smoke Screen puff: a soft lumpy blob, drawn once.
 let puffTex = null;
@@ -575,6 +629,192 @@ export class Effects {
     return g;
   }
 
+  // ---------------------------------------------------------------- ultimates
+  // Cinder's Cataclysm: the whole circle smoulders while the meteors fall.
+  cataclysmZone(p, life) {
+    const g = new THREE.Group();
+    g.position.set(p[0], 0, p[2]);
+    const fill = new THREE.Mesh(new THREE.CircleGeometry(CATA.radius, 64).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0xff5a1e, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
+    const ring = new THREE.Mesh(new THREE.RingGeometry(CATA.radius - 0.25, CATA.radius, 96).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0xffa040, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
+    fill.position.y = 0.13; ring.position.y = 0.15;
+    g.add(fill, ring);
+    this.scene.add(g);
+    (this.zones ??= new Set()).add({ group: g, fill, ring, born: realNow(), endAt: realNow() + life });
+  }
+  // One meteor: its shadow appears CATA.warn before impact; the fireball drops in the last CATA.fall.
+  meteorStrike(p, left) {
+    const g = new THREE.Group();
+    g.position.set(p[0], 0, p[2]);
+    const shadow = new THREE.Mesh(new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ map: emberShadowTexture(), transparent: true, depthWrite: false }));
+    shadow.position.y = 0.16; shadow.renderOrder = 2;
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.94, 1, 48).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0xffb060, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }));
+    ring.position.y = 0.17; ring.scale.setScalar(CATA.impact);
+    const rock = new THREE.Group();
+    rock.add(new THREE.Mesh(new THREE.IcosahedronGeometry(0.75, 1), new THREE.MeshBasicMaterial({ color: 0xffd08a })));
+    rock.add(new THREE.Mesh(new THREE.IcosahedronGeometry(1.15, 1), new THREE.MeshBasicMaterial({ color: 0xff5a1e, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false })));
+    const light = new THREE.PointLight(0xff7a2a, 0, 12);
+    rock.add(light);
+    rock.visible = false;
+    g.add(shadow, ring, rock);
+    g.visible = false;
+    this.scene.add(g);
+    const e = { group: g, shadow, ring, rock, light, landAt: realNow() + left, trail: 0, dir: new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5).normalize() };
+    (this.meteors ??= new Set()).add(e);
+    return e;
+  }
+  meteorImpact(e, p) {
+    if (e) { this.meteors?.delete(e); this.scene.remove(e.group); }
+    const pos = new THREE.Vector3(p[0], 0.5, p[2]);
+    this.burst(pos, 0xffb040, 26, 8, 0.6, 5);
+    this.burst(pos.clone().setY(1), 0xff3a10, 16, 5, 0.8, 2);
+    const rockMat = this.mat(0x3a2418, { opacity: 1 });
+    for (let i = 0; i < 14; i++) {
+      const m = new THREE.Mesh(new THREE.DodecahedronGeometry(0.1 + Math.random() * 0.15, 0), i % 3 ? rockMat : this.mat(0xff7a2a, { opacity: 1 }));
+      m.position.set(p[0] + (Math.random() - 0.5), 0.3, p[2] + (Math.random() - 0.5));
+      this.scene.add(m);
+      const a = Math.random() * Math.PI * 2, sp = 3 + Math.random() * 6;
+      this.debris.push({ mesh: m, life: 0, maxLife: 1 + Math.random() * 0.8, vel: new THREE.Vector3(Math.sin(a) * sp, 3 + Math.random() * 5, Math.cos(a) * sp),
+        spin: new THREE.Vector3(Math.random() * 10 - 5, Math.random() * 10 - 5, Math.random() * 10 - 5) });
+    }
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.8, 1, 48).rotateX(-Math.PI / 2),
+      this.mat(0xffa040, { opacity: 0.9, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
+    ring.position.set(p[0], 0.18, p[2]);
+    this.scene.add(ring);
+    this.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0, maxLife: 0.35, grav: 0, grow: (CATA.impact + 1) / 0.35, still: true });
+    for (let i = 0; i < 6; i++) this.dust(pos, 3);
+  }
+  // The caster's targeting circle while Q is held (Cataclysm).
+  cataAim() {
+    const g = new THREE.Group();
+    const fill = new THREE.Mesh(new THREE.CircleGeometry(1, 64).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0xff7a2a, transparent: true, opacity: 0.12, depthWrite: false }));
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.95, 1, 96).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0xffc080, transparent: true, opacity: 0.9, depthWrite: false }));
+    fill.position.y = ring.position.y = 0.16;
+    g.add(fill, ring);
+    g.scale.setScalar(CATA.radius);
+    g.visible = false;
+    this.scene.add(g);
+    return g;
+  }
+
+  // Gale's Eye of the Storm: a violet funnel of wind around her, a faint pull circle on the ground.
+  // It follows `follow` (her group) until stopEye().
+  eyeStorm(follow) {
+    const g = new THREE.Group();
+    const layers = [];
+    for (let i = 0; i < 4; i++) {
+      const h = 1.3, r0 = 0.7 + i * 0.55, r1 = 1.0 + i * 0.75;
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(r1, r0, h, 28, 1, true),
+        new THREE.MeshBasicMaterial({ map: windTexture(), color: i % 2 ? 0xb48cff : 0x7a3cdf, transparent: true, opacity: 0.85 - i * 0.12, side: THREE.DoubleSide, depthWrite: false }));
+      m.position.y = 0.35 + i * h * 0.95;
+      g.add(m); layers.push(m);
+    }
+    const pullRing = new THREE.Mesh(new THREE.RingGeometry(EYE.radius - 0.15, EYE.radius, 96).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0xc8a0ff, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false }));
+    pullRing.position.y = 0.14;
+    g.add(pullRing);
+    this.scene.add(g);
+    const e = { group: g, layers, pullRing, follow, mote: 0, born: realNow() };
+    (this.eyes ??= new Set()).add(e);
+    return e;
+  }
+  stopEye(e) { if (!e) return; this.eyes?.delete(e); this.scene.remove(e.group); }
+  // The final fling: a burst of wind outward.
+  eyeBurst(p) {
+    this.cyclonePulse(p, EYE.radius);
+    this.burst(new THREE.Vector3(p[0], p[1] + 1.5, p[2]), 0xe8dcff, 24, 7, 0.6, 1);
+  }
+
+  // Rime's Absolute Zero: a rune flares on the ground and a cold column rises for the wind-up.
+  zeroFlare(p, left) {
+    const g = new THREE.Group();
+    g.position.set(p[0], 0, p[2]);
+    const rune = new THREE.Mesh(new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ map: zeroRuneTexture(), color: 0x9ae4ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+    rune.position.y = 0.15; rune.renderOrder = 2;
+    const column = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.55, 9, 16, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0x7fd0ff, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false }));
+    column.position.y = 4.5;
+    const light = new THREE.PointLight(0x9ae4ff, 0, 16);
+    light.position.y = 1.5;
+    g.add(rune, column, light);
+    this.scene.add(g);
+    const e = { group: g, rune, column, light, born: realNow(), total: Math.max(0.05, left) };
+    (this.zeros ??= new Set()).add(e);
+    return e;
+  }
+  zeroBlast(e, p) {
+    if (e) { this.zeros?.delete(e); this.scene.remove(e.group); }
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.9, 1, 96).rotateX(-Math.PI / 2),
+      this.mat(0xdff6ff, { opacity: 0.95, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
+    ring.position.set(p[0], 0.2, p[2]);
+    this.scene.add(ring);
+    this.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0, maxLife: 0.45, grav: 0, grow: ZERO.radius / 0.45, still: true });
+    const ring2 = new THREE.Mesh(new THREE.RingGeometry(0.6, 1, 96).rotateX(-Math.PI / 2),
+      this.mat(0x7fd0ff, { opacity: 0.6, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
+    ring2.position.set(p[0], 0.18, p[2]);
+    this.scene.add(ring2);
+    this.particles.push({ mesh: ring2, vel: new THREE.Vector3(), life: 0, maxLife: 0.6, grav: 0, grow: ZERO.radius / 0.6, still: true });
+    // a freezing mist rolling out over the whole radius
+    for (let i = 0; i < 40; i++) {
+      const a = Math.random() * Math.PI * 2, r = Math.random() * 2;
+      const m = new THREE.Mesh(this.sphereGeo, this.mat(0xeef8ff, { opacity: 0.5, depthWrite: false }));
+      m.position.set(p[0] + Math.sin(a) * r, 0.3 + Math.random() * 0.5, p[2] + Math.cos(a) * r);
+      m.scale.setScalar(0.4 + Math.random() * 0.4);
+      this.scene.add(m);
+      const sp = ZERO.radius * (0.5 + Math.random() * 0.6);
+      this.particles.push({ mesh: m, vel: new THREE.Vector3(Math.sin(a) * sp, 0.4 + Math.random() * 0.6, Math.cos(a) * sp), life: 0, maxLife: 0.8 + Math.random() * 0.4, grav: 0, grow: 1.4 });
+    }
+    const shardMat = this.mat(0xe8f8ff, { opacity: 0.95 });
+    for (let i = 0; i < 48; i++) {
+      const m = new THREE.Mesh(new THREE.TetrahedronGeometry(0.1 + Math.random() * 0.2, 0), shardMat);
+      const a = Math.random() * Math.PI * 2;
+      m.position.set(p[0] + Math.sin(a) * 0.8, 0.5 + Math.random() * 1.5, p[2] + Math.cos(a) * 0.8);
+      this.scene.add(m);
+      const sp = 10 + Math.random() * 10;
+      this.debris.push({ mesh: m, life: 0, maxLife: 0.7 + Math.random() * 0.5, vel: new THREE.Vector3(Math.sin(a) * sp, 1 + Math.random() * 3, Math.cos(a) * sp),
+        spin: new THREE.Vector3(Math.random() * 10 - 5, Math.random() * 10 - 5, Math.random() * 10 - 5) });
+    }
+    this.burst(new THREE.Vector3(p[0], 1.2, p[2]), 0xffffff, 24, 8, 0.6, 2);
+  }
+  zeroCancel(e) { if (e) { this.zeros?.delete(e); this.scene.remove(e.group); } }
+
+  // Vesper's Crimson Eclipse: a pulsing crimson beam between two points (main.js moves it every frame).
+  tether() {
+    const g = new THREE.Group();
+    const core = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1, 8, 1, true).translate(0, 0.5, 0).rotateX(Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0xffd0d8, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false }));
+    const glow = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 1, 10, 1, true).translate(0, 0.5, 0).rotateX(Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0xff1f3d, transparent: true, opacity: 0.45, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+    g.add(core, glow);
+    this.scene.add(g);
+    const e = { group: g, core, glow, phase: Math.random() * 6 };
+    e.set = (a, b) => {
+      g.position.copy(a);
+      g.lookAt(b);
+      const l = a.distanceTo(b);
+      const w = 1 + Math.sin(this.clock * 14 + e.phase) * 0.35;
+      core.scale.set(w, w, l); glow.scale.set(w * 1.2, w * 1.2, l);
+      glow.material.opacity = 0.35 + Math.sin(this.clock * 9 + e.phase) * 0.15;
+      // blood motes running along the beam, from the victim to Vesper
+      if (Math.random() < 0.5) {
+        const k = Math.random();
+        const m = new THREE.Mesh(this.particleGeo, this.mat(0xff2a48, { opacity: 1 }));
+        m.position.copy(b).lerp(a, k);
+        m.scale.setScalar(0.5 + Math.random() * 0.5);
+        this.scene.add(m);
+        this.particles.push({ mesh: m, vel: a.clone().sub(b).normalize().multiplyScalar(6), life: 0, maxLife: 0.25, grav: 0, shrink: true });
+      }
+    };
+    e.dispose = () => this.scene.remove(g);
+    return e;
+  }
+
   // ---------------------------------------------------------------- update
   update(dt) {
     this.clock += dt;
@@ -615,6 +855,78 @@ export class Effects {
         e.ice.rotation.y += dt * 2;
       }
       if (e.left < -1) { this.frosts.delete(e); this.scene.remove(e.group); }   // lost the impact message
+    }
+
+    // ultimates
+    const rn = realNow();
+    for (const z of this.zones || []) {
+      const k = Math.min(1, (rn - z.born) / 0.3), fade = Math.max(0, Math.min(1, (z.endAt - rn) / 0.4));
+      if (fade <= 0) { this.zones.delete(z); this.scene.remove(z.group); continue; }
+      z.fill.material.opacity = (0.08 + Math.sin(this.clock * 5) * 0.03) * k * fade;
+      z.ring.material.opacity = 0.8 * k * fade;
+    }
+    for (const e of this.meteors || []) {
+      const left = e.landAt - rn;
+      e.group.visible = left <= CATA.warn;
+      if (!e.group.visible) continue;
+      const k = 1 - Math.max(0, left) / CATA.warn;
+      e.shadow.scale.setScalar(CATA.impact * (0.3 + 0.7 * k));
+      e.shadow.material.opacity = 0.4 + 0.6 * k;
+      e.ring.material.opacity = 0.5 + 0.4 * Math.sin(this.clock * 14) * 0.5 + 0.2 * k;
+      if (left <= CATA.fall) {
+        // falling in at an angle, trailing fire
+        const f = Math.max(0, left) / CATA.fall;
+        e.rock.visible = true;
+        e.rock.position.set(e.dir.x * f * 8, 0.6 + f * f * 22, e.dir.z * f * 8);
+        e.light.intensity = 4 + (1 - f) * 10;
+        e.trail += dt;
+        if (e.trail > 0.02) {
+          e.trail = 0;
+          const m = new THREE.Mesh(this.sphereGeo, this.mat(Math.random() < 0.5 ? 0xff7a2a : 0xffc060, { opacity: 0.6 }));
+          m.position.copy(e.rock.position).add(e.group.position);
+          m.scale.setScalar(0.5 + Math.random() * 0.3);
+          this.scene.add(m);
+          this.particles.push({ mesh: m, vel: new THREE.Vector3(0, 1, 0), life: 0, maxLife: 0.35, grav: 0, shrink: true });
+        }
+      }
+      if (left < -1) { this.meteors.delete(e); this.scene.remove(e.group); }   // lost the impact message
+    }
+    for (const e of this.eyes || []) {
+      if (e.follow) e.group.position.set(e.follow.position.x, e.follow.position.y, e.follow.position.z);
+      e.layers.forEach((m, i) => { m.rotation.y += dt * (7 - i * 1.2); m.scale.x = m.scale.z = 1 + Math.sin(this.clock * 6 + i) * 0.06; });
+      e.pullRing.rotation.y -= dt * 0.8;
+      e.pullRing.material.opacity = 0.3 + Math.sin(this.clock * 8) * 0.15;
+      // dust and leaves spiralling in toward the funnel
+      e.mote += dt;
+      while (e.mote > 0.02) {
+        e.mote -= 0.02;
+        const a = Math.random() * Math.PI * 2, r = 2 + Math.random() * (EYE.radius - 2);
+        const m = new THREE.Mesh(this.particleGeo, this.mat(Math.random() < 0.3 ? 0xb59a72 : 0xd8c0ff, { opacity: 0.9 }));
+        m.position.set(e.group.position.x + Math.sin(a) * r, 0.2 + Math.random() * 2.5, e.group.position.z + Math.cos(a) * r);
+        m.scale.setScalar(0.4 + Math.random() * 0.6);
+        this.scene.add(m);
+        const inx = -Math.sin(a), inz = -Math.cos(a);
+        this.particles.push({ mesh: m, vel: new THREE.Vector3((inx * 0.6 + inz) * r * 1.6, 1.5, (inz * 0.6 - inx) * r * 1.6), life: 0, maxLife: 0.45, grav: -2, shrink: true });
+      }
+    }
+    for (const e of this.zeros || []) {
+      const k = Math.min(1, (rn - e.born) / e.total);
+      e.rune.scale.setScalar(Math.max(0.05, (1 - Math.pow(1 - k, 3)) * ZERO.radius));
+      e.rune.rotation.y += dt * (0.6 + k * 2);
+      e.rune.material.opacity = 0.35 + 0.6 * k + Math.sin(this.clock * 30) * 0.05 * k;
+      e.column.material.opacity = 0.15 + 0.4 * k;
+      e.column.scale.set(1 - k * 0.4, 0.2 + k * 0.8, 1 - k * 0.4);
+      e.column.position.y = 4.5 * (0.2 + k * 0.8);
+      // frost motes drawn in toward the rune's centre as it charges
+      if (Math.random() < 0.7) {
+        const a = Math.random() * Math.PI * 2, r = ZERO.radius * (0.4 + Math.random() * 0.6);
+        const m = new THREE.Mesh(this.particleGeo, this.mat(0xe8f8ff, { opacity: 1 }));
+        m.position.set(e.group.position.x + Math.sin(a) * r, 0.3 + Math.random() * 0.8, e.group.position.z + Math.cos(a) * r);
+        this.scene.add(m);
+        this.particles.push({ mesh: m, vel: new THREE.Vector3(-Math.sin(a) * r * 1.6, 1.5, -Math.cos(a) * r * 1.6), life: 0, maxLife: 0.5, grav: 0, shrink: true });
+      }
+      e.light.intensity = 2 + k * 14;
+      if (rn - e.born > e.total + 1.5) { this.zeros.delete(e); this.scene.remove(e.group); }   // lost the blast message
     }
 
     // smoke clouds: billow out, churn, then fade
