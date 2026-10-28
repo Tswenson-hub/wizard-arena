@@ -175,3 +175,17 @@ telekinesis side (`server.js`, `server/bots.js`, `main.js`, `wizard.js`, `effect
   show the hint "F hurl goat".
 - **Bots:** Hard and Normal bots sometimes lift a goat and hurl it at an enemy within about 18 m. Every bot treats a
   flying goat like a thrown prop.
+
+### REVISION from Ty (supersedes the anger rules above): a thrown goat is just a regular object
+Ty: "don't have the goat aggro unless someone shoots it with a spell after telekinesis. It is just a regular object
+except it doesn't break and just resumes what it was doing."
+- **Lifting, holding, throwing, landing and hitting a wizard never anger the goat.**
+- **A thrown goat hits like a thrown prop** (same damage, stun, knockback and ward rules as `SPELLS.prop`), but it
+  **doesn't break**. It lands on its feet (a short stumble is fine) and **resumes what it was doing**: graze or wander if
+  it's in the pen, otherwise `return` home. Same after G, or after the holder dies or is stunned.
+- **Only a spell makes a goat angry, as before:** a spark, skim, meteor, cyclone, frostfall and so on hitting it. That
+  includes a goat that is held or flying. If a spell hits a held goat (absorbing the hit for its holder) or a flying goat,
+  it drops and does the normal `angerGoat` rear-up and charge at that spell's caster.
+- **Interface changes:** `angerGoatAt` is no longer needed. `ctx.goatHitPlayer(goat, player, throwerId)` just applies
+  prop-style damage (kind `goat`, credited to the thrower), and the goat keeps falling and lands normally. Everything else
+  in the interface stands.
