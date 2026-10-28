@@ -3,6 +3,8 @@
 #   tools/optimize-models.sh <goat.glb> <potion.glb> <farmhouse.glb>
 #   tools/optimize-models.sh one <src.glb> <name> [simplify-ratio] [texture-size]
 #     -> public/models/<name>.glb (defaults: ratio 0.35, 1024 px; aim for < 1 MB, ~10k tris for props)
+#   Big image-to-3d scenery went:  one <barn.glb> barn 0.03 2048   (88 MB -> 2.6 MB, 64k tris)
+#                                  one <silo.glb> silo 0.012 2048  (248 MB -> 4.1 MB)
 # Needs network access the first time (npx fetches @gltf-transform/cli).
 set -e
 G="npx --yes @gltf-transform/cli@4"

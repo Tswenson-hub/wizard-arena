@@ -74,6 +74,48 @@ The well, cart, shelter and trough are still procedural stand-ins. To swap one:
 Run the script under `sh` and pass arguments literally. A zsh `for` loop that splits `$pair` silently passes nothing.
 Fence and crops are instanced. A Meshy fence or crop would need a small instancing change.
 
+## Barn and fallen silo (Meshy, round 4)
+| Piece | Where | Details |
+|---|---|---|
+| Walk-through barn | (14, 20.5), yaw −π/2, between the house and the pen's NW corner | `public/models/barn.glb`, 2.6 MB, 64k tris (88 MB source, ratio 0.03, 2048 px). 15.3 m long, 7 m to the cupola. |
+| Fallen grain silo | (−16, −27), yaw 0.35, south-west meadow | `public/models/silo.glb`, 4.1 MB (248 MB source, ratio 0.012, 2048 px). 11 m long, 4 m tall, ivy-covered, domed cap toward the ESE. |
+
+**The barn is not open at both ends.** I rendered it from all sides and inside (`m_barn_*.png`). In model space it is long along x,
+with a wide arch and swung-open doors at −x, a 3 m side doorway in the middle of the +z wall (x 0..3), and a *closed*
+window wall at +x. So the way through is an L: the **arch opens south onto the courtyard** (a new path strip leads to it from
+the yard, past the rune pillar at (10, 9.5), which now screens the entrance) and the **side door opens west toward the house**
+(a path strip to the house path). North of the side door is a 3.5 m dead-end nook.
+Colliders: 60 posts (`kind: 'barn'`, r 0.45, `h` 4, ≤ 0.6 m apart) along wall polylines that I measured with a raycast section of the
+model at 0.6 and 1.4 m (`/tmp/wa-environment/section.py`), not by eye. That covers both long walls, the closed end and the door leaves.
+The arch and the side door stay open, and the inside is 2.5 m clear. The big side windows are visual only: walls block spells and LOS full height.
+I closed a 1.2 m gap beside the arch's north door leaf (it is visually open, but sits right next to the arch).
+
+Silo: 7 circles (`kind: 'silo'`, r 1.8, `h` 3.6) along its axis, fitted to the section (body x −5.75..5.3, z −0.25 in model space).
+I moved the tree (−12, −31) to (−11, −33.5) and the crate (−21, −25) to (−24, −21.5) out of its footprint. No spawn point
+was within reach of either piece, so spawns are unchanged.
+
+Code: `map.js` has `BARN`, `BARN_POSTS`, `SILO`, a `chain()` polyline helper, a `place()` model→world helper and `GOAT_DETOURS`
+(world boxes of the barn and silo colliders). `world.js` has procedural stand-ins `makeBarn`/`makeSilo` (shown only if the glb fails;
+I didn't screenshot those) and the two `FARM_MODELS` entries. `server/goats.js`: the return route now goes around
+the pen **and** every `GOAT_DETOURS` box (their padded corners are extra Dijkstra nodes). A goat inside a box's margin only has to clear
+the bare box.
+
+Verified (server 4102):
+- Screenshots, all of which I looked at: `c_barn.png` and `c_silo.png` (collider overlay, top down), `c_plan2.png` (whole map overlay),
+  `o_v_barn_arch.png`, `o_v_barn_inside.png`, `o_v_barn_door.png`, `o_v_barn_out.png`, `o_v_silo_court.png`,
+  `o_v_silo_meadow.png` (player's eye), `o_aerial.png`. No page errors.
+- `botmatch.mjs 4102 90 hard normal easy`: 6 kills, goats penned.
+- `/tmp/wa-environment/stuckwatch.mjs` (stall = 6 s within 1.5 m): 5 bots, 180 s, 32 kills, one 7.8 s stall at the old pillar (−9, −11).
+  With idle targets planted behind the barn (11, 31) and behind the silo (−16, −31.5): 41 kills in 150 s, both targets were killed repeatedly,
+  and no bot stalled at the barn or silo (one 9 s stall against the farmhouse's east wall).
+- `/tmp/wa-environment/homesim.mjs` runs the real server goat code with a dizzy goat dropped at 15 spots: around, inside and in the nook of the barn,
+  and around the silo. Every goat got home in 9–25 s and none needed the 30 s ghost fallback.
+- Live goat run with lures (`lure.mjs`): 6/6 returns finished, longest 19.9 s, `leftUnangered: 0`.
+- `du -sh public/models` is 23 MB in total, but most of that is the characters' `wizards/`. Barn + silo add 6.7 MB.
+
+Known: bots don't pathfind (they steer and flip strafe), so a bot chasing someone around the barn takes the long way, but in my runs it never stuck.
+Pre-existing, not new: a goat sparked near the trough bonks on it (the trough isn't excluded from charge stops). It's harmless, but it is why lures rarely got a charge past the pen.
+
 ## For the gameplay agent / Ty
 - Requests filed in `requests.md`:
   - optional: call `trampleCrops(x, z, r)` from `world.js` on Meteor impacts and cyclone pulses

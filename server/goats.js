@@ -187,17 +187,20 @@ function pickDest(g) {
 
 // ---------------------------------------------------------------- going home
 // Route: around the outside of the pen (via its corners) to the gate, through it, then a grazing spot.
+// The barn and the fallen silo are boxes the route also goes around, by their corners.
 const PAD = 1.9;
-const CORNERS = [
-  [C.PEN.x0 - PAD, C.PEN.z0 - PAD], [C.PEN.x1 + PAD, C.PEN.z0 - PAD],
-  [C.PEN.x1 + PAD, C.PEN.z1 + PAD], [C.PEN.x0 - PAD, C.PEN.z1 + PAD],
-];
+const PEN_BOX = { x0: C.PEN.x0, x1: C.PEN.x1, z0: C.PEN.z0, z1: C.PEN.z1 };
+const BOXES = [[PEN_BOX, 0.5], ...C.GOAT_DETOURS.map(b => [b, 0.6])];   // [box, how much a route must clear it by]
+const CORNERS = BOXES.flatMap(([b], i) => {
+  const pad = i ? PAD - 0.6 : PAD;
+  return [[b.x0 - pad, b.z0 - pad], [b.x1 + pad, b.z0 - pad], [b.x1 + pad, b.z1 + pad], [b.x0 - pad, b.z1 + pad]];
+}).filter(([x, z]) => Math.hypot(x, z) < C.ARENA_RADIUS - 1);
 
-// Does segment a-b cross the pen rectangle (grown by `grow`)? Liang-Barsky clip.
-function crossesPen(a, b, grow = 0.5) {
+// Does segment a-b cross box b (grown by `grow`)? Liang-Barsky clip.
+function crossesBox(a, c, b, grow) {
   let t0 = 0, t1 = 1;
-  const dx = b[0] - a[0], dz = b[1] - a[1];
-  const edges = [[-dx, a[0] - (C.PEN.x0 - grow)], [dx, (C.PEN.x1 + grow) - a[0]], [-dz, a[1] - (C.PEN.z0 - grow)], [dz, (C.PEN.z1 + grow) - a[1]]];
+  const dx = c[0] - a[0], dz = c[1] - a[1];
+  const edges = [[-dx, a[0] - (b.x0 - grow)], [dx, (b.x1 + grow) - a[0]], [-dz, a[1] - (b.z0 - grow)], [dz, (b.z1 + grow) - a[1]]];
   for (const [p, q] of edges) {
     if (Math.abs(p) < 1e-9) { if (q < 0) return false; continue; }
     const r = q / p;
@@ -206,8 +209,11 @@ function crossesPen(a, b, grow = 0.5) {
   }
   return true;
 }
+// A goat already inside a box's grown margin (it was knocked there) only has to clear the box itself.
+const inBox = (p, b, grow) => p[0] > b.x0 - grow && p[0] < b.x1 + grow && p[1] > b.z0 - grow && p[1] < b.z1 + grow;
+const blocked = (a, c) => BOXES.some(([b, grow], i) => crossesBox(a, c, b, i && inBox(a, b, grow) ? 0 : grow));
 
-// Shortest path from `from` to the gate over the corner waypoints (5 nodes, so plain Dijkstra).
+// Shortest path from `from` to the gate over the corner waypoints (plain Dijkstra, a dozen nodes).
 export function routeToGate(from) {
   const nodes = [from, ...CORNERS, C.PEN.gateOut];
   const goal = nodes.length - 1;
@@ -220,7 +226,7 @@ export function routeToGate(from) {
     done[u] = true;
     if (u === goal) break;
     for (let v = 1; v < nodes.length; v++) {
-      if (done[v] || crossesPen(nodes[u], nodes[v])) continue;
+      if (done[v] || blocked(nodes[u], nodes[v])) continue;
       const d = dist[u] + Math.hypot(nodes[v][0] - nodes[u][0], nodes[v][1] - nodes[u][1]);
       if (d < dist[v]) { dist[v] = d; prev[v] = u; }
     }

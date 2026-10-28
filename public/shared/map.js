@@ -5,10 +5,10 @@
 // the goat pen is on your left (+x) and the crop field on your right (-x).
 //
 //                 farmhouse (0, 26)
-//      tractor
+//      tractor                         walk-through barn (14, 20.5)
 //   crop field      courtyard + well      goat pen (gate faces the courtyard)
 //   (-x)            (0, 0)                (+x)
-//                 south meadow, trees
+//       fallen silo     south meadow, trees
 
 export const ARENA_RADIUS = 40;       // playable circle radius (m)
 
@@ -126,6 +126,37 @@ export const TRACTOR = { x: -14.8, z: 13.2, yaw: 2.35, len: 4.3 };
 // Footprint as circles [offset along its heading, r], fitted to the Meshy model: 4.3 m long,
 // 2.5 m across the rear wheels, 2.0 m across the front.
 const TRACTOR_BLOCKS = [[-1.15, 1.25], [0.3, 1.0], [1.45, 1.0]];
+// Chain of points every `spacing` m along a polyline [[x, z], ...] (walls and fences made of circles).
+function chain(line, spacing) {
+  const out = [];
+  for (let s = 1; s < line.length; s++) {
+    const [a, b] = [line[s - 1], line[s]];
+    const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / spacing));
+    for (let i = s > 1 ? 1 : 0; i <= n; i++) out.push([a[0] + (b[0] - a[0]) * i / n, a[1] + (b[1] - a[1]) * i / n]);
+  }
+  return out;
+}
+// Model space -> world for a piece placed at {x, z, yaw} (same convention as Object3D.rotation.y).
+const place = (o, [lx, lz]) => [o.x + lx * Math.cos(o.yaw) + lz * Math.sin(o.yaw), o.z - lx * Math.sin(o.yaw) + lz * Math.cos(o.yaw)];
+
+// Walk-through barn (models/barn.glb) by the pen's north-west corner. In model space it is long along x:
+// a wide arch at -x, a 3 m side doorway in the +z wall (x 0..3) and a closed window wall at +x.
+// Turned -90°, the arch opens south onto the courtyard and the side door west toward the house, so the
+// way through is an L-shaped corridor, 2.5 m wide, with walls you can't shoot through.
+export const BARN = { x: 14, z: 20.5, yaw: -Math.PI / 2, height: 7 };
+// Wall lines in model space, from a raycast section of the model at 0.6 and 1.4 m.
+const BARN_WALLS = [
+  [[-7.6, -2.4], [2.75, -2.4], [2.75, -1.5], [6.6, -1.5], [6.6, 1.15], [3.1, 1.15]],   // south wall, end wall, north wall to the side door
+  [[-0.1, 1.1], [-4.3, 1.05], [-5.5, 1.5], [-7.2, 3.2]],                                 // north wall from the side door, then the arch's open door leaf
+  [[6.6, 1.15], [6.5, 2.5]],                                                              // the end wall's open door leaf
+];
+export const BARN_POSTS = BARN_WALLS.flatMap(line => chain(line, 0.6)).map(p => place(BARN, p));
+
+// A grain silo lying on its side in the south-west meadow (models/silo.glb): 11 m of hard cover, 3.6 m tall.
+// In model space its body runs along x (-5.75..5.3, domed cap at +x), centred on z -0.25, radius 1.8.
+export const SILO = { x: -16, z: -27, yaw: 0.35, height: 4 };
+const SILO_BLOCKS = [-4, -2.7, -1.4, -0.1, 1.2, 2.5, 3.6].map(lx => place(SILO, [lx, -0.25]));
+
 export const WELL = { x: 0, z: 2, r: 1.25, h: 2.6 };
 export const CART = { x: -4, z: -16, yaw: 0.5 };
 // Big round bales standing on end: courtyard cover. [x, z]
@@ -140,7 +171,7 @@ export const PILLARS = [
 ];
 
 export const TREES = [
-  { x: 22, z: -20, r: 0.6 }, { x: -20, z: -20, r: 0.6 }, { x: -12, z: -31, r: 0.6 }, { x: 12, z: -31, r: 0.6 },
+  { x: 22, z: -20, r: 0.6 }, { x: -20, z: -20, r: 0.6 }, { x: -11, z: -33.5, r: 0.6 }, { x: 12, z: -31, r: 0.6 },
   { x: 30, z: -21, r: 0.6 }, { x: -30, z: -19, r: 0.6 }, { x: -13, z: 31, r: 0.6 }, { x: 13, z: 32, r: 0.6 },
   { x: 24, z: 22, r: 0.6 }, { x: -24, z: 23, r: 0.6 }, { x: 0, z: -36, r: 0.6 },
 ];
@@ -157,7 +188,7 @@ export const PROP_SPAWNS = [
   // courtyard: pots around the well, a few crates and barrels
   ['pot', 2.4, 0], ['pot', -2.4, 0.8], ['pot', 1, 4.6], ['crate', 3, -12], ['barrel', -3, 11], ['barrel', 3.5, 12],
   // south meadow: rocks and a crate or two
-  ['rock', 15, -18], ['rock', -15, -16], ['rock', 6, -29], ['rock', -7, -27], ['crate', 20, -26], ['crate', -21, -25],
+  ['rock', 15, -18], ['rock', -15, -16], ['rock', 6, -29], ['rock', -7, -27], ['crate', 20, -26], ['crate', -24, -21.5],
   ['barrel', -0.5, -14], ['pumpkin', -6, -18.5],
 ];
 
@@ -190,4 +221,14 @@ export const COLLIDERS = [
   { x: WELL.x, z: WELL.z, r: WELL.r, h: WELL.h, kind: 'well' },
   ...along(CART, 1.0, 2, 0.8, 1.7, 'cart'),
   ...HAY_STACKS.map(([x, z]) => ({ x, z, r: 0.85, h: 1.7, kind: 'hay' })),
+  ...BARN_POSTS.map(([x, z]) => ({ x, z, r: 0.45, h: 4, kind: 'barn' })),
+  ...SILO_BLOCKS.map(([x, z]) => ({ x, z, r: 1.8, h: 3.6, kind: 'silo' })),
 ];
+
+// Big solid pieces the goats walk around on their way home (world-space boxes around their colliders).
+const boxOf = (kind) => {
+  const cs = COLLIDERS.filter(c => c.kind === kind);
+  return { x0: Math.min(...cs.map(c => c.x - c.r)), x1: Math.max(...cs.map(c => c.x + c.r)),
+           z0: Math.min(...cs.map(c => c.z - c.r)), z1: Math.max(...cs.map(c => c.z + c.r)) };
+};
+export const GOAT_DETOURS = [boxOf('barn'), boxOf('silo')];

@@ -110,6 +110,9 @@ export function buildWorld(scene) {
   scene.add(groundStrip([11, C.PEN.gateOut[1]], [C.PEN.x0 + 0.5, C.PEN.gateOut[1]], 2.8, path));
   scene.add(groundStrip([-12, 4], [C.FIELD.x1 + 0.3, 3], 2.4, path));
   scene.add(groundStrip([0, -12], [0, -C.ARENA_RADIUS + 2], 2.6, path));
+  // through the barn: courtyard -> arch (south), side door (west) -> the house path
+  scene.add(groundStrip([10.2, 6], [14.6, 13.6], 2.6, path));
+  scene.add(groundStrip([12.6, 22], [1.6, 20.6], 2.4, path));
   // cobbles around the well
   const cobble = new THREE.Mesh(new THREE.RingGeometry(C.WELL.r + 0.1, C.WELL.r + 1.4, 14).rotateX(-Math.PI / 2), decal(0x8d9196, 4));
   cobble.position.set(C.WELL.x, 0.05, C.WELL.z); cobble.receiveShadow = true;
@@ -136,6 +139,8 @@ export function buildWorld(scene) {
   standin('well', makeWell(), C.WELL, scene);
   standin('cart', makeCart(), C.CART, scene);
   standin('scarecrow', makeScarecrow(), C.SCARECROW, scene);
+  standin('barn', makeBarn(), C.BARN, scene);
+  standin('silo', makeSilo(), C.SILO, scene);
   for (const [x, z] of C.HAY_STACKS) standin('haystack', makeHayStack(), { x, z, yaw: Math.random() * Math.PI }, scene);
 
   // Scatter some tufts outside the arena for depth
@@ -433,6 +438,24 @@ function makeHayStack() {
   return g;
 }
 
+// Stand-ins in model space (see C.BARN / C.SILO): long along x, arch at -x, side door in the +z wall.
+function makeBarn() {
+  const g = new THREE.Group();
+  g.add(box(10.4, 3.4, 0.2, M.wood, -2.4, 1.7, -2.4), box(3.9, 3.4, 0.2, M.wood, 4.65, 1.7, -1.5));
+  g.add(box(4.2, 3.4, 0.2, M.wood, -2.2, 1.7, 1.1), box(3.5, 3.4, 0.2, M.wood, 4.85, 1.7, 1.15));
+  g.add(box(0.2, 3.4, 2.7, M.wood, 6.6, 1.7, -0.2));
+  for (const s of [-1, 1]) {
+    const roof = box(14.6, 0.15, 3.0, M.roof, -0.5, 4.6, -0.6 + s * 1.15);
+    roof.rotation.x = s * 0.6; g.add(roof);
+  }
+  return g;
+}
+function makeSilo() {
+  const g = new THREE.Group();
+  const body = cyl(1.8, 1.8, 10.6, 16, M.metal, -0.2, 1.8, -0.25); body.rotation.z = Math.PI / 2; g.add(body);
+  return g;
+}
+
 // ------------------------------------------------------------ Meshy models
 // Optimised copies of the Meshy exports (see tools/optimize-models.sh). Each is a single textured
 // mesh centred on the origin, about one unit tall, facing +z.
@@ -457,6 +480,8 @@ function fitModel(gltf, height, yaw = 0) {
 const FARM_MODELS = [
   ['tractor', '/models/tractor.glb', 3.0, Math.PI / 2],     // exported nose toward -x
   ['scarecrow', '/models/scarecrow.glb', 2.4],
+  ['barn', '/models/barn.glb', C.BARN.height],               // model space as measured for the colliders in map.js
+  ['silo', '/models/silo.glb', C.SILO.height],
 ];
 
 export function loadModels(loader, scene) {
