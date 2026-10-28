@@ -79,17 +79,19 @@ export class Effects {
   // ---------------------------------------------------------------- projectiles
   spawnProjectile(msg) {
     const g = new THREE.Group();
-    const color = SPELL_COLORS[msg.kind];
+    const color = msg.kind === 'fast' && msg.color !== undefined ? msg.color : SPELL_COLORS[msg.kind];
     let light = null;
     if (msg.kind === 'fast') {
-      // the finisher (last shot of the magazine) is bigger and burns gold, so it reads at a glance
-      const core = new THREE.Mesh(this.sphereGeo, this.mat(msg.fin ? 0xfffbe8 : 0xffffff));
+      // in the caster's colour (msg.color) around a hot near-white core; the finisher (last shot of the
+      // magazine) is bigger, brighter and ringed, so it reads at a glance
+      const tint = new THREE.Color(color), hot = tint.clone().lerp(new THREE.Color(0xffffff), 0.5);
+      const core = new THREE.Mesh(this.sphereGeo, this.mat(0xfff6ee));
       core.scale.setScalar(msg.fin ? 0.24 : 0.16);
-      const glow = new THREE.Mesh(this.sphereGeo, this.mat(msg.fin ? 0xffc94a : color, { opacity: msg.fin ? 0.7 : 0.55 }));
+      const glow = new THREE.Mesh(this.sphereGeo, this.mat(color, { opacity: msg.fin ? 0.75 : 0.55, blending: THREE.AdditiveBlending, depthWrite: false }));
       glow.scale.setScalar(msg.fin ? 0.52 : 0.3);
       g.add(core, glow);
-      if (msg.fin) { const ring = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.04, 6, 20), this.mat(0xffe08a, { opacity: 0.8 })); g.add(ring); g.userData.shell = ring; }
-      light = new THREE.PointLight(msg.fin ? 0xffc94a : color, msg.fin ? 7 : 3, msg.fin ? 9 : 6);
+      if (msg.fin) { const ring = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.04, 6, 20), this.mat(hot.getHex(), { opacity: 0.85 })); g.add(ring); g.userData.shell = ring; }
+      light = new THREE.PointLight(color, msg.fin ? 7 : 3, msg.fin ? 9 : 6);
       g.add(light);
     } else if (msg.kind === 'heavy') {
       const core = new THREE.Mesh(this.sphereGeo, this.mat(0xfff0c0));
@@ -134,7 +136,7 @@ export class Effects {
       id: msg.id, kind: msg.kind, group: g,
       pos: new THREE.Vector3(msg.p[0], msg.p[1], msg.p[2]),
       vel: new THREE.Vector3(msg.v[0], msg.v[1], msg.v[2]),
-      g: msg.g || 0, life: msg.life, age: 0, trail: 0, fin: !!msg.fin,
+      g: msg.g || 0, life: msg.life, age: 0, trail: 0, fin: !!msg.fin, color,
     });
   }
 
@@ -146,12 +148,12 @@ export class Effects {
     const p = msg.p ? new THREE.Vector3(msg.p[0], msg.p[1], msg.p[2]) : pr.pos;
     if (msg.hit) {
       if (pr.kind === 'heavy') this.burst(p, 0xff7a2a, 34, 7, 0.8);
-      else if (pr.kind === 'fast') this.burst(p, 0x7ad8ff, 14, 4, 0.4);
+      else if (pr.kind === 'fast') { this.burst(p, pr.color, pr.fin ? 22 : 14, pr.fin ? 5 : 4, pr.fin ? 0.5 : 0.4); if (pr.fin) this.burst(p, 0xffffff, 8, 3, 0.3, 0); }
       else if (pr.kind === 'skim') this.burst(p, 0xdff6ff, 9, 3, 0.25, 4);
       else if (pr.kind === 'lash') this.burst(p, 0xff2a3c, 14, 4, 0.35);
       // thrown props shatter via the propBreak message
     } else {
-      this.burst(p, SPELL_COLORS[pr.kind] || 0xffffff, 6, 1.5, 0.3);
+      this.burst(p, pr.color ?? SPELL_COLORS[pr.kind] ?? 0xffffff, 6, 1.5, 0.3);
     }
   }
 
@@ -589,7 +591,7 @@ export class Effects {
       const interval = pr.kind === 'heavy' || pr.kind === 'lash' ? 0.025 : 0.035;
       if (pr.trail > interval) {
         pr.trail = 0;
-        const m = new THREE.Mesh(this.sphereGeo, this.mat(pr.fin && pr.kind === 'fast' ? 0xffc94a : SPELL_COLORS[pr.kind], { opacity: pr.fin ? 0.7 : 0.5 }));
+        const m = new THREE.Mesh(this.sphereGeo, this.mat(pr.kind === 'fast' ? pr.color : SPELL_COLORS[pr.kind], { opacity: pr.fin ? 0.7 : 0.5 }));
         m.position.copy(pr.pos);
         if (pr.kind === 'prop') m.position.add(new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(0.6));
         m.scale.setScalar((pr.kind === 'heavy' ? 0.5 : pr.kind === 'prop' ? 0.14 : pr.kind === 'skim' ? 0.11 : pr.kind === 'lash' ? 0.13 : 0.2) * (pr.fin ? 1.8 : 1));

@@ -231,6 +231,10 @@ export const SPELLBOOK = {
   },
 };
 
+// Spark colour per wizard (a hot near-white core, this glow): brighter than the UI colours so it reads as fire.
+export const BOLT_COLORS = { cinder: 0xff5a1e, gale: 0xb070ff, vesper: 0xff1f3d, rime: 0x7ad8ff };
+export const boltColor = (wizard) => BOLT_COLORS[wizard] ?? 0x7ad8ff;
+
 // Primary fire is a magazine: `magazine` shots (a Skim volley counts as one), then `reload` seconds.
 // Pressing R, or `idleReload` seconds without firing, reloads a partial magazine. Only the last shot
 // of a magazine (the "finisher") stuns and interrupts wind-ups; the others just do their damage.

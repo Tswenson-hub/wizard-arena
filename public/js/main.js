@@ -200,7 +200,7 @@ function onWelcome(msg) {
   myId = msg.id;
   for (const p of msg.players) addPlayer(p);
   for (const pr of msg.props) setProp(pr, true);
-  for (const pj of msg.projectiles) effects.spawnProjectile(pj);
+  for (const pj of msg.projectiles) effects.spawnProjectile(withBolt(pj));
   for (const g of msg.goats || []) goats.set(g.id, new GoatView(g, scene));
   for (const w of msg.walls || []) wallUp(w);
   for (const f of msg.frostfalls || []) frosts.set(f.id, effects.frostfall(f.p, f.left));
@@ -298,6 +298,12 @@ function setProp(data, initial = false) {
   }
 }
 
+// A spark takes its caster's colour (constants: BOLT_COLORS).
+function withBolt(pj) {
+  const owner = players.get(pj.owner);
+  return pj.kind === 'fast' && owner ? { ...pj, color: C.boltColor(owner.wizard) } : pj;
+}
+
 // Where a wizard's sounds come from (chest height).
 function wpos(w) { return w.group.position.clone().setY(w.group.position.y + 1.1); }
 
@@ -345,7 +351,7 @@ function handleMessage(msg) {
       break;
     }
     case 'proj': {
-      effects.spawnProjectile(msg);
+      effects.spawnProjectile(withBolt(msg));
       const owner = players.get(msg.owner);
       if (owner) {
         if (msg.kind === 'fast') { owner.oneShot('cast_fast', 0.45, 2.6, 0.25); msg.fin ? sfx.castFinisher(msg.p) : sfx.castFast(msg.p); }
