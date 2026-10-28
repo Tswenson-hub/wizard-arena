@@ -10,7 +10,7 @@ export const WIZARDS = {
     color: 0xff5c3c,          // UI accent, ring and nameplate
     tint: null,               // stand-in tint over the base model until a model of its own exists
     model: '/models/wizards/cinder.glb',   // null = base wizard.glb, tinted by `tint`
-    kit: { primary: 'spark', power: 'meteor', mobility: 'blink', guard: 'ward', utility: 'telekinesis' },
+    kit: { primary: 'spark', power: 'meteor', mobility: 'smoke_screen', guard: 'ward', utility: 'telekinesis' },
   },
   gale: {
     id: 'gale', name: 'Gale', title: 'the Tempest Dervish', role: 'Diver · blinks in and spins',
