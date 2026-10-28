@@ -13,7 +13,7 @@ export const WIZARDS = {
     kit: { primary: 'spark', power: 'meteor', mobility: 'blink', guard: 'ward', utility: 'telekinesis' },
   },
   gale: {
-    id: 'gale', name: 'Gale', title: 'the Tempest Dervish', role: 'Diver · drops in and spins',
+    id: 'gale', name: 'Gale', title: 'the Tempest Dervish', role: 'Diver · blinks in and spins',
     color: 0xb46cff, tint: 0x9a6bff, model: '/models/wizards/gale.glb',
     kit: { primary: 'spark', power: 'cyclone', mobility: 'skyward', guard: 'ward', utility: 'telekinesis' },
   },
