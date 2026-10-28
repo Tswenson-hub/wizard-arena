@@ -1,4 +1,4 @@
-# Shared rules for parallel agents (Wizard Arena, round 3)
+# Shared rules for parallel agents (Wizard Arena)
 
 Two agents work in the same git working tree at `~/wizard-arena` at the same time:
 **environment** (farmstead map) and **gameplay** (spell loadouts). A coordinator (the Claude
@@ -11,12 +11,15 @@ session that wrote these briefs) merges, runs final verification and talks to Ty
   pass over anything lower than `h`, line-of-sight checks ignore colliders shorter than `LOS_HEIGHT`).
 - `public/shared/constants.js`: gameplay tuning; it re-exports everything from `map.js`.
 
-## File ownership (strict)
+## File ownership (strict), round 4
 | Agent | Owns (may edit) |
 |---|---|
-| environment | `public/shared/map.js`, `public/js/world.js`, `public/js/goats.js`, `server/goats.js`, `public/models/*`, `tools/optimize-models.sh`, new files under `public/js/env/` if you want them |
-| gameplay | `public/shared/constants.js`, `server.js`, `server/bots.js`, `bot.js`, `public/js/main.js`, `public/js/wizard.js`, `public/js/effects.js`, `public/js/audio.js`, `public/js/input.js`, `public/js/net.js`, `public/index.html`, `public/css/style.css`, `public/sounds/*` |
+| spells (the former gameplay agent) | `public/shared/constants.js`, `server.js`, `server/bots.js`, `bot.js`, `public/js/main.js`, `public/js/wizard.js`, `public/js/effects.js`, `public/js/audio.js`, `public/js/input.js`, `public/js/net.js`, `public/index.html`, `public/css/style.css`, `public/sounds/*`, and the `kit` fields in `public/shared/wizards.js` |
+| characters | `public/js/looks.js`, `public/js/select.js`, `public/css/select.css`, `public/models/wizards/*`, `public/models/wizard.glb`, and every field **except** `kit` in `public/shared/wizards.js` |
+| environment | `public/shared/map.js`, `public/js/world.js`, `public/js/goats.js`, `server/goats.js`, `public/models/*` (except `wizards/` and `wizard.glb`), `tools/optimize-models.sh` |
 | coordinator | `README.md`, `docs/agents/*` (except your own hand-off and `requests.md`), `tools/test/*`, `package.json` |
+
+`wizards.js` is shared field by field. Edit only your own fields, and commit it on its own so the other agent's edits don't get mixed in.
 
 Need a change in a file you don't own? Append it to `docs/agents/requests.md`
 (`## <from> → <to>: <one-line title>` + what and why), keep going, and check that file now and then
@@ -30,7 +33,7 @@ for requests addressed to you. Never edit the other agent's files, even for a on
 - If `git commit` fails because of the index lock, wait a few seconds and retry.
 
 ## Running and testing
-- Your own server port: **environment 4102, gameplay 4101**. Start it with
+- Your own server port: **spells 4101, environment 4102, characters 4103**. Start it with
   `PORT=410x node server.js` (background) and restart it after server-side changes.
   Port 3000 belongs to Ty. Don't stop or restart it.
 - Headless balance check: `node tools/test/botmatch.mjs <port> <seconds> hard normal easy`

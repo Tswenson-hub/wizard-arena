@@ -6,7 +6,8 @@ import { Input } from './input.js';
 import { Sfx } from './audio.js';
 import { buildWorld, makePropMesh, spinners, loadModels, trampleCrops } from './world.js';
 import { GoatView } from './goats.js';
-import { Wizard, registerModel } from './wizard.js';
+import { Wizard } from './wizard.js';
+import { registerModel, loadWizardModels } from './looks.js';
 import { Effects } from './effects.js';
 
 // ---------------------------------------------------------------- setup
@@ -119,7 +120,7 @@ const loader = new GLTFLoader();
 const wizardLoaded = new Promise((res, rej) => loader.load('/models/wizard.glb', (gltf) => { registerModel(gltf); res(); }, (ev) => {
   if (ev.total) ui.loadStatus.textContent = `Loading wizard… ${Math.round(ev.loaded / ev.total * 100)}%`;
 }, rej));
-Promise.all([wizardLoaded, loadModels(loader, scene)]).then(() => {
+Promise.all([wizardLoaded.then(() => loadWizardModels(loader)), loadModels(loader, scene)]).then(() => {
   ui.loadStatus.textContent = 'Ready. Pick a name and enter.';
   ui.joinBtn.disabled = false;
   if (!ui.name.value) ui.name.value = 'Wizard' + Math.floor(Math.random() * 900 + 100);
