@@ -116,6 +116,22 @@ Verified (server 4102):
 Known: bots don't pathfind (they steer and flip strafe), so a bot chasing someone around the barn takes the long way, but in my runs it never stuck.
 Pre-existing, not new: a goat sparked near the trough bonks on it (the trough isn't excluded from charge stops). It's harmless, but it is why lures rarely got a charge past the pen.
 
+## Throwable goats, goat side (round 4, Ty's revision)
+- `server/goats.js`: `canLift` (graze, wander, return, recover, dizzy, stumble), `liftGoat` (state `held`, placed at
+  `C.holdPoint` of the holder each tick, set down if the holder is gone, dead or stunned), `releaseGoat`, and `throwGoat` (state `flying`,
+  `GOAT.throwSpeed` 24 and `throwGravity` 6, the prop numbers). The flight hits each wizard except the thrower once via `ctx.goatHitPlayer` and bounces off.
+  It lands on ground, any collider (Bulwark walls too) or the rim with a `goatBonk`, then `stumble` for 0.5 s, then graze/wander in the pen or
+  `return` home. **Nothing about telekinesis angers a goat.** `angerGoat` (a spell) on a held or flying goat drops it, then rears it up at
+  the caster. `goatPublic` gains `y`, `holder` and `v` (velocity, while flying). `ram()` only runs for a charging goat.
+- `public/js/goats.js`: draws the goat at its `y`. Held goats kick (a fast uneven body wobble). Flying ones tumble end over end about their middle,
+  extrapolated with `v` and gravity between snapshots, and roll back upright on landing. `stumble` is a dying wobble. It plays `sfx.bleat` on lift
+  (calm) and throw (indignant).
+- Verified: `/tmp/wa-environment/goatthrow_test.mjs` runs 20 checks against a fake ctx, all passing. Lift/hold point, hit credited to the
+  thrower, landing beside the victim and at the aim point, the well stopping it, calm return to the pen, spell on held/flying → charge
+  at the caster, holder stun and death. Screenshots `held_1.png` and `fly_1.png` come from faked held/flying snapshots, because the
+  spells side wasn't in yet. Botmatch 4102 90 s: 5 kills, goats penned, none angered. I couldn't test the full loop (F lift → hurl) until the spells side lands.
+  Contract notes for spells are in `requests.md` ("environment → spells: throwable goats").
+
 ## For the gameplay agent / Ty
 - Requests filed in `requests.md`:
   - optional: call `trampleCrops(x, z, r)` from `world.js` on Meteor impacts and cyclone pulses

@@ -5,6 +5,10 @@
 //   (hit) -> windup -> charge -> recover -> return    (charge ran out or reached the arena edge)
 //                            \-> dizzy   -> return    (hit a pillar, a tree, the house or a ward)
 //   return: around the pen to the gate, in, then graze
+// Telekinesis can pick a calm goat up and hurl it like a prop that doesn't break (see liftGoat / throwGoat).
+// None of that angers it; only a spell does, held and flying goats included:
+//   graze|wander|return|recover|dizzy|stumble -> held -> flying -> stumble -> graze/wander (in the pen) or return
+//                                                   \-> stumble (dropped)      (spell) -> drops -> windup
 
 import * as C from '../public/shared/constants.js';
 
@@ -18,19 +22,91 @@ export function createGoats() {
     state: 'graze', until: rand(1, 5),     // seconds of grazing left (converted to absolute time on first update)
     target: null, angeredBy: null, dest: null, vx: 0, vz: 0, started: false,
     route: null, routeT: 0, checkT: 0, checkPos: null, detours: 0,
+    y: 0, vy: 0, holder: null, thrower: null, flyT: 0, hitIds: null,   // telekinesis: height above ground, flight
   }));
 }
 
-export const goatPublic = (g) => ({ id: g.id, p: [round(g.x), round(g.z)], yaw: round(g.yaw), s: g.state, tgt: g.target });
+export const goatPublic = (g) => {
+  const o = { id: g.id, p: [round(g.x), round(g.z)], yaw: round(g.yaw), s: g.state, tgt: g.target, y: round(g.y), holder: g.holder };
+  if (g.state === 'flying') o.v = [round(g.vx), round(g.vy), round(g.vz)];   // lets clients extrapolate the arc
+  return o;
+};
 const round = (v) => Math.round(v * 100) / 100;
 
-// Something `ownerId` threw or cast hit this goat.
+// A spell `ownerId` cast hit this goat. A held or flying goat drops to the ground first (a held one
+// takes the hit for its holder), then rears up at the caster like any other.
 export function angerGoat(g, ownerId, ctx) {
   if (g.state === 'windup' || g.state === 'charge') return;
+  if (g.state === 'held' || g.state === 'flying') toGround(g, ctx);
   const t = ctx.now();
   g.state = 'windup'; g.until = t + G.windup;
   g.target = ownerId; g.angeredBy = ownerId;
   ctx.broadcast({ t: 'goatAngry', id: g.id, target: ownerId });
+}
+
+// ---------------------------------------------------------------- telekinesis
+const LIFTABLE = new Set(['graze', 'wander', 'return', 'recover', 'dizzy', 'stumble']);
+export const canLift = (g) => LIFTABLE.has(g.state) && !g.holder;
+
+export function liftGoat(g, holderId, ctx) {
+  if (!canLift(g)) return false;
+  g.state = 'held'; g.holder = holderId; g.target = null; g.ghost = false;
+  placeHeld(g, ctx);
+  return true;
+}
+
+// Set down gently where it floats; it stumbles, then carries on.
+export function releaseGoat(g, ctx) {
+  if (g.state !== 'held') return;
+  land(g, ctx);
+}
+
+// Hurled like a prop: SPELLS.prop's speed and gravity (C.GOAT.throwSpeed / throwGravity).
+export function throwGoat(g, throwerId, origin, dir, ctx) {
+  if (g.state !== 'held') return false;
+  const l = Math.hypot(dir[0], dir[1], dir[2]) || 1;
+  g.state = 'flying'; g.holder = null; g.thrower = throwerId; g.flyT = 0; g.hitIds = new Set();
+  g.x = origin[0]; g.y = Math.max(0, origin[1] - G.hitY); g.z = origin[2];
+  g.vx = dir[0] / l * G.throwSpeed; g.vy = dir[1] / l * G.throwSpeed; g.vz = dir[2] / l * G.throwSpeed;
+  return true;
+}
+
+function placeHeld(g, ctx) {
+  const h = ctx.players.get(g.holder);
+  if (!h || h.dead || h.stunUntil > ctx.now()) { releaseGoat(g, ctx); return; }
+  const hp = C.holdPoint(h.p, h.yaw);
+  g.x = hp[0]; g.z = hp[2]; g.y = Math.max(0, hp[1] - G.hitY); g.yaw = h.yaw;
+}
+
+function toGround(g, ctx) {
+  g.holder = null; g.thrower = null; g.hitIds = null; g.y = 0; g.vx = g.vz = g.vy = 0;
+  g.ghost = false; pushOut(g, ctx);
+}
+
+// On its feet again: a short stumble, then back to whatever a calm goat does (see 'stumble').
+function land(g, ctx) {
+  toGround(g, ctx);
+  g.state = 'stumble'; g.until = ctx.now() + G.stumbleTime; g.target = null;
+}
+
+function fly(g, dt, ctx) {
+  g.flyT += dt;
+  g.vy -= G.throwGravity * dt;
+  g.x += g.vx * dt; g.y += g.vy * dt; g.z += g.vz * dt;
+  if (Math.hypot(g.vx, g.vz) > 0.5) g.yaw = Math.atan2(g.vx, g.vz);
+  // a wizard (not the thrower) takes a prop's hit; the goat bounces off and keeps falling
+  for (const p of ctx.players.values()) {
+    if (p.dead || p.id === g.thrower || g.hitIds.has(p.id)) continue;
+    const d = Math.hypot(g.x - p.p[0], g.y + G.hitY - (p.p[1] + C.HIT_CENTER_Y), g.z - p.p[2]);
+    if (d >= C.HIT_RADIUS + G.radius * 0.8) continue;
+    g.hitIds.add(p.id);
+    ctx.goatHitPlayer?.(g, p, g.thrower);
+    g.vx *= -0.15; g.vz *= -0.15; g.vy = Math.min(g.vy, 0);
+  }
+  // ground, anything solid it's low enough to hit (Bulwark walls included), the rim, or a very long flight
+  let stop = g.y <= 0 || g.flyT > 5 || Math.hypot(g.x, g.z) > C.ARENA_RADIUS - 0.5;
+  for (const o of C.COLLIDERS) if (!stop && g.y < o.h && Math.hypot(o.x - g.x, o.z - g.z) < o.r + G.radius) stop = true;
+  if (stop) { ctx.broadcast({ t: 'goatBonk', id: g.id, p: [g.x, 0.8, g.z] }); land(g, ctx); }
 }
 
 // Knock a charging (or winding-up) goat dizzy, as if it hit a pillar: Arcane Cyclone answering a charge.
@@ -78,8 +154,15 @@ export function updateGoats(goats, dt, ctx) {
       case 'charge':
         charge(g, dt, t, ctx);
         break;
+      case 'held':
+        placeHeld(g, ctx);
+        break;
+      case 'flying':
+        fly(g, dt, ctx);
+        break;
       case 'dizzy':
       case 'recover':
+      case 'stumble':
         if (t >= g.until) {
           g.target = null;
           if (C.inPen(g.x, g.z, 0.3)) { g.state = 'graze'; g.until = t + rand(2, 5); }
@@ -128,6 +211,7 @@ function charge(g, dt, t, ctx) {
 }
 
 function ram(g, p, t, ctx) {
+  if (g.state !== 'charge') return;             // held and flying goats never ram
   const dir = [g.vx / G.chargeSpeed, 0, g.vz / G.chargeSpeed];
   if (wardFacing(p, g)) {
     // The ward holds. Expensive, and an empty ward shatters, but you live.

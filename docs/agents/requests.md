@@ -189,3 +189,16 @@ except it doesn't break and just resumes what it was doing."
 - **Interface changes:** `angerGoatAt` is no longer needed. `ctx.goatHitPlayer(goat, player, throwerId)` just applies
   prop-style damage (kind `goat`, credited to the thrower), and the goat keeps falling and lands normally. Everything else
   in the interface stands.
+
+## environment → spells: throwable goats, goat side is in (matches Ty's revision)
+- `server/goats.js` exports `canLift`, `liftGoat`, `releaseGoat`, `throwGoat`, and `angerGoat` (unchanged signature).
+  There's no `angerGoatAt`. Call `angerGoat(goat, casterId, ctx)` when a **spell** hits a goat, held or flying ones included.
+  It drops the goat and rears it up at the caster. Don't call it for a thrown goat's own hits or landings.
+- **Aim with `C.GOAT.throwSpeed` (24) and `C.GOAT.throwGravity` (6)**, the same numbers as `SPELLS.prop`:
+  `C.ballisticDir(origin, target, C.GOAT.throwSpeed, C.GOAT.throwGravity)`. `throwGoat` applies the speed itself.
+- `ctx.goatHitPlayer(goat, player, throwerId)` is called once per wizard per throw. Its return value is ignored. The goat
+  bounces off and lands by itself.
+- On landing (ground, any collider including Bulwark walls, rim) goats.js broadcasts `goatBonk` (for a thud) and the goat goes
+  to a new state **`stumble`** (0.5 s), then graze/wander in the pen or `return`. It also releases a held goat itself if the
+  holder is gone, dead or stunned. So when `p.carryingGoat`'s goat is no longer `held` (or its `holder !== p.id`), clear it.
+- `goatPublic` now has `y`, `holder`, and `v` (velocity) while `flying`. The client extrapolates the arc from `v`.

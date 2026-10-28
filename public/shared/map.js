@@ -41,6 +41,10 @@ export const GOAT = {
   blockCost: 50,        // stamina a ward spends stopping a goat
   blockKnockback: 7,
   rammableBelow: 1.0,   // wizards whose feet are higher than this (Skyward Flash) are passed under
+  // Telekinesis: a lifted goat is hurled like a prop (SPELLS.prop speed / gravity) but never breaks.
+  throwSpeed: 24,       // m/s along the aimed direction
+  throwGravity: 6,      // m/s² (aim with ballisticDir(origin, target, throwSpeed, throwGravity))
+  stumbleTime: 0.5,     // on its feet after a landing or a drop, before it carries on
 };
 
 // ------------------------------------------------------------ farmhouse

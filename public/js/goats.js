@@ -1,6 +1,8 @@
 // Client-side goats: the Meshy goat model mirrored from server snapshots. The model has no rig, so
 // grazing, trotting, rearing up, galloping, leaping the pen fence and seeing stars are all done by
 // moving the whole body. The server ignores fence posts while a goat charges; the leap is drawn here.
+// Telekinesis: a held goat floats at the snapshot's height, kicking (body wobble); a thrown one
+// tumbles end over end along an arc extrapolated from the snapshot's velocity.
 import * as THREE from 'three';
 import * as C from '../shared/constants.js';
 import { models, trampleCrops, updateCrops } from './world.js';
@@ -27,7 +29,10 @@ export class GoatView {
     this.id = info.id;
     this.group = new THREE.Group();
     this.body = new THREE.Group();           // pitch / roll / bob happen here, about the hooves
-    this.group.add(this.body);
+    this.spin = new THREE.Group();           // tumbling in flight, about the middle of the goat
+    this.spin.position.y = C.GOAT.hitY;
+    const mid = new THREE.Group(); mid.position.y = -C.GOAT.hitY;
+    this.group.add(this.spin); this.spin.add(mid); mid.add(this.body);
     this.body.add(models.goat ? models.goat.clone() : new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.9, 1.1), new THREE.MeshStandardMaterial({ color: 0xeeeeee })));
     this.alert = makeAlert(); this.alert.position.y = 2.0; this.alert.visible = false;
     this.group.add(this.alert);
@@ -36,7 +41,9 @@ export class GoatView {
     this.group.add(this.stars);
     scene.add(this.group);
 
-    this.target = new THREE.Vector3(info.p[0], 0, info.p[1]);
+    this.target = new THREE.Vector3(info.p[0], info.y || 0, info.p[1]);
+    this.vel = new THREE.Vector3();          // flight velocity, for extrapolating between snapshots
+    this.bleatQueued = null;
     this.group.position.copy(this.target);
     this.targetYaw = info.yaw; this.group.rotation.y = info.yaw;
     this.state = info.s; this.tgt = info.tgt; this.stateT = 0;
@@ -45,9 +52,14 @@ export class GoatView {
   }
 
   apply(s) {
-    this.target.set(s.p[0], 0, s.p[1]);
+    this.target.set(s.p[0], s.y || 0, s.p[1]);
+    if (s.s === 'flying' && s.v) this.vel.set(s.v[0], s.v[1], s.v[2]);
     this.targetYaw = s.yaw;
-    if (s.s !== this.state) { this.state = s.s; this.stateT = 0; }
+    if (s.s !== this.state) {
+      if (s.s === 'held') this.bleatQueued = false;          // picked up: a startled bleat
+      if (s.s === 'flying') this.bleatQueued = true;         // hurled: an indignant one
+      this.state = s.s; this.stateT = 0;
+    }
     this.tgt = s.tgt;
   }
 
@@ -59,7 +71,14 @@ export class GoatView {
       this.target.x += Math.sin(this.targetYaw) * C.GOAT.chargeSpeed * dt;
       this.target.z += Math.cos(this.targetYaw) * C.GOAT.chargeSpeed * dt;
     }
-    this.group.position.lerp(this.target, Math.min(1, dt * (charging ? 20 : 10)));
+    const flying = this.state === 'flying', held = this.state === 'held';
+    if (flying) {
+      this.target.addScaledVector(this.vel, dt);
+      this.vel.y -= C.GOAT.throwGravity * dt;
+      if (this.target.y < 0) this.target.y = 0;
+    }
+    this.group.position.lerp(this.target, Math.min(1, dt * (flying ? 30 : held ? 18 : charging ? 20 : 10)));
+    if (this.bleatQueued !== null) { sfx.bleat?.(this.group.position, this.bleatQueued); this.bleatQueued = null; }
     let dy = Math.atan2(Math.sin(this.targetYaw - this.group.rotation.y), Math.cos(this.targetYaw - this.group.rotation.y));
     this.group.rotation.y += dy * Math.min(1, dt * 12);
 
@@ -79,6 +98,22 @@ export class GoatView {
       case 'dizzy':   roll = Math.sin(t * 5) * 0.2; pitch = Math.sin(t * 3.3) * 0.08; break;
       case 'recover': pitch = 0.1 + Math.sin(t * 6) * 0.03; break;                // panting
       case 'return':  lift = Math.abs(Math.sin(t * 10)) * 0.08; roll = Math.sin(t * 10) * 0.05; break;   // trotting home
+      case 'held':    // legs kicking: a fast, uneven wobble of the whole body
+        roll = Math.sin(t * 17) * 0.3 + Math.sin(t * 29) * 0.08; pitch = Math.sin(t * 11) * 0.25;
+        lift = Math.abs(Math.sin(t * 23)) * 0.06;
+        break;
+      case 'flying':  roll = Math.sin(t * 21) * 0.25; break;
+      case 'stumble': {   // back on its feet: a couple of staggering wobbles that die away
+        const k = Math.max(0, 1 - this.stateT / C.GOAT.stumbleTime);
+        roll = Math.sin(this.stateT * 22) * 0.22 * k; pitch = 0.12 * k; break;
+      }
+    }
+    // end-over-end tumble in flight; afterwards roll on to the nearest upright
+    if (flying) this.spin.rotation.x += dt * 9;
+    else if (this.spin.rotation.x) {
+      const up = Math.round(this.spin.rotation.x / (Math.PI * 2)) * Math.PI * 2;
+      this.spin.rotation.x += (up - this.spin.rotation.x) * Math.min(1, dt * 14);
+      if (Math.abs(up - this.spin.rotation.x) < 0.01) this.spin.rotation.x = 0;
     }
     // Leap over the pen fence: a hop arc centred on the fence line (the server lets charges through it).
     const p = this.group.position;
