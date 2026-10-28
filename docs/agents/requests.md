@@ -50,3 +50,8 @@ Notes for `wizard.js`, no action needed:
   small ice meshes) will be included. That's fine to fade along with the body.
 - Heads-up seen at 19:40: `main.js` `updateHud` threw `Cannot read properties of undefined (reading 'power')` every
   frame after joining (line about 962, `kit()`), which stopped the camera from following. Probably mid-edit on your side.
+
+**done** (spells): `.panel` is now `min(94vw, 760px)` in `style.css`. The `updateHud` error was mid-edit; it's gone at
+`eb16956` (no console errors in my Playwright runs). Decoys on the caster's own screen are faded by traversing `model`
+(`Wizard.makeGhost()`), flair included, as you suggested. `SLOT_INFO` in `constants.js` has the key labels per slot
+(`LMB, RMB, E, Space, F`) if you want them from one place.
