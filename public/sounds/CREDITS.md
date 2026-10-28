@@ -9,9 +9,6 @@ Processing: decoded, downmixed to mono (except `ambient_loop`, stereo), leading 
 
 | File | Source(s): pack — original file | License | Notes |
 |---|---|---|---|
-| `spark_cast_1.m4a` | Kenney Sci-Fi Sounds (kenney.nl/assets/sci-fi-sounds) — `laserSmall_001.ogg` | CC0 1.0 |  |
-| `spark_cast_2.m4a` | Kenney Sci-Fi Sounds (kenney.nl/assets/sci-fi-sounds) — `laserSmall_002.ogg` | CC0 1.0 |  |
-| `spark_cast_3.m4a` | Kenney Sci-Fi Sounds (kenney.nl/assets/sci-fi-sounds) — `laserRetro_003.ogg` | CC0 1.0 |  |
 | `meteor_cast.m4a` | Kenney Sci-Fi Sounds (kenney.nl/assets/sci-fi-sounds) — `laserLarge_000.ogg`<br>Kenney Sci-Fi Sounds (kenney.nl/assets/sci-fi-sounds) — `thrusterFire_000.ogg` (from 1.0s, -4 dB) | CC0 1.0 | layered: sci-fi large laser + 0.9 s burst of thruster fire roar |
 | `charge_loop.m4a` | Kenney Sci-Fi Sounds (kenney.nl/assets/sci-fi-sounds) — `engineCircular_000.ogg` (from 0.5s) | CC0 1.0 | 2.0 s crossfade loop cut from a 5 s engine bed |
 | `impact_small_1.m4a` | Kenney Impact Sounds (kenney.nl/assets/impact-sounds) — `impactSoft_medium_001.ogg`<br>Kenney Sci-Fi Sounds (kenney.nl/assets/sci-fi-sounds) — `laserSmall_004.ogg` (-10 dB) | CC0 1.0 | layered thud + low zap |
@@ -27,8 +24,6 @@ Processing: decoded, downmixed to mono (except `ambient_loop`, stereo), leading 
 | `ward_block_2.m4a` | Kenney Impact Sounds (kenney.nl/assets/impact-sounds) — `impactPlate_light_000.ogg` | CC0 1.0 |  |
 | `ward_block_3.m4a` | Kenney Impact Sounds (kenney.nl/assets/impact-sounds) — `impactBell_heavy_002.ogg` | CC0 1.0 |  |
 | `ward_break.m4a` | Kenney Impact Sounds (kenney.nl/assets/impact-sounds) — `impactGlass_medium_000.ogg`<br>Kenney Sci-Fi Sounds (kenney.nl/assets/sci-fi-sounds) — `forceField_000.ogg` (-6 dB) | CC0 1.0 | glass shatter + forcefield whump |
-| `ward_loop.m4a` | Kenney Sci-Fi Sounds (kenney.nl/assets/sci-fi-sounds) — `spaceEngineSmall_001.ogg` (from 0.5s) | CC0 1.0 | 3.0 s crossfade loop |
-| `blink.m4a` | Kenney Digital Audio (kenney.nl/assets/digital-audio) — `phaseJump1.ogg` | CC0 1.0 |  |
 | `tk_lift.m4a` | Kenney Digital Audio (kenney.nl/assets/digital-audio) — `phaserUp3.ogg`<br>Kenney Interface Sounds (kenney.nl/assets/interface-sounds) — `glass_004.ogg` (offset 0.1s, -14 dB) | CC0 1.0 | phaser rise + faint glass shimmer |
 | `tk_throw_1.m4a` | OpenGameArt "Swishes Sound Pack" by artisticdude (opengameart.org/content/swishes-sound-pack) — `swish-3.wav` | CC0 1.0 |  |
 | `tk_throw_2.m4a` | OpenGameArt "Swishes Sound Pack" by artisticdude (opengameart.org/content/swishes-sound-pack) — `swish-7.wav` | CC0 1.0 |  |
@@ -45,3 +40,18 @@ Processing: decoded, downmixed to mono (except `ambient_loop`, stereo), leading 
 | `respawn.m4a` | Kenney Interface Sounds (kenney.nl/assets/interface-sounds) — `maximize_005.ogg`<br>Kenney Interface Sounds (kenney.nl/assets/interface-sounds) — `glass_004.ogg` (offset 0.42s, -6 dB) | CC0 1.0 | rising sweep into glass shimmer |
 | `ui_click.m4a` | Kenney Interface Sounds (kenney.nl/assets/interface-sounds) — `toggle_004.ogg` | CC0 1.0 |  |
 | `ambient_loop.m4a` | OpenGameArt "Park ambiences" by thimras (opengameart.org/content/park-ambiences) — `park_ambience_wind.wav`<br>OpenGameArt "Park ambiences" by thimras (opengameart.org/content/park-ambiences) — `park_ambience_birds.wav` (from 30.0s, -3 dB) | CC0 1.0 | 20 s crossfade loop; wind bed with birds mixed under (stereo) |
+
+## Provided by Ty (Wizard Arena owner)
+Original files supplied by Ty for this game. Processing as above: decoded, downmixed to mono, leading silence trimmed,
+short fades, peak-normalized to -1 dB (the ward loop to about -7 dB so it sits under combat), AAC .m4a at 44.1 kHz via `afconvert`.
+
+| File | Source (Ty's file) | Notes |
+|---|---|---|
+| `spark_cast.m4a` | `fireball primary.mp3` | Spark cast (Cinder, Gale, Vesper); the 3rd-shot finisher plays it pitched down with a bright ring |
+| `skim_cast.m4a` | `ice primary.mp3` | Glacial Skim cast: the punchiest 0.8 s (3.65–4.45 s of the original) |
+| `blink.m4a` | `blink teleport.mp3` | Blink (Skyward Flash plays it pitched up) |
+| `mirror_step.m4a` | `split into 3.mp3` | Mirror Step |
+| `smoke_screen.m4a` | `smoke screen.mp3` | Smoke Screen |
+| `wall_up.m4a` | `Ice wall.mp3` | Glacial Bulwark rising (its break keeps the ward_break + stone shatter layers) |
+| `ward_loop.m4a` | `ward shield.mp3` | Ward hum while Space is held: a 4.0 s loop (from 2.0 s) with a 0.5 s equal-power crossfade seam |
+| `kill_sting.m4a` | `win_duel_kill_enemy.mp3` | Played flat, for the killer only, on a kill; the original's sound is all in its first ~1 s, so it's trimmed to 1.45 s with a 0.35 s fade |

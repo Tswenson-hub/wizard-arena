@@ -1,8 +1,6 @@
 {
   "spark_cast": [
-    "spark_cast_1.m4a",
-    "spark_cast_2.m4a",
-    "spark_cast_3.m4a"
+    "spark_cast.m4a"
   ],
   "meteor_cast": [
     "meteor_cast.m4a"
@@ -74,5 +72,20 @@
   ],
   "ambient_loop": [
     "ambient_loop.m4a"
+  ],
+  "skim_cast": [
+    "skim_cast.m4a"
+  ],
+  "mirror_step": [
+    "mirror_step.m4a"
+  ],
+  "smoke_screen": [
+    "smoke_screen.m4a"
+  ],
+  "wall_up": [
+    "wall_up.m4a"
+  ],
+  "kill_sting": [
+    "kill_sting.m4a"
   ]
 }

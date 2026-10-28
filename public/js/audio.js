@@ -181,10 +181,7 @@ export class Sfx {
     this.play('ward_block', { pos, vol: 0.35, rate: 1.8, jitter: 0.04, delay: 0.02 });
   }
   // Glacial Skim: a bright, glassy flick; shards tinkle on impact.
-  castSkim(pos) {
-    this.play('spark_cast', { pos, vol: 0.45, rate: 1.6, jitter: 0.06 });
-    this.play('impact_small', { pos, vol: 0.25, rate: 1.9, jitter: 0.08, delay: 0.02 });
-  }
+  castSkim(pos) { this.play('skim_cast', { pos, vol: 0.7, jitter: 0.06 }); }
   shardHit(pos) { this.play('impact_small', { pos, vol: 0.45, rate: 1.7, jitter: 0.1 }); }
   // Sanguine Lash: a low rising hum (the charge loop, see main.js), then a crack; a bind lands with a snap.
   lashCrack(pos) {
@@ -196,25 +193,21 @@ export class Sfx {
     this.play('hit_body', { pos, vol: 0.8, rate: 0.7 });
   }
   // Mirror Step: the blink, doubled and detuned. Decoys pop like soap bubbles.
-  mirror(pos) {
-    this.play('blink', { pos, vol: 0.7, rate: 1.15, jitter: 0.03 });
-    this.play('blink', { pos, vol: 0.4, rate: 0.85, jitter: 0.03, delay: 0.05 });
-  }
+  mirror(pos) { this.play('mirror_step', { pos, vol: 0.8, jitter: 0.03 }); }
   decoyPop(pos) { this.play('impact_small', { pos, vol: 0.55, rate: 1.4, jitter: 0.1 }); }
   // Glacial Bulwark: a deep crunch rising out of the ground; cracking on hits; a shatter at the end.
-  wallUp(pos) {
-    this.play('impact_big', { pos, vol: 0.8, rate: 1.3, jitter: 0.05 });
-    this.play('prop_shatter_stone', { pos, vol: 0.5, rate: 0.7, jitter: 0.05, delay: 0.05 });
-  }
+  wallUp(pos) { this.play('wall_up', { pos, vol: 0.9, jitter: 0.03 }); }
   wallHit(pos) { this.play('ward_block', { pos, vol: 0.55, rate: 0.75, jitter: 0.08 }); }
   wallShatter(pos) {
     this.play('ward_break', { pos, vol: 1, rate: 1.2 });
     this.play('prop_shatter_stone', { pos, vol: 0.9, rate: 1.25, delay: 0.03 });
   }
   // Smoke Screen: a low whoosh and a puff.
-  smoke(pos) {
-    this.play('tk_throw', { pos, vol: 0.9, rate: 0.55, jitter: 0.05 });
-    this.play('blink', { pos, vol: 0.4, rate: 0.6, jitter: 0.05, delay: 0.04 });
+  smoke(pos) { this.play('smoke_screen', { pos, vol: 0.85, jitter: 0.04 }); }
+  // A kill of ours: a flat reward sting for the killer only. A new kill restarts it rather than stacking.
+  killSting() {
+    try { this.sting?.stop(); } catch {}
+    this.sting = this.play('kill_sting', { vol: 0.8, jitter: 0 });
   }
   // Frostfall: a cold rising chime as it's cast; a crushing crash of ice on impact.
   frostCast(pos) {
@@ -273,6 +266,8 @@ export class Sfx {
       ward_block: () => this.tone({ type: 'sine', f0: 1400, f1: 1800, dur: 0.1, vol: 0.5 }),
       ward_break: () => this.noise({ dur: 0.3, vol: 0.7, f: 3000 }),
       blink: () => this.tone({ type: 'sine', f0: 300, f1: 1800, dur: 0.25, vol: 0.5 }),
+      skim_cast: () => this.tone({ type: 'triangle', f0: 2200, f1: 1400, dur: 0.12, vol: 0.4 }),
+      kill_sting: () => { this.tone({ type: 'triangle', f0: 523, f1: 523, dur: 0.12, vol: 0.4 }); this.tone({ type: 'triangle', f0: 784, f1: 784, dur: 0.3, vol: 0.4, delay: 0.12 }); },
       prop_shatter_wood: () => this.noise({ dur: 0.3, vol: 0.6, f: 2500 }),
       prop_shatter_stone: () => this.noise({ dur: 0.3, vol: 0.6, f: 1500 }),
       tk_lift: () => this.tone({ type: 'sine', f0: 400, f1: 700, dur: 0.2, vol: 0.4 }),

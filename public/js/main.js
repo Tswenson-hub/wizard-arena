@@ -611,6 +611,7 @@ function handleMessage(msg) {
         local.cyclone = null; local.flight = null; local.pos.y = 0; local.lash = null; local.fHold = null;
         local.slowUntil = local.rootUntil = local.silenceUntil = local.frozenUntil = 0; local.frostAim = false;
       }
+      if (msg.killer === myId && msg.id !== myId) sfx.killSting();   // our kill (goat kills credited to us too)
       if (msg.cause === 'goat') feed(`<b>${esc(w.name)}</b> was rammed by a goat${k && k !== w ? ` (thanks, <b>${esc(k.name)}</b>)` : ''}`);
       else if (k && k !== w) feed(`<b>${esc(k.name)}</b> vanquished <b>${esc(w.name)}</b>`);
       else feed(`<b>${esc(w.name)}</b> perished`);
