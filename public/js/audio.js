@@ -206,6 +206,16 @@ export class Sfx {
     this.play('ward_break', { pos, vol: 1, rate: 1.2 });
     this.play('prop_shatter_stone', { pos, vol: 0.9, rate: 1.25, delay: 0.03 });
   }
+  // Frostfall: a cold rising chime as it's cast; a crushing crash of ice on impact.
+  frostCast(pos) {
+    this.play('tk_lift', { pos, vol: 0.7, rate: 1.4, jitter: 0.04 });
+    this.play('ward_block', { pos, vol: 0.4, rate: 1.6, jitter: 0.05, delay: 0.05 });
+  }
+  frostImpact(pos) {
+    this.play('impact_big', { pos, vol: 1.3, rate: 0.7, jitter: 0.04 });
+    this.play('prop_shatter_stone', { pos, vol: 1.0, rate: 1.1, delay: 0.03 });
+    this.play('ward_break', { pos, vol: 0.8, rate: 1.3, delay: 0.06 });
+  }
   // Trapped Relic: a quiet hiss when you lay the curse; a deep blast when it goes off.
   curse() { this.play('tk_lift', { vol: 0.35, rate: 0.45, jitter: 0.03 }); }
   relicBlast(pos) {

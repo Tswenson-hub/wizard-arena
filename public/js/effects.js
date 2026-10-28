@@ -4,7 +4,24 @@ import * as C from '../shared/constants.js';
 import { makePropMesh, makeFragments } from './world.js';
 
 const SPELL_COLORS = { fast: 0x7ad8ff, heavy: 0xff7a2a, prop: 0xb48cff, skim: 0xbfeaff, lash: 0xff2a3c };
-const BULWARK = C.SPELLBOOK.glacial_bulwark;
+const BULWARK = C.SPELLBOOK.glacial_bulwark, FROST = C.SPELLBOOK.frostfall;
+
+// Frostfall's warning: a dark shadow with a frosty rim, drawn once.
+let frostShadowTex = null;
+function frostShadowTexture() {
+  if (frostShadowTex) return frostShadowTex;
+  const S = 256, c = document.createElement('canvas'); c.width = c.height = S;
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  grad.addColorStop(0, 'rgba(10,20,40,0.85)'); grad.addColorStop(0.75, 'rgba(10,25,50,0.6)');
+  grad.addColorStop(0.9, 'rgba(160,220,255,0.55)'); grad.addColorStop(1, 'rgba(160,220,255,0)');
+  g.fillStyle = grad; g.fillRect(0, 0, S, S);
+  // frost crystals around the rim
+  g.strokeStyle = 'rgba(220,245,255,0.9)'; g.lineWidth = 3; g.translate(S / 2, S / 2);
+  for (let i = 0; i < 24; i++) { g.rotate(Math.PI * 2 / 24); g.beginPath(); g.moveTo(0, -S * 0.43); g.lineTo(0, -S * 0.49); g.moveTo(-5, -S * 0.455); g.lineTo(5, -S * 0.455); g.stroke(); }
+  frostShadowTex = new THREE.CanvasTexture(c); frostShadowTex.colorSpace = THREE.SRGBColorSpace;
+  return frostShadowTex;
+}
 
 // Crack lines for the ice wall, generated once: each wall shows more of them as it takes damage.
 const CRACKS = (() => {
@@ -398,6 +415,83 @@ export class Effects {
     return sp;
   }
 
+  // ---------------------------------------------------------------- Frostfall
+  // The warning everyone sees: a shadow growing to the full circle with a pale frost ring, and the
+  // block of ice dropping out of the sky for the last FROST.fall seconds. `left` = seconds to impact.
+  frostfall(p, left) {
+    const g = new THREE.Group();
+    g.position.set(p[0], 0, p[2]);
+    const shadow = new THREE.Mesh(new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ map: frostShadowTexture(), transparent: true, depthWrite: false }));
+    shadow.position.y = 0.14; shadow.renderOrder = 2;
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.96, 1, 64).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0xbfeaff, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }));
+    ring.position.y = 0.15; ring.scale.setScalar(FROST.radius);
+    const iceMat = new THREE.MeshStandardMaterial({ color: 0xcdefff, emissive: 0x3a8fc8, emissiveIntensity: 0.4, roughness: 0.15, flatShading: true, transparent: true, opacity: 0.9 });
+    const ice = new THREE.Group();
+    const core = new THREE.Mesh(new THREE.IcosahedronGeometry(1.5, 0), iceMat);
+    core.scale.set(1, 1.3, 1);
+    ice.add(core);
+    for (let i = 0; i < 7; i++) {
+      const sp = new THREE.Mesh(new THREE.ConeGeometry(0.35, 1.6, 5), iceMat);
+      const a = i / 7 * Math.PI * 2;
+      sp.position.set(Math.sin(a) * 1.1, (i % 3 - 1) * 0.7, Math.cos(a) * 1.1);
+      sp.rotation.set(Math.cos(a) * 1.3, 0, -Math.sin(a) * 1.3);
+      ice.add(sp);
+    }
+    ice.visible = false; ice.castShadow = true;
+    g.add(shadow, ring, ice);
+    this.scene.add(g);
+    // timed on the real clock, not the frame-clamped dt, so a slow machine still sees the ice land on time
+    const e = { group: g, shadow, ring, ice, total: Math.max(left, 0.01), left, endAt: performance.now() / 1000 + left };
+    (this.frosts ??= new Set()).add(e);
+    return e;
+  }
+  frostfallImpact(e, p) {
+    if (e) { this.frosts?.delete(e); this.scene.remove(e.group); }
+    const pos = new THREE.Vector3(p[0], 0.6, p[2]);
+    const shardMat = this.mat(0xd8f2ff, { opacity: 0.95 });
+    for (let i = 0; i < 40; i++) {
+      const m = new THREE.Mesh(new THREE.TetrahedronGeometry(0.12 + Math.random() * 0.22, 0), shardMat);
+      m.position.set(p[0] + (Math.random() - 0.5) * 2, 0.3 + Math.random() * 1.2, p[2] + (Math.random() - 0.5) * 2);
+      this.scene.add(m);
+      const a = Math.random() * Math.PI * 2, sp = 3 + Math.random() * 6;
+      this.debris.push({ mesh: m, life: 0, maxLife: 1.2 + Math.random() * 0.9,
+        vel: new THREE.Vector3(Math.sin(a) * sp, 2 + Math.random() * 5, Math.cos(a) * sp),
+        spin: new THREE.Vector3(Math.random() * 10 - 5, Math.random() * 10 - 5, Math.random() * 10 - 5) });
+    }
+    // mist: slow, rising, spreading
+    for (let i = 0; i < 26; i++) {
+      const m = new THREE.Mesh(this.sphereGeo, this.mat(0xeef8ff, { opacity: 0.5, depthWrite: false }));
+      const a = Math.random() * Math.PI * 2, r = Math.random() * FROST.radius;
+      m.position.set(p[0] + Math.sin(a) * r, 0.3 + Math.random() * 0.6, p[2] + Math.cos(a) * r);
+      m.scale.setScalar(0.4 + Math.random() * 0.5);
+      this.scene.add(m);
+      this.particles.push({ mesh: m, vel: new THREE.Vector3(Math.sin(a) * 1.5, 0.6 + Math.random(), Math.cos(a) * 1.5), life: 0, maxLife: 1 + Math.random() * 0.6, grav: 0, grow: 1.2 });
+    }
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.85, 1, 64).rotateX(-Math.PI / 2),
+      this.mat(0xdff6ff, { opacity: 0.9, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
+    ring.position.set(p[0], 0.15, p[2]); ring.scale.setScalar(1);
+    this.scene.add(ring);
+    this.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0, maxLife: 0.4, grav: 0, grow: (FROST.radius + 1.5) / 0.4, still: true });
+    this.burst(pos, 0xffffff, 20, 6, 0.5, 4);
+    for (let i = 0; i < 8; i++) this.dust(pos, 2);
+  }
+  // The caster's targeting circle while RMB is held.
+  frostAim() {
+    const g = new THREE.Group();
+    const fill = new THREE.Mesh(new THREE.CircleGeometry(1, 48).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0x7fd8ff, transparent: true, opacity: 0.16, depthWrite: false }));
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.94, 1, 64).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0xcdf0ff, transparent: true, opacity: 0.85, depthWrite: false }));
+    fill.position.y = ring.position.y = 0.16;
+    g.add(fill, ring);
+    g.scale.setScalar(FROST.radius);
+    g.visible = false;
+    this.scene.add(g);
+    return g;
+  }
+
   // ---------------------------------------------------------------- update
   update(dt) {
     this.clock += dt;
@@ -421,6 +515,23 @@ export class Effects {
         this.scene.add(m);
         this.particles.push({ mesh: m, vel: new THREE.Vector3(), life: 0, maxLife: pr.kind === 'heavy' ? 0.4 : 0.25, grav: 0, shrink: true });
       }
+    }
+
+    // Frostfall warnings: the shadow grows over the delay, the ice drops in the last FROST.fall seconds
+    for (const e of this.frosts || []) {
+      e.left = e.endAt - performance.now() / 1000;
+      const k = Math.min(1, 1 - Math.max(0, e.left) / e.total);
+      e.shadow.scale.setScalar(FROST.radius * (0.25 + 0.75 * k));
+      e.shadow.material.opacity = 0.45 + 0.55 * k;
+      e.ring.material.opacity = 0.5 + 0.4 * Math.sin(this.clock * 12) * 0.5 + 0.2 * k;
+      e.ring.rotation.y += dt * 0.5;
+      if (e.left <= FROST.fall) {
+        const f = Math.max(0, e.left) / FROST.fall;    // 1 -> 0
+        e.ice.visible = true;
+        e.ice.position.y = 1.4 + f * f * 18;
+        e.ice.rotation.y += dt * 2;
+      }
+      if (e.left < -1) { this.frosts.delete(e); this.scene.remove(e.group); }   // lost the impact message
     }
 
     // walls rise out of the ground

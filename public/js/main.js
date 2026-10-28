@@ -65,6 +65,8 @@ const local = {
   slowUntil: 0,                // Glacial Skim slow
   rootUntil: 0,                // bound by a lash, or recovering from our own missed lash
   silenceUntil: 0,             // bound: no spells, ward or telekinesis
+  frostAim: false,             // RMB held with Frostfall: aiming the circle
+  frozenUntil: 0,              // frozen by a Frostfall (the bind, shown as ice)
   fHold: null,                 // { start } while F is held with nothing carried (Trapped Relic: hold to curse)
   flight: null,                // { start, drop } during our own Skyward Flash
   spaceHeld: false,            // Space was used to drop out of a flight: don't ward until it's released
@@ -84,6 +86,7 @@ let wantWizard = C.DEFAULT_WIZARD;
 try { const w = localStorage.getItem('wizardChoice'); if (C.isWizard(w)) wantWizard = w; } catch {}
 const kit = () => C.kitOf(me ? me.wizard : wantWizard);
 const SPELL = C.SPELLBOOK;
+const FROST = SPELL.frostfall;
 const LASH = SPELL.sanguine_lash, MIRROR = SPELL.mirror_step, BULWARK = SPELL.glacial_bulwark, RELIC = SPELL.trapped_relic, SKIM = SPELL.glacial_skim;
 
 function chooseWizard(id) {
@@ -197,6 +200,7 @@ function onWelcome(msg) {
   for (const pj of msg.projectiles) effects.spawnProjectile(pj);
   for (const g of msg.goats || []) goats.set(g.id, new GoatView(g, scene));
   for (const w of msg.walls || []) wallUp(w);
+  for (const f of msg.frostfalls || []) frosts.set(f.id, effects.frostfall(f.p, f.left));
   me = players.get(myId);
   for (const d of msg.decoys || []) spawnDecoy(d);
   local.pos.set(me.targetPos.x, 0, me.targetPos.z);
@@ -223,7 +227,7 @@ function rebuildWizard(w, wizard, color) {
   stopWizardAudio(w);
   w.dispose(scene);
   const n = new Wizard(info, scene, w === me);
-  for (const k of ['hp', 'st', 'kills', 'deaths', 'dead', 'blocking', 'charging', 'stunned', 'netAnim', 'targetYaw', 'bound', 'slowed', 'lashing']) n[k] = w[k];
+  for (const k of ['hp', 'st', 'kills', 'deaths', 'dead', 'blocking', 'charging', 'stunned', 'netAnim', 'targetYaw', 'bound', 'slowed', 'lashing', 'frozen']) n[k] = w[k];
   n.targetPos.copy(w.targetPos);
   players.set(w.id, n);
   if (w.carrying) startCarry(n, w.carrying);
@@ -241,7 +245,7 @@ function applySnapshot(w, s) {
   }
   w.hp = s.hp; w.st = s.st; w.kills = s.kills; w.deaths = s.deaths;
   w.blocking = s.blocking; w.charging = s.charging; w.stunned = s.stun;
-  w.slowed = !!s.slow; w.bound = !!s.bound; w.lashing = !!s.lashing;
+  w.slowed = !!s.slow; w.bound = !!s.bound; w.lashing = !!s.lashing; w.frozen = !!s.frozen;
   if (!s.lashing && w.lashT >= 0 && w !== me) w.endLash();
   if (s.dead !== w.dead) w.dead = s.dead;
   if (w === me) {
@@ -335,7 +339,11 @@ function handleMessage(msg) {
       if (owner) {
         if (msg.kind === 'fast') { owner.oneShot('cast_fast', 0.45, 2.6, 0.25); sfx.castFast(msg.p); }
         else if (msg.kind === 'skim') { if (!owner.inOneShot()) { owner.oneShot('cast_fast', 0.4, 2.8, 0.25); sfx.castSkim(msg.p); } }   // three per cast
-        else if (msg.kind === 'lash') { owner.endLash(); owner.lashing = false; owner.oneShot('cast_heavy', 0.5, 1.8, 1.9); sfx.lashCrack(msg.p); }
+        else if (msg.kind === 'lash') {
+          // a body with its own lash clip is already mid-strike: let the follow-through play
+          if (!owner.actions.lash) owner.oneShot('cast_heavy', 0.5, 1.8, 1.9);
+          owner.lashT = -1; owner.lashing = false; sfx.lashCrack(msg.p);
+        }
         else if (msg.kind === 'heavy') { owner.charging = false; owner.oneShot('cast_heavy', 0.55, 1.5, 1.9); sfx.castHeavy(msg.p); }
         else { owner.oneShot('cast_fast', 0.4, 2.6, 0.3); sfx.throw_(msg.p); if (owner.carrying) startCarry(owner, null); }
       }
@@ -362,14 +370,20 @@ function handleMessage(msg) {
         if (C.hitSpec(msg.kind)?.stun !== 0) target.oneShot('stun', msg.kind === 'heavy' ? 0.5 : 0.55, 3.0, 0.3);
         sfx.hitBody(c);
         if (msg.slow) target.slowed = true;
-        if (msg.bind) { target.bound = true; target.endLash(); target.cancelCyclone(); effects.bind([c.x, c.y - 1, c.z]); sfx.bind(c); target.oneShot('stun', msg.bind, 0.6, 0.2); }
+        if (msg.bind && msg.kind === 'frostfall') { target.bound = true; target.frozen = true; target.endLash(); target.cancelCyclone(); target.oneShot('stun', 0.15, 3, 0.3); }
+        else if (msg.bind) { target.bound = true; target.endLash(); target.cancelCyclone(); effects.bind([c.x, c.y - 1, c.z]); sfx.bind(c); target.oneShot('stun', msg.bind, 0.6, 0.2); }
       }
       if (target === me) {
         if (!msg.blocked) {
           sfx.hurt(); flashVignette(); shake(msg.kind === 'heavy' || msg.kind === 'cyclone' || msg.kind === 'trapped_relic' ? 0.6 : 0.25);
           local.stunUntil = Math.max(local.stunUntil, now + (C.hitSpec(msg.kind)?.stun ?? 0.4));
           if (msg.slow) local.slowUntil = now + msg.slow;
-          if (msg.bind) { local.rootUntil = Math.max(local.rootUntil, now + msg.bind); local.silenceUntil = Math.max(local.silenceUntil, now + msg.bind); local.vel.set(0, 0, 0); feed(`Bound by <b>${esc(players.get(msg.attacker)?.name || '?')}</b>'s lash!`); }
+          if (msg.bind) {
+            local.rootUntil = Math.max(local.rootUntil, now + msg.bind); local.silenceUntil = Math.max(local.silenceUntil, now + msg.bind); local.vel.set(0, 0, 0);
+            local.frostAim = false;
+            if (msg.kind === 'frostfall') { local.frozenUntil = now + msg.bind; feed(`Frozen by <b>${esc(players.get(msg.attacker)?.name || '?')}</b>'s Frostfall!`); }
+            else feed(`Bound by <b>${esc(players.get(msg.attacker)?.name || '?')}</b>'s lash!`);
+          }
         }
         // knockback (none while rooted)
         if (now >= local.rootUntil) { local.vel.x += msg.dir[0] * msg.kb; local.vel.z += msg.dir[2] * msg.kb; }
@@ -489,6 +503,22 @@ function handleMessage(msg) {
       removeDecoy(msg.id);
       break;
     }
+    case 'frostfall': {
+      frosts.set(msg.id, effects.frostfall(msg.p, msg.left));
+      const w = players.get(msg.owner);
+      if (w) { w.oneShot('cast_heavy', FROST.castPose, 1.5, 1.9); sfx.frostCast(wpos(w)); }
+      if (Math.hypot(msg.p[0] - local.pos.x, msg.p[2] - local.pos.z) < FROST.radius + 0.5 && msg.owner !== myId) feed('<b>Ice from above!</b> Get out of the shadow');
+      break;
+    }
+    case 'frostfallHit': {
+      effects.frostfallImpact(frosts.get(msg.id), msg.p);
+      frosts.delete(msg.id);
+      sfx.frostImpact([msg.p[0], 0.5, msg.p[2]]);
+      trampleCrops(msg.p[0], msg.p[2], FROST.radius);
+      const d = Math.hypot(msg.p[0] - local.pos.x, msg.p[2] - local.pos.z);
+      shake(d < FROST.radius + 1 ? 0.9 : 0.7 / (1 + d * 0.2));
+      break;
+    }
     case 'wallUp': wallUp(msg.wall, true); break;
     case 'wallHit': {
       const w = walls.get(msg.id);
@@ -557,7 +587,7 @@ function handleMessage(msg) {
         ui.death.querySelector('.big').textContent = msg.cause === 'goat' ? 'Rammed by a goat' : 'You were vanquished';
         ui.death.classList.remove('hidden'); local.charging = false; local.blocking = false;
         local.cyclone = null; local.flight = null; local.pos.y = 0; local.lash = null; local.fHold = null;
-        local.slowUntil = local.rootUntil = local.silenceUntil = 0;
+        local.slowUntil = local.rootUntil = local.silenceUntil = local.frozenUntil = 0; local.frostAim = false;
       }
       if (msg.cause === 'goat') feed(`<b>${esc(w.name)}</b> was rammed by a goat${k && k !== w ? ` (thanks, <b>${esc(k.name)}</b>)` : ''}`);
       else if (k && k !== w) feed(`<b>${esc(k.name)}</b> vanquished <b>${esc(w.name)}</b>`);
@@ -568,7 +598,7 @@ function handleMessage(msg) {
       const w = players.get(msg.id);
       if (!w) break;
       w.dead = false;
-      w.bound = w.slowed = false;
+      w.bound = w.slowed = w.frozen = false;
       if (w === me) { local.pos.set(msg.p[0], 0, msg.p[2]); local.vel.set(0, 0, 0); ui.death.classList.add('hidden'); local.stunUntil = 0; local.slowUntil = local.rootUntil = local.silenceUntil = 0; }
       else { w.targetPos.set(msg.p[0], 0, msg.p[2]); w.group.position.copy(w.targetPos); }
       effects.teleport(msg.p, msg.p);
@@ -610,6 +640,9 @@ function updateDecoys(list) {
 // Glacial Bulwark walls: their circles go into the shared collider list, so movement, the camera and
 // aiming all treat them like any other obstacle.
 const walls = new Map();     // id -> { data, fx }
+// Frostfall warnings on the ground (everyone sees them), and our own targeting circle.
+const frosts = new Map();    // id -> effects entry
+const frostMark = effects.frostAim();
 function wallUp(w, fresh = false) {
   if (walls.has(w.id)) return;
   C.addWallColliders(w.id, w.x, w.z, w.yaw);
@@ -716,6 +749,20 @@ function aimPoint() {
   return [o.x + camDir.x * best, Math.max(0.3, o.y + camDir.y * best), o.z + camDir.z * best];
 }
 
+// Where the crosshair meets the ground, at most FROST.range from us and inside the arena.
+function frostTarget() {
+  camera.getWorldDirection(camDir);
+  const o = camera.position;
+  let x, z;
+  if (camDir.y < -0.02) { const t = -o.y / camDir.y; x = o.x + camDir.x * t; z = o.z + camDir.z * t; }
+  else { x = local.pos.x + Math.sin(local.yaw) * FROST.range; z = local.pos.z + Math.cos(local.yaw) * FROST.range; }
+  const d = Math.hypot(x - local.pos.x, z - local.pos.z);
+  if (d > FROST.range) { x = local.pos.x + (x - local.pos.x) * FROST.range / d; z = local.pos.z + (z - local.pos.z) * FROST.range / d; }
+  const r = Math.hypot(x, z);
+  if (r > C.ARENA_RADIUS) { x *= C.ARENA_RADIUS / r; z *= C.ARENA_RADIUS / r; }
+  return [x, 0, z];
+}
+
 function sendPickup() {
   camera.getWorldDirection(camDir);
   net.send({ t: 'pickup', aimOrigin: camera.position.toArray(), aimDir: camDir.toArray() });
@@ -808,6 +855,17 @@ function updateLocal(dt) {
         local.lash = { start: now, sent: false };
         me.startLash();
         net.send({ t: 'lashStart' });
+      } else if (K.power === 'frostfall') {
+        local.frostAim = true;   // hold to aim, release to cast
+      }
+    }
+    if (local.frostAim) {
+      if (busy || airborne || me.carrying || local.blocking || K.power !== 'frostfall') local.frostAim = false;
+      else if (!input.rmb) {
+        local.frostAim = false;
+        local.cd.power = now + FROST.cooldown;
+        const at = frostTarget();
+        net.send({ t: 'frostfall', at: [at[0], at[2]] });
       }
     }
     if (local.charging && !local.chargeSent && now - local.chargeStart >= C.SPELLS.heavy.chargeTime) {
@@ -867,8 +925,11 @@ function updateLocal(dt) {
     if (input.justPressed('KeyG') && me.carrying) net.send({ t: 'drop' });
   } else {
     if (local.blocking) { local.blocking = false; net.send({ t: 'block', on: false }); }
-    local.fHold = null;
+    local.fHold = null; local.frostAim = false;
   }
+  // the targeting circle follows the crosshair while aiming
+  frostMark.visible = local.frostAim;
+  if (local.frostAim) { const at = frostTarget(); frostMark.position.set(at[0], 0, at[2]); }
 
   // ---- movement (camera-relative); a bound wizard can't move, a silenced one still can
   const moving = (mx || mz) && !me.dead && !stunned && !rooted;
@@ -908,7 +969,7 @@ function updateLocal(dt) {
   me.group.rotation.y = local.yaw;
   me.blocking = local.blocking;
   me.charging = local.charging;
-  me.slowed = now < local.slowUntil; me.bound = bound && !me.dead;
+  me.slowed = now < local.slowUntil; me.bound = bound && !me.dead; me.frozen = now < local.frozenUntil || (me.frozen && me.bound);
   me.updateAnimation(!!moving, dt);
   local.anim = me.dead ? 'dead' : local.charging || winding ? 'charge' : local.blocking ? 'block' : moving ? 'run' : 'idle';
 
@@ -974,7 +1035,7 @@ function updateHud(dt) {
   cdFill('block', local.cd.guard, SPELL[K.guard].cooldown);
   cdFill('throw', local.cd.throw, C.THROW_COOLDOWN);
   ui.ab.block.classList.toggle('active', local.blocking || [...walls.values()].some(w => w.data.owner === myId));
-  ui.ab.power.classList.toggle('active', local.charging || !!local.cyclone || !!local.lash);
+  ui.ab.power.classList.toggle('active', local.charging || !!local.cyclone || !!local.lash || local.frostAim);
   ui.ab.mobility.classList.toggle('active', !!local.flight);
   ui.ab.block.classList.toggle('disabled', bound || (K.guard === 'ward' && me.st < 3) || !!local.flight);
   ui.ab.throw.classList.toggle('active', !!me.carrying || !!local.fHold);
@@ -1003,8 +1064,12 @@ function updateHud(dt) {
   } else tkMarker.visible = false;
   const hunted = !me.dead && [...goats.values()].some(g => g.tgt === myId && (g.state === 'windup' || g.state === 'charge'));
   const rooted = now < local.rootUntil, slowed = now < local.slowUntil;
+  const inFrost = !me.dead && [...frosts.values()].some(f => f.left > 0 && Math.hypot(f.group.position.x - local.pos.x, f.group.position.z - local.pos.z) < FROST.radius + 0.3);
   if (hunted) hint = K.guard === 'ward' ? 'A goat is charging you! Ward (Space) facing it, or get out of the way' : 'A goat is charging you! Wall it off (Space) or get out of the way';
+  else if (bound && now < local.frozenUntil) hint = 'Frozen!';
   else if (bound) hint = 'Bound!';
+  else if (inFrost) hint = 'Ice falling! Get out of the shadow';
+  else if (local.frostAim) hint = 'Release RMB to drop the ice';
   else if (rooted) hint = 'Recovering…';
   else if (local.flight) hint = 'Hold E to hover · Space to drop';
   else if (me.carrying) hint = 'F hurl · G set down';
@@ -1012,7 +1077,7 @@ function updateHud(dt) {
   else if (local.fHold) hint = 'Cursing…';
   else if (tkHover) hint = K.utility === 'trapped_relic' ? (tkHover.data.id === cursedProp ? 'Your relic · F lift (removes the curse)' : 'F lift · hold F to curse') : 'F lift';
   else if (slowed) hint = 'Slowed by frost';
-  ui.hint.textContent = hint; ui.hint.classList.toggle('on', !!hint); ui.hint.classList.toggle('danger', hunted);
+  ui.hint.textContent = hint; ui.hint.classList.toggle('on', !!hint); ui.hint.classList.toggle('danger', hunted || (inFrost && !bound));
   ui.hint.classList.toggle('bound', !hunted && (bound || rooted)); ui.hint.classList.toggle('frost', !hunted && !bound && !rooted && slowed && hint === 'Slowed by frost');
 
   if (vignetteT > 0) { vignetteT -= dt; if (vignetteT <= 0) ui.vignette.classList.remove('hit'); }
@@ -1102,4 +1167,4 @@ function frame(t) {
 requestAnimationFrame(frame);
 
 // Debug handle (used by the automated smoke test; harmless in production).
-window.__wa = { input, net, local, players, props, goats, effects, scene, camera, sfx, decoys, walls, C, get cursedProp() { return cursedProp; } };
+window.__wa = { input, net, local, players, props, goats, effects, scene, camera, sfx, decoys, walls, frosts, frostMark, C, get cursedProp() { return cursedProp; } };

@@ -116,6 +116,8 @@ export class Wizard {
     this.actions.cast_heavy.setLoop(THREE.LoopOnce); this.actions.cast_heavy.clampWhenFinished = true;
     this.actions.stun.setLoop(THREE.LoopOnce); this.actions.stun.clampWhenFinished = true;
     this.actions.dash.setLoop(THREE.LoopOnce); this.actions.dash.clampWhenFinished = true;
+    // optional clips some bodies have (looks.js): a death fall, Gale's cyclone sweep
+    for (const k of ['death', 'spin', 'lash', 'float']) if (this.actions[k]) { this.actions[k].setLoop(THREE.LoopOnce); this.actions[k].clampWhenFinished = true; }
 
     this.current = null;
     this.oneShotUntil = 0;
@@ -200,6 +202,22 @@ export class Wizard {
     }
     this.frost.visible = false;
     this.group.add(this.frost);
+    // Frostfall: frozen solid in a block of ice
+    this.ice = new THREE.Group();
+    const iceMat = new THREE.MeshStandardMaterial({ color: 0xbfeaff, emissive: 0x4aa8e0, emissiveIntensity: 0.35, roughness: 0.1, transparent: true, opacity: 0.5, flatShading: true, depthWrite: false });
+    const block = new THREE.Mesh(new THREE.IcosahedronGeometry(0.75, 0), iceMat);
+    block.scale.set(1, 1.45, 1); block.position.y = 0.95;
+    this.ice.add(block);
+    for (let i = 0; i < 6; i++) {
+      const a = i / 6 * Math.PI * 2;
+      const sh = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.7, 4), iceMat);
+      sh.position.set(Math.sin(a) * 0.62, 0.25 + (i % 2) * 0.9, Math.cos(a) * 0.62);
+      sh.rotation.set(Math.cos(a) * 0.9, 0, -Math.sin(a) * 0.9);
+      this.ice.add(sh);
+    }
+    this.ice.visible = false;
+    this.group.add(this.ice);
+    this.frozen = false;
     this.bound = false; this.slowed = false; this.lashing = false;
 
     this.nameplate = makeNameplate(this.bot ? `${info.name} · ${this.bot}` : info.name, info.color);
@@ -269,8 +287,12 @@ export class Wizard {
 
   inOneShot() { return performance.now() / 1000 < this.oneShotUntil; }
 
-  startLash() { this.lashT = 0; }
-  endLash() { this.lashT = -1; }
+  // A body with its own lash clip (Vesper) plays it from the start: the strike lands on the 1.5 s release.
+  startLash() { this.lashT = 0; if (this.actions.lash) this.oneShot('lash', LASH.windup + 0.6, 1, 0); }
+  endLash() {
+    if (this.lashT >= 0 && this.current === 'lash' && this.lashT < LASH.windup - 0.1) this.oneShotUntil = 0;   // cancelled: back to the base state
+    this.lashT = -1;
+  }
   // Own decoys are drawn see-through on the caster's screen.
   makeGhost() {
     this.model.traverse(o => {
@@ -288,12 +310,23 @@ export class Wizard {
   spin() {
     this.cycloneT = Math.max(this.cycloneT, CYC.windup);
     this.spinT = 0;
-    this.oneShot('dash', CYC.spin, 2.5, 2.2);
+    // a body with its own sweep (Gale) plays the whole clip over the spin; others use the dash clip
+    if (this.actions.spin) this.oneShot('spin', CYC.spin, this.actions.spin.getClip().duration / CYC.spin, 0);
+    else this.oneShot('dash', CYC.spin, 2.5, 2.2);
   }
 
   // Decide the looping state from the mirrored server state + movement. Called every frame.
   updateAnimation(moving, dt) {
-    if (this.dead) { this.setBase('stun', 0.1); }
+    // Skyward Flash descent: a body with a float clip (Rime) holds its airborne pose until it lands
+    const floating = !this.dead && this.actions.float && this.group.position.y > 0.3;
+    if (floating) this.floatT = (this.floatT ?? 0) + dt; else this.floatT = 0;
+    if (this.dead) { this.setBase(this.actions.death ? 'death' : 'stun', 0.1); }
+    else if (floating && !this.inOneShot()) {
+      const back = this.current !== 'float';
+      this.setBase('float', 0.2);
+      // returning to it after a cast mid-air: skip the fall straight to the held pose
+      if (back && this.floatT > 1) this.actions.float.time = this.actions.float.getClip().duration;
+    }
     else if (!this.inOneShot()) {
       if (this.charging || this.lashT >= 0 || (this.cycloneT >= 0 && this.cycloneT < CYC.windup)) this.setBase('cast_heavy', 0.1);
       else if (this.blocking) this.setBase('block');
@@ -335,7 +368,7 @@ export class Wizard {
     this.updateCarry(dt);
 
     // death: sink into the ground
-    const target = this.dead ? 1 : 0;
+    const target = this.dead && !this.actions.death ? 1 : 0;   // a body with a death clip falls instead of sinking
     this.dissolve += (target - this.dissolve) * Math.min(1, dt * (this.dead ? 1.2 : 8));
     this.model.position.y = -this.dissolve * 1.6;
     this.model.rotation.x = this.dissolve * 0.5;
@@ -379,7 +412,8 @@ export class Wizard {
       this.coil.material.opacity = 0.35 + 0.6 * k;
       if (this.lashT > LASH.windup + 0.6) this.lashT = -1;   // missed the release message
     } else this.coil.visible = false;
-    this.chains.visible = this.bound && !this.dead;
+    this.chains.visible = this.bound && !this.frozen && !this.dead;
+    this.ice.visible = this.frozen && !this.dead;
     if (this.chains.visible) {
       this.chains.children.forEach((c, i) => { if (i < 3) c.rotation.z += dt * (i % 2 ? -2.2 : 2.6); });
       this.chains.children[3].rotation.y += dt * 1.5;
