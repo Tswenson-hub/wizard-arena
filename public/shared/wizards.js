@@ -9,7 +9,7 @@ export const WIZARDS = {
     id: 'cinder', name: 'Cinder', title: 'the Pyromancer', role: 'All-rounder · long-range burst',
     color: 0xff5c3c,          // UI accent, ring and nameplate
     tint: null,               // stand-in tint over the base model until a model of its own exists
-    model: null,              // e.g. '/models/wizards/cinder.glb' once Ty's model arrives; null = base wizard.glb
+    model: '/models/wizards/cinder.glb',   // null = base wizard.glb, tinted by `tint`
     kit: { primary: 'spark', power: 'meteor', mobility: 'blink', guard: 'ward', utility: 'telekinesis' },
   },
   gale: {

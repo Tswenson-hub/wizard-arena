@@ -79,6 +79,13 @@ const MODEL_CLIPS = {
     float: ['Fall2', 0, 0.67, 1.0],
     death: ['Strangled_and_Fall_Forward', 3.6, 7.3, 2.5],  // kneels and falls flat, squeezed to 2.5 s (respawn is 3 s); extra key
   },
+  cinder: {
+    run: 'Running', walk: 'Walking',
+    cast_fast: 'Right_Hand_Sword_Slash',       // a one-handed slash; the strike (0.7-0.96 s) lands in the spark window
+    cast_heavy: 'Charged_Upward_Slash',        // gathers low, then slashes upward at 1.8-2.3 s: the meteor release window
+    death: ['Fall_Dead_from_Abdominal_Injury', 0, 2.8, 2.4],  // hunches, kneels, flat by about 1.9 s; extra key
+    back: 'Walk_Backward',                     // extra key: moving backward relative to facing (see requests.md)
+  },
   vesper: {
     run: 'Running', walk: 'Walking',
     cast_fast: ['mage_soell_cast_5', 9.9, 11.36],     // the arm rises overhead, then flings forward and down (the spark window)
