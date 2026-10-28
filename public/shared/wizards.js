@@ -10,7 +10,7 @@ export const WIZARDS = {
     color: 0xff5c3c,          // UI accent, ring and nameplate
     tint: null,               // stand-in tint over the base model until a model of its own exists
     model: '/models/wizards/cinder.glb',   // null = base wizard.glb, tinted by `tint`
-    kit: { primary: 'fireball', power: 'meteor', mobility: 'smoke_screen', guard: 'flame_ward', utility: 'telekinesis', ultimate: 'cataclysm' },
+    kit: { primary: 'fireball', power: 'meteor', mobility: 'smoke_screen', guard: 'firewall', utility: 'telekinesis', ultimate: 'cataclysm' },
     speed: 5.3,               // run speed (m/s); spells track, like kit
   },
   gale: {
