@@ -175,6 +175,11 @@ export class Sfx {
   skyward(pos) { this.play('blink', { pos, vol: 0.8, rate: 1.45, jitter: 0.04 }); }
   land(pos) { this.play('footstep', { pos, vol: 0.9, rate: 0.7, jitter: 0.1 }); }
   goatBonk(pos) { this.play('impact_small', { pos, vol: 1, rate: 0.55 }); }
+  // The last shot of a magazine: a heavier, lower crack with a bright ring on top.
+  castFinisher(pos) {
+    this.play('spark_cast', { pos, vol: 0.8, rate: 0.75, jitter: 0.03 });
+    this.play('ward_block', { pos, vol: 0.35, rate: 1.8, jitter: 0.04, delay: 0.02 });
+  }
   // Glacial Skim: a bright, glassy flick; shards tinkle on impact.
   castSkim(pos) {
     this.play('spark_cast', { pos, vol: 0.45, rate: 1.6, jitter: 0.06 });

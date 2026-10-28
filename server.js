@@ -75,6 +75,7 @@ function newPlayer(id, name, wizard = C.DEFAULT_WIZARD) {
     slowUntil: 0,                 // Glacial Skim slow
     rootUntil: 0, silenceUntil: 0,   // Sanguine Lash bind (both), or a missed lash's recovery (root only)
     frozenUntil: 0,               // Frostfall: the bind above, shown as ice
+    ammo: 3, reloadUntil: 0, lastShotAt: 0,   // primary magazine (constants: primaryMag)
     flightStart: 0, flightUntil: 0,   // Skyward Flash window: y may exceed 0 only inside it
     carrying: null,
     lastHitBy: null,
@@ -91,6 +92,7 @@ function playerPublic(p) {
     stun: p.stunUntil > now(), dead: p.dead,
     carrying: p.carrying, kills: p.kills, deaths: p.deaths,
     wizard: p.wizard, lashing: !!p.lash,
+    ammo: p.ammo, reload: p.reloadUntil > now() ? +(p.reloadUntil - now()).toFixed(2) : 0,
     slow: p.slowUntil > now(), bound: p.silenceUntil > now(), rooted: p.rootUntil > now(), frozen: p.frozenUntil > now(),
     bot: p.bot ? p.bot.difficulty : undefined,
   };
@@ -138,7 +140,7 @@ function broadcast(msg) {
 }
 
 // ---------------------------------------------------------------- combat
-function spawnProjectile(owner, kind, origin, dir, propType = null) {
+function spawnProjectile(owner, kind, origin, dir, propType = null, fin = false) {
   const spec = C.SPELLS[kind];
   const d = norm3(dir);
   const id = nextProjId++;
@@ -151,8 +153,9 @@ function spawnProjectile(owner, kind, origin, dir, propType = null) {
     born: now(), life: spec.life,
   };
   if (kind === 'lash') { proj.pierce = true; proj.hitIds = new Set(); proj.landed = 0; }
+  if (fin) proj.fin = true;
   projectiles.set(id, proj);
-  broadcast({ t: 'proj', id, kind, owner: owner.id, propType, p: proj.p, v: proj.v, g: proj.g, r: proj.radius, life: proj.life });
+  broadcast({ t: 'proj', id, kind, owner: owner.id, propType, p: proj.p, v: proj.v, g: proj.g, r: proj.radius, life: proj.life, ...(fin ? { fin: true } : {}) });
   return proj;
 }
 
@@ -179,6 +182,8 @@ function endProjectile(proj, hit, extra = {}) {
 function applyHit(target, proj) {
   const spec = C.hitSpec(proj.kind);
   const attacker = players.get(proj.owner);
+  // primary fire only interrupts (stun, cancel) with the last shot of a magazine
+  const interrupt = (proj.kind !== 'fast' && proj.kind !== 'skim') || !!proj.fin;
   const t = now();
 
   // Is the target blocking and facing the incoming projectile?
@@ -206,16 +211,20 @@ function applyHit(target, proj) {
       target.stunUntil = Math.max(target.stunUntil, t + C.BLOCK_BREAK_STUN);
       broadcast({ t: 'blockBreak', id: target.id });
     }
-  } else {
+  } else if (interrupt) {
     // Sparks can't chain-stun: once a spark stun ends there's a short window where sparks only sting.
     if (proj.kind !== 'fast' || t >= target.stunImmuneUntil) {
       target.stunUntil = Math.max(target.stunUntil, t + spec.stun);
       if (proj.kind === 'fast') target.stunImmuneUntil = target.stunUntil + C.SPARK_STUN_IMMUNITY;
     }
-    // Being hit cancels a heavy wind-up, a lash wind-up or a cyclone that hasn't spun yet.
+    // Being hit cancels a heavy wind-up, a lash wind-up, a cyclone that hasn't spun yet, and a lift
     if (target.charging) { target.charging = false; broadcast({ t: 'chargeCancel', id: target.id }); }
     cancelCyclone(target);
     cancelLash(target);
+    const lifting = target.carrying && props.get(target.carrying);
+    if (lifting && lifting.state === 'lifting') { target.carrying = null; lifting.state = 'idle'; lifting.carrier = null; lifting.trap = null; broadcast({ t: 'prop', prop: propPublic(lifting) }); }
+  }
+  if (!blocked) {
     // Glacial Skim slows (refreshed, never stacked); Sanguine Lash binds: rooted and silenced.
     if (spec.slow) target.slowUntil = t + spec.slowTime;
     if (spec.bind) {
@@ -233,7 +242,7 @@ function applyHit(target, proj) {
 
   broadcast({
     t: 'hit', target: target.id, attacker: proj.owner, kind: proj.kind, dmg, blocked,
-    kb, dir: norm3([proj.v[0], 0, proj.v[2]]),
+    kb, dir: norm3([proj.v[0], 0, proj.v[2]]), int: interrupt,
     ...(!blocked && spec.slow ? { slow: spec.slowTime } : {}),
     ...(!blocked && spec.bind ? { bind: spec.bind } : {}),
   });
@@ -265,6 +274,7 @@ function respawn(p) {
   p.hp = C.MAX_HP; p.st = C.MAX_STAMINA;
   p.dead = false; p.stunUntil = 0; p.blocking = false; p.charging = false; p.cyclone = null; p.lash = null; p.flightUntil = 0;
   p.slowUntil = p.rootUntil = p.silenceUntil = p.frozenUntil = 0;
+  p.ammo = 3; p.reloadUntil = 0;
   if (p.pendingWizard) applyWizard(p, p.pendingWizard);
   broadcast({ t: 'respawn', id: p.id, p: p.p });
 }
@@ -502,6 +512,10 @@ function simulate(dt) {
     // Skyward Flash: the flight ends when the wizard reports touching down, or when time runs out
     if (p.flightUntil && (t >= p.flightUntil || (p.p[1] <= 0.01 && t > p.flightStart + 0.3))) { p.flightUntil = 0; p.p[1] = 0; }
     flushPendingWizard(p);
+    // primary magazine: a finished reload refills it; a partial one reloads after idling
+    const mag = C.primaryMag(kit(p).primary);
+    if (p.reloadUntil && t >= p.reloadUntil) { p.ammo = mag.magazine; p.reloadUntil = 0; }
+    else if (!p.reloadUntil && p.ammo > 0 && p.ammo < mag.magazine && t - p.lastShotAt > mag.idleReload) { p.ammo = 0; p.reloadUntil = t + mag.reload; }
   }
 
   // projectiles
@@ -659,12 +673,18 @@ function handle(p, msg) {
     case 'cast': {
       if (!canAct(p) || p.blocking || p.charging || p.cyclone || p.lash || p.carrying) break;
       const primary = kit(p).primary;
-      if (t < p.cd.fast) break;
-      if (msg.kind === 'fast' && primary === 'spark') {
+      if (t < p.cd.fast || t < p.reloadUntil || p.ammo <= 0) break;   // reloading: refused
+      const wanted = (msg.kind === 'fast' && primary === 'spark') || (msg.kind === 'skim' && primary === 'glacial_skim');
+      if (!wanted) break;
+      // the last round of the magazine is the finisher; firing it starts the reload
+      const fin = p.ammo === 1;
+      p.ammo--; p.lastShotAt = t;
+      if (p.ammo === 0) p.reloadUntil = t + C.primaryMag(primary).reload;
+      if (msg.kind === 'fast') {
         p.cd.fast = t + C.SPELLS.fast.cooldown;
         const origin = sanitizeOrigin(p, msg.origin);
-        spawnProjectile(p, 'fast', origin, sanitizeDir(msg.dir, p));
-      } else if (msg.kind === 'skim' && primary === 'glacial_skim') {
+        spawnProjectile(p, 'fast', origin, sanitizeDir(msg.dir, p), null, fin);
+      } else {
         // three shards in a tight fan, skimming the ground just ahead of the caster's feet
         p.cd.fast = t + SKIM.cooldown;
         const d = sanitizeDir([msg.dir?.[0] ?? 0, 0, msg.dir?.[2] ?? 0], p);
@@ -672,7 +692,7 @@ function handle(p, msg) {
         for (let i = 0; i < SKIM.shards; i++) {
           const a = base + (i - (SKIM.shards - 1) / 2) * SKIM.spreadDeg * Math.PI / 180;
           const dir = [Math.sin(a), 0, Math.cos(a)];
-          spawnProjectile(p, 'skim', [p.p[0] + dir[0] * 0.5, C.SPELLS.skim.height, p.p[2] + dir[2] * 0.5], dir);
+          spawnProjectile(p, 'skim', [p.p[0] + dir[0] * 0.5, C.SPELLS.skim.height, p.p[2] + dir[2] * 0.5], dir, null, fin);
         }
       }
       break;
@@ -793,6 +813,12 @@ function handle(p, msg) {
     }
     case 'wizard': {
       requestWizard(p, msg.id);
+      break;
+    }
+    case 'reload': {
+      // R: reload a partial magazine
+      if (p.dead || p.ammo >= C.primaryMag(kit(p).primary).magazine || t < p.reloadUntil) break;
+      p.ammo = 0; p.reloadUntil = t + C.primaryMag(kit(p).primary).reload;
       break;
     }
     case 'skyward': {

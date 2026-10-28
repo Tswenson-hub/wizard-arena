@@ -45,6 +45,7 @@ const ui = {
   scoreboard: $('#scoreboard'), scoreBody: $('#scoreboard tbody'), clickToPlay: $('#clickToPlay'),
   botCount: $('#botCount'), botDiff: $('#botDiff'), botTally: $('#botTally'), volume: $('#volume'), mute: $('#mute'),
   pickNote: $('#pickNote'),
+  ammo: [...document.querySelectorAll('#abilities .ammo i')],
   ab: Object.fromEntries([...document.querySelectorAll('.ab')].map(el => [el.dataset.ab, el])),
 };
 
@@ -66,6 +67,7 @@ const local = {
   rootUntil: 0,                // bound by a lash, or recovering from our own missed lash
   silenceUntil: 0,             // bound: no spells, ward or telekinesis
   dash: null,                  // { start, dir } during our own Smoke Screen dash
+  ammo: 3, reloadUntil: 0, lastShot: 0,   // primary magazine (predicted; the server's copy wins)
   frostAim: false,             // RMB held with Frostfall: aiming the circle
   frozenUntil: 0,              // frozen by a Frostfall (the bind, shown as ice)
   fHold: null,                 // { start } while F is held with nothing carried (Trapped Relic: hold to curse)
@@ -254,6 +256,11 @@ function applySnapshot(w, s) {
     if (!s.blocking && local.blocking) { local.blocking = false; }   // server cancelled the ward
     if (!s.charging && local.charging && local.chargeSent) { local.charging = false; }
     if (!s.lashing && local.lash && local.lash.sent) { local.lash = null; me.endLash(); }
+    // the magazine: adopt the server's count when we haven't just fired (our prediction may be ahead)
+    if (s.ammo !== undefined && now - local.lastShot > 0.4) {
+      if (s.reload > 0) { if (!local.reloadUntil || Math.abs(local.reloadUntil - now - s.reload) > 0.25) { local.ammo = 0; local.reloadUntil = now + s.reload; } }
+      else if (!local.reloadUntil && s.ammo !== local.ammo) local.ammo = s.ammo;
+    }
   }
   if (s.carrying !== w.carrying) startCarry(w, s.carrying);
 }
@@ -339,8 +346,8 @@ function handleMessage(msg) {
       effects.spawnProjectile(msg);
       const owner = players.get(msg.owner);
       if (owner) {
-        if (msg.kind === 'fast') { owner.oneShot('cast_fast', 0.45, 2.6, 0.25); sfx.castFast(msg.p); }
-        else if (msg.kind === 'skim') { if (!owner.inOneShot()) { owner.oneShot('cast_fast', 0.4, 2.8, 0.25); sfx.castSkim(msg.p); } }   // three per cast
+        if (msg.kind === 'fast') { owner.oneShot('cast_fast', 0.45, 2.6, 0.25); msg.fin ? sfx.castFinisher(msg.p) : sfx.castFast(msg.p); }
+        else if (msg.kind === 'skim') { if (!owner.inOneShot()) { owner.oneShot('cast_fast', 0.4, 2.8, 0.25); msg.fin ? sfx.castFinisher(msg.p) : sfx.castSkim(msg.p); } }   // three per cast
         else if (msg.kind === 'lash') {
           // a body with its own lash clip is already mid-strike: let the follow-through play
           if (!owner.actions.lash) owner.oneShot('cast_heavy', 0.5, 1.8, 1.9);
@@ -369,7 +376,7 @@ function handleMessage(msg) {
       if (msg.blocked) { effects.blockFlash(c); sfx.block(c); }
       else {
         effects.burst(c, msg.kind === 'skim' ? 0xbfeaff : 0xff3b4e, 10, 3, 0.35);
-        if (C.hitSpec(msg.kind)?.stun !== 0) target.oneShot('stun', msg.kind === 'heavy' ? 0.5 : 0.55, 3.0, 0.3);
+        if (C.hitSpec(msg.kind)?.stun !== 0 && msg.int !== false) target.oneShot('stun', msg.kind === 'heavy' ? 0.5 : 0.55, 3.0, 0.3);
         sfx.hitBody(c);
         if (msg.slow) target.slowed = true;
         if (msg.bind && msg.kind === 'frostfall') { target.bound = true; target.frozen = true; target.endLash(); target.cancelCyclone(); target.oneShot('stun', 0.15, 3, 0.3); }
@@ -378,7 +385,7 @@ function handleMessage(msg) {
       if (target === me) {
         if (!msg.blocked) {
           sfx.hurt(); flashVignette(); shake(msg.kind === 'heavy' || msg.kind === 'cyclone' || msg.kind === 'trapped_relic' ? 0.6 : 0.25);
-          local.stunUntil = Math.max(local.stunUntil, now + (C.hitSpec(msg.kind)?.stun ?? 0.4));
+          if (msg.int !== false) local.stunUntil = Math.max(local.stunUntil, now + (C.hitSpec(msg.kind)?.stun ?? 0.4));
           if (msg.slow) local.slowUntil = now + msg.slow;
           if (msg.bind) {
             local.rootUntil = Math.max(local.rootUntil, now + msg.bind); local.silenceUntil = Math.max(local.silenceUntil, now + msg.bind); local.vel.set(0, 0, 0);
@@ -389,9 +396,12 @@ function handleMessage(msg) {
         }
         // knockback (none while rooted)
         if (now >= local.rootUntil) { local.vel.x += msg.dir[0] * msg.kb; local.vel.z += msg.dir[2] * msg.kb; }
-        if (!msg.blocked && local.charging) local.charging = false;
-        if (!msg.blocked && local.lash) { local.lash = null; me.endLash(); }
-        if (!msg.blocked && local.cyclone && !local.cyclone.pulsed) { local.cyclone = null; me.cancelCyclone(); }
+        // only an interrupting hit (anything but the first two shots of a magazine) breaks a cast
+        const breaks = !msg.blocked && msg.int !== false;
+        if (breaks && local.charging) local.charging = false;
+        if (breaks && local.lash) { local.lash = null; me.endLash(); }
+        if (breaks && local.cyclone && !local.cyclone.pulsed) { local.cyclone = null; me.cancelCyclone(); }
+        if (breaks) local.frostAim = false;
       }
       if (msg.attacker === myId && msg.dmg > 0) hitmarker();
       break;
@@ -855,8 +865,15 @@ function updateLocal(dt) {
     }
 
     // primary
-    if (input.lmbPressed && !local.blocking && !busy && !me.carrying && now >= local.cd.fast) {
+    const MAG = C.primaryMag(K.primary);
+    if (local.reloadUntil && now >= local.reloadUntil) { local.ammo = MAG.magazine; local.reloadUntil = 0; }
+    const startReload = () => { local.ammo = 0; local.reloadUntil = now + MAG.reload; };
+    if (!local.reloadUntil && local.ammo > 0 && local.ammo < MAG.magazine && now - local.lastShot > MAG.idleReload) startReload();
+    if (input.justPressed('KeyR') && !local.reloadUntil && local.ammo < MAG.magazine) { startReload(); net.send({ t: 'reload' }); }
+    if (input.lmbPressed && !local.blocking && !busy && !me.carrying && now >= local.cd.fast && !local.reloadUntil && local.ammo > 0) {
       computeAim();
+      local.ammo--; local.lastShot = now;
+      if (!local.ammo) local.reloadUntil = now + MAG.reload;
       if (K.primary === 'glacial_skim') {
         local.cd.fast = now + SKIM.cooldown;
         net.send({ t: 'cast', kind: 'skim', dir: [aimDir.x, 0, aimDir.z] });
@@ -1077,7 +1094,11 @@ function updateHud(dt) {
   setName('block', shortName(K.guard));
   setName('throw', me.carrying ? 'Hurl' : shortName(K.utility));
   const cdFill = (key, until, total) => { const k = total ? Math.max(0, Math.min(1, (until - now) / total)) : 0; ui.ab[key].querySelector('.cd').style.height = `${k * 100}%`; };
-  cdFill('fast', local.cd.fast, SPELL[K.primary].cooldown);
+  // primary: ammo pips, and the reload sweeping down over the slot
+  const MAG = C.primaryMag(K.primary);
+  if (local.reloadUntil) cdFill('fast', local.reloadUntil, MAG.reload); else cdFill('fast', local.cd.fast, SPELL[K.primary].cooldown);
+  ui.ammo.forEach((el, i) => { el.classList.toggle('full', i < local.ammo); el.classList.toggle('fin', i === 0); });
+  ui.ab.fast.classList.toggle('reloading', !!local.reloadUntil);
   cdFill('power', local.cd.power, SPELL[K.power].cooldown);
   cdFill('mobility', local.cd.mobility, SPELL[K.mobility].cooldown);
   cdFill('block', local.cd.guard, SPELL[K.guard].cooldown);
@@ -1125,6 +1146,7 @@ function updateHud(dt) {
   else if (local.fHold) hint = 'Cursing…';
   else if (tkHover) hint = K.utility === 'trapped_relic' ? (tkHover.data.id === cursedProp ? 'Your relic · F lift (removes the curse)' : 'F lift · hold F to curse') : 'F lift';
   else if (slowed) hint = 'Slowed by frost';
+  else if (local.reloadUntil && now - local.lastShot < 1) hint = 'Reloading…';
   ui.hint.textContent = hint; ui.hint.classList.toggle('on', !!hint); ui.hint.classList.toggle('danger', hunted || (inFrost && !bound));
   ui.hint.classList.toggle('bound', !hunted && (bound || rooted)); ui.hint.classList.toggle('frost', !hunted && !bound && !rooted && slowed && hint === 'Slowed by frost');
 

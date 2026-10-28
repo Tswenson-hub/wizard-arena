@@ -139,3 +139,10 @@ kbd {
 #hint.bound { background: rgba(140, 10, 30, 0.85); color: #fff; font-weight: 700; }
 #hint.frost { background: rgba(30, 90, 140, 0.8); color: #fff; }
 @media (max-width: 480px) { .panel { padding: 22px 16px; } }
+/* primary magazine: three pips under the LMB slot; the last one (the finisher) is gold */
+.ab .ammo { position: absolute; left: 0; right: 0; bottom: 5px; display: flex; justify-content: center; gap: 4px; z-index: 1; }
+.ab .ammo i { width: 7px; height: 7px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.45); background: transparent; }
+.ab .ammo i.full { background: #9adfff; border-color: #9adfff; }
+.ab .ammo i.full.fin { background: #ffc94a; border-color: #ffe08a; box-shadow: 0 0 6px #ffc94a; }
+.ab[data-ab=fast] { justify-content: flex-start; padding-top: 10px; }
+.ab.reloading .name { color: #ffc94a; }

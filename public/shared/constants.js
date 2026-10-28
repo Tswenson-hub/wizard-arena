@@ -103,14 +103,16 @@ export const SLOT_INFO = {
 export const SPELLBOOK = {
   spark: {
     id: 'spark', slot: 'primary', name: 'Spark', short: 'Spark',
-    blurb: 'Quick bolt. Low damage, briefly stuns.',
+    blurb: 'Quick bolts, 3 to a charge, then a reload. The 3rd stuns and breaks a wind-up.',
     cooldown: SPELLS.fast.cooldown,
+    magazine: 3, reload: 1.5, idleReload: 2,   // see PRIMARY_MAGAZINE
   },
   glacial_skim: {
     id: 'glacial_skim', slot: 'primary', name: 'Glacial Skim', short: 'Skim',
-    blurb: 'Three ice shards skim the ground. Each hit slows by 35% for 2 s. Fences stop them.',
+    blurb: 'Three ice shards skim the ground and slow by 35% for 2 s. 3 volleys, then a reload; the 3rd breaks a wind-up.',
     shards: 3, spreadDeg: 6,
     cooldown: 0.6,
+    magazine: 3, reload: 1.5, idleReload: 2,
   },
   meteor: {
     id: 'meteor', slot: 'power', name: 'Meteor', short: 'Meteor',
@@ -219,6 +221,11 @@ export const SPELLBOOK = {
     cooldown: 0.6,
   },
 };
+
+// Primary fire is a magazine: `magazine` shots (a Skim volley counts as one), then `reload` seconds.
+// Pressing R, or `idleReload` seconds without firing, reloads a partial magazine. Only the last shot
+// of a magazine (the "finisher") stuns and interrupts wind-ups; the others just do their damage.
+export const primaryMag = (id) => SPELLBOOK[id] || SPELLBOOK.spark;
 
 // The kit (slot -> spell id) of wizard `id`, falling back to the default wizard.
 export const kitOf = (id) => (WIZARDS[id] || WIZARDS[DEFAULT_WIZARD]).kit;

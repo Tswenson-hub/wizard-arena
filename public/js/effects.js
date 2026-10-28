@@ -82,12 +82,14 @@ export class Effects {
     const color = SPELL_COLORS[msg.kind];
     let light = null;
     if (msg.kind === 'fast') {
-      const core = new THREE.Mesh(this.sphereGeo, this.mat(0xffffff));
-      core.scale.setScalar(0.16);
-      const glow = new THREE.Mesh(this.sphereGeo, this.mat(color, { opacity: 0.55 }));
-      glow.scale.setScalar(0.3);
+      // the finisher (last shot of the magazine) is bigger and burns gold, so it reads at a glance
+      const core = new THREE.Mesh(this.sphereGeo, this.mat(msg.fin ? 0xfffbe8 : 0xffffff));
+      core.scale.setScalar(msg.fin ? 0.24 : 0.16);
+      const glow = new THREE.Mesh(this.sphereGeo, this.mat(msg.fin ? 0xffc94a : color, { opacity: msg.fin ? 0.7 : 0.55 }));
+      glow.scale.setScalar(msg.fin ? 0.52 : 0.3);
       g.add(core, glow);
-      light = new THREE.PointLight(color, 3, 6);
+      if (msg.fin) { const ring = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.04, 6, 20), this.mat(0xffe08a, { opacity: 0.8 })); g.add(ring); g.userData.shell = ring; }
+      light = new THREE.PointLight(msg.fin ? 0xffc94a : color, msg.fin ? 7 : 3, msg.fin ? 9 : 6);
       g.add(light);
     } else if (msg.kind === 'heavy') {
       const core = new THREE.Mesh(this.sphereGeo, this.mat(0xfff0c0));
@@ -101,10 +103,10 @@ export class Effects {
       g.add(light);
     } else if (msg.kind === 'skim') {
       // an ice shard: a stretched crystal pointing along its flight
-      const shard = new THREE.Mesh(new THREE.OctahedronGeometry(0.16, 0), this.mat(0xe8f8ff));
-      shard.scale.set(0.8, 0.8, 2.4);
-      const glow = new THREE.Mesh(this.sphereGeo, this.mat(0x9adfff, { opacity: 0.35 }));
-      glow.scale.setScalar(0.24);
+      const shard = new THREE.Mesh(new THREE.OctahedronGeometry(0.16, 0), this.mat(msg.fin ? 0xffffff : 0xe8f8ff));
+      shard.scale.set(0.8, 0.8, 2.4).multiplyScalar(msg.fin ? 1.5 : 1);
+      const glow = new THREE.Mesh(this.sphereGeo, this.mat(msg.fin ? 0x5cc8ff : 0x9adfff, { opacity: msg.fin ? 0.6 : 0.35 }));
+      glow.scale.setScalar(msg.fin ? 0.42 : 0.24);
       g.add(shard, glow);
       g.lookAt(msg.v[0], 0, msg.v[2]);
       g.userData.aim = true;
@@ -132,7 +134,7 @@ export class Effects {
       id: msg.id, kind: msg.kind, group: g,
       pos: new THREE.Vector3(msg.p[0], msg.p[1], msg.p[2]),
       vel: new THREE.Vector3(msg.v[0], msg.v[1], msg.v[2]),
-      g: msg.g || 0, life: msg.life, age: 0, trail: 0,
+      g: msg.g || 0, life: msg.life, age: 0, trail: 0, fin: !!msg.fin,
     });
   }
 
@@ -559,10 +561,10 @@ export class Effects {
       const interval = pr.kind === 'heavy' || pr.kind === 'lash' ? 0.025 : 0.035;
       if (pr.trail > interval) {
         pr.trail = 0;
-        const m = new THREE.Mesh(this.sphereGeo, this.mat(SPELL_COLORS[pr.kind], { opacity: 0.5 }));
+        const m = new THREE.Mesh(this.sphereGeo, this.mat(pr.fin && pr.kind === 'fast' ? 0xffc94a : SPELL_COLORS[pr.kind], { opacity: pr.fin ? 0.7 : 0.5 }));
         m.position.copy(pr.pos);
         if (pr.kind === 'prop') m.position.add(new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(0.6));
-        m.scale.setScalar(pr.kind === 'heavy' ? 0.5 : pr.kind === 'prop' ? 0.14 : pr.kind === 'skim' ? 0.11 : pr.kind === 'lash' ? 0.13 : 0.2);
+        m.scale.setScalar((pr.kind === 'heavy' ? 0.5 : pr.kind === 'prop' ? 0.14 : pr.kind === 'skim' ? 0.11 : pr.kind === 'lash' ? 0.13 : 0.2) * (pr.fin ? 1.8 : 1));
         this.scene.add(m);
         this.particles.push({ mesh: m, vel: new THREE.Vector3(), life: 0, maxLife: pr.kind === 'heavy' ? 0.4 : 0.25, grav: 0, shrink: true });
       }

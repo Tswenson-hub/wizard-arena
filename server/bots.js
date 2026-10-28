@@ -24,17 +24,18 @@ const DIFFICULTY = {
     punish: 0.25,       // chance it spots and punishes a meteor wind-up
     goatAware: false,   // checks for goats in its line of fire (Easy bots anger them by accident)
     fooled: 0.5,        // chance it goes after a Mirror Step decoy instead of the real wizard
+    saveFinisher: 0,    // chance it holds the magazine's last (interrupting) shot for an enemy wind-up
     relicMemory: false, // stops re-lifting a prop that just blew up on it
   },
   normal: {
     react: 0.25, aimErr: 3.5, lead: 0.6, dodge: 0.6, blinkDodge: true,
     think: 1 / 3, speed: 0.95, range: [8, 14], aggression: 0.8, tk: 0.12, punish: 0.7, goatAware: true,
-    fooled: 0.3, relicMemory: false,
+    fooled: 0.3, relicMemory: false, saveFinisher: 0.5,
   },
   hard: {
     react: 0.12, aimErr: 1.2, lead: 1, dodge: 0.9, blinkDodge: true,
     think: 1 / 6, speed: 1, range: [9, 15], aggression: 0.95, tk: 0.1, punish: 1, goatAware: true,
-    fooled: 0.15, relicMemory: true,
+    fooled: 0.15, relicMemory: true, saveFinisher: 0.9,
   },
 };
 
@@ -134,6 +135,8 @@ const cycloneWindingUp = (q) => q.cyclone && !q.cyclone.pulsed;
 const mobilityReady = (me, t) => t >= me.cd.mobility && !airborne(me, t) && !rooted(me, t);
 const wallReady = (me, t) => kit(me).guard === 'glacial_bulwark' && t >= me.cd.guard && !airborne(me, t);
 const busyCasting = (q) => q.charging || !!q.lash || cycloneWindingUp(q);
+// the primary can fire now (cooldown, and the magazine isn't reloading)
+const primaryReady = (me, t) => t >= me.cd.fast && !(me.reloadUntil > t) && me.ammo > 0;
 
 // A decoy seen as a target: shaped enough like a player for aiming and movement.
 function decoyTarget(d, owner) {
@@ -333,7 +336,7 @@ function think(me, world, t) {
     const seen = b.chargeSeen.get(target.id);
     if (seen.go && t >= seen.at + cfg.react) {
       if (carried?.state === 'carried' && t >= me.cd.throw && throwLOS(me, target)) return throwProp(me, target, act, cfg, world);
-      if (!me.carrying && t >= me.cd.fast) return primary(me, target, act, cfg, world, t);
+      if (!me.carrying && primaryReady(me, t)) return primary(me, target, act, cfg, world, t);   // shots 1–2, then the finisher
     }
   } else b.chargeSeen.delete(target.id);
 
@@ -397,7 +400,10 @@ function think(me, world, t) {
 
   const targetStunned = isStunned(target, t);
   const targetWarded = target.blocking && target.st > 30 && facing(target, me.p);
-  const powerReady = t >= me.cd.power && !meAir, fastReady = t >= me.cd.fast;
+  const powerReady = t >= me.cd.power && !meAir, fastReady = primaryReady(me, t);
+  // the magazine's last shot is the one that interrupts: keep it for a wind-up (the punish check above fires it)
+  const savingFinisher = me.ammo === 1 && !busyCasting(target) && (b.saveRoll ??= Math.random() < cfg.saveFinisher);
+  if (me.ammo !== 1) b.saveRoll = undefined;
 
   if (K.power === 'meteor') {
     // Meteor: when they can't easily dodge or block it, or from long range with time to spare.
@@ -441,7 +447,7 @@ function think(me, world, t) {
     return;
   }
   // The primary: the bread and butter. Against a raised ward sparks still drain stamina.
-  if (fastReady && (!targetWarded || Math.random() < 0.5)) return primary(me, target, act, cfg, world, t);
+  if (fastReady && !savingFinisher && (!targetWarded || Math.random() < 0.5)) return primary(me, target, act, cfg, world, t);
 }
 
 const LASH_RANGE = C.SPELLS.lash.speed * C.SPELLS.lash.life;
