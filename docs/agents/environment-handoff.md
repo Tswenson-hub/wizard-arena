@@ -1,5 +1,86 @@
 # Environment hand-off: the farmstead
 
+## Round 6: the altar and the blast site (current layout; positions in older sections below are out of date)
+Ty asked for the map to read as one magical explosion around a stone altar, with the farm organised on its own and nothing strewn about.
+
+**Where things are now (+z north):**
+| Area | Where | Details |
+|---|---|---|
+| Altar | `ALTAR` (0, −7): the map's centre, halfway between the team sides | Procedural. A two-step dais (0.3 m, walkable), a slab split in two with violet light through the crack, a floating crystal with 4 shards, and 22 flagstones heaved outward. Collider r 1.3, `h` 1.1 (`'altar'`): you can shoot over it but not walk through. |
+| Blast site | radius 15 round the altar | A scorched decal (canvas texture: soot rays, cracks) with an additive layer of violet glowing cracks. Every piece below leans away from the altar (`awayYaw`). Helpers: `fromAltar(bearing°, d)` and `awayYaw(x, z)`. |
+| Rune pillars | 4 on the diagonals, 7.5 m out | Tilt 0.11, crystals follow the tilt. The N–S and E–W lanes through the altar stay open. |
+| Fallen pillars | `FALLEN_PILLARS`, bearings 100° and 255° | Procedural stump plus 3 drums with rune bands. Colliders `'ruin'`: stump r 0.8 `h` 1.2, shaft r 0.55 `h` 1.0, so they are low cover. |
+| Archway | (−0.14, −17), facing south, tilt 0.06 | The path south runs through it. Legs refit with yaw π: gap still centred on the path. |
+| Obelisk | bearing 200°, 23 m out (−7.9, −28.6) | Tilt 0.3, sunk 0.35. 3 colliders along the lean. A torn-earth furrow decal runs back toward the altar. |
+| Blast stones | `BLAST_STONES`: 7 jagged shards at 11.5–14 m | `h` 1.6–2.2, tilt 0.28–0.35, collider r 0.33 h shifted toward the lean (`'stone'`). They block LOS. |
+| Slabs | `TABLE_ROCKS`: 4 at 14.5–17.5 m | Tilt 0.15–0.2, low cover. |
+| Shards | `BLAST_SHARDS`: 26, seeded, 6–18 m | 0.45–0.75 m. Colliders r ~0.2 (`'stone'`), so you don't walk through them and spells fly over. Kept ≥1.4 m from other colliders and ≥1.8 m apart, so no snag pockets. |
+| Silo | bearing 225°, 21.5 m out, yaw 3π/4 | Felled radially, base toward the altar, with a cracked stone footing (`SILO_FOOTING`, visual) where it stood. |
+| Farmyard | dirt ellipse centred (0, 13) | Well at (−4.5, 12.5), horse cart at (−9, 18) beside the tractor. Paths lead to the door, the barn arch, the pen gate and the field, plus the old way south past the altar and through the arch. |
+| Hay | `HAY_STACKS` | 3 big bales against the pen's yard-side fence, 2 in the SE meadow (16–18, −23). |
+
+**Props, grouped:**
+- Potion barrels in pairs flanking the farmhouse door.
+- Crates beside the cart.
+- Barrels by the barn's west wall, set 1.5 m off it so goats can pass.
+- A pot by the well.
+- Loose bales by the pen stacks and by the meadow stacks.
+- A grain store (3 crates, 3 barrels) lined up along the felled silo.
+- Two offering pots on the dais rim.
+- 4 rock props among the debris.
+- Pumpkins along the field edge.
+
+Relic-eligible props, measured by the nearest team spawn: 11 Ember, 10 Frost, 2 in the middle.
+
+**Spawns:**
+- `TEAM_SPAWNS`: Ember is in the farmyard, Frost in the south meadow (lists in requests.md). Average distance to the altar is 21.2 m for Ember and 22.6 m for Frost.
+- `SPAWN_POINTS` (FFA) is both lists plus flank points (−13.5, 1.5) and (12.5, 1.5).
+- Every spawn is ≥1.9 m from a collider and not in the pen, field or house.
+
+**Goats:** `GOAT_DETOURS` gained a box for the pen hay stacks plus their bales, and one per fallen pillar. A long low wall is something the
+goat's step-aside can't get round. Before the boxes, goats from south of the arch or by the obelisk ghosted after 30 s.
+
+**Code:**
+- `world.js`: `standin()` takes `tilt` (lean toward the model's +z after the yaw, Euler order YXZ) and `sink`.
+- `instanced()` items take `[x, z, yaw, h, tilt, leanYaw, sink]`. Rim rocks and trees are unchanged.
+- `buildBlastSite()` draws the decals, altar, flagstones, fallen pillars and furrow.
+
+**Also done:** spells' requests for goat rams. Tempest Veil bounces a goat at no cost, and Black Death blocks from every side
+(`server/goats.js`, see requests.md).
+
+**Verified (server 4102):**
+- `layoutcheck.mjs` (scratch) checks:
+  - spawn clearance
+  - prop overlap
+  - the relic split
+  - collider pairs with a 0–1 m gap (none, apart from the old sealed fence/shelter and fence/hay nooks)
+- `homesim.mjs`, with idle props present: a dizzy goat dropped at 30 spots round the barn, pen hay, altar, fallen pillars, silo, store, arch,
+  obelisk, meadow hay and farmyard. All got home in 4.5–25 s with no ghosting, in 3 repeated runs.
+  - Found and fixed on the way:
+    - an offering pot 0.86 m from the altar trapped a goat (moved to the dais rim)
+    - the barn barrels flush against the wall trapped one (moved 1.5 m out)
+- `goatthrow_test.mjs`: all pass. I moved its three throw lanes off the old courtyard (a pillar now stands on the old z −2 line).
+- `stuckwatch.mjs`, 5 bots × 180 s: 33 kills, **no stall episodes**.
+- `botmatch.mjs 4102 90 hard normal easy`: 5 kills, 3 kills and 7 kills on three runs. Goats penned or homing.
+- `modematch.mjs`:
+  - TDM 120 s: 7–10, 18 deaths, 3v3 throughout, no friendly fire
+  - Relic 150 s: 71–115 (one run, so it may be noise), 14 lifts, 3 rotations, points only while held
+  - Both "FAIL" only because no team reached the target in the short run.
+- `ramtest.mjs`: Veil and Black Death checks as listed in requests.md.
+- **Screenshots** in `/tmp/wa-environment/`, all of which I looked at, no page errors:
+  - `r6_aerial`, `r6_top`, `c_r6_top` (collider overlay plus team spawn markers)
+  - blast site: `r6_blast`, `r6_v_altar`, `r6_obelisk`, `r6_v_obelisk`, `r6_v_silo`
+  - farm: `r6_farm`, `r6_v_farm`, `r6_v_house`, `r6_v_hay`
+  - team spawn views: `r6_v_ember` (from (4.5, 10.5), facing south) and `r6_v_frost` (from (0.5, −31), facing north, through the arch to the house)
+
+**Known issues:**
+- `tools/test/modematch-unit.mjs` fails 14 checks at HEAD before my change too, so the cause is not the map.
+- Not re-measured for draw calls. The blast site adds roughly 70 small procedural meshes, mostly flagstones and pillar drums. If perf matters,
+  instance the flagstones first.
+- The furrow decal can read as a plinth under the obelisk when seen end-on from close by.
+- `blast_shard` colliders add 26 circles (433 total).
+
+
 ## What I built
 The arena is now a wizard's farmstead, radius 40 (was 34). **+z is north.** If you stand in the
 courtyard facing the farmhouse, the goat pen is on your **left (+x)** and the crop field on your **right (−x)**.

@@ -330,3 +330,30 @@ ud.setWhipGlow?.(k);      // 0..1, crimson glow on both whips (Black Death charg
 
 Screenshots: `/tmp/wa-characters/shots/whip-game-sheet.png` (in game: idle, run, wind-up, strike, glow) and
 `vesper-whips.png` (close-up over time).
+
+## spells → environment: a goat ram should be blocked by Black Death from any side
+Vesper's guard is now **Black Death** (`kit.guard === 'black_death'`, `C.SPELLBOOK.black_death.allSides`): a held ward
+(`p.blocking`) that blocks from every direction. In `goats.js`, `wardFacing(p, g)` only accepts a ram from the front. Please
+treat `C.SPELLBOOK[C.kitOf(p.wizard).guard]?.allSides` as facing (stamina cost unchanged). Cinder's **Flame Ward** is a
+normal front ward (`C.isWard(guard)` is true for all three), so nothing else changes.
+
+## environment → modes: TEAM_SPAWNS is in map.js (reply)
+`C.TEAM_SPAWNS` is exported, so match.js's fallback is no longer used. The map was re-laid in round 6: a stone altar sits at the
+centre (0, -7). Ember spawns in the farmyard: (4.5, 10.5), (-8.5, 8), (3, 16.5), (-4, 17), (8.5, 14). Frost spawns in the south meadow:
+(5.5, -26.5), (-3, -30), (11, -26), (-11, -28), (0.5, -31). Average distance to the altar is 21.2 m for Ember and 22.6 m for Frost.
+Every spawn is at least 1.9 m from a collider. `SPAWN_POINTS` (FFA) is now both lists plus two flank points.
+Relic-eligible props: 11 nearer Ember, 10 nearer Frost, 2 in the middle (the offering pots at the altar).
+The spectator spot (0, 0, -38) is still open ground.
+
+## environment → spells: goat rams vs Tempest Veil and Black Death (reply, done)
+`server/goats.js` `ram()`:
+- **Tempest Veil:** if `p.veilUntil > now`, the goat bounces off from any side at no stamina cost and goes dizzy. It broadcasts
+  `goatRam` with `blocked: true, veil: true`.
+- **Black Death:** `wardFacing` returns true whenever `C.SPELLBOOK[C.kitOf(p.wizard).guard]?.allSides` holds, for a blocking wizard
+  with stamina. The normal ward cost and shatter rules apply.
+- **Checked against a fake ctx:**
+  - Vesper rammed from behind while blocking: blocked
+  - Cinder rammed from behind: killed; from the front: blocked
+  - Gale veiled, rammed from behind: bounced, stamina untouched
+- **Heads-up:** new scenery collider kinds are `altar`, `stone`, `ruin` (fallen pillars, low) and `obelisk` (3 circles, now leaning).
+  `pillar`, `arch`, `rock`, `hay`, `cart` and `silo` all moved. See the environment hand-off.
