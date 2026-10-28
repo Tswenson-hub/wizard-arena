@@ -12,8 +12,7 @@ const BEAM_MOTES = 12;
 
 const CYC = C.SPELLBOOK.cyclone, LASH = C.SPELLBOOK.sanguine_lash;
 // Natural ground speed (m/s) of each locomotion clip at 1x, so playback = actual speed / natural speed and the
-// feet don't slide. The fight walks are from looks.js (characters agent); Running's is the old fixed 1.35x at 6.2 m/s
-// until its measured value is posted. A body can override with `speeds` (makeWizardBody).
+// feet don't slide. looks.js measures each body's clips (clip.userData.speed); these are the fallbacks.
 const NATURAL_SPEED = { run: 4.6, walk_fight: 0.73, back: 0.56 };
 const SLOW_WALK = 3;   // m/s: below this the fight walk plays instead of Running
 
@@ -105,7 +104,6 @@ export class Wizard {
     this.wizard = info.wizard;
     const body = makeWizardBody(info.wizard);   // model + clips for this wizard (looks.js)
     const clips = body.clips;
-    this.speeds = body.speeds || null;   // natural clip speeds, if the body knows them
     this.model = body.model;
     this.group.add(this.model);
     scene.add(this.group);
@@ -415,7 +413,8 @@ export class Wizard {
       else this.setBase('idle', 0.25);
     }
     // time-scale the walk or run to the ground speed so the feet don't slide
-    const nat = this.speeds?.[this.current] ?? NATURAL_SPEED[this.current];
+    // the clip's own measured gait speed (looks.js: clip.userData.speed), else the table above
+    const nat = NATURAL_SPEED[this.current] && (this.actions[this.current].getClip().userData?.speed || NATURAL_SPEED[this.current]);
     if (nat && !this.inOneShot()) this.actions[this.current].setEffectiveTimeScale(Math.min(6, Math.max(0.3, m.speed / nat)));
     this.mixer.update(dt);
 
