@@ -73,7 +73,10 @@ const MODEL_CLIPS = {
     run: 'Running', walk: 'Walking',
     cast_fast: 'mage_soell_cast_4',            // arms flung out at 0.6-1.4 s: the spark/skim window
     cast_heavy: 'Charged_Spell_Cast_1',        // gathers to 1.4 s, then a wide push 1.75-3.1 s: the meteor release window
-    stun: ['Fall2', 0, 0.67, 2.3],             // a knocked-back flinch, stretched to the base stun's length (main.js plays 0.3-1.65 s)
+    // Fall2 is an airborne pose (knees up, arms out): Ty wants it for the Skyward Flash descent, not the stun.
+    // Extra key: it settles into the pose over 1 s; play it LoopOnce + clamp so it holds for the whole descent.
+    // stun: the base stun retargeted, which reads as a quick flinch.
+    float: ['Fall2', 0, 0.67, 1.0],
     death: ['Strangled_and_Fall_Forward', 3.6, 7.3, 2.5],  // kneels and falls flat, squeezed to 2.5 s (respawn is 3 s); extra key
   },
   vesper: {
