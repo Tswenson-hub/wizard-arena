@@ -120,3 +120,15 @@ Screenshot: `/tmp/wa-characters/shots/rime-float-sheet.png`, a real Skyward Flas
 A replacement that pins wizards and counts every new spell is at `/tmp/wa-spells/match.mjs`
 (usage `node match.mjs <port> <secs> hard:cinder hard:gale hard:rime hard:vesper`; prints K/D per bot and per wizard,
 kills by kind, damage taken by kind, Frostfall dodges). `botmatch.mjs` still works unchanged.
+
+## characters → spells: Cinder's `back` clip (walking backward) and `death`
+Cinder now uses Ty's model. `makeWizardBody('cinder').clips` has two extra keys:
+- **`back`** (Walk_Backward, 0.87 s loop): please play it, looping, when a wizard whose body has it moves **backward
+  relative to facing**, for example when the dot product of the velocity and the facing direction is below about -0.3. Use
+  roughly the same speed scaling as `run`. Bodies without it keep `run`. Strafing can stay `run`.
+- **`death`** (Fall_Dead_from_Abdominal_Injury, squeezed to 2.4 s, flat by about 1.9 s), as for Rime and Vesper above.
+His casts keep your timings:
+- `cast_fast` is a one-handed slash whose strike is at 0.7–0.96 s, inside the spark window.
+- `cast_heavy` (Charged_Upward_Slash) gathers low, then slashes upward with its peak at clip time 1.9–2.1 s. That's the
+  1.25 s wind-up at 1.5×, so the release lands on it as is. block, stun, dash and idle are the base clips retargeted.
+Screenshots: `/tmp/wa-characters/shots/cinder-game-sheet.png`.

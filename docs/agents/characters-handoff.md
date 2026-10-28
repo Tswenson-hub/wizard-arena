@@ -137,8 +137,24 @@
     The crimson halo, sparks and pool stay.
   - The wand uses the same `PROPS` fit as Rime's: upright at idle, overhead on the cast, drawn back then swung across in
     the lash, upright in the ward, and under her in death.
-- **Cinder:** his body is still to come. Ty is re-exporting it rigged; until then he keeps the base model (it's his look
-  already). A "rig ready" export works with the same path: prepare, set `model`, and add `MODEL_CLIPS` (and `PROPS`) entries.
+- **Cinder: in the game.** The source is `Meshy_AI_cinder_pyromancer_rig_All_Animations.glb`, now `cinder.glb`.
+  - Size: 10.7 MB went down to **1.49 MB**.
+  - Rig: the same 66-bone rig as Gale and Rime. **He holds no staff or weapon**: the lantern staff from his earlier static
+    model isn't part of the rigged export. If Ty sends it as a separate file like Rime's and Vesper's, it goes into
+    `PROPS.cinder` the same way.
+
+    | key | clip | notes |
+    |---|---|---|
+    | run, walk | `Running`, `Walking` | |
+    | cast_fast | `Right_Hand_Sword_Slash` | a quick one-handed slash; the strike at 0.7–0.96 s lands in the spark window. It reads punchier than `mage_soell_cast_4`. |
+    | cast_heavy | `Charged_Upward_Slash` | gathers low through the wind-up; the upward slash peaks at clip time 1.9–2.1 s. That's the 1.25 s wind-up at main.js's 1.5×, so the release lands on it with no warp. `Charged_Slash` strikes too early (1.1–1.6 s). |
+    | **death** | `Fall_Dead_from_Abdominal_Injury` 0–2.8 s, squeezed to 2.4 s | hunches, kneels, and is flat by about 1.9 s |
+    | **back** (new key) | `Walk_Backward` | for moving backward relative to facing (requested) |
+    | block, stun, dash, idle | retargeted from the base wizard | |
+
+  - Not used: `Walk_Fight_Forward` and `Walk_Fight_Back` are a guarded walk that reads no better as a ward than the retargeted block.
+  - **Flair:** the ember glow and sparks at his right hand suit the pyromancer and don't clash, so they stay.
+- **All four wizards now have Ty's models.** The recoloured stand-in (`STAND_IN`, `bodyMaterial`) is only used if a model fails to load.
 
 ## Verification
 All runs used headless Chromium (SwiftShader) against port 4103. Screenshots are in `/tmp/wa-characters/shots/`.
@@ -166,6 +182,9 @@ All runs used headless Chromium (SwiftShader) against port 4103. Screenshots are
   - The staff is in hand in every pose. `rime-keys.png` shows every key over time; `rime-clips.png` compares his clips with the base clips.
   - The picker card shows him with the staff and snowfall (`rime-picker.png`).
   - No `[looks]` warnings and no console errors. The integrated `e2e.py` still passes (reload keeps `wizardChoice`, 0 errors).
+- **Cinder in game (`cindergame.py`):** six Cinder dummies (run, spark, meteor wind-up, meteor release, stagger, death),
+  each at two moments: `cinder-game-sheet.png`. Every key over time: `cinder-keys.png`; his clips next to the base clips:
+  `cinder-clips.png`. No `[looks]` warnings and no console errors.
 - **Rime's stun and float (`rimefloat.py`):**
   - The stunned dummy recoils, then recovers.
   - The float dummy really cast Skyward Flash, so it hangs about 3 m up with the landing ring below, holding the float pose:
@@ -178,13 +197,13 @@ All runs used headless Chromium (SwiftShader) against port 4103. Screenshots are
   - No `[looks]` warnings and no console errors.
 - **Fixed along the way:** flair points were sized by the whole canvas height, so in the picker's small viewports they were
   about 5× too big. They now scale by viewport height, with no change in game.
-- `public/models/wizards/` (`ls`): `gale.glb` 1.71 MB, `rime.glb` 1.43 MB, `rime-wand.glb` 261 KB, `vesper.glb` 1.23 MB, `vesper-wand.glb` 157 KB. The base `wizard.glb` is unchanged at 1.4 MB.
+- `public/models/wizards/` (`ls`): `gale.glb` 1.71 MB, `rime.glb` 1.43 MB, `rime-wand.glb` 261 KB, `vesper.glb` 1.23 MB, `vesper-wand.glb` 157 KB, `cinder.glb` 1.49 MB (about 6.3 MB in total). The base `wizard.glb` is unchanged at 1.4 MB.
 
 ## Known issues and notes
 - **Vesper vs Cinder:** both are red, but Vesper is darker, has smoke and a pool, and has a different nameplate tone.
   At long range they're closest; Ty's models will settle it.
 - **Panel width:** the spells agent answered the 760 px panel request in `requests.md`.
-- **Extra clip keys:** Gale's `spin`, Rime's `float`, Rime's and Vesper's `death`, and Vesper's `lash` need the spells agent's changes
+- **Extra clip keys:** Gale's `spin`, Rime's `float`, `death` (Rime, Vesper, Cinder), Vesper's `lash` and Cinder's `back` need the spells agent's changes
   (all requested in `requests.md`) to show in play.
 - **wizards.js:** the spells agent had an uncommitted `frostfall` kit edit in the file, so I staged only my `model` line
   (via `git update-index`). Their change is still in the working tree for them to commit.
