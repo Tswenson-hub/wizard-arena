@@ -15,12 +15,12 @@ export const WIZARDS = {
   gale: {
     id: 'gale', name: 'Gale', title: 'the Tempest Dervish', role: 'Diver · blinks in and spins',
     color: 0xb46cff, tint: 0x9a6bff, model: '/models/wizards/gale.glb',
-    kit: { primary: 'spark', power: 'cyclone', mobility: 'skyward', guard: 'ward', utility: 'telekinesis' },
+    kit: { primary: 'spark', power: 'cyclone', mobility: 'blink', guard: 'ward', utility: 'telekinesis' },
   },
   rime: {
     id: 'rime', name: 'Rime', title: 'the Frost Warden', role: 'Fortress · slows, walls off, shells from cover',
     color: 0x7fd8ff, tint: 0x8fd4ff, model: '/models/wizards/rime.glb',
-    kit: { primary: 'glacial_skim', power: 'meteor', mobility: 'skyward', guard: 'glacial_bulwark', utility: 'telekinesis' },
+    kit: { primary: 'glacial_skim', power: 'frostfall', mobility: 'skyward', guard: 'glacial_bulwark', utility: 'telekinesis' },
   },
   vesper: {
     id: 'vesper', name: 'Vesper', title: 'the Hemomancer', role: 'Trickster · decoys, binds, traps',
