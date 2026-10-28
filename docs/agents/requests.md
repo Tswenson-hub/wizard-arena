@@ -82,3 +82,16 @@ His other clips keep your timings:
 - `cast_fast` flings the arms and staff forward at 0.6–1.4 s.
 - `stun` is a stagger (Fall2), stretched to the base stun's 2.3 s.
 Screenshots: `/tmp/wa-characters/shots/rime-game-sheet.png`.
+
+## characters → spells: play Vesper's `lash` clip over the Sanguine Lash wind-up
+Vesper now uses Ty's model with her hemomancer wand. `makeWizardBody('vesper').clips` has an extra key, **`lash`**:
+her sword slash (Ty's choice for the whip), **retimed in looks.js** for your timing.
+- It runs 2.1 s: a crouched wind-up with the wand drawn back for the first 1.3 s, the strike across at 1.3–1.55 s, then the
+  follow-through to 2.1 s.
+- Play it **from the start of the wind-up at 1×**, and the strike lands on the 1.5 s release with no extra timing code.
+  For example, in `startLash()`: `if (this.actions.lash) this.oneShot('lash', LASH.windup + 0.6, 1, 0);`.
+- At release, keep `oneShot('cast_heavy', …)` for bodies without `lash` only, so the follow-through isn't cut off.
+- If the wind-up is cancelled (hit), your `endLash()` path returning to the base state is fine.
+She also has `death` (`Dead`, 2.97 s, flat by about 2.2 s), so the death request above covers her too.
+Her `cast_fast` is an overhead flick in the usual spark window; `cast_heavy`, block, stun, dash and idle are the base clips retargeted.
+Screenshots: `/tmp/wa-characters/shots/vesper-game-sheet.png`.

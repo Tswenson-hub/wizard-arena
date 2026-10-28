@@ -118,13 +118,26 @@
     While running it angles down and forward with the arm swing.
   - **Flair:** the frost-shard clusters are skipped on a real model (his pauldrons are already ice); the snowfall stays.
     The same body is used in the picker preview.
-- **Vesper's staff** (`Meshy_AI_hemomancer_wand_3d…`) is shrunk to 157 KB at `/tmp/wa-characters/vwand/vesper-wand.glb`.
-  It isn't wired yet because her rigged body hasn't arrived; the stand-in base model already holds a staff.
-  When her body lands: copy the wand to `public/models/wizards/vesper-wand.glb`, add `PROPS.vesper`, and tune `lean`/`out` by eye.
-- **Cinder, Vesper:** their bodies are still to come. Ty is re-exporting them rigged; until then they keep the recoloured base
-  model. A "rig ready" export like Gale's and Rime's works with the same path: prepare, set `model`, and add
-  `MODEL_CLIPS` (and `PROPS`) entries.
-- A render of the static models: `/tmp/wa-characters/shots/desktop-models.png`.
+- **Vesper: in the game, with her hemomancer wand.** The source is `Meshy_AI_vesper_hemomancer_rig_All_Animations.glb`, now
+  `vesper.glb`.
+  - Size: 8.8 MB went down to **1.23 MB**. The wand (`vesper-wand.glb`) went from 8.9 MB to **157 KB**.
+  - Rig: Mixamo-style with **50 bones**, fewer finger bones than Gale and Rime. Every bone in `MIXAMO_TO_BASE` and
+    `RightHandMiddle1` (for the grip) is still there, so the retarget and the wand fit work unchanged.
+
+    | key | clip | notes |
+    |---|---|---|
+    | run, walk | `Running`, `Walking` | |
+    | cast_fast | `mage_soell_cast_5` 9.9–11.36 s | the quickest readable gesture in the 11 s clip: the arm rises overhead, then flings forward and down, inside the spark window |
+    | **lash** (new key) | `Right_Hand_Sword_Slash`, **retimed** to 2.1 s | Ty's choice for the whip. The native strike is at about 0.7–0.85 s, so `warpClip` stretches the crouched wind-up over 1.3 s and lands the strike on the 1.5 s release, then follows through. Play it from the wind-up's start at 1× (requested). |
+    | **death** | `Dead` (2.97 s) | staggers, then is flat by about 2.2 s, inside the 3 s respawn. Not trimmed. |
+    | cast_heavy, block, stun, dash, idle | retargeted from the base wizard | |
+
+  - **Flair:** the smoke wisps read as grey blotches next to the real model, so they're skipped for her (stand-in only).
+    The crimson halo, sparks and pool stay.
+  - The wand uses the same `PROPS` fit as Rime's: upright at idle, overhead on the cast, drawn back then swung across in
+    the lash, upright in the ward, and under her in death.
+- **Cinder:** his body is still to come. Ty is re-exporting it rigged; until then he keeps the base model (it's his look
+  already). A "rig ready" export works with the same path: prepare, set `model`, and add `MODEL_CLIPS` (and `PROPS`) entries.
 
 ## Verification
 All runs used headless Chromium (SwiftShader) against port 4103. Screenshots are in `/tmp/wa-characters/shots/`.
@@ -152,15 +165,21 @@ All runs used headless Chromium (SwiftShader) against port 4103. Screenshots are
   - The staff is in hand in every pose. `rime-keys.png` shows every key over time; `rime-clips.png` compares his clips with the base clips.
   - The picker card shows him with the staff and snowfall (`rime-picker.png`).
   - No `[looks]` warnings and no console errors. The integrated `e2e.py` still passes (reload keeps `wizardChoice`, 0 errors).
+- **Vesper in game (`vespergame.py`):** four Vesper dummies (run, cast, lash, death), each at two moments:
+  `vesper-game-sheet.png`.
+  - The wand is in hand in every pose.
+  - `vesper-keys.png` shows every key over time; `vesper-clips.png` and `vesper-cast5.png` show how I chose the cast segment and the slash timing.
+  - No `[looks]` warnings and no console errors.
 - **Fixed along the way:** flair points were sized by the whole canvas height, so in the picker's small viewports they were
   about 5× too big. They now scale by viewport height, with no change in game.
-- `public/models/wizards/` (`ls`): `gale.glb` 1.71 MB, `rime.glb` 1.43 MB, `rime-wand.glb` 261 KB. The base `wizard.glb` is unchanged at 1.4 MB.
+- `public/models/wizards/` (`ls`): `gale.glb` 1.71 MB, `rime.glb` 1.43 MB, `rime-wand.glb` 261 KB, `vesper.glb` 1.23 MB, `vesper-wand.glb` 157 KB. The base `wizard.glb` is unchanged at 1.4 MB.
 
 ## Known issues and notes
 - **Vesper vs Cinder:** both are red, but Vesper is darker, has smoke and a pool, and has a different nameplate tone.
   At long range they're closest; Ty's models will settle it.
 - **Panel width:** the spells agent answered the 760 px panel request in `requests.md`.
-- **Extra clip keys:** Gale's `spin` and Rime's `death` need the spells agent's changes (both requested) to show in play.
+- **Extra clip keys:** Gale's `spin`, Rime's and Vesper's `death`, and Vesper's `lash` need the spells agent's changes
+  (all requested in `requests.md`) to show in play.
 - **wizards.js:** the spells agent had an uncommitted `frostfall` kit edit in the file, so I staged only my `model` line
   (via `git update-index`). Their change is still in the working tree for them to commit.
 - **Retarget limits:** the retarget works for Mixamo-style rigs (`MIXAMO_TO_BASE`). A rig with other bone names needs its
