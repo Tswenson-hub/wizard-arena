@@ -39,7 +39,7 @@ const DIFFICULTY = {
 };
 
 const CYC = C.SPELLBOOK.cyclone, SKY = C.SPELLBOOK.skyward, LASH = C.SPELLBOOK.sanguine_lash;
-const BULWARK = C.SPELLBOOK.glacial_bulwark, SKIM = C.SPELLS.skim, RELIC = C.SPELLBOOK.trapped_relic;
+const BULWARK = C.SPELLBOOK.glacial_bulwark, SKIM = C.SPELLS.skim, RELIC = C.SPELLBOOK.trapped_relic, FROST = C.SPELLBOOK.frostfall;
 const kit = (q) => C.kitOf(q.wizard);
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -276,6 +276,19 @@ function think(me, world, t) {
     runLashPlan(me, q, rec, q.lash.start + LASH.windup, dq, t, act);
   }
 
+  // standing in a Frostfall shadow: walk out of the circle (or blink / flash / mirror out if there's no time)
+  for (const k of b.threats.keys()) if (typeof k === 'string' && k.startsWith('frost') && !world.frostfalls?.has(+k.slice(5))) b.threats.delete(k);
+  for (const f of world.frostfalls?.values() || []) {
+    const key = 'frost' + f.id;
+    const df = Math.hypot(me.p[0] - f.x, me.p[2] - f.z);
+    if (f.owner === me.id || df > FROST.radius + 0.6) { b.threats.delete(key); continue; }
+    let rec = b.threats.get(key);
+    if (!rec) { rec = newThreat(cfg, t); b.threats.set(key, rec); }
+    if (rec.handled || rec.ignore || t < rec.seenAt + rec.react) continue;
+    rec.handled = true;
+    respondFrostfall(me, f, df, t, act);
+  }
+
   // ---- maintain ongoing actions
   if (me.blocking && (t >= b.blockUntil || (me.st < 15 && !b.faceGoat))) { act({ t: 'block', on: false }); b.faceGoat = null; }
   if (!me.blocking) b.faceGoat = null;
@@ -392,6 +405,18 @@ function think(me, world, t) {
       act({ t: 'lashStart' });
       if (me.lash) b.lashFireAt = t + LASH.windup + 0.02;
       return;
+    }
+  } else if (K.power === 'frostfall' && powerReady && !targetAir && !me.carrying && d < FROST.range) {
+    // Frostfall: where a slowed, bound or stunned target will still be when the ice lands
+    const stuck = rooted(target, t) || isStunned(target, t) || busyCasting(target);
+    const slowed = target.slowUntil > t;
+    if (stuck || (slowed && Math.random() < 0.6) || Math.random() < 0.1) {
+      const at = frostfallAim(me, target, t, cfg);
+      if (Math.hypot(at[0] - me.p[0], at[1] - me.p[2]) > FROST.radius + 0.8) {   // not on our own head
+        me.yaw = yawTo(me.p, [at[0], 0, at[1]]);
+        act({ t: 'frostfall', at });
+        return;
+      }
     }
   }
 
@@ -614,6 +639,34 @@ function respondCyclone(me, caster, t, act) {
   const l = d || 1;
   b.dodgeVec = [away[0] / l, away[2] / l];
   b.dodgeUntil = caster.cyclone.pulseAt + 0.15;
+}
+
+// Where to drop a Frostfall on `target`: its position when the ice lands. It can't move while rooted or
+// stunned, and only the free time after that counts. Aim error scales with difficulty.
+function frostfallAim(me, target, t, cfg) {
+  const tr = tracks.get(target.id);
+  const v = tr ? tr.v : target.vel || [0, 0];
+  const stuckFor = Math.max(target.rootUntil || 0, target.stunUntil || 0) - t;
+  const free = Math.max(0, FROST.delay - Math.max(0, stuckFor)) * cfg.lead * 0.6;
+  const err = cfg.aimErr * 0.12;
+  return [target.p[0] + v[0] * free + gauss() * err, target.p[2] + v[1] * free + gauss() * err];
+}
+
+// Standing in a Frostfall shadow: walk straight out if there's time, else use mobility.
+function respondFrostfall(me, f, df, t, act) {
+  const b = me.bot, cfg = b.cfg, K = kit(me);
+  if (!canAct(me, t) && rooted(me, t)) return;
+  const left = f.at - t;
+  const need = FROST.radius + C.PLAYER_RADIUS + 0.3 - df;
+  const out = df > 0.05 ? [(me.p[0] - f.x) / df, 0, (me.p[2] - f.z) / df] : [Math.sin(me.yaw), 0, Math.cos(me.yaw)];
+  if (need > left * C.MOVE_SPEED * cfg.speed * (me.slowUntil > t ? 1 - SKIM.slow : 1) && cfg.blinkDodge && mobilityReady(me, t) && canAct(me, t)) {
+    if (K.mobility === 'skyward') return act({ t: 'skyward' });
+    if (K.mobility === 'mirror_step') return mirrorStep(me, out, act);
+    if (K.mobility === 'blink') return blinkAway(me, out, act);
+  }
+  if (me.charging || me.lash) act({ t: me.charging ? 'chargeRelease' : 'lashRelease', dir: [Math.sin(me.yaw), 0, Math.cos(me.yaw)] });
+  b.dodgeVec = [out[0], out[2]];
+  b.dodgeUntil = f.at + 0.1;
 }
 
 // How to meet a lash wind-up aimed at us. Mobility is saved for the whip itself (respond()), since

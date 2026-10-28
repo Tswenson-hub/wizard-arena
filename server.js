@@ -40,6 +40,7 @@ const goats = createGoats();
 let nextProjId = 1;
 const decoys = new Map();    // Mirror Step decoys: id -> { id, owner, p, dir, yaw, until }
 const walls = new Map();     // Glacial Bulwark walls: id -> { id, owner, x, z, yaw, hp, until }
+const frostfalls = new Map(); // Frostfall ice on its way down: id -> { id, owner, x, z, at }
 let nextFxId = 1;            // ids for decoys and walls
 
 // ---------------------------------------------------------------- props
@@ -72,6 +73,7 @@ function newPlayer(id, name, wizard = C.DEFAULT_WIZARD) {
     lash: null,                   // { start } during a Sanguine Lash wind-up
     slowUntil: 0,                 // Glacial Skim slow
     rootUntil: 0, silenceUntil: 0,   // Sanguine Lash bind (both), or a missed lash's recovery (root only)
+    frozenUntil: 0,               // Frostfall: the bind above, shown as ice
     flightStart: 0, flightUntil: 0,   // Skyward Flash window: y may exceed 0 only inside it
     carrying: null,
     lastHitBy: null,
@@ -88,7 +90,7 @@ function playerPublic(p) {
     stun: p.stunUntil > now(), dead: p.dead,
     carrying: p.carrying, kills: p.kills, deaths: p.deaths,
     wizard: p.wizard, lashing: !!p.lash,
-    slow: p.slowUntil > now(), bound: p.silenceUntil > now(), rooted: p.rootUntil > now(),
+    slow: p.slowUntil > now(), bound: p.silenceUntil > now(), rooted: p.rootUntil > now(), frozen: p.frozenUntil > now(),
     bot: p.bot ? p.bot.difficulty : undefined,
   };
 }
@@ -101,7 +103,7 @@ const isAirborne = (p) => p.flightUntil > now();
 const kit = (p) => C.kitOf(p.wizard);
 const CYCLONE = C.SPELLBOOK.cyclone, SKY = C.SPELLBOOK.skyward, LASH = C.SPELLBOOK.sanguine_lash;
 const MIRROR = C.SPELLBOOK.mirror_step, BULWARK = C.SPELLBOOK.glacial_bulwark, RELIC = C.SPELLBOOK.trapped_relic;
-const SKIM = C.SPELLBOOK.glacial_skim;
+const SKIM = C.SPELLBOOK.glacial_skim, FROST = C.SPELLBOOK.frostfall;
 
 // ---------------------------------------------------------------- wizard choice
 // A switch applies at once if the player is alive and not mid-cast, else when the cast ends or at respawn.
@@ -180,7 +182,7 @@ function applyHit(target, proj) {
 
   // Is the target blocking and facing the incoming projectile?
   let blocked = false;
-  if (target.blocking && target.st > 0) {
+  if (target.blocking && target.st > 0 && !spec.unblockable) {
     const fx = Math.sin(target.yaw), fz = Math.cos(target.yaw);         // facing vector
     const ix = -proj.v[0], iz = -proj.v[2];                              // direction towards the shooter
     const il = Math.hypot(ix, iz) || 1;
@@ -219,6 +221,7 @@ function applyHit(target, proj) {
       target.rootUntil = Math.max(target.rootUntil, t + spec.bind);
       target.silenceUntil = Math.max(target.silenceUntil, t + spec.bind);
       if (target.blocking) { target.blocking = false; target.blockReleasedAt = t; }
+      if (proj.kind === 'frostfall') target.frozenUntil = t + spec.bind;
     }
   }
 
@@ -244,7 +247,7 @@ function killPlayer(target, attacker, cause = null) {
   target.charging = false;
   cancelCyclone(target);
   cancelLash(target);
-  target.slowUntil = target.rootUntil = target.silenceUntil = 0;
+  target.slowUntil = target.rootUntil = target.silenceUntil = target.frozenUntil = 0;
   for (const d of [...decoys.values()]) if (d.owner === target.id) endDecoy(d, false);
   target.flightUntil = 0; target.p[1] = 0;
   target.blocking = false;
@@ -260,7 +263,7 @@ function respawn(p) {
   p.p = [sp[0] + rand(-1, 1), 0, sp[2] + rand(-1, 1)];
   p.hp = C.MAX_HP; p.st = C.MAX_STAMINA;
   p.dead = false; p.stunUntil = 0; p.blocking = false; p.charging = false; p.cyclone = null; p.lash = null; p.flightUntil = 0;
-  p.slowUntil = p.rootUntil = p.silenceUntil = 0;
+  p.slowUntil = p.rootUntil = p.silenceUntil = p.frozenUntil = 0;
   if (p.pendingWizard) applyWizard(p, p.pendingWizard);
   broadcast({ t: 'respawn', id: p.id, p: p.p });
 }
@@ -398,6 +401,33 @@ function wallBetween(a, b) {
   return null;
 }
 
+// ---------------------------------------------------------------- Frostfall
+const frostPublic = (f) => ({ id: f.id, owner: f.owner, p: [f.x, 0, f.z], left: Math.max(0, f.at - now()) });
+// The ice lands: everyone in the circle on (or near) the ground is crushed and frozen. Wards and walls
+// don't help: it comes from above.
+function frostfallImpact(f) {
+  frostfalls.delete(f.id);
+  const at = [f.x, 0, f.z];
+  const hits = [];
+  for (const q of players.values()) {
+    if (q.dead || q.id === f.owner || q.p[1] > FROST.height || dist2D(q.p, at) > FROST.radius) continue;
+    const dx = q.p[0] - f.x, dz = q.p[2] - f.z, l = Math.hypot(dx, dz);
+    const { dmg } = applyHit(q, { kind: 'frostfall', owner: f.owner, v: l > 0.05 ? [dx / l, 0, dz / l] : [0, 0, 1] });
+    hits.push({ id: q.id, dmg });
+  }
+  for (const d of [...decoys.values()]) if (d.owner !== f.owner && dist2D(d.p, at) < FROST.radius) endDecoy(d, true);
+  for (const prop of props.values()) {
+    if (prop.state !== 'idle') continue;
+    if (dist2D(at, [prop.x, 0, prop.z]) < FROST.radius + C.PROP_TYPES[prop.type].r * 0.5) breakProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z]);
+  }
+  for (const g of goats) {
+    if (Math.hypot(g.x - f.x, g.z - f.z) > FROST.radius + C.GOAT.radius * 0.5) continue;
+    // a rearing or charging goat is knocked dizzy; any other goat is now angry at the caster
+    if (!Goats.dizzyGoat?.(g, goatCtx)) angerGoat(g, f.owner, goatCtx);
+  }
+  broadcast({ t: 'frostfallHit', id: f.id, p: at, hits });
+}
+
 // ---------------------------------------------------------------- Trapped Relic
 // One cursed prop per caster. The curse is known only to the server and the caster.
 function clearCurse(p) {
@@ -439,6 +469,7 @@ function simulate(dt) {
   updateGoats(goats, dt, goatCtx);
   updateDecoys(dt, t);
   for (const w of [...walls.values()]) if (t >= w.until) wallDown(w, true);
+  for (const f of [...frostfalls.values()]) if (t >= f.at) frostfallImpact(f);
 
   for (const p of players.values()) {
     if (p.dead) {
@@ -689,6 +720,21 @@ function handle(p, msg) {
       spawnProjectile(p, 'lash', sanitizeOrigin(p, msg.origin), sanitizeDir(msg.dir, p));
       break;
     }
+    case 'frostfall': {
+      if (kit(p).power !== 'frostfall' || !canAct(p) || p.blocking || p.charging || p.cyclone || p.lash || p.carrying || isAirborne(p) || t < p.cd.power) break;
+      if (!Array.isArray(msg.at) || msg.at.length < 2 || !Number.isFinite(msg.at[0]) || !Number.isFinite(msg.at[msg.at.length - 1])) break;
+      let x = msg.at[0], z = msg.at[msg.at.length - 1];
+      // at most `range` from the caster, inside the arena
+      const d = Math.hypot(x - p.p[0], z - p.p[2]);
+      if (d > FROST.range) { x = p.p[0] + (x - p.p[0]) * FROST.range / d; z = p.p[2] + (z - p.p[2]) * FROST.range / d; }
+      const r = Math.hypot(x, z);
+      if (r > C.ARENA_RADIUS) { x *= C.ARENA_RADIUS / r; z *= C.ARENA_RADIUS / r; }
+      p.cd.power = t + FROST.cooldown;
+      const f = { id: nextFxId++, owner: p.id, x, z, at: t + FROST.delay };
+      frostfalls.set(f.id, f);
+      broadcast({ t: 'frostfall', ...frostPublic(f) });
+      break;
+    }
     case 'mirror': {
       if (kit(p).mobility !== 'mirror_step' || !canAct(p) || isRooted(p) || p.charging || p.cyclone || p.lash || isAirborne(p) || t < p.cd.mobility) break;
       const dir = sanitizeDir([msg.dir?.[0] ?? 0, 0, msg.dir?.[2] ?? 1], p);
@@ -836,7 +882,7 @@ function removePlayer(id) {
 }
 
 // cycloneStopsGoats: the goat module can knock a charging goat dizzy (bots then answer a charge with a cyclone)
-const world = { players, props, projectiles, goats, decoys, walls, handle, now, cycloneStopsGoats: !!Goats.dizzyGoat };
+const world = { players, props, projectiles, goats, decoys, walls, frostfalls, handle, now, cycloneStopsGoats: !!Goats.dizzyGoat };
 const goatCtx = {
   players, props, now, broadcast, breakProp, killPlayer,
   // humans apply goat knockback themselves from the goatRam message
@@ -907,6 +953,7 @@ wss.on('connection', (ws) => {
         goats: goats.map(goatPublic),
         projectiles: [...projectiles.values()].map(pr => ({ id: pr.id, kind: pr.kind, owner: pr.owner, propType: pr.propType, p: pr.p, v: pr.v, g: pr.g, r: pr.radius, life: pr.life - (now() - pr.born) })),
         walls: [...walls.values()].map(wallPublic),
+        frostfalls: [...frostfalls.values()].map(frostPublic),
         decoys: [...decoys.values()].map(decoyPublic),
       }));
       broadcast({ t: 'joined', player: playerPublic(p) });

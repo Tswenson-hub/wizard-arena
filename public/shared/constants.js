@@ -137,6 +137,22 @@ export const SPELLBOOK = {
     missRoot: 1.0,       // the caster's recovery when the whip hits nobody
     cooldown: 13,
   },
+  frostfall: {
+    id: 'frostfall', slot: 'power', name: 'Frostfall', short: 'Frostfall',
+    blurb: 'Hold to aim a circle, release: 1.75 s later a block of ice crushes it. 50 damage and freezes 1.5 s. Wards don\'t help.',
+    radius: 3.2,         // the circle
+    range: 24,           // farthest centre from the caster
+    delay: 1.75,         // release to impact; everyone sees the shadow grow meanwhile
+    fall: 0.5,           // the ice is visible falling for this long before impact
+    castPose: 0.5,
+    height: 2,           // wizards whose feet are higher than this are out of reach
+    damage: 50,
+    stun: 0,
+    knockback: 0,
+    bind: 1.5,           // frozen: rooted and silenced, like the lash's bind
+    unblockable: true,   // it comes from above: wards and ice walls don't stop it
+    cooldown: 14,
+  },
   blink: {
     id: 'blink', slot: 'mobility', name: 'Blink', short: 'Blink',
     blurb: 'Teleport 9 m in the direction you face.',
