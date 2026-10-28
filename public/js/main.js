@@ -10,6 +10,7 @@ import { Wizard } from './wizard.js';
 import { registerModel, loadWizardModels } from './looks.js';
 import { Effects } from './effects.js';
 import { mountWizardPicker } from './select.js';
+import { mountMatchUI } from './match-ui.js';
 
 // ---------------------------------------------------------------- setup
 const canvas = document.getElementById('game');
@@ -197,8 +198,12 @@ net.onClose = () => {
 };
 
 // ---------------------------------------------------------------- network handlers
+// Game modes UI (public/js/match-ui.js, modes agent)
+const matchUI = mountMatchUI({ scene, camera, net, players, props, myId: () => myId });
+
 function onWelcome(msg) {
   myId = msg.id;
+  matchUI.onWelcome(msg);
   for (const p of msg.players) addPlayer(p);
   for (const pr of msg.props) setProp(pr, true);
   for (const pj of msg.projectiles) effects.spawnProjectile(withBolt(pj));
@@ -326,6 +331,7 @@ function handleMessage(msg) {
       }
       updateDecoys(msg.decoys || []);
       for (const g of msg.goats || []) (goats.get(g.id) || goats.set(g.id, new GoatView(g, scene)).get(g.id)).apply(g);
+      matchUI.onSnapshot(msg);
       break;
     case 'goatAngry': {
       const g = goats.get(msg.id);
@@ -677,6 +683,8 @@ function handleMessage(msg) {
       sfx.respawn([msg.p[0], 1, msg.p[2]]);
       break;
     }
+    default:
+      if (msg.t.startsWith('match')) matchUI.onMessage(msg);
   }
 }
 
@@ -1311,6 +1319,7 @@ function frame(t) {
     updateSmokeHiding(dt);
     for (const w of players.values()) w.faceCamera(camera);
     updateHud(dt);
+    matchUI.update(dt);
     if (input.justPressed('KeyM')) { sfx.muted = !sfx.muted; ui.mute.checked = sfx.muted; feed(sfx.muted ? 'Sound muted (M)' : 'Sound on'); }
     sfx.setListener(camera);
     for (const w of players.values()) updateWizardAudio(w, dt);

@@ -10,6 +10,7 @@ import { WebSocketServer } from 'ws';
 import * as C from './public/shared/constants.js';
 import { createBot, updateBots, botKnockback, botNoteRelic, botDash, BOT_LIMIT } from './server/bots.js';
 import * as Goats from './server/goats.js';
+import { createMatch } from './server/match.js';
 const { createGoats, updateGoats, angerGoat, goatPublic } = Goats;
 // Throwable goats (goats.js, environment): called defensively so either side can land first
 const goatTK = typeof Goats.liftGoat === 'function' && typeof Goats.throwGoat === 'function';
@@ -89,6 +90,7 @@ function newPlayer(id, name, wizard = C.DEFAULT_WIZARD) {
 
 function playerPublic(p) {
   return {
+    ...match.playerExtras(p),
     id: p.id, name: p.name, color: p.color,
     p: p.p, yaw: p.yaw, anim: p.anim,
     hp: Math.round(p.hp), st: Math.round(p.st),
@@ -189,6 +191,8 @@ function endProjectile(proj, hit, extra = {}) {
 function applyHit(target, proj) {
   const spec = C.hitSpec(proj.kind);
   const attacker = players.get(proj.owner);
+  // game modes: no friendly fire
+  if (attacker && attacker !== target && !match.isEnemy(attacker, target)) return { dmg: 0, blocked: false, friendly: true };
   // primary fire only interrupts (stun, cancel) with the last shot of a magazine
   const interrupt = (proj.kind !== 'fast' && proj.kind !== 'skim') || !!proj.fin;
   const t = now();
@@ -250,7 +254,7 @@ function applyHit(target, proj) {
   }
 
   target.hp -= dmg;
-  if (dmg > 0) target.lastHitBy = proj.owner;
+  if (dmg > 0) { target.lastHitBy = proj.owner; match.onDamage(target, attacker, dmg); }
   const kb = isRooted(target) ? 0 : blocked ? spec.knockback * 0.3 : spec.knockback;
   if (target.bot && kb) botKnockback(target, norm3([proj.v[0], 0, proj.v[2]]), kb);
 
@@ -281,11 +285,12 @@ function killPlayer(target, attacker, cause = null) {
   if (target.carrying) dropProp(target, true);
   if (target.carryingGoat) { const g = goatById(target.carryingGoat); target.carryingGoat = null; if (g && g.holder === target.id) Goats.releaseGoat?.(g, goatCtx); }
   if (attacker && attacker.id !== target.id) attacker.kills++;
+  match.onKill(target, attacker, cause);
   broadcast({ t: 'death', id: target.id, killer: attacker ? attacker.id : null, cause });
 }
 
 function respawn(p) {
-  const sp = C.SPAWN_POINTS[Math.floor(Math.random() * C.SPAWN_POINTS.length)];
+  const sp = match.spawnPointFor(p) || C.SPAWN_POINTS[Math.floor(Math.random() * C.SPAWN_POINTS.length)];
   p.p = [sp[0] + rand(-1, 1), 0, sp[2] + rand(-1, 1)];
   p.hp = C.MAX_HP; p.st = C.MAX_STAMINA;
   p.dead = false; p.stunUntil = 0; p.blocking = false; p.charging = false; p.cyclone = null; p.lash = null; p.flightUntil = 0;
@@ -295,10 +300,11 @@ function respawn(p) {
   broadcast({ t: 'respawn', id: p.id, p: p.p });
 }
 
-function dropProp(p, destroy) {
+function dropProp(p, destroy, reason = null) {
   const prop = props.get(p.carrying);
   p.carrying = null;
   if (!prop) return;
+  match.onDrop(p, prop, reason || (destroy ? 'destroyed' : 'dropped'));
   prop.carrier = null;
   if (destroy) {
     breakProp(prop, [p.p[0], 1, p.p[2]]);
@@ -351,6 +357,7 @@ function cyclonePulse(p) {
 }
 
 function breakProp(prop, at) {
+  match.onPropBroken(prop);
   if (prop.cursedBy) { const c = players.get(prop.cursedBy); prop.cursedBy = null; if (c) send(c.id, { t: 'curse', id: null }); }
   prop.trap = null;
   prop.state = 'broken';
@@ -496,6 +503,7 @@ function simulate(dt) {
   const t = now();
   updateBots(dt, world);
   updateGoats(goats, dt, goatCtx);
+  match.tick(dt);
   updateDecoys(dt, t);
   for (const w of [...walls.values()]) if (t >= w.until) wallDown(w, true);
   for (const f of [...frostfalls.values()]) if (t >= f.at) frostfallImpact(f);
@@ -901,6 +909,7 @@ function handle(p, msg) {
       best.state = 'lifting'; best.carrier = p.id; best.liftUntil = t + C.TK.liftTime;
       p.carrying = best.id;
       broadcast({ t: 'prop', prop: propPublic(best) });
+      match.onPickup(p, best);
       break;
     }
     case 'throw': {
@@ -920,7 +929,9 @@ function handle(p, msg) {
       if (!p.carrying) break;
       const prop = props.get(p.carrying);
       if (prop && prop.state !== 'carried') break;   // still rising
+      if (prop && !match.canThrow(p, prop)) { dropProp(p, false, 'released'); break; }   // e.g. the Sacred Relic is set down, not hurled
       p.carrying = null;
+      if (prop) match.onDrop(p, prop, 'thrown');
       p.cd.throw = t + C.THROW_COOLDOWN;
       if (!prop) break;
       // The prop leaves the world as a standing object and becomes a projectile.
@@ -952,6 +963,8 @@ function handle(p, msg) {
       for (const q of [...players.values()]) if (q.bot) removePlayer(q.id);
       break;
     }
+    default:
+      match.handle(p, msg);
   }
 }
 
@@ -970,6 +983,8 @@ function addBot(difficulty, wizard = null) {
   p.p = [sp[0], 0, sp[2]];
   p.bot = createBot(difficulty);
   players.set(id, p);
+  match.onJoin(p);
+  { const msp = match.spawnPointFor(p); if (msp) p.p = [msp[0], 0, msp[2]]; }
   broadcast({ t: 'joined', player: playerPublic(p) });
   console.log(`[+] bot ${name} (${difficulty}, ${p.wizard}) joined. ${players.size} online`);
 }
@@ -977,6 +992,7 @@ function addBot(difficulty, wizard = null) {
 function removePlayer(id) {
   const p = players.get(id);
   if (!p) return;
+  match.onLeave(p);
   if (p.carrying) dropProp(p, false);
   if (p.carryingGoat) { const g = goatById(p.carryingGoat); p.carryingGoat = null; if (g && g.holder === p.id) Goats.releaseGoat?.(g, goatCtx); }
   clearCurse(p);
@@ -987,6 +1003,13 @@ function removePlayer(id) {
 
 // cycloneStopsGoats: the goat module can knock a charging goat dizzy (bots then answer a charge with a cyclone)
 const world = { players, props, projectiles, goats, decoys, walls, frostfalls, smokes, handle, now, cycloneStopsGoats: !!Goats.dizzyGoat };
+// Game modes (server/match.js, modes agent). addUltCharge is the spells agent's to implement.
+const match = createMatch({
+  players, props, now, broadcast, send, propPublic,
+  addBot: (...a) => addBot(...a), removePlayer: (id) => removePlayer(id), respawn: (p) => respawn(p),
+  addUltCharge: (p, pct) => {},
+});
+world.match = match;
 const goatCtx = {
   players, props, now, broadcast, breakProp,
   // a Tempest Veil survives a ram (goats.js treats the veil as a ward once that request is in; this is the fallback)
@@ -1074,6 +1097,8 @@ wss.on('connection', (ws) => {
       const p = newPlayer(id, name, msg.wizard);
       players.set(id, p);
       sockets.set(id, ws);
+      match.onJoin(p);
+      { const sp = match.spawnPointFor(p); if (sp) p.p = [sp[0], 0, sp[2]]; }
       ws.send(JSON.stringify({
         t: 'welcome', id,
         players: [...players.values()].map(playerPublic),
@@ -1084,6 +1109,7 @@ wss.on('connection', (ws) => {
         frostfalls: [...frostfalls.values()].map(frostPublic),
         smokes: [...smokes.values()].map(smokePublic),
         decoys: [...decoys.values()].map(decoyPublic),
+        ...match.welcomeExtras(p),
       }));
       broadcast({ t: 'joined', player: playerPublic(p) });
       console.log(`[+] ${name} (#${id}) joined. ${players.size} online`);
@@ -1120,7 +1146,7 @@ setInterval(() => {
 
 setInterval(() => {
   if (players.size === 0) return;
-  broadcast({ t: 'snap', time: now(), players: [...players.values()].map(playerPublic), goats: goats.map(goatPublic), decoys: [...decoys.values()].map(decoyPublic) });
+  broadcast({ t: 'snap', time: now(), players: [...players.values()].map(playerPublic), goats: goats.map(goatPublic), decoys: [...decoys.values()].map(decoyPublic), ...match.snapshotExtras() });
 }, 1000 / C.SNAPSHOT_RATE);
 
 httpServer.listen(PORT, () => console.log(`Wizard Arena listening on http://localhost:${PORT}`));

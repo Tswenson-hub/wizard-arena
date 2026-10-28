@@ -17,6 +17,7 @@ session that wrote these briefs) merges, runs final verification and talks to Ty
 | spells (the former gameplay agent) | `public/shared/constants.js`, `server.js`, `server/bots.js`, `bot.js`, `public/js/main.js`, `public/js/wizard.js`, `public/js/effects.js`, `public/js/audio.js`, `public/js/input.js`, `public/js/net.js`, `public/index.html`, `public/css/style.css`, `public/sounds/*`, and the `kit` fields in `public/shared/wizards.js` |
 | characters | `public/js/looks.js`, `public/js/select.js`, `public/css/select.css`, `public/models/wizards/*`, `public/models/wizard.glb`, and every field **except** `kit` in `public/shared/wizards.js` |
 | environment | `public/shared/map.js`, `public/js/world.js`, `public/js/goats.js`, `server/goats.js`, `public/models/*` (except `wizards/` and `wizard.glb`), `tools/optimize-models.sh` |
+| modes (round 5) | `server/match.js`, `server/objectives.js`, `public/js/match-ui.js`, `public/css/match.css`, `tools/test/modematch.mjs` |
 | coordinator | `README.md`, `docs/agents/*` (except your own hand-off and `requests.md`), `tools/test/*`, `package.json` |
 
 `wizards.js` is shared field by field. Edit only your own fields, and commit it on its own so the other agent's edits don't get mixed in.
@@ -33,7 +34,7 @@ for requests addressed to you. Never edit the other agent's files, even for a on
 - If `git commit` fails because of the index lock, wait a few seconds and retry.
 
 ## Running and testing
-- Your own server port: **spells 4101, environment 4102, characters 4103**. Start it with
+- Your own server port: **spells 4101, environment 4102, characters 4103, modes 4104**. Start it with
   `PORT=410x node server.js` (background) and restart it after server-side changes.
   Port 3000 belongs to Ty. Don't stop or restart it.
 - Headless balance check: `node tools/test/botmatch.mjs <port> <seconds> hard normal easy`
