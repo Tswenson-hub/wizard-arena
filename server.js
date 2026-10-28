@@ -71,7 +71,7 @@ function newPlayer(id, name, wizard = C.DEFAULT_WIZARD) {
     blocking: false, blockReleasedAt: -10,
     stunUntil: 0, stunImmuneUntil: 0, dead: false, respawnAt: 0,
     kills: 0, deaths: 0,
-    cd: { fast: 0, power: 0, mobility: 0, guard: 0, throw: 0 },   // per slot, whichever spell is in it
+    cd: { fast: 0, power: 0, mobility: 0, guard: 0, throw: 0, lift: 0 },   // per slot, whichever spell is in it
     charging: false, chargeStart: 0,
     cyclone: null,                // { start, pulseAt, endAt, pulsed } during an Arcane Cyclone
     lash: null,                   // { start } during a Sanguine Lash wind-up
@@ -96,7 +96,7 @@ function playerPublic(p) {
     stun: p.stunUntil > now(), dead: p.dead,
     carrying: p.carrying, carryingGoat: p.carryingGoat || null, kills: p.kills, deaths: p.deaths,
     wizard: p.wizard, lashing: !!p.lash,
-    veil: p.veilUntil > now(),
+    veil: p.veilUntil > now(), liftCd: p.cd.lift > now() ? +(p.cd.lift - now()).toFixed(2) : 0,
     ammo: p.ammo, reload: p.reloadUntil > now() ? +(p.reloadUntil - now()).toFixed(2) : 0,
     slow: p.slowUntil > now(), bound: p.silenceUntil > now(), rooted: p.rootUntil > now(), frozen: p.frozenUntil > now(),
     bot: p.bot ? p.bot.difficulty : undefined,
@@ -376,7 +376,8 @@ function endDecoy(d, popped) {
 function updateDecoys(dt, t) {
   for (const d of [...decoys.values()]) {
     if (t >= d.until) { endDecoy(d, false); continue; }
-    d.p[0] += d.dir[0] * C.MOVE_SPEED * dt; d.p[2] += d.dir[2] * C.MOVE_SPEED * dt;
+    const sp = C.speedOf(players.get(d.owner)?.wizard);   // as fast as the caster runs
+    d.p[0] += d.dir[0] * sp * dt; d.p[2] += d.dir[2] * sp * dt;
     for (const c of C.COLLIDERS) {
       const dx = d.p[0] - c.x, dz = d.p[2] - c.z, dd = Math.hypot(dx, dz);
       if (dd < c.r + C.PLAYER_RADIUS && dd > 1e-4) { const k = (c.r + C.PLAYER_RADIUS - dd) / dd; d.p[0] += dx * k; d.p[2] += dz * k; }
@@ -530,6 +531,10 @@ function simulate(dt) {
     flushPendingWizard(p);
     // goats.js drops a held goat itself (holder dead, stunned or gone); forget it when it's no longer ours
     if (p.carryingGoat) { const g = goatById(p.carryingGoat); if (!g || g.state !== 'held' || g.holder !== p.id) p.carryingGoat = null; }
+    // telekinesis: however we let go of something (thrown, set down, knocked away, dropped), the next lift waits
+    const held = holding(p);
+    if (p.wasHolding && !held) p.cd.lift = t + C.SPELLBOOK[kit(p).utility].liftCooldown;
+    p.wasHolding = held;
     if (p.veilUntil && t >= p.veilUntil) { p.veilUntil = 0; broadcast({ t: 'veilEnd', id: p.id }); }
     // primary magazine: a finished reload refills it; a partial one reloads after idling
     const mag = C.primaryMag(kit(p).primary);
@@ -668,8 +673,10 @@ function handle(p, msg) {
       // which the speed check below already allows)
       if (isRooted(p)) { np[0] = p.p[0]; np[2] = p.p[2]; }
       const dashing = p.dashUntil > t;   // Smoke Screen's dash is much faster than running
-      const maxStep = ((dashing ? SMOKE.distance / SMOKE.dashTime : C.MOVE_SPEED) + C.SPELLS.heavy.knockback + 2) * dt + 0.6;
       const d = dist2D(np, p.p);
+      // the fastest this wizard can go this way: its run speed, the backpedal cap against its facing, or a dash
+      const run = C.backpedalSpeed(C.speedOf(p.wizard), np[0] - p.p[0], np[2] - p.p[2], Number.isFinite(msg.yaw) ? msg.yaw : p.yaw);
+      const maxStep = ((dashing ? SMOKE.distance / SMOKE.dashTime : run) + C.SPELLS.heavy.knockback + 2) * dt + 0.6;
       if (p.lastStateAt && d > maxStep && !p.justTeleported) {
         // Moving faster than any legitimate wizard can: let the server's copy catch up at the
         // maximum plausible speed instead of snapping (so a laggy-but-honest client converges).
@@ -831,11 +838,12 @@ function handle(p, msg) {
       break;
     }
     case 'curse': {
-      if (kit(p).utility !== 'trapped_relic' || !canAct(p) || holding(p) || p.blocking) break;
+      if (kit(p).utility !== 'trapped_relic' || !canAct(p) || holding(p) || p.blocking || t < p.cd.lift) break;
       const prop = tkTarget(p, msg.aimOrigin, msg.aimDir);
       if (!prop) break;
       clearCurse(p);
       prop.cursedBy = p.id;
+      p.cd.lift = t + C.SPELLBOOK.trapped_relic.liftCooldown;
       send(p.id, { t: 'curse', id: prop.id });   // nobody else hears of it
       break;
     }
@@ -877,7 +885,7 @@ function handle(p, msg) {
       break;
     }
     case 'pickup': {
-      if (!canAct(p) || holding(p) || p.charging || p.cyclone || p.lash || p.blocking) break;
+      if (!canAct(p) || holding(p) || p.charging || p.cyclone || p.lash || p.blocking || t < p.cd.lift) break;
       const best = tkTarget(p, msg.aimOrigin, msg.aimDir, goatTK);
       if (!best) break;
       if (best.goat) {

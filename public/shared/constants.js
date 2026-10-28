@@ -217,7 +217,8 @@ export const SPELLBOOK = {
   telekinesis: {
     id: 'telekinesis', slot: 'utility', name: 'Telekinesis', short: 'Lift',
     blurb: 'Lift an object, then hurl it. It shields you while held.',
-    cooldown: 0.6,
+    cooldown: 0.6,       // lift to throw (THROW_COOLDOWN)
+    liftCooldown: 3,     // after letting go of something (thrown, set down, knocked away), before the next lift
   },
   trapped_relic: {
     id: 'trapped_relic', slot: 'utility', name: 'Trapped Relic', short: 'Relic',
@@ -228,6 +229,7 @@ export const SPELLBOOK = {
     knockback: 7,
     staminaCost: 40,     // a ward facing the blast blocks it
     cooldown: 0.6,
+    liftCooldown: 3,     // as telekinesis; laying a curse starts it too
   },
 };
 
@@ -239,6 +241,21 @@ export const boltColor = (wizard) => BOLT_COLORS[wizard] ?? 0x7ad8ff;
 // Pressing R, or `idleReload` seconds without firing, reloads a partial magazine. Only the last shot
 // of a magazine (the "finisher") stuns and interrupts wind-ups; the others just do their damage.
 export const primaryMag = (id) => SPELLBOOK[id] || SPELLBOOK.spark;
+
+// Run speed of wizard `id` (wizards.js `speed`); wind-up and ward speeds scale with it.
+export const speedOf = (id) => WIZARDS[id]?.speed ?? MOVE_SPEED;
+export const chargeSpeedOf = (id) => speedOf(id) * CHARGE_MOVE_SPEED / MOVE_SPEED;
+export const blockSpeedOf = (id) => speedOf(id) * BLOCK_MOVE_SPEED / MOVE_SPEED;
+
+// Backpedalling is slower: moving against the facing direction is capped at BACKPEDAL_SPEED, easing back to
+// full speed as the direction turns sideways (strafing is full speed). (dx, dz) is the movement direction.
+export const BACKPEDAL_SPEED = 3;
+export function backpedalSpeed(speed, dx, dz, yaw) {
+  const l = Math.hypot(dx, dz);
+  if (l < 1e-6) return speed;
+  const back = -(dx * Math.sin(yaw) + dz * Math.cos(yaw)) / l;   // 1 = straight back, 0 = sideways
+  return back > 0 ? speed - Math.max(0, speed - BACKPEDAL_SPEED) * back : speed;
+}
 
 // The kit (slot -> spell id) of wizard `id`, falling back to the default wizard.
 export const kitOf = (id) => (WIZARDS[id] || WIZARDS[DEFAULT_WIZARD]).kit;

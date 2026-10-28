@@ -11,6 +11,11 @@ const shellMat = new THREE.MeshBasicMaterial({ color: TK_COLOR, transparent: tru
 const BEAM_MOTES = 12;
 
 const CYC = C.SPELLBOOK.cyclone, LASH = C.SPELLBOOK.sanguine_lash;
+// Natural ground speed (m/s) of each locomotion clip at 1x, so playback = actual speed / natural speed and the
+// feet don't slide. The fight walks are from looks.js (characters agent); Running's is the old fixed 1.35x at 6.2 m/s
+// until its measured value is posted. A body can override with `speeds` (makeWizardBody).
+const NATURAL_SPEED = { run: 4.6, walk_fight: 0.73, back: 0.56 };
+const SLOW_WALK = 3;   // m/s: below this the fight walk plays instead of Running
 
 // Sanguine Lash: the whip coiling around the caster during the wind-up (a helix of blood-red light).
 const coilGeo = (() => {
@@ -100,6 +105,7 @@ export class Wizard {
     this.wizard = info.wizard;
     const body = makeWizardBody(info.wizard);   // model + clips for this wizard (looks.js)
     const clips = body.clips;
+    this.speeds = body.speeds || null;   // natural clip speeds, if the body knows them
     this.model = body.model;
     this.group.add(this.model);
     scene.add(this.group);
@@ -117,7 +123,7 @@ export class Wizard {
     this.actions.stun.setLoop(THREE.LoopOnce); this.actions.stun.clampWhenFinished = true;
     this.actions.dash.setLoop(THREE.LoopOnce); this.actions.dash.clampWhenFinished = true;
     // optional clips some bodies have (looks.js): a death fall, Gale's cyclone sweep
-    for (const k of ['death', 'spin', 'lash', 'float', 'back']) if (this.actions[k]) { this.actions[k].setLoop(THREE.LoopOnce); this.actions[k].clampWhenFinished = true; }
+    for (const k of ['death', 'spin', 'lash', 'float', 'tk_lift', 'tk_throw', 'hit_waist']) if (this.actions[k]) { this.actions[k].setLoop(THREE.LoopOnce); this.actions[k].clampWhenFinished = true; }
 
     this.current = null;
     this.oneShotUntil = 0;
@@ -363,7 +369,32 @@ export class Wizard {
   }
 
   // Decide the looping state from the mirrored server state + movement. Called every frame.
+  // Ground velocity, measured from how the group actually moves (works for the local and remote wizards alike).
+  measureVelocity(dt) {
+    const p = this.group.position;
+    this.vel ??= new THREE.Vector3(); this.prevPos ??= p.clone();
+    if (dt > 0) {
+      const vx = (p.x - this.prevPos.x) / dt, vz = (p.z - this.prevPos.z) / dt;
+      if (Math.hypot(vx, vz) > 30) this.vel.set(0, 0, 0);   // a blink, a respawn: not walking
+      else { const k = Math.min(1, dt * 10); this.vel.x += (vx - this.vel.x) * k; this.vel.z += (vz - this.vel.z) * k; }
+    }
+    this.prevPos.copy(p);
+    const speed = Math.hypot(this.vel.x, this.vel.z);
+    const fwd = speed > 0.01 ? (this.vel.x * Math.sin(this.group.rotation.y) + this.vel.z * Math.cos(this.group.rotation.y)) / speed : 1;
+    return { speed, backward: fwd < -0.3 };
+  }
+
+  // The locomotion clip for this speed and direction: Running at full speed, the fight walk when slow
+  // (wind-ups, ward, slowed), the backward fight walk when moving backward. Null when standing.
+  locomotion(m, slow) {
+    if (m.speed < 0.4 || this.group.position.y > 0.3) return null;
+    if (m.backward && this.actions.back) return 'back';
+    if ((slow || m.speed < SLOW_WALK) && this.actions.walk_fight) return 'walk_fight';
+    return 'run';
+  }
+
   updateAnimation(moving, dt) {
+    const m = this.measureVelocity(dt);
     // Skyward Flash descent: a body with a float clip (Rime) holds its airborne pose until it lands
     const floating = !this.dead && this.actions.float && this.group.position.y > 0.3;
     if (floating) this.floatT = (this.floatT ?? 0) + dt; else this.floatT = 0;
@@ -375,11 +406,17 @@ export class Wizard {
       if (back && this.floatT > 1) this.actions.float.time = this.actions.float.getClip().duration;
     }
     else if (!this.inOneShot()) {
-      if (this.charging || this.lashT >= 0 || (this.cycloneT >= 0 && this.cycloneT < CYC.windup)) this.setBase('cast_heavy', 0.1);
-      else if (this.blocking) this.setBase('block');
-      else if (moving) this.setBase('run');
+      const windup = this.charging || this.lashT >= 0 || (this.cycloneT >= 0 && this.cycloneT < CYC.windup);
+      // moving slowly in a wind-up or behind a ward: the fight walk; standing: the cast or ward pose
+      const loco = this.locomotion(m, windup || this.blocking || this.slowed);
+      if (windup) this.setBase(loco || 'cast_heavy', 0.1);
+      else if (this.blocking) this.setBase(loco || 'block');
+      else if (loco) this.setBase(loco, 0.15);
       else this.setBase('idle', 0.25);
     }
+    // time-scale the walk or run to the ground speed so the feet don't slide
+    const nat = this.speeds?.[this.current] ?? NATURAL_SPEED[this.current];
+    if (nat && !this.inOneShot()) this.actions[this.current].setEffectiveTimeScale(Math.min(6, Math.max(0.3, m.speed / nat)));
     this.mixer.update(dt);
 
     // ward bubble

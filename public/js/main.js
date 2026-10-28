@@ -67,6 +67,7 @@ const local = {
   rootUntil: 0,                // bound by a lash, or recovering from our own missed lash
   silenceUntil: 0,             // bound: no spells, ward or telekinesis
   dash: null,                  // { start, dir } during our own Smoke Screen dash
+  liftCdUntil: 0, wasHolding: false,       // telekinesis: no new lift for a while after letting go
   ammo: 3, reloadUntil: 0, lastShot: 0,   // primary magazine (predicted; the server's copy wins)
   frostAim: false,             // RMB held with Frostfall: aiming the circle
   frozenUntil: 0,              // frozen by a Frostfall (the bind, shown as ice)
@@ -257,6 +258,7 @@ function applySnapshot(w, s) {
     if (!s.blocking && local.blocking) { local.blocking = false; }   // server cancelled the ward
     if (!s.charging && local.charging && local.chargeSent) { local.charging = false; }
     if (!s.lashing && local.lash && local.lash.sent) { local.lash = null; me.endLash(); }
+    if (s.liftCd > 0 && Math.abs(local.liftCdUntil - now - s.liftCd) > 0.3) local.liftCdUntil = now + s.liftCd;
     // the magazine: adopt the server's count when we haven't just fired (our prediction may be ahead)
     if (s.ammo !== undefined && now - local.lastShot > 0.4) {
       if (s.reload > 0) { if (!local.reloadUntil || Math.abs(local.reloadUntil - now - s.reload) > 0.25) { local.ammo = 0; local.reloadUntil = now + s.reload; } }
@@ -296,6 +298,14 @@ function setProp(data, initial = false) {
     // thrown, dropped or broken: nobody holds it any more
     for (const w of players.values()) if (w.carrying === data.id) startCarry(w, null);
   }
+}
+
+// Telekinesis gestures (looks.js clips): the arm raising a lift, the fling of a throw. Bodies without them
+// fall back to the quick cast.
+function tkGesture(w, clip) {
+  const a = w.actions[clip];
+  if (a) w.oneShot(clip, Math.min(0.9, a.getClip().duration), 1, 0);
+  else w.oneShot('cast_fast', 0.4, 2.6, 0.3);
 }
 
 // A spark takes its caster's colour (constants: BOLT_COLORS).
@@ -362,7 +372,7 @@ function handleMessage(msg) {
           owner.lashT = -1; owner.lashing = false; sfx.lashCrack(msg.p);
         }
         else if (msg.kind === 'heavy') { owner.charging = false; owner.oneShot('cast_heavy', 0.55, 1.5, 1.9); sfx.castHeavy(msg.p); }
-        else { owner.oneShot('cast_fast', 0.4, 2.6, 0.3); sfx.throw_(msg.p); if (owner.carrying) startCarry(owner, null); }
+        else { tkGesture(owner, 'tk_throw'); sfx.throw_(msg.p); if (owner.carrying) startCarry(owner, null); }
       }
       break;
     }
@@ -385,7 +395,9 @@ function handleMessage(msg) {
       else if (msg.blocked) { effects.blockFlash(c); sfx.block(c); }
       else {
         effects.burst(c, msg.kind === 'skim' ? 0xbfeaff : 0xff3b4e, 10, 3, 0.35);
-        if (C.hitSpec(msg.kind)?.stun !== 0 && msg.int !== false) target.oneShot('stun', msg.kind === 'heavy' ? 0.5 : 0.55, 3.0, 0.3);
+        // a hurled prop or goat doubles them over (hit_waist); other interrupting hits flinch
+        if ((msg.kind === 'prop' || msg.kind === 'goat') && target.actions.hit_waist) target.oneShot('hit_waist', target.actions.hit_waist.getClip().duration, 1, 0);
+        else if (C.hitSpec(msg.kind)?.stun !== 0 && msg.int !== false) target.oneShot('stun', msg.kind === 'heavy' ? 0.5 : 0.55, 3.0, 0.3);
         sfx.hitBody(c);
         if (msg.slow) target.slowed = true;
         if (msg.bind && msg.kind === 'frostfall') { target.bound = true; target.frozen = true; target.endLash(); target.cancelCyclone(); target.oneShot('stun', 0.15, 3, 0.3); }
@@ -526,12 +538,12 @@ function handleMessage(msg) {
     }
     case 'goatLift': {
       const w = players.get(msg.id);
-      if (w) { w.carryingGoat = msg.goat; sfx.pickup(wpos(w)); }
+      if (w) { w.carryingGoat = msg.goat; tkGesture(w, 'tk_lift'); sfx.pickup(wpos(w)); }
       break;
     }
     case 'goatThrow': {
       const w = players.get(msg.id);
-      if (w) { w.carryingGoat = null; w.oneShot('cast_fast', 0.4, 2.6, 0.3); sfx.throw_(msg.p); }
+      if (w) { w.carryingGoat = null; tkGesture(w, 'tk_throw'); sfx.throw_(msg.p); }
       break;
     }
     case 'veil': {
@@ -621,7 +633,7 @@ function handleMessage(msg) {
       break;
     }
     case 'prop':
-      if (msg.prop.state === 'lifting') sfx.pickup([msg.prop.x, 0.6, msg.prop.z]);
+      if (msg.prop.state === 'lifting') { sfx.pickup([msg.prop.x, 0.6, msg.prop.z]); const w = players.get(msg.prop.carrier); if (w) tkGesture(w, 'tk_lift'); }
       setProp(msg.prop);
       break;
     case 'propBreak': {
@@ -929,6 +941,8 @@ function updateLocal(dt) {
     if (!local.reloadUntil && local.ammo > 0 && local.ammo < MAG.magazine && now - local.lastShot > MAG.idleReload) startReload();
     if (input.justPressed('KeyR') && !local.reloadUntil && local.ammo < MAG.magazine) { startReload(); net.send({ t: 'reload' }); }
     const holding = !!(me.carrying || me.carryingGoat);
+    if (local.wasHolding && !holding) local.liftCdUntil = now + SPELL[K.utility].liftCooldown;
+    local.wasHolding = holding;
     if (input.lmbPressed && !local.blocking && !busy && !holding && now >= local.cd.fast && !local.reloadUntil && local.ammo > 0) {
       computeAim();
       local.ammo--; local.lastShot = now;
@@ -1025,14 +1039,14 @@ function updateLocal(dt) {
           local.cd.throw = now + C.THROW_COOLDOWN;
           net.send({ t: 'throw', dir: aimDir.toArray(), target: aimPoint() });
         }
-      } else if (!busy && !local.blocking && tkHover) {
+      } else if (!busy && !local.blocking && tkHover && now >= local.liftCdUntil) {
         if (relic && !tkHover.goat) local.fHold = { start: now };   // goats can't be cursed: they just lift
         else sendPickup();
       }
     }
     if (local.fHold) {
       if (holding || busy || local.blocking || !tkHover || tkHover.goat) local.fHold = null;
-      else if (now - local.fHold.start >= RELIC.hold) { local.fHold = null; camera.getWorldDirection(camDir); net.send({ t: 'curse', aimOrigin: camera.position.toArray(), aimDir: camDir.toArray() }); }
+      else if (now - local.fHold.start >= RELIC.hold) { local.fHold = null; local.liftCdUntil = now + RELIC.liftCooldown; camera.getWorldDirection(camDir); net.send({ t: 'curse', aimOrigin: camera.position.toArray(), aimDir: camDir.toArray() }); }
       else if (!input.down('KeyF')) { local.fHold = null; sendPickup(); }
     }
     if (input.justPressed('KeyG') && holding) net.send({ t: 'drop' });
@@ -1046,13 +1060,16 @@ function updateLocal(dt) {
 
   // ---- movement (camera-relative); a bound wizard can't move, a silenced one still can
   const moving = (mx || mz) && !me.dead && !stunned && !rooted;
-  let speed = C.MOVE_SPEED;
-  if (local.charging || local.cyclone || local.lash) speed = C.CHARGE_MOVE_SPEED;
-  else if (local.blocking) speed = C.BLOCK_MOVE_SPEED;
+  let speed = C.speedOf(me.wizard);   // per wizard (wizards.js speed)
+  if (local.charging || local.cyclone || local.lash) speed = C.chargeSpeedOf(me.wizard);
+  else if (local.blocking) speed = C.blockSpeedOf(me.wizard);
   else if (local.flight) speed = SKY.airSpeed;
   if (now < local.slowUntil) speed *= 1 - C.SPELLS.skim.slow;     // Glacial Skim
   const wish = tmp.v3.set(0, 0, 0);
-  if (moving) { wish.addScaledVector(fwd, mz).addScaledVector(right, mx).normalize().multiplyScalar(speed); }
+  if (moving) {
+    wish.addScaledVector(fwd, mz).addScaledVector(right, mx).normalize();
+    wish.multiplyScalar(C.backpedalSpeed(speed, wish.x, wish.z, local.yaw));   // backpedalling is slower
+  }
   // accelerate toward wish velocity; knockback lives in local.vel too
   const accel = Math.min(1, dt * 12);
   local.vel.x += (wish.x - local.vel.x) * accel;
@@ -1169,7 +1186,8 @@ function updateHud(dt) {
   cdFill('power', local.cd.power, SPELL[K.power].cooldown);
   cdFill('mobility', local.cd.mobility, SPELL[K.mobility].cooldown);
   cdFill('block', local.cd.guard, SPELL[K.guard].cooldown);
-  cdFill('throw', local.cd.throw, C.THROW_COOLDOWN);
+  if (!me.carrying && !me.carryingGoat && now < local.liftCdUntil) cdFill('throw', local.liftCdUntil, SPELL[K.utility].liftCooldown);   // lift cooldown
+  else cdFill('throw', local.cd.throw, C.THROW_COOLDOWN);
   ui.ab.block.classList.toggle('active', local.blocking || me.veiled || [...walls.values()].some(w => w.data.owner === myId));
   ui.ab.power.classList.toggle('active', local.charging || !!local.cyclone || !!local.lash || local.frostAim);
   ui.ab.mobility.classList.toggle('active', !!local.flight);
@@ -1250,7 +1268,7 @@ function updateWizardAudio(w, dt) {
   if (w.sndWard) w.sndWard.setPos(pos);
 
   // running steps every 0.3 s; slowed by a ward or wind-up, every 0.5 s
-  const speed = w === me ? Math.hypot(local.vel.x, local.vel.z) : (w.netAnim === 'run' ? C.MOVE_SPEED : 0);
+  const speed = w === me ? Math.hypot(local.vel.x, local.vel.z) : (w.netAnim === 'run' ? C.speedOf(w.wizard) : 0);
   const moving = !w.dead && speed > 1.5;
   const interval = speed > 4 ? 0.3 : 0.5;
   w.stepT = (w.stepT || 0) + dt;

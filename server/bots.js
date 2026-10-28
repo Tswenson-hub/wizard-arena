@@ -143,7 +143,7 @@ const primaryReady = (me, t) => t >= me.cd.fast && !(me.reloadUntil > t) && me.a
 // A decoy seen as a target: shaped enough like a player for aiming and movement.
 function decoyTarget(d, owner) {
   return {
-    id: 'decoy' + d.id, decoy: d.id, p: d.p, yaw: d.yaw, vel: [d.dir[0] * C.MOVE_SPEED, d.dir[2] * C.MOVE_SPEED],
+    id: 'decoy' + d.id, decoy: d.id, p: d.p, yaw: d.yaw, vel: [d.dir[0] * C.speedOf(owner.wizard), d.dir[2] * C.speedOf(owner.wizard)],
     hp: owner.hp, st: owner.st, dead: false, flightUntil: 0, stunUntil: 0, blocking: false, charging: false, cyclone: null, lash: null,
   };
 }
@@ -399,7 +399,7 @@ function think(me, world, t) {
   if (Math.random() > cfg.aggression) return;
 
   // ---- Trapped Relic: curse a prop lying near the enemy, for them to pick up
-  if (K.utility === 'trapped_relic' && t >= b.nextCurse && !target.decoy) {
+  if (K.utility === 'trapped_relic' && t >= b.nextCurse && t >= me.cd.lift && !target.decoy) {
     b.nextCurse = t + rand(3, 6);
     const mine = [...world.props.values()].find(pr => pr.cursedBy === me.id);
     if (!mine || mine.state !== 'idle' || dist2D([mine.x, 0, mine.z], target.p) > 9) {
@@ -409,7 +409,7 @@ function think(me, world, t) {
   }
 
   // ---- telekinesis: Normal and Hard bots sometimes grab a calm goat close by to hurl at the target
-  if (cfg.goatAware && !me.carrying && d < 18 && Math.random() < cfg.tk * 0.5) {
+  if (cfg.goatAware && !me.carrying && t >= me.cd.lift && d < 18 && Math.random() < cfg.tk * 0.5) {
     const g = world.goats.find(x => ['graze', 'wander', 'return', 'recover', 'dizzy', 'stumble'].includes(x.state) && !x.holder
       && Math.hypot(x.x - me.p[0], x.z - me.p[2]) < C.TK.range - 1 && hasLOS(me.p, [x.x, 0, x.z]));
     if (g) {
@@ -422,7 +422,7 @@ function think(me, world, t) {
   }
 
   // ---- telekinesis: grab a prop that's roughly between us and them
-  if (Math.random() < cfg.tk) {
+  if (t >= me.cd.lift && Math.random() < cfg.tk) {
     const prop = pickProp(me, target, world, t);
     if (prop) {
       aimProp(me, prop, (from, dir) => act({ t: 'pickup', aimOrigin: from, aimDir: dir }));
@@ -705,7 +705,7 @@ function respondCyclone(me, caster, t, act) {
   if (veiled(me, t)) return;
   if (veilReady(me, t)) return act({ t: 'veil' });
   if (wallReady(me, t) && d > BULWARK.dist + 0.6) return raiseWall(me, caster.p, act);
-  if (K.guard === 'ward' && need > left * C.MOVE_SPEED * cfg.speed && me.st >= CYC.staminaCost + 5 && !me.carrying && cfg.dodge > 0.8) {
+  if (K.guard === 'ward' && need > left * C.speedOf(me.wizard) * cfg.speed && me.st >= CYC.staminaCost + 5 && !me.carrying && cfg.dodge > 0.8) {
     me.yaw = Math.atan2(caster.p[0] - me.p[0], caster.p[2] - me.p[2]);
     act({ t: 'block', on: true });
     b.blockUntil = caster.cyclone.pulseAt + 0.15;
@@ -736,7 +736,7 @@ function respondFrostfall(me, f, df, t, act) {
   if (veilReady(me, t) && left < C.SPELLBOOK.tempest_veil.duration - 0.2) return act({ t: 'veil' });
   const need = FROST.radius + C.PLAYER_RADIUS + 0.3 - df;
   const out = df > 0.05 ? [(me.p[0] - f.x) / df, 0, (me.p[2] - f.z) / df] : [Math.sin(me.yaw), 0, Math.cos(me.yaw)];
-  if (need > left * C.MOVE_SPEED * cfg.speed * (me.slowUntil > t ? 1 - SKIM.slow : 1) && cfg.blinkDodge && mobilityReady(me, t) && canAct(me, t)) {
+  if (need > left * C.speedOf(me.wizard) * cfg.speed * (me.slowUntil > t ? 1 - SKIM.slow : 1) && cfg.blinkDodge && mobilityReady(me, t) && canAct(me, t)) {
     if (K.mobility === 'skyward') return act({ t: 'skyward' });
     if (K.mobility === 'mirror_step') return mirrorStep(me, out, act);
     if (K.mobility === 'blink') return blinkAway(me, out, act);
@@ -829,7 +829,7 @@ function respond(me, world, t, proj, th, act) {
   // Ice shards fly at ankle height: up in the air they can't reach us.
   if (proj.kind === 'skim' && airborne(me, t)) return;
   // Sparks, shards and thrown props: sidestep if there's time to clear the hit sphere, else ward.
-  const clearTime = (C.HIT_RADIUS + proj.radius - th.miss + 0.3) / (C.MOVE_SPEED * cfg.speed);
+  const clearTime = (C.HIT_RADIUS + proj.radius - th.miss + 0.3) / (C.speedOf(me.wizard) * cfg.speed);
   if (th.tc > clearTime + 0.05 && Math.random() < 0.65) return sidestep();
   if (canWard) { faceIt(); act({ t: 'block', on: true }); b.blockUntil = t + th.tc + 0.2; return; }
   sidestep();
@@ -898,13 +898,15 @@ function moveBot(me, dt, world, t) {
     if (r > C.ARENA_RADIUS - 5) { wx -= me.p[0] / r * 1.5; wz -= me.p[2] / r * 1.5; }
   }
   const wl = Math.hypot(wx, wz);
-  let speed = C.MOVE_SPEED * cfg.speed;
-  if (me.charging || me.cyclone || me.lash) speed = C.CHARGE_MOVE_SPEED;
-  else if (me.blocking) speed = C.BLOCK_MOVE_SPEED;
+  const run = C.speedOf(me.wizard);   // per wizard (wizards.js speed)
+  let speed = run * cfg.speed;
+  if (me.charging || me.cyclone || me.lash) speed = C.chargeSpeedOf(me.wizard);
+  else if (me.blocking) speed = C.blockSpeedOf(me.wizard);
   else if (flying) speed = SKY.airSpeed;
-  if (t < b.dodgeUntil && !me.cyclone && !flying && !me.charging && !me.lash) speed = Math.max(speed, C.MOVE_SPEED * 0.95);
+  if (t < b.dodgeUntil && !me.cyclone && !flying && !me.charging && !me.lash) speed = Math.max(speed, run * 0.95);
   if (me.slowUntil > t) speed *= 1 - SKIM.slow;
   if (rooted(me, t)) { speed = 0; b.vel = [0, 0]; }
+  if (wl > 0.01) speed = C.backpedalSpeed(speed, wx, wz, me.yaw);   // backpedalling is slower, like for players
   const tx = wl > 0.01 ? wx / wl * speed : 0, tz = wl > 0.01 ? wz / wl * speed : 0;
   const k = Math.min(1, dt * 12);
   if (!b.dash) { b.vel[0] += (tx - b.vel[0]) * k; b.vel[1] += (tz - b.vel[1]) * k; }
