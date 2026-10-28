@@ -62,9 +62,18 @@
 5. Screenshot it running, casting, warding and stunned. `/tmp/wa-characters/ingame.py` places all four bodies in the
    live scene, and `ingame.py model` shows how to fake a model URL with an init script.
 
-**Status at hand-off: none of Ty's character models had arrived.** Only farm props were on the Desktop
-(scarecrow, tractor, hay and others), plus the original rigged wizard zip from 10-26.
-So `public/models/wizards/` doesn't exist yet and every `model` field is still `null`.
+**Status: Ty's four models arrived at 19:40 (`Meshy_AI_<wizard>_…_texture.glb`), but they can't be used yet: they are
+static meshes.** They have no skin, no bones and no animations; they're the textured exports, not the rigged ones.
+They look great: Cinder has a lantern staff and a witch hat, Gale wears flowing violet scarves, Vesper is hooded in
+black and crimson, and Rime is the frost warden. They face +z and stand about 0.95 m tall, centred on the origin.
+`looks.js` rescales and grounds them automatically. Render: `/tmp/wa-characters/shots/desktop-models.png`.
+
+**Ty, one step per wizard:** in Meshy, open each model and run **Animate → Rig** (humanoid auto-rig). Download the rigged
+character (`Meshy_AI_Character_output.glb` or `…_rigged….glb`) to the Desktop. Exporting animations isn't needed:
+Meshy's humanoid rig uses the same 24 bone names as `wizard.glb`, so the existing seven clips drive it.
+Then: `tools/prepare-wizard-model.sh <file> <id>`, set `model` in wizards.js, and screenshot it (steps above).
+Until then every wizard keeps the recoloured base model and its flair, so nothing is broken.
+Gale's long scarves may stretch a little under the auto-rig; check her run and cyclone poses first.
 
 ## Verification
 All runs used headless Chromium (SwiftShader) against port 4103. Screenshots are in `/tmp/wa-characters/shots/`.
@@ -82,7 +91,7 @@ All runs used headless Chromium (SwiftShader) against port 4103. Screenshots are
 - **Console:** no errors from my code. One earlier run hit a spells-side `updateHud` exception, which they've since fixed;
   the final run had 0 errors. The only warnings were "GPU stall due to ReadPixels", which also appear on the untouched
   page in headless Chromium, so they come from the screenshot path, not the game.
-- `du -sh public/models/wizards`: not created yet (no models). The base `wizard.glb` is unchanged at 1.4 MB.
+- `du -sh public/models/wizards`: not created yet (the models that arrived are unrigged, see above). The base `wizard.glb` is unchanged at 1.4 MB.
 
 ## Known issues and notes
 - **Vesper vs Cinder:** both are red, but Vesper is darker, has smoke and a pool, and has a different nameplate tone.
