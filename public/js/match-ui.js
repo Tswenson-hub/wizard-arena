@@ -315,6 +315,9 @@ export function mountMatchUI(env) {
       shell.scale.setScalar(pulse);
       light.intensity = 5 + Math.sin(tsec * 4) * 1.5;
       beam.position.set(pos.x, 0, pos.z);
+      // full strength from afar, faint when you're standing next to it
+      const near = Math.min(1, Math.max(0.2, (Math.hypot(camera.position.x - pos.x, camera.position.z - pos.z) - 3) / 14));
+      beamOuter.material.opacity = 0.26 * near; beamCore.material.opacity = 0.8 * near;
       const held = r.holder != null;
       const tc = held && info.get(r.holder)?.team;
       const col = tc ? TEAM[tc].color : gold;

@@ -283,3 +283,25 @@ point farthest from living enemies.
    for spectators (a debug flag used by tools/test/modematch.mjs).
 7. **In team modes, `addBot` from the join screen / pause menu is trimmed** back to 3v3 by the fill; "Remove all" is refilled.
    You may want to grey out those buttons when `snap.match.teams` is true.
+
+## spells → modes: your match hooks are wired (reply to "match hooks in server.js / main.js")
+1. **`match.protectProp?.(prop)`** is asked before every *hit* that would shatter a prop: a projectile hitting a held prop
+   (the shield) or a standing one, a cyclone, Frostfall, a relic blast, Cataclysm meteors, Eye of the Storm, and a charging
+   goat (`goatCtx.breakProp`). If it returns true, the prop is knocked loose instead: the holder (if any) loses it
+   (`onDrop(holder, prop, 'dropped')`), and it lands idle where it was hit (broadcast as a `prop` update, no shatter). Holder
+   death still goes through `dropProp(p, true)` → `breakProp`. A cursed relic that is protected loses its curse instead of exploding.
+2. **`ctx.resetUlt(p)`** sets the charge to 0, and `addUltCharge` clamps to 0–100 anyway.
+3. **`ctx.resetGoats()`** replaces the herd with a fresh `createGoats()` (in the pen, calm) and clears every `carryingGoat`.
+4. **`join` carries `difficulty`** (the join screen's bot difficulty); `p.botPref` is set before `match.onJoin(p)`.
+5. **Team colours:** `teamColor ?? color` now drives the ring and nameplate (`Wizard.setColor`, rebuilt when it changes).
+6. **Bots** follow `objectiveFor` (focus / guard / moveTo / lift; `lift` walks to the prop and lifts it in range) and never
+   throw a prop when `canThrow` is false: a relic holder keeps it and walks its `moveTo`. All targeting and dodging go
+   through `isEnemy`.
+7. **Bot buttons** (`[data-bot]`, `#clearBots`) are disabled while `snap.match.teams` is true.
+Ultimate charge is `p.ult` (0–100) on the server and `ult` in `playerPublic`.
+
+## modes → spells: hint text while holding the Sacred Relic (main.js)
+While the local player holds the relic, the hint says "F hurl · G set down", but F only sets the relic down (`canThrow` is false).
+`snap.match.relic.propId` is the relic's prop id: when `me.carrying === match.relic.propId`, please show "F / G set down"
+(and the ability bar's F as "Drop"). match-ui.js keeps the latest `match` if you'd rather read it from there
+(I can export a getter on the returned object: `matchUI.state()`, just ask).
