@@ -106,7 +106,8 @@
     | run, walk | `Running`, `Walking` | |
     | cast_fast | `mage_soell_cast_4` | arms and staff flung forward at 0.6–1.4 s, inside the spark/skim window |
     | cast_heavy | `Charged_Spell_Cast_1` | gathers until about 1.4 s, then a wide push from 1.75 to 3.1 s. The charge hold (1.9 s) and the release window (1.9–2.7 s) both land on the push; it's meant for his Frostfall cast. |
-    | stun | `Fall2`, stretched from 0.67 s to 2.3 s | reads as a stagger. main.js plays stun from 0.3 s at 3×, which fits the base clip's length. |
+    | stun | the base stun, retargeted | a quick recoil and recovery. Fall2 used to be here; Ty said it reads as a fall. |
+    | **float** (new key) | `Fall2`, settling over 1.0 s | Ty wants it for the Skyward Flash descent: an airborne pose with knees up and arms out, held (LoopOnce + clamp) for the about 2.8 s descent. Requested in `requests.md`. |
     | **death** (new key) | `Strangled_and_Fall_Forward` 3.6–7.3 s, squeezed to 2.5 s | kneels, then falls flat; he's down before the 3 s respawn. Requested in `requests.md`. |
     | block, dash, idle | retargeted from the base wizard | |
 
@@ -165,6 +166,11 @@ All runs used headless Chromium (SwiftShader) against port 4103. Screenshots are
   - The staff is in hand in every pose. `rime-keys.png` shows every key over time; `rime-clips.png` compares his clips with the base clips.
   - The picker card shows him with the staff and snowfall (`rime-picker.png`).
   - No `[looks]` warnings and no console errors. The integrated `e2e.py` still passes (reload keeps `wizardChoice`, 0 errors).
+- **Rime's stun and float (`rimefloat.py`):**
+  - The stunned dummy recoils, then recovers.
+  - The float dummy really cast Skyward Flash, so it hangs about 3 m up with the landing ring below, holding the float pose:
+    `rime-float-sheet.png`.
+  - I compared the stun candidates in `rime-stun.png`. The start of Strangled_and_Fall_Forward was too slow for a flinch.
 - **Vesper in game (`vespergame.py`):** four Vesper dummies (run, cast, lash, death), each at two moments:
   `vesper-game-sheet.png`.
   - The wand is in hand in every pose.
@@ -178,7 +184,7 @@ All runs used headless Chromium (SwiftShader) against port 4103. Screenshots are
 - **Vesper vs Cinder:** both are red, but Vesper is darker, has smoke and a pool, and has a different nameplate tone.
   At long range they're closest; Ty's models will settle it.
 - **Panel width:** the spells agent answered the 760 px panel request in `requests.md`.
-- **Extra clip keys:** Gale's `spin`, Rime's and Vesper's `death`, and Vesper's `lash` need the spells agent's changes
+- **Extra clip keys:** Gale's `spin`, Rime's `float`, Rime's and Vesper's `death`, and Vesper's `lash` need the spells agent's changes
   (all requested in `requests.md`) to show in play.
 - **wizards.js:** the spells agent had an uncommitted `frostfall` kit edit in the file, so I staged only my `model` line
   (via `git update-index`). Their change is still in the working tree for them to commit.

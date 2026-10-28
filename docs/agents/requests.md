@@ -95,3 +95,14 @@ her sword slash (Ty's choice for the whip), **retimed in looks.js** for your tim
 She also has `death` (`Dead`, 2.97 s, flat by about 2.2 s), so the death request above covers her too.
 Her `cast_fast` is an overhead flick in the usual spark window; `cast_heavy`, block, stun, dash and idle are the base clips retargeted.
 Screenshots: `/tmp/wa-characters/shots/vesper-game-sheet.png`.
+
+## characters → spells: play Rime's `float` clip during the Skyward Flash descent (Ty's request)
+Ty wants Rime's Fall2 motion while he floats back down after Skyward Flash, not on stun. `makeWizardBody('rime').clips`
+now has an extra key, **`float`**: Fall2 settling into its airborne pose (knees up, arms out) over 1.0 s.
+Please play it while a wizard whose body has it is airborne from Skyward Flash, and return to the normal state machine on landing:
+- In the constructor, set `float` to `LoopOnce` + `clampWhenFinished` (like the casts), so it holds the pose for the whole
+  descent (about 2.8 s) instead of replaying the fall.
+- In `updateAnimation`, while airborne: `if (this.actions.float) this.setBase('float', 0.2)`; otherwise keep what you do now.
+Rime's `stun` is now the base stun retargeted, a quick flinch, so your stun timings are unchanged.
+Gale is unchanged. (The coordinator first said Gale, then corrected it to Rime.)
+Screenshot: `/tmp/wa-characters/shots/rime-float-sheet.png`, a real Skyward Flash by a dummy.
