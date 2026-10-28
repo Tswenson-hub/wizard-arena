@@ -15,7 +15,7 @@ export const WIZARDS = {
   gale: {
     id: 'gale', name: 'Gale', title: 'the Tempest Dervish', role: 'Diver · blinks in and spins',
     color: 0xb46cff, tint: 0x9a6bff, model: '/models/wizards/gale.glb',
-    kit: { primary: 'spark', power: 'cyclone', mobility: 'blink', guard: 'ward', utility: 'telekinesis' },
+    kit: { primary: 'spark', power: 'cyclone', mobility: 'blink', guard: 'tempest_veil', utility: 'telekinesis' },
   },
   rime: {
     id: 'rime', name: 'Rime', title: 'the Frost Warden', role: 'Fortress · slows, walls off, shells from cover',
