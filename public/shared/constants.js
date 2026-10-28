@@ -39,7 +39,7 @@ export const SPELLS = {
     knockback: 1.5,
   },
   heavy: {
-    damage: 38,
+    damage: 44,          // round 6: +15 %
     stun: 0.25,
     speed: 19,
     radius: 0.65,
@@ -68,6 +68,7 @@ export const SPELLS = {
     staminaCost: 6,
     knockback: 0.6,
     height: 0.35,        // flight height; a wizard in the air is above it
+    ultCharge: 0.7,      // Rime fills his ultimate fastest: Skim damage charges 30 % less
     slow: 0.35,          // movement slowed by this fraction...
     slowTime: 2,         // ...for this long (refreshed by a new hit, never stacked)
   },
@@ -81,7 +82,66 @@ export const SPELLS = {
     knockback: 0,        // a bound wizard doesn't move, knockback included
     bind: 1.25,          // rooted and silenced
   },
+  fireball: {           // Cinder's primary: a big, hot, slower bolt
+    damage: 20,          // balance match: 18 left Cinder trailing in 2 of 3 runs
+    finDamage: 28,       // the 3rd shot of the magazine
+    stun: 0.55,
+    speed: 24,
+    radius: 0.45,
+    life: 1.3,           // about 31 m
+    cooldown: 0.5,
+    staminaCost: 16,
+    knockback: 2,
+  },
+  shear: {               // Gale's primary: a short wind blade, gone after about 8 m
+    damage: 14,
+    stun: 0.45,
+    speed: 30,
+    radius: 0.85,        // wide: it's an arc of wind, not a bolt
+    finRadius: 1.35,     // the 3rd shot: a wider crescent
+    life: 8 / 30,
+    cooldown: 0.42,
+    staminaCost: 12,
+    knockback: 3,
+  },
+  hex: {                 // Vesper's primary: a crimson glyph flying a curved path to the aim point
+    damage: 11,
+    stun: 0.55,
+    speed: 22,           // along the curve
+    radius: 0.3,
+    life: 2,
+    cooldown: 0.45,
+    staminaCost: 12,
+    knockback: 1.2,
+    range: 28,           // aim points farther than this are pulled in
+    side: 0.32,          // shots 1 and 2: the control point sits this fraction of the distance to the side...
+    lob: 0.4,            // ...shot 3: this fraction above
+  },
 };
+
+// Vesper's Hex Shards: shot `i` (0, 1, 2 = the finisher) from `from` to the aim point `to` flies a quadratic Bézier
+// whose control point is pulled left, right or up. The server and clients both use this, so the curve matches.
+export function hexCurve(from, to, i) {
+  const H = SPELLS.hex;
+  const dx = to[0] - from[0], dy = to[1] - from[1], dz = to[2] - from[2];
+  const d = Math.hypot(dx, dy, dz) || 1, flat = Math.hypot(dx, dz) || 1;
+  const side = [-dz / flat, 0, dx / flat];   // left of the flight, seen from the caster
+  const mid = [from[0] + dx / 2, from[1] + dy / 2, from[2] + dz / 2];
+  const off = Math.min(5, Math.max(1.2, d * H.side));
+  const p1 = i === 2 ? [mid[0], mid[1] + Math.min(6, Math.max(1.5, d * H.lob)), mid[2]]
+    : [mid[0] + side[0] * off * (i === 0 ? 1 : -1), mid[1], mid[2] + side[2] * off * (i === 0 ? 1 : -1)];
+  // the curve's length is about the chord plus a little; the shard keeps a steady speed along it
+  const len = d * (i === 2 ? 1.18 : 1.12);
+  return { p0: from.slice(), p1, p2: to.slice(), dur: len / H.speed };
+}
+// Position and velocity on a hex curve `age` seconds in; past the end it flies straight on along the end tangent.
+export function hexAt(c, age) {
+  const s = Math.min(1, age / c.dur), u = 1 - s;
+  const p = [0, 1, 2].map(k => u * u * c.p0[k] + 2 * u * s * c.p1[k] + s * s * c.p2[k]);
+  const tan = [0, 1, 2].map(k => (2 * u * (c.p1[k] - c.p0[k]) + 2 * s * (c.p2[k] - c.p1[k])) / c.dur);
+  if (age > c.dur) for (let k = 0; k < 3; k++) p[k] += tan[k] * (age - c.dur);
+  return { p, v: tan };
+}
 
 // A goat hurled by telekinesis hits exactly like a thrown prop (Ty), it just doesn't break.
 SPELLS.goat = { ...SPELLS.prop };
@@ -125,6 +185,24 @@ export const SPELLBOOK = {
     blurb: 'Three ice shards skim the ground and slow by 35% for 2 s. 3 volleys, then a reload; the 3rd breaks a wind-up.',
     shards: 3, spreadDeg: 6,
     cooldown: 0.6,
+    magazine: 3, reload: 1.5, idleReload: 2,
+  },
+  fireball: {
+    id: 'fireball', slot: 'primary', name: 'Fireball', short: 'Fireball',
+    blurb: 'Big, hot bolts, 3 to a charge, then a reload. 20 damage; the 3rd hits for 28, stuns and breaks a wind-up.',
+    cooldown: SPELLS.fireball.cooldown,
+    magazine: 3, reload: 1.5, idleReload: 2,
+  },
+  gale_shear: {
+    id: 'gale_shear', slot: 'primary', name: 'Gale Shear', short: 'Shear',
+    blurb: 'A blade of wind out to 8 m, 3 to a charge. The 3rd is a wide crescent that breaks a wind-up.',
+    cooldown: SPELLS.shear.cooldown,
+    magazine: 3, reload: 1.5, idleReload: 2,
+  },
+  hex_shards: {
+    id: 'hex_shards', slot: 'primary', name: 'Hex Shards', short: 'Hex',
+    blurb: 'Crimson glyphs that curve in on the aim point: from the left, from the right, then a high lob that breaks a wind-up.',
+    cooldown: SPELLS.hex.cooldown,
     magazine: 3, reload: 1.5, idleReload: 2,
   },
   meteor: {
@@ -206,9 +284,23 @@ export const SPELLBOOK = {
     cooldown: 8,
   },
   ward: {
-    id: 'ward', slot: 'guard', name: 'Ward', short: 'Ward',
+    id: 'ward', slot: 'guard', name: 'Ward', short: 'Ward', ward: true,
     blurb: 'Hold to block spells from the front. Drains stamina.',
     cooldown: 0,
+  },
+  flame_ward: {
+    id: 'flame_ward', slot: 'guard', name: 'Flame Ward', short: 'Flame Ward', ward: true,
+    blurb: 'Hold: a curtain of fire blocks spells from the front. Every block lashes back, burning anyone within 6 m in front.',
+    cooldown: 0,
+    burnRange: 6, burnCone: 110,   // who the lash-back reaches
+  },
+  black_death: {
+    id: 'black_death', slot: 'guard', name: 'Black Death', short: 'Black Death', ward: true, allSides: true,
+    blurb: 'Hold: a black shroud blocks spells from every side. Damage it absorbs charges your next Lash.',
+    cooldown: 0,
+    lashCdPerDamage: 0.1,   // each absorbed point cuts Sanguine Lash's cooldown by this (s)...
+    bonusPerDamage: 0.5,    // ...and stores this much bonus damage for the next Lash...
+    maxBonus: 14,           // ...up to this
   },
   tempest_veil: {
     id: 'tempest_veil', slot: 'guard', name: 'Tempest Veil', short: 'Veil',
@@ -218,10 +310,12 @@ export const SPELLBOOK = {
   },
   glacial_bulwark: {
     id: 'glacial_bulwark', slot: 'guard', name: 'Glacial Bulwark', short: 'Bulwark',
-    blurb: 'Tap to raise an ice wall ahead that blocks everything. 10 s or 120 damage.',
-    dist: 2.5, width: 2.7, height: 2.7,
-    circles: 5, r: 0.35,  // collider chain
-    life: 10, hp: 120,
+    blurb: 'Tap to raise a 6 m ice wall ahead that blocks everything and freezes enemies who touch it. 10 s or 220 damage.',
+    dist: 2.8, width: 6, height: 4,
+    circles: 9, r: 0.4,   // collider chain
+    life: 10, hp: 220,
+    freeze: 1.5,          // an enemy touching it is frozen this long (Frostfall's freeze)...
+    refreeze: 3,          // ...at most once per wall per enemy this often
     cooldown: 12,
   },
   telekinesis: {
@@ -260,13 +354,20 @@ export const SPELLBOOK = {
   },
   eye_of_storm: {
     id: 'eye_of_storm', slot: 'ultimate', name: 'Eye of the Storm', short: 'Eye', ult: true,
-    blurb: 'Become a tornado for 3 s: 1.3× speed, unstoppable, pulls enemies within 7 m in, 12 damage every 0.5 s, then flings them out.',
+    blurb: 'Become a tornado for 3 s: 1.3× speed, unstoppable, pulls enemies within 7 m in, 8 damage every 0.5 s, then flings them out.',
     duration: 3,
     speedMul: 1.3,
     radius: 7,
     pull: 3.4,           // m/s inward on enemies inside the radius
-    tick: 0.5, damage: 12, stun: 0, knockback: 0, staminaCost: 10,   // a ward facing her soaks a tick for 10
+    tick: 0.5, damage: 8, stun: 0, knockback: 0, staminaCost: 10,   // a ward facing her soaks a tick for 10
     height: 3,           // vertical reach
+  },
+  flame_lash: {          // Flame Ward's lash-back (a hit kind)
+    id: 'flame_lash', name: 'Flame Ward', damage: 8, stun: 0, knockback: 1.5, staminaCost: 0, unblockable: true, noInterrupt: true,
+  },
+  bulwark_frost: {       // touching an enemy Glacial Bulwark (a hit kind)
+    id: 'bulwark_frost', name: 'Glacial Bulwark', damage: 4, stun: 0, knockback: 0, staminaCost: 0, unblockable: true,
+    bind: 1.5, freeze: true,
   },
   eye_burst: {           // the final fling (a hit kind, not a spell in a kit)
     id: 'eye_burst', name: 'Eye of the Storm', ult: true,
@@ -281,15 +382,14 @@ export const SPELLBOOK = {
     bind: 2.5, freeze: true,   // Frostfall's freeze
     unblockable: true,
   },
-  crimson_eclipse: {
-    id: 'crimson_eclipse', slot: 'ultimate', name: 'Crimson Eclipse', short: 'Eclipse', ult: true,
-    blurb: 'Tether up to 3 enemies within 12 m for 4 s: each loses 10 HP a second and you heal as much. Line of sight or 14 m breaks it.',
+  night_cage: {
+    id: 'night_cage', slot: 'ultimate', name: 'Night Cage', short: 'Cage', ult: true,
+    blurb: 'Hold Q to aim, release: a 7 m ring of black spikes for 4 s. Enemies inside can\'t get out, enemies outside can\'t get in.',
+    radius: 7,
+    range: 24,
     duration: 4,
-    targets: 3,
-    radius: 12,          // tether on cast
-    breakRange: 14,      // a tether snaps beyond this, or when line of sight is lost
-    tick: 0.5, damage: 5, stun: 0, knockback: 0, staminaCost: 0,   // 10 HP/s
-    unblockable: true, noInterrupt: true,
+    flyOver: 3,          // a wizard higher than this (Skyward Flash) passes over the ring
+    castPose: 0.6,
   },
 };
 
@@ -301,6 +401,20 @@ export const boltColor = (wizard) => BOLT_COLORS[wizard] ?? 0x7ad8ff;
 // Pressing R, or `idleReload` seconds without firing, reloads a partial magazine. Only the last shot
 // of a magazine (the "finisher") stuns and interrupts wind-ups; the others just do their damage.
 export const primaryMag = (id) => SPELLBOOK[id] || SPELLBOOK.spark;
+// The projectile kind each primary fires, and the kinds that follow the magazine rule (only the finisher interrupts).
+export const PRIMARY_KIND = { spark: 'fast', glacial_skim: 'skim', fireball: 'fireball', gale_shear: 'shear', hex_shards: 'hex' };
+export const PRIMARY_KINDS = new Set(Object.values(PRIMARY_KIND));
+// Ward-style guards (hold Space, drain stamina): the Ward, Flame Ward, Black Death.
+export const isWard = (id) => !!SPELLBOOK[id]?.ward;
+// Night Cage: keep `pos` (mutated) on its side of the ring. `inside` says which side it belongs to.
+export function cageClamp(pos, cage, inside) {
+  const R = SPELLBOOK.night_cage.radius, pr = PLAYER_RADIUS;
+  if ((pos[1] || 0) > SPELLBOOK.night_cage.flyOver) return false;
+  const dx = pos[0] - cage.x, dz = pos[2] - cage.z, d = Math.hypot(dx, dz);
+  if (inside && d > R - pr) { const k = (R - pr) / (d || 1); pos[0] = cage.x + dx * k; pos[2] = cage.z + dz * k; return true; }
+  if (!inside && d < R + pr) { const k = (R + pr) / (d || 1e-3); pos[0] = cage.x + (d ? dx : 1e-3) * k; pos[2] = cage.z + dz * k; return true; }
+  return false;
+}
 
 // Run speed of wizard `id` (wizards.js `speed`); wind-up and ward speeds scale with it.
 export const speedOf = (id) => WIZARDS[id]?.speed ?? MOVE_SPEED;

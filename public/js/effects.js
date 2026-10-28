@@ -3,8 +3,10 @@ import * as THREE from 'three';
 import * as C from '../shared/constants.js';
 import { makePropMesh, makeFragments } from './world.js';
 
-const SPELL_COLORS = { fast: 0x7ad8ff, heavy: 0xff7a2a, prop: 0xb48cff, skim: 0xbfeaff, lash: 0xff2a3c };
+const SPELL_COLORS = { fast: 0x7ad8ff, heavy: 0xff7a2a, prop: 0xb48cff, skim: 0xbfeaff, lash: 0xff2a3c, fireball: 0xff6a1e, shear: 0xd8c8ff, hex: 0xff1f3d };
+const HEX_SHAPES = [3, 4, 0];   // Hex Shards: a triangle, a diamond, then a crescent (0)
 const BULWARK = C.SPELLBOOK.glacial_bulwark, FROST = C.SPELLBOOK.frostfall, SMOKE = C.SPELLBOOK.smoke_screen;
+const CAGE = C.SPELLBOOK.night_cage;
 const CATA = C.SPELLBOOK.cataclysm, EYE = C.SPELLBOOK.eye_of_storm, ZERO = C.SPELLBOOK.absolute_zero;
 const realNow = () => performance.now() / 1000;
 
@@ -147,6 +149,42 @@ export class Effects {
       if (msg.fin) { const ring = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.04, 6, 20), this.mat(hot.getHex(), { opacity: 0.85 })); g.add(ring); g.userData.shell = ring; }
       light = new THREE.PointLight(color, msg.fin ? 7 : 3, msg.fin ? 9 : 6);
       g.add(light);
+    } else if (msg.kind === 'fireball') {
+      // Cinder's Fireball: a white-hot core in a fat flame shell, bigger again for the 3rd shot
+      const k = msg.fin ? 1.45 : 1;
+      const core = new THREE.Mesh(this.sphereGeo, this.mat(0xfff2c8));
+      core.scale.setScalar(0.2 * k);
+      const flame = new THREE.Mesh(this.sphereGeo, this.mat(0xff7a1e, { opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false }));
+      flame.scale.setScalar(0.42 * k);
+      const outer = new THREE.Mesh(new THREE.IcosahedronGeometry(0.6 * k, 0), this.mat(0xff3a0a, { opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false }));
+      g.add(core, flame, outer);
+      g.userData.shell = outer;
+      if (msg.fin) { const ring = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.05, 6, 24), this.mat(0xffd080, { opacity: 0.85 })); g.add(ring); g.userData.ring = ring; }
+      light = new THREE.PointLight(0xff6a1e, msg.fin ? 9 : 5, msg.fin ? 11 : 8);
+      g.add(light);
+    } else if (msg.kind === 'shear') {
+      // Gale Shear: a thin crescent blade of wind, flat, swept along its flight; the 3rd is wider
+      const R = msg.r || C.SPELLS.shear.radius;
+      const blade = new THREE.Mesh(new THREE.RingGeometry(R * 0.78, R, 24, 1, Math.PI * 0.15, Math.PI * 0.7).rotateX(-Math.PI / 2).rotateY(-Math.PI / 2 - Math.PI * 0.5),
+        this.mat(0xe8dcff, { opacity: msg.fin ? 0.9 : 0.7, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
+      const inner = new THREE.Mesh(new THREE.RingGeometry(R * 0.55, R * 0.8, 24, 1, Math.PI * 0.2, Math.PI * 0.6).rotateX(-Math.PI / 2).rotateY(-Math.PI),
+        this.mat(0xa070ff, { opacity: 0.45, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
+      g.add(blade, inner);
+      g.userData.aimV = new THREE.Vector3(msg.v[0], msg.v[1], msg.v[2]);
+    } else if (msg.kind === 'hex') {
+      // Vesper's Hex Shards: a spinning crimson glyph (triangle, diamond, crescent) with a dark core
+      const shape = HEX_SHAPES[msg.curve?.shot ?? 0];
+      const geo = shape ? new THREE.RingGeometry(0.2, 0.32, shape, 1) : new THREE.RingGeometry(0.22, 0.34, 16, 1, 0, Math.PI * 1.25);
+      const glyph = new THREE.Mesh(geo, this.mat(0xff2a48, { side: THREE.DoubleSide, opacity: 0.95 }));
+      const glow = new THREE.Mesh(this.sphereGeo, this.mat(0xff1f3d, { opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false }));
+      glow.scale.setScalar(msg.fin ? 0.38 : 0.26);
+      const dark = new THREE.Mesh(this.sphereGeo, this.mat(0x2a0008));
+      dark.scale.setScalar(0.08);
+      if (msg.fin) glyph.scale.setScalar(1.4);
+      g.add(glyph, glow, dark);
+      g.userData.glyph = glyph;
+      light = new THREE.PointLight(0xff1f3d, msg.fin ? 4 : 2.2, 6);
+      g.add(light);
     } else if (msg.kind === 'heavy') {
       const core = new THREE.Mesh(this.sphereGeo, this.mat(0xfff0c0));
       core.scale.setScalar(0.35);
@@ -190,7 +228,7 @@ export class Effects {
       id: msg.id, kind: msg.kind, group: g,
       pos: new THREE.Vector3(msg.p[0], msg.p[1], msg.p[2]),
       vel: new THREE.Vector3(msg.v[0], msg.v[1], msg.v[2]),
-      g: msg.g || 0, life: msg.life, age: 0, trail: 0, fin: !!msg.fin, color,
+      g: msg.g || 0, life: msg.life, age: 0, trail: 0, fin: !!msg.fin, color, curve: msg.curve || null,
     });
   }
 
@@ -205,6 +243,9 @@ export class Effects {
       else if (pr.kind === 'fast') { this.burst(p, pr.color, pr.fin ? 22 : 14, pr.fin ? 5 : 4, pr.fin ? 0.5 : 0.4); if (pr.fin) this.burst(p, 0xffffff, 8, 3, 0.3, 0); }
       else if (pr.kind === 'skim') this.burst(p, 0xdff6ff, 9, 3, 0.25, 4);
       else if (pr.kind === 'lash') this.burst(p, 0xff2a3c, 14, 4, 0.35);
+      else if (pr.kind === 'fireball') { this.burst(p, 0xff7a1e, pr.fin ? 30 : 20, pr.fin ? 6 : 5, pr.fin ? 0.7 : 0.55); this.burst(p, 0xffd080, 8, 3, 0.35, 0); }
+      else if (pr.kind === 'shear') this.burst(p, 0xe8dcff, 12, 5, 0.3, 0);
+      else if (pr.kind === 'hex') this.burst(p, 0xff1f3d, pr.fin ? 18 : 12, 4, 0.35);
       // thrown props shatter via the propBreak message
     } else {
       this.burst(p, pr.color ?? SPELL_COLORS[pr.kind] ?? 0xffffff, 6, 1.5, 0.3);
@@ -247,12 +288,12 @@ export class Effects {
     for (let i = 0; i < 10; i++) this.dust(p, 2);
   }
 
-  blockFlash(pos) {
-    const flash = new THREE.Mesh(new THREE.IcosahedronGeometry(1.3, 1), this.mat(0x9ae4ff, { opacity: 0.6, wireframe: true }));
+  blockFlash(pos, color = 0x9ae4ff) {
+    const flash = new THREE.Mesh(new THREE.IcosahedronGeometry(1.3, 1), this.mat(color, { opacity: 0.6, wireframe: true }));
     flash.position.copy(pos);
     this.scene.add(flash);
     this.particles.push({ mesh: flash, vel: new THREE.Vector3(), life: 0, maxLife: 0.3, grav: 0, grow: 0.9 });
-    this.burst(pos, 0x9ae4ff, 10, 3, 0.3, 0);
+    this.burst(pos, color, 10, 3, 0.3, 0);
   }
 
   teleport(from, to) {
@@ -688,15 +729,15 @@ export class Effects {
     for (let i = 0; i < 6; i++) this.dust(pos, 3);
   }
   // The caster's targeting circle while Q is held (Cataclysm).
-  cataAim() {
+  cataAim(radius = CATA.radius, color = 0xff7a2a, rim = 0xffc080) {
     const g = new THREE.Group();
     const fill = new THREE.Mesh(new THREE.CircleGeometry(1, 64).rotateX(-Math.PI / 2),
-      new THREE.MeshBasicMaterial({ color: 0xff7a2a, transparent: true, opacity: 0.12, depthWrite: false }));
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.12, depthWrite: false }));
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.95, 1, 96).rotateX(-Math.PI / 2),
-      new THREE.MeshBasicMaterial({ color: 0xffc080, transparent: true, opacity: 0.9, depthWrite: false }));
+      new THREE.MeshBasicMaterial({ color: rim, transparent: true, opacity: 0.9, depthWrite: false }));
     fill.position.y = ring.position.y = 0.16;
     g.add(fill, ring);
-    g.scale.setScalar(CATA.radius);
+    g.scale.setScalar(radius);
     g.visible = false;
     this.scene.add(g);
     return g;
@@ -784,35 +825,54 @@ export class Effects {
   }
   zeroCancel(e) { if (e) { this.zeros?.delete(e); this.scene.remove(e.group); } }
 
-  // Vesper's Crimson Eclipse: a pulsing crimson beam between two points (main.js moves it every frame).
-  tether() {
+  // Vesper's Night Cage: a ring of jagged obsidian spikes rising out of the ground, and a dark wall shimmering up
+  // from it. `left` = seconds it stands.
+  nightCage(p, left) {
     const g = new THREE.Group();
-    const core = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1, 8, 1, true).translate(0, 0.5, 0).rotateX(Math.PI / 2),
-      new THREE.MeshBasicMaterial({ color: 0xffd0d8, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false }));
-    const glow = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 1, 10, 1, true).translate(0, 0.5, 0).rotateX(Math.PI / 2),
-      new THREE.MeshBasicMaterial({ color: 0xff1f3d, transparent: true, opacity: 0.45, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
-    g.add(core, glow);
+    g.position.set(p[0], 0, p[2]);
+    const obsidian = new THREE.MeshStandardMaterial({ color: 0x0c0810, emissive: 0x3a0010, emissiveIntensity: 0.6, roughness: 0.25, metalness: 0.4, flatShading: true });
+    const spikes = new THREE.Group();
+    let seed = 7;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const n = 44;
+    for (let i = 0; i < n; i++) {
+      const a = i / n * Math.PI * 2 + rnd() * 0.05;
+      const h = 0.9 + rnd() * 1.6;
+      const sp = new THREE.Mesh(new THREE.ConeGeometry(0.22 + rnd() * 0.18, h, 4), obsidian);
+      sp.position.set(Math.sin(a) * CAGE.radius, h / 2, Math.cos(a) * CAGE.radius);
+      sp.rotation.set((rnd() - 0.5) * 0.5, rnd() * 3, (rnd() - 0.5) * 0.5);
+      spikes.add(sp);
+    }
+    const wall = new THREE.Mesh(new THREE.CylinderGeometry(CAGE.radius, CAGE.radius, 4, 72, 1, true),
+      new THREE.MeshBasicMaterial({ map: windTexture(), color: 0x2a0a18, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false }));
+    wall.position.y = 2;
+    const ring = new THREE.Mesh(new THREE.RingGeometry(CAGE.radius - 0.35, CAGE.radius + 0.35, 96).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0x050205, transparent: true, opacity: 0.85, depthWrite: false }));
+    ring.position.y = 0.14;
+    const glow = new THREE.Mesh(new THREE.RingGeometry(CAGE.radius - 0.05, CAGE.radius + 0.05, 96).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0xff1f3d, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false }));
+    glow.position.y = 0.16;
+    g.add(ring, glow, spikes, wall);
+    spikes.scale.y = 0.05; wall.scale.y = 0.05;
     this.scene.add(g);
-    const e = { group: g, core, glow, phase: Math.random() * 6 };
-    e.set = (a, b) => {
-      g.position.copy(a);
-      g.lookAt(b);
-      const l = a.distanceTo(b);
-      const w = 1 + Math.sin(this.clock * 14 + e.phase) * 0.35;
-      core.scale.set(w, w, l); glow.scale.set(w * 1.2, w * 1.2, l);
-      glow.material.opacity = 0.35 + Math.sin(this.clock * 9 + e.phase) * 0.15;
-      // blood motes running along the beam, from the victim to Vesper
-      if (Math.random() < 0.5) {
-        const k = Math.random();
-        const m = new THREE.Mesh(this.particleGeo, this.mat(0xff2a48, { opacity: 1 }));
-        m.position.copy(b).lerp(a, k);
-        m.scale.setScalar(0.5 + Math.random() * 0.5);
-        this.scene.add(m);
-        this.particles.push({ mesh: m, vel: a.clone().sub(b).normalize().multiplyScalar(6), life: 0, maxLife: 0.25, grav: 0, shrink: true });
-      }
-    };
-    e.dispose = () => this.scene.remove(g);
+    const e = { group: g, spikes, wall, glow, born: realNow(), endAt: realNow() + left };
+    (this.cages ??= new Set()).add(e);
+    for (let i = 0; i < 24; i++) { const a = i / 24 * Math.PI * 2; this.dust(new THREE.Vector3(p[0] + Math.sin(a) * CAGE.radius, 0.2, p[2] + Math.cos(a) * CAGE.radius), 1); }
     return e;
+  }
+  endCage(e) { if (e) e.endAt = Math.min(e.endAt, realNow()); }
+
+  // Flame Ward's lash-back: a tongue of fire licking out in front of Cinder.
+  flameLash(p, yaw) {
+    const fx = Math.sin(yaw), fz = Math.cos(yaw);
+    for (let i = 0; i < 26; i++) {
+      const a = yaw + (Math.random() - 0.5) * 1.6, sp = 6 + Math.random() * 8;
+      const m = new THREE.Mesh(this.particleGeo, this.mat(Math.random() < 0.5 ? 0xff6a1e : 0xffc060, { opacity: 1 }));
+      m.position.set(p[0] + fx * 0.8, (p[1] || 0) + 0.6 + Math.random() * 1.2, p[2] + fz * 0.8);
+      m.scale.setScalar(0.6 + Math.random() * 0.8);
+      this.scene.add(m);
+      this.particles.push({ mesh: m, vel: new THREE.Vector3(Math.sin(a) * sp, 1 + Math.random() * 2, Math.cos(a) * sp), life: 0, maxLife: 0.3 + Math.random() * 0.2, grav: -2, shrink: true });
+    }
   }
 
   // ---------------------------------------------------------------- update
@@ -820,21 +880,29 @@ export class Effects {
     this.clock += dt;
     for (const pr of this.projectiles.values()) {
       pr.age += dt;
-      pr.vel.y -= pr.g * dt;
-      pr.pos.addScaledVector(pr.vel, dt);
+      if (pr.curve) {
+        // Hex Shards: the same Bézier the server flies
+        const at = C.hexAt(pr.curve, pr.age);
+        pr.pos.set(at.p[0], at.p[1], at.p[2]); pr.vel.set(at.v[0], at.v[1], at.v[2]);
+        if (pr.group.userData.glyph) { pr.group.userData.glyph.rotation.z += dt * 9; pr.group.userData.glyph.lookAt(pr.group.position.clone().sub(pr.vel)); }
+      } else {
+        pr.vel.y -= pr.g * dt;
+        pr.pos.addScaledVector(pr.vel, dt);
+      }
       pr.group.position.copy(pr.pos);
       if (pr.group.userData.shell) { pr.group.userData.shell.rotation.x += dt * 6; pr.group.userData.shell.rotation.y += dt * 4; }
       if (pr.group.userData.aimV) pr.group.lookAt(pr.pos.clone().add(pr.vel));
       if (pr.group.userData.spin) { const s = pr.group.userData.spin; pr.group.rotation.x += s.x * dt; pr.group.rotation.y += s.y * dt; pr.group.rotation.z += s.z * dt; }
       // trail
       pr.trail += dt;
-      const interval = pr.kind === 'heavy' || pr.kind === 'lash' ? 0.025 : 0.035;
+      if (pr.group.userData.ring) pr.group.userData.ring.rotation.y += dt * 8;
+      const interval = pr.kind === 'heavy' || pr.kind === 'lash' || pr.kind === 'fireball' ? 0.025 : 0.035;
       if (pr.trail > interval) {
         pr.trail = 0;
         const m = new THREE.Mesh(this.sphereGeo, this.mat(pr.kind === 'fast' ? pr.color : SPELL_COLORS[pr.kind], { opacity: pr.fin ? 0.7 : 0.5 }));
         m.position.copy(pr.pos);
         if (pr.kind === 'prop') m.position.add(new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(0.6));
-        m.scale.setScalar((pr.kind === 'heavy' ? 0.5 : pr.kind === 'prop' ? 0.14 : pr.kind === 'skim' ? 0.11 : pr.kind === 'lash' ? 0.13 : 0.2) * (pr.fin ? 1.8 : 1));
+        m.scale.setScalar((pr.kind === 'heavy' ? 0.5 : pr.kind === 'fireball' ? 0.3 : pr.kind === 'prop' ? 0.14 : pr.kind === 'skim' ? 0.11 : pr.kind === 'lash' ? 0.13 : pr.kind === 'shear' ? 0.16 : 0.2) * (pr.fin ? 1.6 : 1));
         this.scene.add(m);
         this.particles.push({ mesh: m, vel: new THREE.Vector3(), life: 0, maxLife: pr.kind === 'heavy' ? 0.4 : 0.25, grav: 0, shrink: true });
       }
@@ -908,6 +976,17 @@ export class Effects {
         const inx = -Math.sin(a), inz = -Math.cos(a);
         this.particles.push({ mesh: m, vel: new THREE.Vector3((inx * 0.6 + inz) * r * 1.6, 1.5, (inz * 0.6 - inx) * r * 1.6), life: 0, maxLife: 0.45, grav: -2, shrink: true });
       }
+    }
+    for (const e of this.cages || []) {
+      const k = Math.min(1, (rn - e.born) / 0.35), fade = Math.max(0, Math.min(1, (e.endAt - rn) / 0.5 + 1));
+      if (rn > e.endAt + 0.5) { this.cages.delete(e); this.scene.remove(e.group); continue; }
+      const grow = 1 - Math.pow(1 - k, 3);
+      e.spikes.scale.y = Math.max(0.05, grow * (rn > e.endAt ? fade : 1));
+      e.wall.scale.y = Math.max(0.05, grow * (rn > e.endAt ? fade : 1));
+      e.wall.material.opacity = (0.4 + Math.sin(this.clock * 3) * 0.12) * (rn > e.endAt ? fade : 1);
+      e.wall.material.map.offset.y -= dt * 0.25;
+      e.wall.rotation.y += dt * 0.15;
+      e.glow.material.opacity = 0.5 + Math.sin(this.clock * 6) * 0.3;
     }
     for (const e of this.zeros || []) {
       const k = Math.min(1, (rn - e.born) / e.total);

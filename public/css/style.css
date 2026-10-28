@@ -159,3 +159,9 @@ kbd {
 .ab.ult.ready .name { color: #fff; }
 .ab.ult.ready .pct { color: var(--ult); font-weight: 700; }
 @keyframes ultGlow { 50% { box-shadow: 0 0 26px var(--ult), inset 0 0 18px var(--ult); } }
+
+/* Black Death: damage it absorbed charges the next Lash; a crimson ring fills around the RMB slot (--whip 0..1). */
+.ab.whip::after { content: ''; position: absolute; inset: 0; border-radius: 12px; padding: 3px; z-index: 2; pointer-events: none;
+  background: conic-gradient(#ff1f3d calc(var(--whip, 0) * 1turn), transparent 0);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; }
+.ab.whip { box-shadow: 0 0 calc(var(--whip, 0) * 16px) rgba(255, 31, 61, 0.8); }

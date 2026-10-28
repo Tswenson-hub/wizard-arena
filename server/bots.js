@@ -43,7 +43,9 @@ const DIFFICULTY = {
 const CYC = C.SPELLBOOK.cyclone, SKY = C.SPELLBOOK.skyward, LASH = C.SPELLBOOK.sanguine_lash;
 const BULWARK = C.SPELLBOOK.glacial_bulwark, SKIM = C.SPELLS.skim, RELIC = C.SPELLBOOK.trapped_relic, FROST = C.SPELLBOOK.frostfall;
 const SMOKE = C.SPELLBOOK.smoke_screen;
-const CATA = C.SPELLBOOK.cataclysm, EYE = C.SPELLBOOK.eye_of_storm, ZERO = C.SPELLBOOK.absolute_zero, ECLIPSE = C.SPELLBOOK.crimson_eclipse;
+const CATA = C.SPELLBOOK.cataclysm, EYE = C.SPELLBOOK.eye_of_storm, ZERO = C.SPELLBOOK.absolute_zero, CAGE = C.SPELLBOOK.night_cage;
+const SHEAR = C.SPELLS.shear, HEX = C.SPELLS.hex, FIRE = C.SPELLS.fireball;
+const SHEAR_RANGE = SHEAR.speed * SHEAR.life;
 let clouds = [];   // Smoke Screen clouds this tick: nobody sees into, out of or through them
 let match = null;  // game modes (server/match.js): who is an enemy
 let players = null;
@@ -380,6 +382,8 @@ function think(me, world, t) {
 
   // a veiled Gale swallows everything for 3 s: don't waste shots, wait it out (movement backs off)
   if (veiled(target, t)) return;
+  // a Flame Ward facing us burns back every blocked shot within 6 m: back off rather than feed it
+  if (flameWarding(target, me, t)) { b.backOff = t + 0.4; if (!busyCasting(target)) return; }
 
   // ---- punish a meteor, lash or cyclone wind-up with a spark (interrupts it)
   if (busyCasting(target) && los && d < 26) {
@@ -479,7 +483,8 @@ function think(me, world, t) {
   }
 
   const targetStunned = isStunned(target, t);
-  const targetWarded = target.blocking && target.st > 30 && facing(target, me.p);
+  // (Black Death blocks from every side, and every blocked shot charges her whip)
+  const targetWarded = target.blocking && target.st > 30 && (facing(target, me.p) || !!C.SPELLBOOK[kit(target).guard]?.allSides);
   const powerReady = t >= me.cd.power && !meAir, fastReady = primaryReady(me, t);
   // the magazine's last shot is the one that interrupts: keep it for a wind-up (the punish check above fires it)
   const savingFinisher = me.ammo === 1 && !busyCasting(target) && (b.saveRoll ??= Math.random() < cfg.saveFinisher);
@@ -571,10 +576,20 @@ function tryUltimate(me, world, t, act, target) {
     const n = foesNear(me, world, me.p, ZERO.radius - 1, t, { sight: true }).length;
     if (!(n >= 2 || (n >= 1 && (patient || lowHp)))) return false;
     act({ t: 'ult' });
-  } else if (U === 'crimson_eclipse') {
-    const n = foesNear(me, world, me.p, ECLIPSE.radius - 1.5, t, { sight: true }).length;
-    if (!(n >= 2 || (n >= 1 && (lowHp || patient)))) return false;
-    act({ t: 'ult' });
+  } else if (U === 'night_cage') {
+    // cage the most enemies we can (centred on them), or one weak or stuck target; we fight on inside with them
+    let best = null, bn = 0;
+    for (const q of foesNear(me, world, me.p, CAGE.range, t, { ground: true })) {
+      const n = foesNear(me, world, q.p, CAGE.radius - 2, t, { ground: true });
+      const score = n.length + (q.hp < 45 || rooted(q, t) || isStunned(q, t) ? 0.6 : 0);
+      if (score > bn) { bn = score; best = n; }
+    }
+    if (!best || !(bn >= 2 || (patient && bn >= 1)) || me.hp < 30) return false;
+    let x = 0, z = 0;
+    for (const q of best) { x += q.p[0]; z += q.p[2]; }
+    x /= best.length; z /= best.length;
+    me.yaw = yawTo(me.p, [x, 0, z]);
+    act({ t: 'ult', at: [x, z] });
   } else return false;
   return me.ult < C.ULT_CHARGE.max;
 }
@@ -659,36 +674,44 @@ function reactToUltimates(me, world, t, act) {
       if (mobOut(out)) continue;
       if (canMove) { const l = Math.hypot(out[0], out[2]) || 1; b.dodgeVec = [out[0] / l, out[2] / l]; b.dodgeUntil = q.zero.at + 0.1; }
     }
-    // Crimson Eclipse tethered to us: pull the tether out of range or sight
-    if (q.eclipse?.targets?.has(me.id)) {
-      const rec = threat('ecl' + q.id); rec.until = q.eclipse.until + 0.2;
-      if (rec.ignore || t < rec.seenAt + rec.react) continue;
-      const out = [me.p[0] - q.p[0], 0, me.p[2] - q.p[2]];
-      if (!rec.mob && mobOut(out)) { rec.mob = true; continue; }
-      if (!canMove) continue;
-      const cover = coverPoint(me, q);
-      const to = cover && Math.hypot(cover[0] - me.p[0], cover[1] - me.p[2]) < 6 ? [cover[0] - me.p[0], cover[1] - me.p[2]] : [out[0], out[2]];
-      const l = Math.hypot(to[0], to[1]) || 1;
-      b.dodgeVec = [to[0] / l, to[1] / l]; b.dodgeUntil = t + 0.25;
-    }
+    // (a Night Cage needs no reaction: the server keeps everyone on their side)
   }
 }
 
 const LASH_RANGE = C.SPELLS.lash.speed * C.SPELLS.lash.life;
+const flameWarding = (q, me, t) => !q.decoy && kit(q).guard === 'flame_ward' && q.blocking && q.st > 15 && dist2D(q.p, me.p) < C.SPELLBOOK.flame_ward.burnRange + 1 && facing(q, me.p);
 const newThreat = (cfg, t) => ({ seenAt: t, react: cfg.react * rand(0.8, 1.3), handled: false, ignore: Math.random() > cfg.dodge });
 
 // Our primary spell at the target: a spark, or a Glacial Skim fan along the ground.
 function primary(me, target, act, cfg, world, t) {
-  if (kit(me).primary === 'glacial_skim') return skim(me, target, act, cfg, world, t);
-  if (dist2D(me.p, target.p) < 28) return spark(me, target, act, cfg, world);
+  const P = kit(me).primary, d = dist2D(me.p, target.p);
+  if (P === 'glacial_skim') return skim(me, target, act, cfg, world, t);
+  if (P === 'hex_shards') return d < HEX.range ? hex(me, target, act, cfg, world) : undefined;
+  if (P === 'gale_shear') return d < SHEAR_RANGE - 0.5 ? bolt(me, target, act, cfg, world, 'shear') : undefined;
+  if (P === 'fireball') return d < FIRE.speed * FIRE.life - 2 ? bolt(me, target, act, cfg, world, 'fireball') : undefined;
+  if (d < 28) return bolt(me, target, act, cfg, world, 'fast');
 }
 
-function spark(me, target, act, cfg, world) {
+// A straight primary bolt: Spark, Fireball or Gale Shear.
+function bolt(me, target, act, cfg, world, kind) {
+  const spec = C.SPELLS[kind];
   const from = [me.p[0], me.p[1] + 1.3, me.p[2]];
-  const dir = aimAt(me, from, target, C.SPELLS.fast.speed, 0, cfg);
-  if (lineBlocked(from, dir, dist2D(me.p, target.p), C.SPELLS.fast.radius, cfg.goatAware && world.goats)) return;
+  const dir = aimAt(me, from, target, spec.speed, 0, cfg);
+  if (lineBlocked(from, dir, dist2D(me.p, target.p), Math.min(spec.radius, 0.5), cfg.goatAware && world.goats)) return;
   me.yaw = yawTo(me.p, target.p);
-  act({ t: 'cast', kind: 'fast', dir });
+  act({ t: 'cast', kind, dir });
+}
+
+// Hex Shards curve in on the aim point, so the bot sends where the target will be (led by the curve's flight time).
+// Curves bend around thin cover, so only the end of the flight needs to be clear.
+function hex(me, target, act, cfg, world) {
+  const from = [me.p[0], me.p[1] + 1.3, me.p[2]];
+  const d = Math.hypot(target.p[0] - from[0], target.p[2] - from[2]);
+  const dir = aimAt(me, from, target, HEX.speed / 1.15, 0, cfg);
+  const to = [from[0] + dir[0] * d, Math.max(0.6, from[1] + dir[1] * d), from[2] + dir[2] * d];
+  if (C.pillarBlocks([to[0] - dir[0] * 4, 0, to[2] - dir[2] * 4], to, 0.2)) return;
+  me.yaw = yawTo(me.p, target.p);
+  act({ t: 'cast', kind: 'hex', dir, target: to });
 }
 
 // The shards fly at ankle height, so anything in the air is out of reach and fences and crops are walls.
@@ -754,7 +777,7 @@ function respondGoat(me, world, g, vel, tc, t, act) {
   if (veiled(me, t)) return;   // it bounces off the veil
   if (veilReady(me, t)) return act({ t: 'veil' });
   if (wallReady(me, t) && Math.hypot(g.x - me.p[0], g.z - me.p[2]) > BULWARK.dist + 1.2) return raiseWall(me, [g.x, 0, g.z], act);
-  if (K.guard === 'ward' && me.st >= C.GOAT.blockCost + 5) {
+  if (C.isWard(K.guard) && me.st >= C.GOAT.blockCost + 5) {
     me.yaw = Math.atan2(g.x - me.p[0], g.z - me.p[2]);
     act({ t: 'block', on: true });
     b.blockUntil = t + tc + 0.45;
@@ -888,7 +911,7 @@ function respondCyclone(me, caster, t, act) {
   if (veiled(me, t)) return;
   if (veilReady(me, t)) return act({ t: 'veil' });
   if (wallReady(me, t) && d > BULWARK.dist + 0.6) return raiseWall(me, caster.p, act);
-  if (K.guard === 'ward' && need > left * C.speedOf(me.wizard) * cfg.speed && me.st >= CYC.staminaCost + 5 && !me.carrying && cfg.dodge > 0.8) {
+  if (C.isWard(K.guard) && need > left * C.speedOf(me.wizard) * cfg.speed && me.st >= CYC.staminaCost + 5 && !me.carrying && cfg.dodge > 0.8) {
     me.yaw = Math.atan2(caster.p[0] - me.p[0], caster.p[2] - me.p[2]);
     act({ t: 'block', on: true });
     b.blockUntil = caster.cyclone.pulseAt + 0.15;
@@ -935,7 +958,7 @@ function respondFrostfall(me, f, df, t, act) {
 function lashPlan(me, d, t) {
   const K = kit(me);
   if (wallReady(me, t) && d > BULWARK.dist + 1) return 'wall';
-  if (K.guard === 'ward' && me.st >= C.SPELLS.lash.staminaCost + 15 && !me.carrying && !airborne(me, t)) return 'ward';
+  if (C.isWard(K.guard) && me.st >= C.SPELLS.lash.staminaCost + 15 && !me.carrying && !airborne(me, t)) return 'ward';
   if (me.bot.cfg.blinkDodge && mobilityReady(me, t) && K.mobility !== 'skyward') return 'whip';
   return 'side';
 }
@@ -991,7 +1014,7 @@ function respond(me, world, t, proj, th, act) {
     return raiseWall(me, [me.p[0] + incoming[0], 0, me.p[2] + incoming[2]], act);
   }
 
-  const canWard = K.guard === 'ward' && me.st >= Math.min(spec.staminaCost + 5, 60) && !me.carrying && !airborne(me, t);
+  const canWard = C.isWard(K.guard) && me.st >= Math.min(spec.staminaCost + 5, 60) && !me.carrying && !airborne(me, t);
   const sidestep = () => {
     if (rooted(me, t)) return;
     const vx = proj.v[0], vz = proj.v[2];
@@ -1058,6 +1081,8 @@ function moveBot(me, dt, world, t) {
       const fx = dx / d, fz = dz / d;
       const los = hasLOS(me.p, target.p);
       const lowHp = me.hp < 35 && me.hp < target.hp;
+      // Gale Shear only reaches 8 m: she fights up close
+      const range = kit(me).primary === 'gale_shear' ? [2.5, 6] : cfg.range;
       const diving = t < (b.diveUntil || 0) && t >= me.cd.power && !me.carrying;
       let fwd = 0;
       if (me.eye) fwd = d > 1.2 ? 1 : 0;                 // the tornado goes for them
@@ -1069,8 +1094,9 @@ function moveBot(me, dt, world, t) {
       } else if (!los) fwd = d > 6 ? 0.6 : 0;            // flank around the obstruction
       else if (diving) fwd = d > 3 ? 1 : 0;              // closing in for a cyclone
       else if (veiled(target, t)) fwd = d < 12 ? -1 : 0;  // a veiled Gale is coming: keep away until it drops
-      else if (d > cfg.range[1]) fwd = 1;
-      else if (d < cfg.range[0]) fwd = -0.8;
+      else if (t < (b.backOff || 0)) fwd = -1;             // a Flame Ward close in front: get out of its reach
+      else if (d > range[1]) fwd = 1;
+      else if (d < range[0]) fwd = -0.8;
       if (t >= b.strafeUntil) { if (Math.random() < 0.6) b.strafe *= -1; b.strafeUntil = t + rand(0.5, 1.8) / (cfg.dodge + 0.4); }
       const strafe = diving ? 0.35 : los ? 0.9 : 1;
       if (!(lowHp && los && wx)) { wx = fx * fwd + fz * strafe * b.strafe; wz = fz * fwd - fx * strafe * b.strafe; }
@@ -1084,6 +1110,14 @@ function moveBot(me, dt, world, t) {
       // nobody to fight: drift toward the middle
       wx = -me.p[0]; wz = -me.p[2];
       if (Math.hypot(wx, wz) < 6) { wx = 0; wz = 0; }
+    }
+    // keep off enemy ice walls: touching one freezes
+    for (const c of C.COLLIDERS) {
+      if (c.kind !== 'bulwark') continue;
+      const w = world.walls.get(c.wall);
+      if (!w || !foeId(me, w.owner)) continue;
+      const dx = me.p[0] - c.x, dz = me.p[2] - c.z, dd = Math.hypot(dx, dz);
+      if (dd < c.r + 1.6 && dd > 1e-3) { wx += dx / dd * 2.5; wz += dz / dd * 2.5; }
     }
     // keep off the edge
     const r = Math.hypot(me.p[0], me.p[2]);

@@ -74,7 +74,7 @@ const local = {
   frostAim: false,             // RMB held with Frostfall: aiming the circle
   frozenUntil: 0,              // frozen by a Frostfall (the bind, shown as ice)
   ult: 0,                      // ultimate charge (the server's, from snapshots)
-  cataAim: false,              // Q held with Cataclysm: aiming the circle
+  cataAim: false,              // Q held with Cataclysm or Night Cage: aiming the circle
   eyeUntil: 0, zeroUntil: 0,   // our own Eye of the Storm / Absolute Zero flare: nothing else can be cast
   pull: null,                  // { v: [x, z], until } dragged by an enemy Eye of the Storm
   fHold: null,                 // { start } while F is held with nothing carried (Trapped Relic: hold to curse)
@@ -97,8 +97,9 @@ try { const w = localStorage.getItem('wizardChoice'); if (C.isWizard(w)) wantWiz
 const kit = () => C.kitOf(me ? me.wizard : wantWizard);
 const SPELL = C.SPELLBOOK;
 const FROST = SPELL.frostfall, SMOKE = SPELL.smoke_screen;
-const CATA = SPELL.cataclysm, EYE = SPELL.eye_of_storm, ZERO = SPELL.absolute_zero, ECLIPSE = SPELL.crimson_eclipse;
-const ULT_KINDS = new Set(['cataclysm', 'eye_of_storm', 'eye_burst', 'absolute_zero', 'crimson_eclipse']);
+const CATA = SPELL.cataclysm, EYE = SPELL.eye_of_storm, ZERO = SPELL.absolute_zero, CAGE = SPELL.night_cage;
+const ULT_KINDS = new Set(['cataclysm', 'eye_of_storm', 'eye_burst', 'absolute_zero']);
+const AIMED_ULTS = { cataclysm: CATA, night_cage: CAGE };   // hold Q to aim a circle, release
 const LASH = SPELL.sanguine_lash, MIRROR = SPELL.mirror_step, BULWARK = SPELL.glacial_bulwark, RELIC = SPELL.trapped_relic, SKIM = SPELL.glacial_skim;
 
 function chooseWizard(id) {
@@ -221,6 +222,7 @@ function onWelcome(msg) {
   for (const f of msg.frostfalls || []) frosts.set(f.id, effects.frostfall(f.p, f.left));
   for (const c of msg.smokes || []) effects.smoke(c.p, c.left);
   for (const st of msg.strikes || []) strikes.set(st.id, effects.meteorStrike(st.p, st.left));
+  for (const c of msg.cages || []) cages.set(c.id, { ...c, x: c.p[0], z: c.p[2], fx: effects.nightCage(c.p, c.left) });
   me = players.get(myId);
   for (const d of msg.decoys || []) spawnDecoy(d);
   local.pos.set(me.targetPos.x, 0, me.targetPos.z);
@@ -271,7 +273,9 @@ function applySnapshot(w, s) {
   const shown = s.teamColor ?? s.color;
   if (shown != null && shown !== w.shownColor) { w.setColor(shown); w.shownColor = shown; }
   if (!s.eye && w.eyeFx) endEye(w);                  // missed the end message
-  if (!s.eclipse && w.tethers) endTethers(w);
+  // Black Death's absorbed damage rides on the next Lash: the coiled whip glows with it (looks.js)
+  if ((s.lashBonus ?? 0) !== (w.lashBonus ?? 0)) { w.lashBonus = s.lashBonus ?? 0; w.body?.setWhipGlow?.(w.lashBonus / SPELL.black_death.maxBonus); }
+  w.team = s.team ?? null;
   if (s.veil !== undefined && !!s.veil !== w.veiled) w.veiled = !!s.veil;
   if (!s.lashing && w.lashT >= 0 && w !== me) w.endLash();
   if (s.dead !== w.dead) w.dead = s.dead;
@@ -394,6 +398,9 @@ function handleMessage(msg) {
       const owner = players.get(msg.owner);
       if (owner) {
         if (msg.kind === 'fast') { owner.oneShot('cast_fast', 0.45, 2.6, 0.25); msg.fin ? sfx.castFinisher(msg.p) : sfx.castFast(msg.p); }
+        else if (msg.kind === 'fireball') { owner.oneShot('cast_fast', 0.5, 2.3, 0.25); msg.fin ? sfx.castFinisher(msg.p) : sfx.play('spark_cast', { pos: msg.p, vol: 0.7, rate: 0.85 }); }
+        else if (msg.kind === 'shear') { owner.oneShot('cast_fast', 0.35, 3, 0.25); sfx.play('tk_throw', { pos: msg.p, vol: msg.fin ? 0.9 : 0.6, rate: msg.fin ? 1.3 : 1.7, jitter: 0.08 }); }
+        else if (msg.kind === 'hex') { owner.oneShot('cast_fast', 0.45, 2.6, 0.25); sfx.play('mirror_step', { pos: msg.p, vol: 0.45, rate: 1.5 + (msg.curve?.shot ?? 0) * 0.15, jitter: 0.04 }); if (msg.fin) sfx.castFinisher(msg.p); }
         else if (msg.kind === 'skim') { if (!owner.inOneShot()) { owner.oneShot('cast_fast', 0.4, 2.8, 0.25); msg.fin ? sfx.castFinisher(msg.p) : sfx.castSkim(msg.p); } }   // three per cast
         else if (msg.kind === 'lash') {
           // a body with its own lash clip is already mid-strike: let the follow-through play
@@ -421,7 +428,7 @@ function handleMessage(msg) {
       if (!target) break;
       const c = target.group.position.clone(); c.y += 1;
       if (msg.veil) { target.veilFlash(); effects.burst(c, 0xe8dcff, 8, 3, 0.25, 0); sfx.block(c); }
-      else if (msg.blocked) { effects.blockFlash(c); sfx.block(c); }
+      else if (msg.blocked) { const G = C.kitOf(target.wizard).guard; effects.blockFlash(c, G === 'flame_ward' ? 0xff7a1e : G === 'black_death' ? 0xa0102a : 0x9ae4ff); sfx.block(c); }
       else {
         effects.burst(c, msg.kind === 'skim' ? 0xbfeaff : 0xff3b4e, 10, 3, 0.35);
         // a hurled prop or goat doubles them over (hit_waist); other interrupting hits flinch
@@ -435,7 +442,7 @@ function handleMessage(msg) {
       }
       if (target === me) {
         if (!msg.blocked) {
-          sfx.hurt(); flashVignette(); shake(msg.kind === 'heavy' || msg.kind === 'cyclone' || msg.kind === 'trapped_relic' || (ULT_KINDS.has(msg.kind) && msg.kind !== 'crimson_eclipse') ? 0.6 : 0.25);
+          sfx.hurt(); flashVignette(); shake(msg.kind === 'heavy' || msg.kind === 'cyclone' || msg.kind === 'trapped_relic' || ULT_KINDS.has(msg.kind) ? 0.6 : 0.25);
           if (msg.int !== false) local.stunUntil = Math.max(local.stunUntil, now + (C.hitSpec(msg.kind)?.stun ?? 0.4));
           if (msg.slow) local.slowUntil = now + msg.slow;
           if (msg.bind) {
@@ -803,26 +810,28 @@ function handleMessage(msg) {
       if (msg.id === myId) local.zeroUntil = 0;
       break;
     }
-    case 'eclipse': {
-      const w = players.get(msg.id);
-      if (!w) break;
-      endTethers(w);
-      w.tethers = new Map(msg.targets.map(id => [id, effects.tether()]));
-      w.oneShot('cast_heavy', 0.6, 1.5, 1.9);
-      sfx.bind(wpos(w));
-      sfx.play('meteor_cast', { pos: wpos(w), vol: 0.5, rate: 0.45 });
-      if (msg.targets.includes(myId)) feed(`<b>${esc(w.name)}</b>'s Crimson Eclipse drains you! Break line of sight or get ${ECLIPSE.breakRange} m away`);
+    case 'cage': {
+      cages.set(msg.id, { ...msg, x: msg.p[0], z: msg.p[2], fx: effects.nightCage(msg.p, msg.left) });
+      const w = players.get(msg.owner);
+      if (w) { w.oneShot('cast_heavy', CAGE.castPose, 1.5, 1.9); sfx.play('wall_up', { pos: [msg.p[0], 1, msg.p[2]], vol: 1, rate: 0.6 }); sfx.bind([msg.p[0], 1, msg.p[2]]); }
+      if (msg.foes.includes(myId)) feed(msg.inside.includes(myId) ? `<b>Caged!</b> You can't leave <b>${esc(w?.name || '?')}</b>'s Night Cage` : `<b>${esc(w?.name || '?')}</b>'s Night Cage: you can't get in`);
       break;
     }
-    case 'eclipseBreak': {
-      const w = players.get(msg.id);
-      const e = w?.tethers?.get(msg.target);
-      if (e) { e.dispose(); w.tethers.delete(msg.target); sfx.play('ward_break', { pos: wpos(w), vol: 0.5, rate: 1.5 }); }
+    case 'cageSide': {
+      const c = cages.get(msg.id);
+      if (c) { c.inside = c.inside.filter(id => id !== msg.pid); if (msg.inside) c.inside.push(msg.pid); }
       break;
     }
-    case 'eclipseEnd': {
+    case 'cageEnd': {
+      const c = cages.get(msg.id);
+      if (c) { effects.endCage(c.fx); cages.delete(msg.id); }
+      break;
+    }
+    case 'flameLash': {
       const w = players.get(msg.id);
-      if (w) endTethers(w);
+      const p = w === me ? [local.pos.x, local.pos.y, local.pos.z] : msg.p;
+      effects.flameLash(p, w === me ? local.yaw : msg.yaw);
+      sfx.play('meteor_cast', { pos: [p[0], 1, p[2]], vol: 0.45, rate: 1.4, jitter: 0.1 });
       break;
     }
     default:
@@ -868,22 +877,18 @@ const frosts = new Map();    // id -> effects entry
 const strikes = new Map();   // id -> effects entry
 const cataMark = effects.cataAim();
 function endEye(w) { effects.stopEye(w.eyeFx); w.eyeFx = null; w.eyeOn = false; }
-function endTethers(w) { for (const e of w.tethers?.values() || []) e.dispose(); w.tethers = null; }
-// Crimson Eclipse beams, chest to chest, and Gale's tornado spin, every frame.
-const tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3();
+// Night Cages (id -> { x, z, inside: [ids], foes: [ids], fx }), and Vesper's aim circle for one.
+const cages = new Map();
+const cageMark = effects.cataAim(CAGE.radius, 0x2a0010, 0xff1f3d);
+// Keep `pos` ([x, y, z], mutated) on our side of every enemy cage, as the server does. True if it moved.
+function cageKeep(pos) {
+  let moved = false;
+  for (const c of cages.values()) if (c.foes.includes(myId) && C.cageClamp(pos, c, c.inside.includes(myId))) moved = true;
+  return moved;
+}
+// Gale's tornado spin, every frame.
 function updateUltimates() {
-  for (const w of players.values()) {
-    if (w.eyeOn && !w.dead && (w.spinT < 0 || !w.inOneShot())) w.eyeSpin();
-    if (!w.tethers) continue;
-    w.hand.getWorldPosition(tmpA);
-    if (tmpA.distanceTo(w.group.position) > 2.5) tmpA.copy(w.group.position).setY(w.group.position.y + 1.3);
-    for (const [id, e] of w.tethers) {
-      const q = players.get(id);
-      if (!q || q.dead) { e.dispose(); w.tethers.delete(id); continue; }
-      tmpB.copy(q.group.position).setY(q.group.position.y + 1.1);
-      e.set(tmpA, tmpB);
-    }
-  }
+  for (const w of players.values()) if (w.eyeOn && !w.dead && (w.spinT < 0 || !w.inOneShot())) w.eyeSpin();
 }
 let lastDashDir = [0, 0];
 const frostMark = effects.frostAim();
@@ -1099,21 +1104,21 @@ function updateLocal(dt) {
     // ultimate (Q): Cataclysm aims a circle (hold, release); the others go off at once
     const U = K.ultimate, ultReady = local.ult >= C.ULT_CHARGE.max, holdingQ = !!(me.carrying || me.carryingGoat);
     if (input.justPressed('KeyQ') && ultReady && !ultLock && !busy && !holdingQ && !local.cataAim) {
-      if (U === 'cataclysm') local.cataAim = true;
-      else if (!airborne || U === 'crimson_eclipse') net.send({ t: 'ult' });
+      if (AIMED_ULTS[U]) local.cataAim = true;
+      else if (!airborne) net.send({ t: 'ult' });
     }
     if (local.cataAim) {
-      if (busy || holdingQ || !ultReady || U !== 'cataclysm') local.cataAim = false;
+      if (busy || holdingQ || !ultReady || !AIMED_ULTS[U]) local.cataAim = false;
       else if (!input.down('KeyQ')) {
         local.cataAim = false;
-        const at = groundTarget(CATA.range);
+        const at = groundTarget(AIMED_ULTS[U].range);
         net.send({ t: 'ult', at: [at[0], at[2]] });
       }
     }
   }
   if (canAct && !ultLock) {
     // guard: hold to ward, or tap for Rime's ice wall (Space while airborne drops instead)
-    const wantBlock = K.guard === 'ward' && input.down('Space') && me.st > 2 && !busy && !airborne && !local.spaceHeld;
+    const wantBlock = C.isWard(K.guard) && input.down('Space') && me.st > 2 && !busy && !airborne && !local.spaceHeld;
     if (wantBlock !== local.blocking) { local.blocking = wantBlock; net.send({ t: 'block', on: wantBlock }); }
     if (K.guard === 'tempest_veil' && input.justPressed('Space') && !airborne && !local.spaceHeld && now >= local.cd.guard && !me.veiled) {
       local.cd.guard = now + SPELL.tempest_veil.cooldown;   // tap: the bubble goes up for its duration, no holding
@@ -1137,13 +1142,11 @@ function updateLocal(dt) {
       computeAim();
       local.ammo--; local.lastShot = now;
       if (!local.ammo) local.reloadUntil = now + MAG.reload;
-      if (K.primary === 'glacial_skim') {
-        local.cd.fast = now + SKIM.cooldown;
-        net.send({ t: 'cast', kind: 'skim', dir: [aimDir.x, 0, aimDir.z] });
-      } else {
-        local.cd.fast = now + C.SPELLS.fast.cooldown;
-        net.send({ t: 'cast', kind: 'fast', origin: aimOrigin.toArray(), dir: aimDir.toArray() });
-      }
+      const kind = C.PRIMARY_KIND[K.primary];
+      local.cd.fast = now + SPELL[K.primary].cooldown;
+      if (kind === 'skim') net.send({ t: 'cast', kind, dir: [aimDir.x, 0, aimDir.z] });
+      else if (kind === 'hex') net.send({ t: 'cast', kind, origin: aimOrigin.toArray(), dir: aimDir.toArray(), target: aimPoint() });   // curves in on what the crosshair is on
+      else net.send({ t: 'cast', kind, origin: aimOrigin.toArray(), dir: aimDir.toArray() });
     }
     // power slot
     if (input.rmbPressed && !local.blocking && !busy && (!airborne || SPELL[K.power].airCast) && !holding && now >= local.cd.power) {
@@ -1191,6 +1194,7 @@ function updateLocal(dt) {
         const dir = [Math.sin(local.yaw), 0, Math.cos(local.yaw)];
         const from = [local.pos.x, 0, local.pos.z];
         const to = C.computeTeleport(from, dir);
+        cageKeep(to);   // a blink can't cross a Night Cage
         local.cd.mobility = now + C.TELEPORT.cooldown;
         net.send({ t: 'teleport', dir, from });
         local.pos.set(to[0], 0, to[2]); local.vel.set(0, 0, 0);
@@ -1245,8 +1249,11 @@ function updateLocal(dt) {
     local.fHold = null; local.frostAim = false;
     if (!canAct) local.cataAim = false;
   }
-  cataMark.visible = local.cataAim;
-  if (local.cataAim) { const at = groundTarget(CATA.range); cataMark.position.set(at[0], 0, at[2]); }
+  const aimedUlt = local.cataAim && AIMED_ULTS[K.ultimate];
+  const mark = K.ultimate === 'night_cage' ? cageMark : cataMark;
+  cataMark.visible = cageMark.visible = false;
+  mark.visible = !!aimedUlt;
+  if (aimedUlt) { const at = groundTarget(aimedUlt.range); mark.position.set(at[0], 0, at[2]); }
   // the targeting circle follows the crosshair while aiming
   frostMark.visible = local.frostAim;
   if (local.frostAim) { const at = frostTarget(); frostMark.position.set(at[0], 0, at[2]); }
@@ -1307,6 +1314,8 @@ function updateLocal(dt) {
   if (y < 1) for (const d of decoys.values()) if (d.owner !== myId) pushOut(d.wiz.group.position.x, d.wiz.group.position.z, pr);
   const r = Math.hypot(local.pos.x, local.pos.z);
   if (r > C.ARENA_RADIUS) { local.pos.x *= C.ARENA_RADIUS / r; local.pos.z *= C.ARENA_RADIUS / r; }
+  // a Night Cage: stay on our side of the ring (the server checks the same)
+  if (cages.size) { const pp = local.pos.toArray(); if (cageKeep(pp)) { local.pos.set(pp[0], pp[1], pp[2]); local.vel.multiplyScalar(0.3); } }
 
   // ---- apply to the wizard
   me.group.position.copy(local.pos);
@@ -1381,6 +1390,10 @@ function updateHud(dt) {
   ui.ammo.forEach((el, i) => { el.classList.toggle('full', i < local.ammo); el.classList.toggle('fin', i === 0); });
   ui.ab.fast.classList.toggle('reloading', !!local.reloadUntil);
   cdFill('power', local.cd.power, SPELL[K.power].cooldown);
+  // Black Death: the whip's stored charge, as a crimson ring around the RMB slot
+  const whipK = K.guard === 'black_death' ? Math.min(1, (me.lashBonus || 0) / SPELL.black_death.maxBonus) : 0;
+  ui.ab.power.style.setProperty('--whip', whipK.toFixed(3));
+  ui.ab.power.classList.toggle('whip', whipK > 0);
   cdFill('mobility', local.cd.mobility, SPELL[K.mobility].cooldown);
   cdFill('block', local.cd.guard, SPELL[K.guard].cooldown);
   if (!me.carrying && !me.carryingGoat && now < local.liftCdUntil) cdFill('throw', local.liftCdUntil, SPELL[K.utility].liftCooldown);   // lift cooldown
@@ -1388,7 +1401,7 @@ function updateHud(dt) {
   ui.ab.block.classList.toggle('active', local.blocking || me.veiled || [...walls.values()].some(w => w.data.owner === myId));
   ui.ab.power.classList.toggle('active', local.charging || !!local.cyclone || !!local.lash || local.frostAim);
   ui.ab.mobility.classList.toggle('active', !!local.flight);
-  ui.ab.block.classList.toggle('disabled', bound || (K.guard === 'ward' && me.st < 3) || !!local.flight);
+  ui.ab.block.classList.toggle('disabled', bound || (C.isWard(K.guard) && me.st < 3) || !!local.flight);
   ui.ab.throw.classList.toggle('active', holdingNow || !!local.fHold);
   ui.ab.throw.classList.toggle('disabled', bound);
   ui.ab.fast.classList.toggle('disabled', holdingNow || bound);
@@ -1404,7 +1417,7 @@ function updateHud(dt) {
   if (ui.ultPct.textContent !== pctText) ui.ultPct.textContent = pctText;
   ultEl.classList.toggle('ready', pct >= C.ULT_CHARGE.max);
   ultEl.style.setProperty('--ult', `#${C.boltColor(me.wizard).toString(16).padStart(6, '0')}`);
-  ultEl.classList.toggle('active', local.cataAim || now < local.eyeUntil || now < local.zeroUntil || !!me.tethers);
+  ultEl.classList.toggle('active', local.cataAim || now < local.eyeUntil || now < local.zeroUntil || [...cages.values()].some(c => c.owner === myId));
   ultEl.classList.toggle('disabled', bound || holdingNow);
 
   // our cursed prop: a faint red glyph above it
@@ -1436,14 +1449,14 @@ function updateHud(dt) {
   const inFrost = !me.dead && [...frosts.values()].some(f => f.left > 0 && Math.hypot(f.group.position.x - local.pos.x, f.group.position.z - local.pos.z) < FROST.radius + 0.3);
   const rn = performance.now() / 1000;
   const inMeteor = !me.dead && [...strikes.values()].some(e => e.landAt - rn < CATA.warn && e.landAt > rn && Math.hypot(e.group.position.x - local.pos.x, e.group.position.z - local.pos.z) < CATA.impact + 0.3);
-  const tethered = !me.dead && [...players.values()].some(w => w.tethers?.has(myId));
-  if (hunted) hint = K.guard === 'ward' ? 'A goat is charging you! Ward (Space) facing it, or get out of the way' : 'A goat is charging you! Wall it off (Space) or get out of the way';
+  const caged = !me.dead && [...cages.values()].some(c => c.foes.includes(myId) && c.inside.includes(myId));
+  if (hunted) hint = C.isWard(K.guard) ? 'A goat is charging you! Ward (Space) facing it, or get out of the way' : 'A goat is charging you! Wall it off (Space) or get out of the way';
   else if (bound && now < local.frozenUntil) hint = 'Frozen!';
   else if (bound) hint = 'Bound!';
   else if (inFrost) hint = 'Ice falling! Get out of the shadow';
   else if (inMeteor) hint = 'Meteor! Get out of the shadow';
-  else if (tethered) hint = `Tethered! Break line of sight or get ${ECLIPSE.breakRange} m away`;
-  else if (local.cataAim) hint = 'Release Q to call down the meteors';
+  else if (caged) hint = 'Caged! You can\'t cross the black ring';
+  else if (local.cataAim) hint = K.ultimate === 'night_cage' ? 'Release Q to raise the Night Cage' : 'Release Q to call down the meteors';
   else if (now < local.eyeUntil) hint = 'Eye of the Storm! Run them down';
   else if (now < local.zeroUntil) hint = 'Absolute Zero…';
   else if (local.frostAim) hint = 'Release RMB to drop the ice';
@@ -1458,7 +1471,7 @@ function updateHud(dt) {
   else if (tkHover) hint = K.utility === 'trapped_relic' ? (tkHover.data.id === cursedProp ? 'Your relic · F lift (removes the curse)' : 'F lift · hold F to curse') : 'F lift';
   else if (slowed) hint = 'Slowed by frost';
   else if (local.reloadUntil && now - local.lastShot < 1) hint = 'Reloading…';
-  ui.hint.textContent = hint; ui.hint.classList.toggle('on', !!hint); ui.hint.classList.toggle('danger', hunted || ((inFrost || inMeteor || tethered) && !bound));
+  ui.hint.textContent = hint; ui.hint.classList.toggle('on', !!hint); ui.hint.classList.toggle('danger', hunted || ((inFrost || inMeteor || caged) && !bound));
   ui.hint.classList.toggle('bound', !hunted && (bound || rooted)); ui.hint.classList.toggle('frost', !hunted && !bound && !rooted && slowed && hint === 'Slowed by frost');
 
   if (vignetteT > 0) { vignetteT -= dt; if (vignetteT <= 0) ui.vignette.classList.remove('hit'); }
@@ -1556,4 +1569,4 @@ function frame(t) {
 requestAnimationFrame(frame);
 
 // Debug handle (used by the automated smoke test; harmless in production).
-window.__wa = { input, net, local, players, props, goats, effects, scene, camera, sfx, decoys, walls, frosts, frostMark, strikes, cataMark, C, get cursedProp() { return cursedProp; } };
+window.__wa = { input, net, local, players, props, goats, effects, scene, camera, sfx, decoys, walls, frosts, frostMark, strikes, cataMark, cageMark, cages, C, get cursedProp() { return cursedProp; } };
