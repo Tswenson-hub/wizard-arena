@@ -39,13 +39,23 @@
 - `tools/prepare-wizard-model.sh <rigged.glb> <id>` is a new file, outside every ownership row. I'm claiming it for characters.
   - **Inspect:** whether the model is skinned, its bone count, whether it matches the base skeleton, `RightHand`/`Head`, its clips and its bind-pose bounds.
     It refuses static (unrigged) meshes.
-  - **Shrink:** weld, resize textures to 1024, webp at quality 80, quantize, prune. It doesn't simplify, because skinned meshes tear.
+  - **Shrink:** weld, resize textures to 1024, webp at quality 80, resample clips (drops redundant keyframes), quantize, prune.
+    It keeps the skin and every clip, and doesn't simplify, because skinned meshes tear.
   - Output: `public/models/wizards/<id>.glb`.
 - **Runtime** (`loadWizardModels`): for every wizard with `WIZARDS[id].model` set:
   - It loads the model and checks the bone names against `wizard.glb`.
     If every base bone is there, the base clips drive it by bone name, so Ty doesn't need to export animations.
-    Otherwise it maps the model's own clips, by our names or Meshy's (`Running`, `Walking`, `Two_Handed_Parry`,
-    `mage_soell_cast`, `Charged_Spell_Cast`, `Stand_Dodge_2`, `Stand_Dodge_3`, including `Armature|X|baselayer`).
+    Otherwise it builds the clip set in this order:
+    1. per-wizard picks in `MODEL_CLIPS` (looks.js)
+    2. Meshy-named clips (`Running`, `Walking`, `Two_Handed_Parry`, `mage_soell_cast`, `Charged_Spell_Cast`,
+       `Stand_Dodge_2`, `Stand_Dodge_3`, including `Armature|X|baselayer`)
+    3. any key still missing: the base clip **retargeted** onto the model's rig, through `MIXAMO_TO_BASE`
+  - **Mixamo-style rigs** (Meshy's "rig ready" export, `mixamorig:Hips` and so on): bone and track names lose the
+    `mixamorig` prefix, so `RightHand` and `Head` exist where wizard.js looks for them.
+  - **Retarget** (`retargetClip` in looks.js, not three's): each target bone's rest pose is first lined up with the base
+    bone's rest direction, which absorbs A-pose vs T-pose differences. It then follows the base bone's world rotation
+    relative to its own rest. The hips also follow the base hips' offset, scaled to the model's hip height.
+    three's `SkeletonUtils.retargetClip` copies world rotations as they are, which only works when both rigs share bone orientations.
   - It scales the model to 1.8 m and puts its feet on y = 0.
   - Any failure logs `[looks] …` and falls back to the recoloured base.
   - The flair still applies on top of a real model. Drop a wizard from `FLAIR` if its model makes it redundant (Rime's shards, say).
@@ -57,27 +67,43 @@
 ## When a model lands on ~/Desktop (Meshy_AI_*)
 1. `tools/prepare-wizard-model.sh ~/Desktop/<file>.glb gale` and read the inspect lines. It must be the **rigged** export.
 2. Set `model: '/models/wizards/gale.glb'` in `public/shared/wizards.js`, and commit wizards.js on its own.
-3. If the skeleton differs and the clips are missing, ask Ty for Meshy's seven animations (names above).
+3. If the skeleton differs: Mixamo-style rigs work as they are (own clips where picked, base clips retargeted for the
+   rest). Watch its clips on a contact sheet (`/tmp/wa-characters/galeclips2.py`) and add picks to `MODEL_CLIPS`.
+   main.js plays casts from fixed offsets tuned to the base clips (spark: from 0.25 s at 2.6×; meteor release: from
+   1.9 s at 1.5×; stun: from 0.3 s at 3×), so a pick needs its key moment at about the same time as the base clip.
 4. Check facing: Meshy exports face +z like the base. If one doesn't, rotate `inner` in `makeWizardBody`.
 5. Screenshot it running, casting, warding and stunned. `/tmp/wa-characters/ingame.py` places all four bodies in the
    live scene, and `ingame.py model` shows how to fake a model URL with an init script.
 
-**Status: Ty's four models arrived at 19:40 (`Meshy_AI_<wizard>_…_texture.glb`), but they can't be used yet: they are
-static meshes.** They have no skin, no bones and no animations; they're the textured exports, not the rigged ones.
-They look great: Cinder has a lantern staff and a witch hat, Gale wears flowing violet scarves, Vesper is hooded in
-black and crimson, and Rime is the frost warden. They face +z and stand about 0.95 m tall, centred on the origin.
-`looks.js` rescales and grounds them automatically. Render: `/tmp/wa-characters/shots/desktop-models.png`.
+## Status of Ty's models
+- **Gale: in the game.** The source is `Meshy_AI_gale_tempest_rigready_All_Animations.glb`, now
+  `public/models/wizards/gale.glb`.
+  - Size: 10.7 MB went down to **1.71 MB**, keeping the skin, the normal map and all nine clips. The resample step did most of it (2.97 to 1.71 MB).
+  - Rig: Mixamo-style, 66 bones, 1.70 m tall, faces +z. The game normalises her to 1.8 m.
+  - Picked by watching contact sheets of every clip (`gale-clips.png`, and `gale-clips2.png` side by side with the base):
 
-**Ty, one step per wizard:** in Meshy, open each model and run **Animate → Rig** (humanoid auto-rig). Download the rigged
-character (`Meshy_AI_Character_output.glb` or `…_rigged….glb`) to the Desktop. Exporting animations isn't needed:
-Meshy's humanoid rig uses the same 24 bone names as `wizard.glb`, so the existing seven clips drive it.
-Then: `tools/prepare-wizard-model.sh <file> <id>`, set `model` in wizards.js, and screenshot it (steps above).
-Until then every wizard keeps the recoloured base model and its flair, so nothing is broken.
-Gale's long scarves may stretch a little under the auto-rig; check her run and cyclone poses first.
+    | key | clip | why |
+    |---|---|---|
+    | run, walk | `Running`, `Walking` | |
+    | cast_fast | `mage_soell_cast` | an overhead flick thrown forward. It's the same Meshy move as the base spark cast, with the same timing, so it fits main.js's window as is. |
+    | cast_heavy | `mage_soell_cast_1` | gathers, then spreads the arms wide. The spread lands in the meteor release window (1.9–2.7 s). |
+    | **spin** (new key) | `Sweeping_Kick` 0.8–1.7 s | the low spinning floor sweep. It reads well as the cyclone spin. |
+    | block, stun, dash, idle | retargeted from the base wizard | they hold up: a guarded block, a clean flinch and crouch, no flipped limbs (`gale-keys.png`) |
+
+  - Not used: `_2` (turns and jumps, too acrobatic), `_3` (a subtle two-handed push), `_4` (a limp arms-out flick).
+    `_5` is 11 s of calm hand gestures and would make a good idle if Ty prefers it to the retargeted base idle:
+    add `idle: 'mage_soell_cast_5'` to `MODEL_CLIPS.gale`.
+  - Requested in `requests.md`: the spells agent should play `actions.spin` during the Arcane Cyclone spin when a body has it.
+    Until they do, Gale spins with the dash clip like everyone else.
+  - Her violet flair motes still swirl around the new model.
+- **Cinder, Rime, Vesper:** the `*_texture.glb` files on the Desktop are static meshes (no skin). Ty is re-exporting them
+  rigged; until then they keep the recoloured base model. A "rig ready" export like Gale's works with the same path:
+  prepare, set `model`, and add `MODEL_CLIPS` picks.
+- A render of the static models: `/tmp/wa-characters/shots/desktop-models.png`.
 
 ## Verification
 All runs used headless Chromium (SwiftShader) against port 4103. Screenshots are in `/tmp/wa-characters/shots/`.
-- **Picker (`picker.py`):** joined to the join panel at 1280×720 and 1920×1080, narrow (560 px) and wide (760 px):
+- **Picker (`picker.py`, written before the spells agent removed `#joinBook`; `e2e.py` now covers the mounted picker):** joined to the join panel at 1280×720 and 1920×1080, narrow (560 px) and wide (760 px):
   `picker-*.png`, `join-*.png`. Pause menu: `pause-1280x720.png`.
   - Keyboard and click: ArrowRight + Enter picked rime, and the click picked vesper.
     `onChange` received `['rime', 'vesper']`, `set('cinder')` didn't fire `onChange`, and focus stayed put.
@@ -91,12 +117,21 @@ All runs used headless Chromium (SwiftShader) against port 4103. Screenshots are
 - **Console:** no errors from my code. One earlier run hit a spells-side `updateHud` exception, which they've since fixed;
   the final run had 0 errors. The only warnings were "GPU stall due to ReadPixels", which also appear on the untouched
   page in headless Chromium, so they come from the screenshot path, not the game.
-- `du -sh public/models/wizards`: not created yet (the models that arrived are unrigged, see above). The base `wizard.glb` is unchanged at 1.4 MB.
+- **Gale in game (`galegame.py`):** I joined as Gale with four Gale dummies, each frozen mid-pose (run, spark, meteor
+  release, cyclone kick) at two moments: `gale-game-sheet.png`, `gale-game-poses*.png`.
+  - Every body had all ten clip keys and found `RightHand`/`Head`, with no `[looks]` warnings and no console errors.
+  - The skin holds in every pose.
+  - The ability bar showed Gale's kit, and the picker card shows the real model (`gale-picker.png`).
+- **Fixed along the way:** flair points were sized by the whole canvas height, so in the picker's small viewports they were
+  about 5× too big. They now scale by viewport height, with no change in game.
+- `public/models/wizards/gale.glb`: 1.71 MB on disk (`ls`); `du` reports 2.5M because of block rounding. The base `wizard.glb` is unchanged at 1.4 MB.
 
 ## Known issues and notes
 - **Vesper vs Cinder:** both are red, but Vesper is darker, has smoke and a pool, and has a different nameplate tone.
   At long range they're closest; Ty's models will settle it.
-- **Panel width:** at the 560 px join panel the blurbs are cut to one line. I asked the spells agent in `requests.md`
-  to widen it to about 760 px (optional).
+- **Panel width:** the spells agent answered the 760 px panel request in `requests.md`.
+- **Gale's spin:** it needs the spells agent's `spin()` change (requested) to show in a real cyclone.
+- **Retarget limits:** the retarget works for Mixamo-style rigs (`MIXAMO_TO_BASE`). A rig with other bone names needs its
+  own map, or Meshy's seven clips exported with it.
 - **Picker canvases:** each mounted picker holds one WebGL context while it exists (2 for join + pause, plus the game's).
   `destroy()` releases it.
