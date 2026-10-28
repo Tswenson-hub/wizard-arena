@@ -70,6 +70,8 @@ Gale's other clips keep your timings: her `cast_fast` is the same Meshy move as 
 `cast_heavy` has its release pose in your 1.9–2.7 s window. block, stun, dash and idle are the base clips retargeted onto her rig.
 Screenshot of the kick in game: `/tmp/wa-characters/shots/gale-game-sheet.png`.
 
+**done** (spells, `d1eb78d`): `spin()` plays `spin` over the 0.5 s spin when the body has it (else `dash`); `spin` is LoopOnce + clamped. Checked in Playwright: Gale's `current` is `spin` at the pulse.
+
 ## characters → spells: Rime's body has a `death` clip (and his casts for Frostfall)
 Rime now uses Ty's model with his frost staff. `makeWizardBody('rime').clips` has an extra key, **`death`**: he kneels
 and falls flat, trimmed and squeezed to **2.5 s**, so he's down well inside the 3 s respawn. `actions.death` exists only
@@ -82,6 +84,8 @@ His other clips keep your timings:
 - `cast_fast` flings the arms and staff forward at 0.6–1.4 s.
 - `stun` is a stagger (Fall2), stretched to the base stun's 2.3 s.
 Screenshots: `/tmp/wa-characters/shots/rime-game-sheet.png`.
+
+**done** (spells, `d1eb78d`): `death` (LoopOnce + clamped) plays on death for any body that has it, with **no sink and no tilt** (the corpse stays at y = 0 holding the last frame until the respawn moves it; 2.5–3 s clips leave no time for a sink before the 3 s respawn). Bodies without it keep the sink. Frostfall uses `cast_heavy` at 1.5× from 1.9 s for its 0.5 s cast pose.
 
 ## characters → spells: play Vesper's `lash` clip over the Sanguine Lash wind-up
 Vesper now uses Ty's model with her hemomancer wand. `makeWizardBody('vesper').clips` has an extra key, **`lash`**:
@@ -96,6 +100,8 @@ She also has `death` (`Dead`, 2.97 s, flat by about 2.2 s), so the death request
 Her `cast_fast` is an overhead flick in the usual spark window; `cast_heavy`, block, stun, dash and idle are the base clips retargeted.
 Screenshots: `/tmp/wa-characters/shots/vesper-game-sheet.png`.
 
+**done** (spells, `d1eb78d`): `startLash()` plays `lash` from 0 at 1× for windup + 0.6 s; at release `cast_heavy` is played only for bodies without `lash`; a cancelled wind-up drops back to the base state.
+
 ## characters → spells: play Rime's `float` clip during the Skyward Flash descent (Ty's request)
 Ty wants Rime's Fall2 motion while he floats back down after Skyward Flash, not on stun. `makeWizardBody('rime').clips`
 now has an extra key, **`float`**: Fall2 settling into its airborne pose (knees up, arms out) over 1.0 s.
@@ -106,3 +112,11 @@ Please play it while a wizard whose body has it is airborne from Skyward Flash, 
 Rime's `stun` is now the base stun retargeted, a quick flinch, so your stun timings are unchanged.
 Gale is unchanged. (The coordinator first said Gale, then corrected it to Rime.)
 Screenshot: `/tmp/wa-characters/shots/rime-float-sheet.png`, a real Skyward Flash by a dummy.
+
+**done** (spells, `d1eb78d`): while a body with `float` is above 0.3 m it uses `float` (LoopOnce + clamped) as its base state after the 0.5 s launch `dash`; casts layer as one-shots, and returning to `float` after one skips straight to the held pose. Back to normal on landing. Checked on Rime's own screen and a watcher's.
+
+## spells → coordinator: adopt the wizard-aware match harness into `tools/test/`
+`tools/test/spellmatch.mjs` still pins `loadout` (gone) and reads `player.loadout` on `joined`, so it throws now.
+A replacement that pins wizards and counts every new spell is at `/tmp/wa-spells/match.mjs`
+(usage `node match.mjs <port> <secs> hard:cinder hard:gale hard:rime hard:vesper`; prints K/D per bot and per wizard,
+kills by kind, damage taken by kind, Frostfall dodges). `botmatch.mjs` still works unchanged.
