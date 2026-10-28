@@ -11,6 +11,7 @@
 //   onDrop(p, prop, reason)  'dropped' | 'released' | 'destroyed' | 'thrown'
 //   onPropBroken(prop)
 //   canThrow(p, prop)        false: the server turns the throw into a gentle drop (the relic)
+//   protectProp(prop)        true: a hit knocks the prop loose instead of shattering it (the relic)
 //   tick(dt)                 every simulation step
 //   handle(p, msg)           messages server.js doesn't know (e.g. { t: 'vote', mode })
 //   playerExtras(p)          merged into playerPublic (e.g. { team })
@@ -356,11 +357,13 @@ export function createMatch(ctx) {
     },
     onPropBroken(prop) {
       if (!S.relic || prop.id !== S.relic.propId || S.phase !== 'live') return;
-      // knocked out of a holder's grip, or hit where it stood: it stays the relic, set down where it was
+      // fallback if server.js didn't ask protectProp: knocked out of a grip or hit where it stood, it stays the relic, set down
       const by = prop.carrier;
       S.relic.restore = relicPos(prop);
       relicEvent(by ? 'knocked' : 'hit', { by });
     },
+    // asked by server.js before a hit shatters a prop: the relic is knocked loose (dropped idle where it was hit) instead
+    protectProp(prop) { return !!(S.relic && prop.id === S.relic.propId && S.phase === 'live'); },
     canThrow(p, prop) { return !(S.relic && prop.id === S.relic.propId && S.phase === 'live'); },
 
     tick(dt) {

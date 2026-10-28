@@ -1,4 +1,4 @@
-// usage: node tools/test/modematch.mjs <port> <mode: ffa|tdm|relic> <seconds> [difficulty] [--target N] [--cap S] [--rotate S]
+// usage: node tools/test/modematch.mjs <port> <mode: ffa|tdm|relic> <seconds> [difficulty] [--target N] [--cap S] [--rotate S] [--bots N (FFA)]
 // Headless game-mode match. The server must run with MATCH_DEBUG=1 (e.g. MATCH_DEBUG=1 PORT=4104 node server.js).
 // Joins as a spectator (no team, can't be hurt, bots ignore it), switches to the mode with a 2 s warm-up and
 // lets bot fill run the match. Reports scores, team sizes over time, friendly-fire hits (should be 0),
@@ -24,6 +24,8 @@ ws.on('message', (raw) => {
   if (m.t === 'welcome') {
     myId = m.id;
     ws.send(JSON.stringify({ t: 'matchDebug', spectate: true, botDiff: diff, warmup: 2, target: flag('--target'), cap: flag('--cap'), rotate: flag('--rotate'), mode }));
+    // FFA has no fill: add practice bots as the join screen would (--bots N, default 4)
+    if (mode === 'ffa') for (let i = 0; i < (flag('--bots') ?? 4); i++) ws.send(JSON.stringify({ t: 'addBot', difficulty: diff }));
     return;
   }
   if (m.t === 'joined') names[m.player.id] = `${m.player.name}(${m.player.bot || 'human'})`;

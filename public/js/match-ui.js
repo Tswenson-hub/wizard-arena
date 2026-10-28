@@ -5,6 +5,7 @@
 //   matchUI.onSnapshot(msg)  every 'snap' (with snapshotExtras, e.g. msg.match)
 //   matchUI.onMessage(msg)   any message whose type starts with 'match'
 //   matchUI.update(dt)       every frame while in game
+//   matchUI.state()          the latest match state ({ mode, phase, relic: { propId, holder }, ... })
 import * as THREE from 'three';
 import * as C from '../shared/constants.js';
 
@@ -261,6 +262,7 @@ export function mountMatchUI(env) {
   }
 
   return {
+    state: () => match,   // the latest match state (e.g. match.relic.propId), for main.js
     onWelcome(msg) {
       joined = true;
       root.classList.remove('hidden');
