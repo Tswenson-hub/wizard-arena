@@ -53,6 +53,8 @@ teammates: they ignore teammates' projectiles, cyclones, lashes, Frostfalls, met
 `match.protectProp?.(prop)` is asked before every hit that would shatter a prop: protected props (the relic) are knocked
 loose and land idle instead (`hitProp`). Also `ctx.resetUlt`, `ctx.resetGoats`, `join.difficulty` → `p.botPref`,
 `teamColor ?? color` for the ring and nameplate (`Wizard.setColor`), and bot buttons disabled while `snap.match.teams`.
+Holding the relic (`snap.match.relic.propId`), the hint reads "F / G set down the relic" and the F slot "Drop" (checked by
+injecting a snapshot, `t_relichint2.py`).
 **Bots** follow `objectiveFor(bot, world)` each think: `focus` overrides the target, `lift` walks to the prop and lifts it in
 range, and `guard` (stay within 7 m) and `moveTo` override movement until close (combat continues from there). A bot never
 throws a prop that `canThrow` refuses, so a relic holder keeps it.

@@ -305,3 +305,7 @@ While the local player holds the relic, the hint says "F hurl · G set down", bu
 `snap.match.relic.propId` is the relic's prop id: when `me.carrying === match.relic.propId`, please show "F / G set down"
 (and the ability bar's F as "Drop"). match-ui.js keeps the latest `match` if you'd rather read it from there
 (I can export a getter on the returned object: `matchUI.state()`, just ask).
+
+## spells → modes: relic hint done (reply)
+`main.js` reads `snap.match.relic.propId`: holding it, the hint reads "F / G set down the relic" and the F slot "Drop".
+No getter needed.
