@@ -9,6 +9,7 @@ import { GoatView } from './goats.js';
 import { Wizard } from './wizard.js';
 import { registerModel, loadWizardModels } from './looks.js';
 import { Effects } from './effects.js';
+import { mountWizardPicker } from './select.js';
 
 // ---------------------------------------------------------------- setup
 const canvas = document.getElementById('game');
@@ -43,7 +44,7 @@ const ui = {
   feed: $('#feed'), hint: $('#hint'), status: $('#status'), death: $('#deathScreen'), vignette: $('#vignette'),
   scoreboard: $('#scoreboard'), scoreBody: $('#scoreboard tbody'), clickToPlay: $('#clickToPlay'),
   botCount: $('#botCount'), botDiff: $('#botDiff'), botTally: $('#botTally'), volume: $('#volume'), mute: $('#mute'),
-  books: [$('#joinBook'), $('#pauseBook')],
+  pickNote: $('#pickNote'),
   ab: Object.fromEntries([...document.querySelectorAll('.ab')].map(el => [el.dataset.ab, el])),
 };
 
@@ -57,9 +58,14 @@ let myId = null;
 const local = {
   pos: new THREE.Vector3(), vel: new THREE.Vector3(),
   yaw: 0, pitch: 0.25,
-  cd: { fast: 0, power: 0, mobility: 0, throw: 0 },   // per slot, like the server
+  cd: { fast: 0, power: 0, mobility: 0, guard: 0, throw: 0 },   // per slot, like the server
   charging: false, chargeStart: 0, chargeSent: false,
   cyclone: null,               // { start, pulsed } during our own Arcane Cyclone
+  lash: null,                  // { start, sent } during our own Sanguine Lash wind-up
+  slowUntil: 0,                // Glacial Skim slow
+  rootUntil: 0,                // bound by a lash, or recovering from our own missed lash
+  silenceUntil: 0,             // bound: no spells, ward or telekinesis
+  fHold: null,                 // { start } while F is held with nothing carried (Trapped Relic: hold to curse)
   flight: null,                // { start, drop } during our own Skyward Flash
   spaceHeld: false,            // Space was used to drop out of a flight: don't ward until it's released
   blocking: false,
@@ -71,42 +77,56 @@ let now = 0;
 const tmp = { v1: new THREE.Vector3(), v2: new THREE.Vector3(), v3: new THREE.Vector3() };
 const CYC = C.SPELLBOOK.cyclone, SKY = C.SPELLBOOK.skyward;
 
-// ---------------------------------------------------------------- spellbook
-// The loadout we want (saved in localStorage). The server's copy (me.loadout) is what casts use;
-// it differs only while a slot is mid-cast and the change is waiting.
-let wantLoadout = C.DEFAULT_LOADOUT;
-try { wantLoadout = C.sanitizeLoadout(JSON.parse(localStorage.getItem('wizardLoadout') || 'null')); } catch {}
+// ---------------------------------------------------------------- wizard choice
+// The wizard we want (saved in localStorage). The server's copy (me.wizard) is what casts use; it
+// differs only while a switch waits for a cast to end or for a respawn.
+let wantWizard = C.DEFAULT_WIZARD;
+try { const w = localStorage.getItem('wizardChoice'); if (C.isWizard(w)) wantWizard = w; } catch {}
+const kit = () => C.kitOf(me ? me.wizard : wantWizard);
+const SPELL = C.SPELLBOOK;
+const LASH = SPELL.sanguine_lash, MIRROR = SPELL.mirror_step, BULWARK = SPELL.glacial_bulwark, RELIC = SPELL.trapped_relic, SKIM = SPELL.glacial_skim;
 
-function renderBooks() {
-  const html = Object.entries(C.LOADOUT_SLOTS).map(([slot, info]) => {
-    const spells = C.spellsFor(slot);
-    const cards = spells.map(sp => {
-      const sel = wantLoadout[slot] === sp.id;
-      const pending = sel && me && me.loadout[slot] !== sp.id;
-      return `<div class="spell-card${sel ? ' selected' : ''}${spells.length === 1 ? ' only' : ''}${pending ? ' pending' : ''}" role="button" tabindex="0" data-slot="${slot}" data-spell="${sp.id}" aria-pressed="${sel}">
-        <span class="sc-key">${info.key}</span><span class="sc-name">${esc(sp.name)}</span><span class="sc-blurb">${esc(sp.blurb)}</span></div>`;
+function chooseWizard(id) {
+  if (!C.isWizard(id)) return;
+  if (id !== wantWizard) sfx.click();
+  wantWizard = id;
+  try { localStorage.setItem('wizardChoice', id); } catch {}
+  for (const pk of pickers) pk.set(id);
+  if (me) net.send({ t: 'wizard', id });
+  updatePickNote();
+}
+function updatePickNote() {
+  if (!ui.pickNote) return;
+  const pending = me && me.wizard !== wantWizard;
+  ui.pickNote.textContent = pending ? `switching to ${C.WIZARDS[wantWizard].name} when your cast ends or you respawn`
+    : 'switches right away (after a cast in progress, or at respawn)';
+  ui.pickNote.classList.toggle('pending', !!pending);
+}
+// The picker draws the cards (select.js). If it draws nothing (the stub), a plain <select> stands in.
+function mountPicker(el) {
+  const pk = mountWizardPicker(el, { selected: wantWizard, onChange: chooseWizard });
+  if (el.childElementCount) return pk;
+  el.innerHTML = `<div class="wiz-fallback"><select aria-label="Wizard">${Object.values(C.WIZARDS).map(w =>
+    `<option value="${w.id}">${esc(w.name)}, ${esc(w.title)}</option>`).join('')}</select><div class="wf-role"></div><ul></ul></div>`;
+  const sel = el.querySelector('select');
+  const show = (id) => {
+    sel.value = id;
+    const w = C.WIZARDS[id];
+    sel.style.borderColor = '#' + w.color.toString(16).padStart(6, '0');
+    el.querySelector('.wf-role').textContent = w.role;
+    el.querySelector('ul').innerHTML = C.KIT_SLOTS.map(slot => {
+      const sp = SPELL[w.kit[slot]];
+      return `<li><kbd>${C.SLOT_INFO[slot].key}</kbd> <b>${esc(sp?.name || w.kit[slot])}</b> · ${esc(sp?.blurb || '')}</li>`;
     }).join('');
-    return `<div class="book-slot"><div class="slot-label">${info.label}<kbd>${info.key}</kbd></div><div class="book-cards">${cards}</div></div>`;
-  }).join('');
-  for (const el of ui.books) el.innerHTML = html;
+  };
+  sel.addEventListener('change', () => chooseWizard(sel.value));
+  sel.addEventListener('keydown', (e) => e.stopPropagation());
+  show(wantWizard);
+  return { set: show, destroy() { el.innerHTML = ''; } };
 }
-function chooseSpell(slot, id) {
-  if (wantLoadout[slot] === id) return;
-  wantLoadout = C.sanitizeLoadout({ ...wantLoadout, [slot]: id }, wantLoadout);
-  try { localStorage.setItem('wizardLoadout', JSON.stringify(wantLoadout)); } catch {}
-  sfx.click();
-  if (me) net.send({ t: 'loadout', power: wantLoadout.power, mobility: wantLoadout.mobility, primary: wantLoadout.primary });
-  renderBooks();
-}
-for (const el of ui.books) {
-  el.addEventListener('click', (e) => { const c = e.target.closest('.spell-card'); if (c) chooseSpell(c.dataset.slot, c.dataset.spell); });
-  el.addEventListener('keydown', (e) => {
-    const c = e.target.closest('.spell-card');
-    if (c && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); chooseSpell(c.dataset.slot, c.dataset.spell); }
-  });
-}
-renderBooks();
-const spellName = (id) => C.SPELLBOOK[id]?.name || id;
+const pickers = [mountPicker($('#joinPicker')), mountPicker($('#pausePicker'))];
+const spellName = (id) => SPELL[id]?.name || id;
+const shortName = (id) => SPELL[id]?.short || spellName(id);
 
 // ---------------------------------------------------------------- loading
 try {
@@ -140,7 +160,7 @@ ui.form.addEventListener('submit', async (e) => {
   ui.joinBtn.disabled = true; ui.loadStatus.textContent = 'Connecting…';
   sfx.init(); sfx.resume();
   try {
-    const welcome = await net.connect(name, wantLoadout);
+    const welcome = await net.connect(name, wantWizard);
     onWelcome(welcome);
     for (let i = 0; i < +ui.botCount.value; i++) net.send({ t: 'addBot', difficulty: ui.botDiff.value });
   } catch (err) {
@@ -176,9 +196,11 @@ function onWelcome(msg) {
   for (const pr of msg.props) setProp(pr, true);
   for (const pj of msg.projectiles) effects.spawnProjectile(pj);
   for (const g of msg.goats || []) goats.set(g.id, new GoatView(g, scene));
+  for (const w of msg.walls || []) wallUp(w);
   me = players.get(myId);
+  for (const d of msg.decoys || []) spawnDecoy(d);
   local.pos.set(me.targetPos.x, 0, me.targetPos.z);
-  renderBooks();
+  updatePickNote();
   ui.join.classList.add('hidden');
   ui.hud.classList.remove('hidden');
   input.enabled = true;
@@ -194,7 +216,24 @@ function addPlayer(info) {
   return w;
 }
 
+// A player switched wizard: rebuild their Wizard (model, ring and nameplate colour), keeping its state.
+function rebuildWizard(w, wizard, color) {
+  const g = w.group.position;
+  const info = { id: w.id, name: w.name, color: color ?? C.WIZARDS[wizard].color, bot: w.bot, wizard, p: [g.x, g.y, g.z], yaw: w.group.rotation.y };
+  stopWizardAudio(w);
+  w.dispose(scene);
+  const n = new Wizard(info, scene, w === me);
+  for (const k of ['hp', 'st', 'kills', 'deaths', 'dead', 'blocking', 'charging', 'stunned', 'netAnim', 'targetYaw', 'bound', 'slowed', 'lashing']) n[k] = w[k];
+  n.targetPos.copy(w.targetPos);
+  players.set(w.id, n);
+  if (w.carrying) startCarry(n, w.carrying);
+  if (w === me) { me = n; updatePickNote(); }
+  if (scoreVisible) updateScoreboard();
+  return n;
+}
+
 function applySnapshot(w, s) {
+  if (s.wizard && s.wizard !== w.wizard) w = rebuildWizard(w, s.wizard, s.color);
   if (w !== me) {
     w.targetPos.set(s.p[0], s.p[1], s.p[2]);
     w.targetYaw = s.yaw;
@@ -202,11 +241,13 @@ function applySnapshot(w, s) {
   }
   w.hp = s.hp; w.st = s.st; w.kills = s.kills; w.deaths = s.deaths;
   w.blocking = s.blocking; w.charging = s.charging; w.stunned = s.stun;
-  if (s.loadout) w.loadout = s.loadout;
+  w.slowed = !!s.slow; w.bound = !!s.bound; w.lashing = !!s.lashing;
+  if (!s.lashing && w.lashT >= 0 && w !== me) w.endLash();
   if (s.dead !== w.dead) w.dead = s.dead;
   if (w === me) {
     if (!s.blocking && local.blocking) { local.blocking = false; }   // server cancelled the ward
     if (!s.charging && local.charging && local.chargeSent) { local.charging = false; }
+    if (!s.lashing && local.lash && local.lash.sent) { local.lash = null; me.endLash(); }
   }
   if (s.carrying !== w.carrying) startCarry(w, s.carrying);
 }
@@ -252,6 +293,7 @@ function handleMessage(msg) {
         const w = players.get(s.id) || addPlayer(s);
         applySnapshot(w, s);
       }
+      updateDecoys(msg.decoys || []);
       for (const g of msg.goats || []) (goats.get(g.id) || goats.set(g.id, new GoatView(g, scene)).get(g.id)).apply(g);
       break;
     case 'goatAngry': {
@@ -292,6 +334,8 @@ function handleMessage(msg) {
       const owner = players.get(msg.owner);
       if (owner) {
         if (msg.kind === 'fast') { owner.oneShot('cast_fast', 0.45, 2.6, 0.25); sfx.castFast(msg.p); }
+        else if (msg.kind === 'skim') { if (!owner.inOneShot()) { owner.oneShot('cast_fast', 0.4, 2.8, 0.25); sfx.castSkim(msg.p); } }   // three per cast
+        else if (msg.kind === 'lash') { owner.endLash(); owner.lashing = false; owner.oneShot('cast_heavy', 0.5, 1.8, 1.9); sfx.lashCrack(msg.p); }
         else if (msg.kind === 'heavy') { owner.charging = false; owner.oneShot('cast_heavy', 0.55, 1.5, 1.9); sfx.castHeavy(msg.p); }
         else { owner.oneShot('cast_fast', 0.4, 2.6, 0.3); sfx.throw_(msg.p); if (owner.carrying) startCarry(owner, null); }
       }
@@ -304,6 +348,7 @@ function handleMessage(msg) {
         const d = Math.hypot(msg.p[0] - local.pos.x, msg.p[2] - local.pos.z);
         if (pr.kind === 'heavy') { sfx.bigImpact(msg.p); shake(0.5 / (1 + d * 0.15)); trampleCrops(msg.p[0], msg.p[2], 2.5); }
         else if (msg.surface !== 'player' && pr.kind === 'fast') sfx.impact(msg.p);
+        else if (pr.kind === 'skim') sfx.shardHit(msg.p);
       }
       break;
     }
@@ -313,18 +358,23 @@ function handleMessage(msg) {
       const c = target.group.position.clone(); c.y += 1;
       if (msg.blocked) { effects.blockFlash(c); sfx.block(c); }
       else {
-        effects.burst(c, 0xff3b4e, 10, 3, 0.35);
-        target.oneShot('stun', msg.kind === 'heavy' ? 0.5 : 0.55, 3.0, 0.3);
+        effects.burst(c, msg.kind === 'skim' ? 0xbfeaff : 0xff3b4e, 10, 3, 0.35);
+        if (C.hitSpec(msg.kind)?.stun !== 0) target.oneShot('stun', msg.kind === 'heavy' ? 0.5 : 0.55, 3.0, 0.3);
         sfx.hitBody(c);
+        if (msg.slow) target.slowed = true;
+        if (msg.bind) { target.bound = true; target.endLash(); target.cancelCyclone(); effects.bind([c.x, c.y - 1, c.z]); sfx.bind(c); target.oneShot('stun', msg.bind, 0.6, 0.2); }
       }
       if (target === me) {
         if (!msg.blocked) {
-          sfx.hurt(); flashVignette(); shake(msg.kind === 'heavy' || msg.kind === 'cyclone' ? 0.6 : 0.25);
-          local.stunUntil = now + (C.hitSpec(msg.kind)?.stun || 0.4);
+          sfx.hurt(); flashVignette(); shake(msg.kind === 'heavy' || msg.kind === 'cyclone' || msg.kind === 'trapped_relic' ? 0.6 : 0.25);
+          local.stunUntil = Math.max(local.stunUntil, now + (C.hitSpec(msg.kind)?.stun ?? 0.4));
+          if (msg.slow) local.slowUntil = now + msg.slow;
+          if (msg.bind) { local.rootUntil = Math.max(local.rootUntil, now + msg.bind); local.silenceUntil = Math.max(local.silenceUntil, now + msg.bind); local.vel.set(0, 0, 0); feed(`Bound by <b>${esc(players.get(msg.attacker)?.name || '?')}</b>'s lash!`); }
         }
-        // knockback
-        local.vel.x += msg.dir[0] * msg.kb; local.vel.z += msg.dir[2] * msg.kb;
+        // knockback (none while rooted)
+        if (now >= local.rootUntil) { local.vel.x += msg.dir[0] * msg.kb; local.vel.z += msg.dir[2] * msg.kb; }
         if (!msg.blocked && local.charging) local.charging = false;
+        if (!msg.blocked && local.lash) { local.lash = null; me.endLash(); }
         if (!msg.blocked && local.cyclone && !local.cyclone.pulsed) { local.cyclone = null; me.cancelCyclone(); }
       }
       if (msg.attacker === myId && msg.dmg > 0) hitmarker();
@@ -389,11 +439,86 @@ function handleMessage(msg) {
     case 'skywardCancel':
       if (msg.id === myId && local.flight) { local.flight = null; local.pos.y = 0; }
       break;
-    case 'loadout': {
+    case 'wizard': {
       const w = players.get(msg.id);
-      if (w) w.loadout = msg.loadout;
-      if (w === me) renderBooks();
-      if (scoreVisible) updateScoreboard();
+      if (w && w.wizard !== msg.wizard) {
+        const n = rebuildWizard(w, msg.wizard, msg.color);
+        effects.teleport([n.group.position.x, n.group.position.y, n.group.position.z], [n.group.position.x, n.group.position.y, n.group.position.z]);
+        if (n === me) feed(`You are now <b>${esc(C.WIZARDS[msg.wizard].name)}</b>, ${esc(C.WIZARDS[msg.wizard].title)}`);
+      }
+      break;
+    }
+    case 'lashStart': {
+      const w = players.get(msg.id);
+      if (!w) break;
+      if (w !== me || w.lashT < 0) w.startLash();   // our own was started locally
+      w.lashing = true;
+      sfx.cycloneWindup(wpos(w));
+      break;
+    }
+    case 'lashCancel': {
+      const w = players.get(msg.id);
+      if (!w) break;
+      w.endLash(); w.lashing = false;
+      if (w === me) local.lash = null;
+      break;
+    }
+    case 'lashMiss': {
+      const w = players.get(msg.id);
+      if (!w) break;
+      w.oneShot('stun', msg.root, 0.5, 0.2);   // recovery: doubled over, rooted
+      if (w === me) { local.rootUntil = Math.max(local.rootUntil, now + msg.root); local.vel.set(0, 0, 0); feed('Your lash missed: <b>recovering</b>'); }
+      break;
+    }
+    case 'mirror': {
+      const w = players.get(msg.id);
+      if (!w) break;
+      effects.mirror(msg.from, [msg.to, ...msg.decoys.map(d => d.p)]);
+      sfx.mirror([msg.from[0], 1, msg.from[2]]);
+      w.oneShot('dash', 0.4, 2.5, 2.2);
+      if (w === me) { local.pos.set(msg.to[0], 0, msg.to[2]); local.vel.multiplyScalar(0.5); }
+      else { w.targetPos.set(msg.to[0], 0, msg.to[2]); w.group.position.copy(w.targetPos); w.targetYaw = msg.yaw; w.group.rotation.y = msg.yaw; }
+      for (const d of msg.decoys) spawnDecoy({ ...d, owner: msg.id });
+      break;
+    }
+    case 'decoyEnd': {
+      const d = decoys.get(msg.id);
+      if (!d) break;
+      effects.decoyPuff(msg.p, d.wiz.color, msg.popped);
+      if (msg.popped) sfx.decoyPop([msg.p[0], 1, msg.p[2]]);
+      removeDecoy(msg.id);
+      break;
+    }
+    case 'wallUp': wallUp(msg.wall, true); break;
+    case 'wallHit': {
+      const w = walls.get(msg.id);
+      if (!w) break;
+      w.fx.setHp(msg.hp);
+      sfx.wallHit([w.data.x, 1.3, w.data.z]);
+      break;
+    }
+    case 'wallDown': {
+      const w = walls.get(msg.id);
+      if (!w) break;
+      C.removeWallColliders(msg.id);
+      effects.wallShatter(w.fx, w.data);
+      sfx.wallShatter([w.data.x, 1.3, w.data.z]);
+      walls.delete(msg.id);
+      break;
+    }
+    case 'curse':
+      // only ever sent to the curser
+      if (msg.id && msg.id !== cursedProp) sfx.curse();
+      cursedProp = msg.id;
+      break;
+    case 'relicBlast': {
+      effects.relicBlast(msg.p, RELIC.radius);
+      sfx.relicBlast(msg.p);
+      const d = Math.hypot(msg.p[0] - local.pos.x, msg.p[2] - local.pos.z);
+      shake(d < RELIC.radius + 1 ? 0.9 : 0.6 / (1 + d * 0.2));
+      const by = players.get(msg.by), victim = players.get(msg.victim);
+      if (victim === me) feed(`It was a trap! <b>${esc(by?.name || '?')}</b> cursed that object`);
+      else if (by === me) feed(`Your relic went off in <b>${esc(victim?.name || '?')}</b>'s hands`);
       break;
     }
     case 'tp': {
@@ -431,7 +556,8 @@ function handleMessage(msg) {
       if (w === me) {
         ui.death.querySelector('.big').textContent = msg.cause === 'goat' ? 'Rammed by a goat' : 'You were vanquished';
         ui.death.classList.remove('hidden'); local.charging = false; local.blocking = false;
-        local.cyclone = null; local.flight = null; local.pos.y = 0;
+        local.cyclone = null; local.flight = null; local.pos.y = 0; local.lash = null; local.fHold = null;
+        local.slowUntil = local.rootUntil = local.silenceUntil = 0;
       }
       if (msg.cause === 'goat') feed(`<b>${esc(w.name)}</b> was rammed by a goat${k && k !== w ? ` (thanks, <b>${esc(k.name)}</b>)` : ''}`);
       else if (k && k !== w) feed(`<b>${esc(k.name)}</b> vanquished <b>${esc(w.name)}</b>`);
@@ -442,7 +568,8 @@ function handleMessage(msg) {
       const w = players.get(msg.id);
       if (!w) break;
       w.dead = false;
-      if (w === me) { local.pos.set(msg.p[0], 0, msg.p[2]); local.vel.set(0, 0, 0); ui.death.classList.add('hidden'); local.stunUntil = 0; }
+      w.bound = w.slowed = false;
+      if (w === me) { local.pos.set(msg.p[0], 0, msg.p[2]); local.vel.set(0, 0, 0); ui.death.classList.add('hidden'); local.stunUntil = 0; local.slowUntil = local.rootUntil = local.silenceUntil = 0; }
       else { w.targetPos.set(msg.p[0], 0, msg.p[2]); w.group.position.copy(w.targetPos); }
       effects.teleport(msg.p, msg.p);
       sfx.respawn([msg.p[0], 1, msg.p[2]]);
@@ -450,6 +577,51 @@ function handleMessage(msg) {
     }
   }
 }
+
+// ---------------------------------------------------------------- decoys, walls, curses
+// Mirror Step decoys: full Wizards that look exactly like their caster (see-through on the caster's screen).
+const decoys = new Map();    // id -> { wiz, owner }
+function spawnDecoy(d) {
+  if (decoys.has(d.id)) return;
+  const owner = players.get(d.owner);
+  if (!owner) return;
+  const wiz = new Wizard({ id: owner.id, name: owner.name, color: owner.color, bot: owner.bot, wizard: owner.wizard, p: d.p, yaw: d.yaw }, scene, false);
+  wiz.hp = owner.hp; wiz.netAnim = 'run';
+  if (owner === me) wiz.makeGhost();
+  decoys.set(d.id, { wiz, owner: d.owner });
+}
+function removeDecoy(id) {
+  const d = decoys.get(id);
+  if (!d) return;
+  d.wiz.dispose(scene);
+  decoys.delete(id);
+}
+function updateDecoys(list) {
+  const seen = new Set();
+  for (const d of list) {
+    seen.add(d.id);
+    if (!decoys.has(d.id)) spawnDecoy(d);
+    const e = decoys.get(d.id);
+    if (e) { e.wiz.targetPos.set(d.p[0], d.p[1], d.p[2]); e.wiz.targetYaw = d.yaw; }
+  }
+  for (const id of [...decoys.keys()]) if (!seen.has(id)) removeDecoy(id);
+}
+
+// Glacial Bulwark walls: their circles go into the shared collider list, so movement, the camera and
+// aiming all treat them like any other obstacle.
+const walls = new Map();     // id -> { data, fx }
+function wallUp(w, fresh = false) {
+  if (walls.has(w.id)) return;
+  C.addWallColliders(w.id, w.x, w.z, w.yaw);
+  const fx = effects.wall(w);
+  if (!fresh) fx.rise = 1;
+  walls.set(w.id, { data: w, fx });
+  if (fresh) sfx.wallUp([w.x, 1, w.z]);
+}
+
+// Trapped Relic: the prop we've cursed (the server tells only us), marked with a faint glyph.
+let cursedProp = null;
+const curseMark = effects.curseGlyph();
 
 // ---------------------------------------------------------------- UI helpers
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
@@ -470,7 +642,7 @@ function hitmarker() {
 let scoreVisible = false, scoreT = 0;
 function updateScoreboard() {
   const rows = [...players.values()].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
-  ui.scoreBody.innerHTML = rows.map(w => `<tr class="${w === me ? 'me' : ''}"><td style="color:#${w.color.toString(16).padStart(6, '0')}">${esc(w.name)}${w.bot ? `<span class="bot">${w.bot} bot</span>` : ''}</td><td class="spells">${esc(spellName(w.loadout.power))} · ${esc(spellName(w.loadout.mobility))}</td><td>${w.kills}</td><td>${w.deaths}</td></tr>`).join('');
+  ui.scoreBody.innerHTML = rows.map(w => `<tr class="${w === me ? 'me' : ''}"><td style="color:#${w.color.toString(16).padStart(6, '0')}">${esc(w.name)}${w.bot ? `<span class="bot">${w.bot} bot</span>` : ''}</td><td class="wiz">${esc(C.WIZARDS[w.wizard]?.name || '?')}</td><td>${w.kills}</td><td>${w.deaths}</td></tr>`).join('');
 }
 
 // ---------------------------------------------------------------- local player update
@@ -528,6 +700,7 @@ function aimPoint() {
     if (t > 4.5 && t < best) best = t;       // ignore anything between the camera and us
   };
   for (const w of players.values()) if (w !== me && !w.dead) hitSphere(tmp.v1.copy(w.group.position).setY(w.group.position.y + C.HIT_CENTER_Y), C.HIT_RADIUS + 0.3);
+  for (const d of decoys.values()) if (d.owner !== myId) hitSphere(tmp.v1.copy(d.wiz.group.position).setY(C.HIT_CENTER_Y), C.HIT_RADIUS + 0.3);
   for (const g of goats.values()) hitSphere(tmp.v1.copy(g.group.position).setY(C.GOAT.hitY), C.GOAT.radius + 0.2);
   // pillars and trees as vertical cylinders (2D ray vs circle)
   const hx = camDir.x, hz = camDir.z, hl = Math.hypot(hx, hz) || 1;
@@ -543,6 +716,11 @@ function aimPoint() {
   return [o.x + camDir.x * best, Math.max(0.3, o.y + camDir.y * best), o.z + camDir.z * best];
 }
 
+function sendPickup() {
+  camera.getWorldDirection(camDir);
+  net.send({ t: 'pickup', aimOrigin: camera.position.toArray(), aimDir: camDir.toArray() });
+}
+
 // Glow marker on the prop telekinesis would grab.
 const tkMarker = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 1),
   new THREE.MeshBasicMaterial({ color: 0xb48cff, wireframe: true, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false }));
@@ -552,7 +730,9 @@ let tkHover = null;
 
 function updateLocal(dt) {
   const stunned = now < local.stunUntil || me.stunned;
-  const canAct = !me.dead && !stunned;
+  const bound = now < local.silenceUntil || me.bound;
+  const rooted = now < local.rootUntil;
+  const canAct = !me.dead && !stunned && !bound;
 
   // mouse look
   if (input.locked) {
@@ -560,7 +740,7 @@ function updateLocal(dt) {
     local.pitch = THREE.MathUtils.clamp(local.pitch + input.mouseDY * 0.0022, -0.6, 1.1);
   }
 
-  const lo = me.loadout;
+  const K = kit();
   if (!input.down('Space')) local.spaceHeld = false;
 
   // ---- Skyward Flash: float down (slower holding E), drop after floatTime or on Space
@@ -580,31 +760,54 @@ function updateLocal(dt) {
 
   // ---- Arcane Cyclone timing (the server pulses; this keeps our controls honest meanwhile)
   if (local.cyclone && now - local.cyclone.start > CYC.windup + CYC.spin + 0.3) local.cyclone = null;
-  const winding = !!local.cyclone && !local.cyclone.pulsed;
-  const busy = local.charging || !!local.cyclone;
+  if (local.lash && local.lash.sent && now - local.lash.start > LASH.windup + 0.6) { local.lash = null; me.endLash(); }
+  const winding = (!!local.cyclone && !local.cyclone.pulsed) || !!local.lash;
+  const busy = local.charging || !!local.cyclone || !!local.lash;
+
+  // movement input (camera-relative), also the direction of a Mirror Step
+  let mx = 0, mz = 0;
+  if (input.down('KeyW')) mz += 1;
+  if (input.down('KeyS')) mz -= 1;
+  if (input.down('KeyA')) mx -= 1;
+  if (input.down('KeyD')) mx += 1;
+  const fwd = tmp.v1.set(Math.sin(local.yaw), 0, Math.cos(local.yaw));
+  const right = tmp.v2.set(-Math.cos(local.yaw), 0, Math.sin(local.yaw));   // forward × up
 
   // ---- actions
   if (canAct) {
-    // block
-    const wantBlock = input.down('Space') && me.st > 2 && !busy && !airborne && !local.spaceHeld;
+    // guard: hold to ward, or tap for Rime's ice wall (Space while airborne drops instead)
+    const wantBlock = K.guard === 'ward' && input.down('Space') && me.st > 2 && !busy && !airborne && !local.spaceHeld;
     if (wantBlock !== local.blocking) { local.blocking = wantBlock; net.send({ t: 'block', on: wantBlock }); }
+    if (K.guard === 'glacial_bulwark' && input.justPressed('Space') && !airborne && !local.spaceHeld && !busy && now >= local.cd.guard) {
+      local.cd.guard = now + BULWARK.cooldown;
+      net.send({ t: 'bulwark', yaw: local.yaw });
+    }
 
-    // fast bolt
+    // primary
     if (input.lmbPressed && !local.blocking && !busy && !me.carrying && now >= local.cd.fast) {
       computeAim();
-      local.cd.fast = now + C.SPELLS.fast.cooldown;
-      net.send({ t: 'cast', kind: 'fast', origin: aimOrigin.toArray(), dir: aimDir.toArray() });
+      if (K.primary === 'glacial_skim') {
+        local.cd.fast = now + SKIM.cooldown;
+        net.send({ t: 'cast', kind: 'skim', dir: [aimDir.x, 0, aimDir.z] });
+      } else {
+        local.cd.fast = now + C.SPELLS.fast.cooldown;
+        net.send({ t: 'cast', kind: 'fast', origin: aimOrigin.toArray(), dir: aimDir.toArray() });
+      }
     }
     // power slot
     if (input.rmbPressed && !local.blocking && !busy && !airborne && !me.carrying && now >= local.cd.power) {
-      if (lo.power === 'meteor') {
+      if (K.power === 'meteor') {
         // wind-up: press to start, fires automatically when fully charged
         local.charging = true; local.chargeStart = now; local.chargeSent = false;
         net.send({ t: 'chargeStart' });
-      } else if (lo.power === 'cyclone') {
+      } else if (K.power === 'cyclone') {
         local.cyclone = { start: now, pulsed: false };
         me.startCyclone();
         net.send({ t: 'cyclone' });
+      } else if (K.power === 'sanguine_lash') {
+        local.lash = { start: now, sent: false };
+        me.startLash();
+        net.send({ t: 'lashStart' });
       }
     }
     if (local.charging && !local.chargeSent && now - local.chargeStart >= C.SPELLS.heavy.chargeTime) {
@@ -614,24 +817,36 @@ function updateLocal(dt) {
       net.send({ t: 'chargeRelease', origin: aimOrigin.toArray(), dir: aimDir.toArray() });
       setTimeout(() => { local.charging = false; }, 150);
     }
+    if (local.lash && !local.lash.sent && now - local.lash.start >= LASH.windup) {
+      computeAim();
+      local.lash.sent = true;
+      local.cd.power = now + LASH.cooldown;
+      net.send({ t: 'lashRelease', origin: aimOrigin.toArray(), dir: aimDir.toArray() });
+    }
     // mobility slot
-    if (input.justPressed('KeyE') && !busy && !airborne && now >= local.cd.mobility) {
-      if (lo.mobility === 'blink') {
+    if (input.justPressed('KeyE') && !busy && !airborne && now >= local.cd.mobility && !(rooted && K.mobility !== 'skyward')) {
+      if (K.mobility === 'blink') {
         const dir = [Math.sin(local.yaw), 0, Math.cos(local.yaw)];
         const from = [local.pos.x, 0, local.pos.z];
         const to = C.computeTeleport(from, dir);
         local.cd.mobility = now + C.TELEPORT.cooldown;
         net.send({ t: 'teleport', dir, from });
         local.pos.set(to[0], 0, to[2]); local.vel.set(0, 0, 0);
-      } else if (lo.mobility === 'skyward') {
+      } else if (K.mobility === 'skyward') {
         local.cd.mobility = now + SKY.cooldown;
         local.flight = { start: now, last: now, drop: false };
         local.pos.y = SKY.height;
         net.send({ t: 'skyward' });
+      } else if (K.mobility === 'mirror_step') {
+        // along the movement keys, forward if none; the server picks which of the three paths is us
+        const d = (mx || mz) ? tmp.v3.set(0, 0, 0).addScaledVector(fwd, mz).addScaledVector(right, mx).normalize() : fwd;
+        local.cd.mobility = now + MIRROR.cooldown;
+        net.send({ t: 'mirror', dir: [d.x, 0, d.z], from: [local.pos.x, 0, local.pos.z] });
       }
       if (local.blocking) { local.blocking = false; }
     }
-    // telekinesis: lift / hurl / set down
+    // utility: lift / hurl / set down; with Trapped Relic, holding F on an object curses it instead
+    const relic = K.utility === 'trapped_relic';
     if (input.justPressed('KeyF')) {
       if (me.carrying) {
         if (now >= local.cd.throw && props.get(me.carrying)?.data.state === 'carried') {
@@ -640,34 +855,35 @@ function updateLocal(dt) {
           net.send({ t: 'throw', dir: aimDir.toArray(), target: aimPoint() });
         }
       } else if (!busy && !local.blocking && tkHover) {
-        camera.getWorldDirection(camDir);
-        net.send({ t: 'pickup', aimOrigin: camera.position.toArray(), aimDir: camDir.toArray() });
+        if (relic) local.fHold = { start: now };
+        else sendPickup();
       }
+    }
+    if (local.fHold) {
+      if (me.carrying || busy || local.blocking || !tkHover) local.fHold = null;
+      else if (now - local.fHold.start >= RELIC.hold) { local.fHold = null; camera.getWorldDirection(camDir); net.send({ t: 'curse', aimOrigin: camera.position.toArray(), aimDir: camDir.toArray() }); }
+      else if (!input.down('KeyF')) { local.fHold = null; sendPickup(); }
     }
     if (input.justPressed('KeyG') && me.carrying) net.send({ t: 'drop' });
   } else {
     if (local.blocking) { local.blocking = false; net.send({ t: 'block', on: false }); }
+    local.fHold = null;
   }
 
-  // ---- movement (camera-relative)
-  let mx = 0, mz = 0;
-  if (input.down('KeyW')) mz += 1;
-  if (input.down('KeyS')) mz -= 1;
-  if (input.down('KeyA')) mx -= 1;
-  if (input.down('KeyD')) mx += 1;
-  const moving = (mx || mz) && canAct;
+  // ---- movement (camera-relative); a bound wizard can't move, a silenced one still can
+  const moving = (mx || mz) && !me.dead && !stunned && !rooted;
   let speed = C.MOVE_SPEED;
-  if (local.charging || local.cyclone) speed = C.CHARGE_MOVE_SPEED;
+  if (local.charging || local.cyclone || local.lash) speed = C.CHARGE_MOVE_SPEED;
   else if (local.blocking) speed = C.BLOCK_MOVE_SPEED;
   else if (local.flight) speed = SKY.airSpeed;
-  const fwd = tmp.v1.set(Math.sin(local.yaw), 0, Math.cos(local.yaw));
-  const right = tmp.v2.set(-Math.cos(local.yaw), 0, Math.sin(local.yaw));   // forward × up
+  if (now < local.slowUntil) speed *= 1 - C.SPELLS.skim.slow;     // Glacial Skim
   const wish = tmp.v3.set(0, 0, 0);
   if (moving) { wish.addScaledVector(fwd, mz).addScaledVector(right, mx).normalize().multiplyScalar(speed); }
   // accelerate toward wish velocity; knockback lives in local.vel too
   const accel = Math.min(1, dt * 12);
   local.vel.x += (wish.x - local.vel.x) * accel;
   local.vel.z += (wish.z - local.vel.z) * accel;
+  if (rooted) local.vel.set(0, 0, 0);
   if (!me.dead) local.pos.addScaledVector(local.vel, dt);
 
   // ---- collisions (2D circles)
@@ -683,6 +899,7 @@ function updateLocal(dt) {
   if (y < 1) for (const e of props.values()) if (e.data.state === 'idle') pushOut(e.data.x, e.data.z, C.PROP_TYPES[e.data.type].r * 0.8);
   for (const w of players.values()) if (w !== me && !w.dead && Math.abs(w.group.position.y - y) < C.PLAYER_HEIGHT) pushOut(w.group.position.x, w.group.position.z, pr);
   if (y < 1) for (const g of goats.values()) if (g.state !== 'charge') pushOut(g.group.position.x, g.group.position.z, C.GOAT.radius);
+  if (y < 1) for (const d of decoys.values()) if (d.owner !== myId) pushOut(d.wiz.group.position.x, d.wiz.group.position.z, pr);
   const r = Math.hypot(local.pos.x, local.pos.z);
   if (r > C.ARENA_RADIUS) { local.pos.x *= C.ARENA_RADIUS / r; local.pos.z *= C.ARENA_RADIUS / r; }
 
@@ -691,6 +908,7 @@ function updateLocal(dt) {
   me.group.rotation.y = local.yaw;
   me.blocking = local.blocking;
   me.charging = local.charging;
+  me.slowed = now < local.slowUntil; me.bound = bound && !me.dead;
   me.updateAnimation(!!moving, dt);
   local.anim = me.dead ? 'dead' : local.charging || winding ? 'charge' : local.blocking ? 'block' : moving ? 'run' : 'idle';
 
@@ -731,31 +949,47 @@ function updateHud(dt) {
   if (Math.abs(stShown - lastHud.st) > 0.5) { ui.st.style.width = `${stShown}%`; lastHud.st = stShown; ui.stBar.classList.toggle('low', stShown < 25); }
 
   // charge ring: the meteor's wind-up, or the cyclone's (purple)
-  const windup = local.charging ? [local.chargeStart, C.SPELLS.heavy.chargeTime] : local.cyclone && !local.cyclone.pulsed ? [local.cyclone.start, CYC.windup] : null;
+  const windup = local.charging ? [local.chargeStart, C.SPELLS.heavy.chargeTime] : local.cyclone && !local.cyclone.pulsed ? [local.cyclone.start, CYC.windup]
+    : local.lash ? [local.lash.start, LASH.windup] : local.fHold ? [local.fHold.start, RELIC.hold] : null;
   if (windup) {
     const k = Math.min(1, (now - windup[0]) / windup[1]);
-    ui.charge.classList.add('on'); ui.charge.classList.toggle('ready', k >= 1); ui.charge.classList.toggle('cyclone', !local.charging);
+    ui.charge.classList.add('on'); ui.charge.classList.toggle('ready', k >= 1);
+    ui.charge.classList.toggle('cyclone', !!local.cyclone); ui.charge.classList.toggle('lash', !!local.lash || !!local.fHold);
     ui.chargeFg.style.strokeDashoffset = 163.4 * (1 - k);
   } else ui.charge.classList.remove('on');
 
-  // ability bar: the equipped spell's name and its slot's cooldown
-  const lo = me.loadout;
+  // ability bar: the wizard's five spells and each slot's cooldown
+  const K = kit();
+  const bound = now < local.silenceUntil;
   const setName = (key, text) => { const el = ui.ab[key].querySelector('.name'); if (el.textContent !== text) el.textContent = text; };
-  setName('power', lo.power === 'cyclone' ? 'Cyclone' : spellName(lo.power));
-  setName('mobility', lo.mobility === 'skyward' ? 'Skyward' : spellName(lo.mobility));
-  const cdFill = (key, until, total) => { const k = Math.max(0, Math.min(1, (until - now) / total)); ui.ab[key].querySelector('.cd').style.height = `${k * 100}%`; };
-  cdFill('fast', local.cd.fast, C.SPELLS.fast.cooldown);
-  cdFill('power', local.cd.power, C.SPELLBOOK[lo.power].cooldown);
-  cdFill('mobility', local.cd.mobility, C.SPELLBOOK[lo.mobility].cooldown);
+  setName('fast', shortName(K.primary));
+  setName('power', shortName(K.power));
+  setName('mobility', shortName(K.mobility));
+  setName('block', shortName(K.guard));
+  setName('throw', me.carrying ? 'Hurl' : shortName(K.utility));
+  const cdFill = (key, until, total) => { const k = total ? Math.max(0, Math.min(1, (until - now) / total)) : 0; ui.ab[key].querySelector('.cd').style.height = `${k * 100}%`; };
+  cdFill('fast', local.cd.fast, SPELL[K.primary].cooldown);
+  cdFill('power', local.cd.power, SPELL[K.power].cooldown);
+  cdFill('mobility', local.cd.mobility, SPELL[K.mobility].cooldown);
+  cdFill('block', local.cd.guard, SPELL[K.guard].cooldown);
   cdFill('throw', local.cd.throw, C.THROW_COOLDOWN);
-  ui.ab.block.classList.toggle('active', local.blocking);
-  ui.ab.power.classList.toggle('active', local.charging || !!local.cyclone);
+  ui.ab.block.classList.toggle('active', local.blocking || [...walls.values()].some(w => w.data.owner === myId));
+  ui.ab.power.classList.toggle('active', local.charging || !!local.cyclone || !!local.lash);
   ui.ab.mobility.classList.toggle('active', !!local.flight);
-  ui.ab.block.classList.toggle('disabled', me.st < 3 || !!local.flight);
-  ui.ab.throw.querySelector('.name').textContent = me.carrying ? 'Hurl' : 'Lift';
-  ui.ab.throw.classList.toggle('active', !!me.carrying);
-  ui.ab.fast.classList.toggle('disabled', !!me.carrying);
-  ui.ab.power.classList.toggle('disabled', !!me.carrying || !!local.flight);
+  ui.ab.block.classList.toggle('disabled', bound || (K.guard === 'ward' && me.st < 3) || !!local.flight);
+  ui.ab.throw.classList.toggle('active', !!me.carrying || !!local.fHold);
+  ui.ab.throw.classList.toggle('disabled', bound);
+  ui.ab.fast.classList.toggle('disabled', !!me.carrying || bound);
+  ui.ab.power.classList.toggle('disabled', !!me.carrying || !!local.flight || bound);
+  ui.ab.mobility.classList.toggle('disabled', bound || (now < local.rootUntil && K.mobility !== 'skyward'));
+
+  // our cursed prop: a faint red glyph above it
+  const cp = cursedProp && props.get(cursedProp);
+  curseMark.visible = !!cp && cp.data.state === 'idle';
+  if (curseMark.visible) {
+    curseMark.position.set(cp.data.x, C.PROP_TYPES[cp.data.type].h + 0.45 + Math.sin(now * 2) * 0.06, cp.data.z);
+    curseMark.material.opacity = 0.4 + Math.sin(now * 3) * 0.12;
+  }
 
   // hint
   let hint = '';
@@ -768,12 +1002,18 @@ function updateHud(dt) {
     tkMarker.rotation.y += dt * 1.5;
   } else tkMarker.visible = false;
   const hunted = !me.dead && [...goats.values()].some(g => g.tgt === myId && (g.state === 'windup' || g.state === 'charge'));
-  if (hunted) hint = 'A goat is charging you! Ward (Space) facing it, or blink away';
+  const rooted = now < local.rootUntil, slowed = now < local.slowUntil;
+  if (hunted) hint = K.guard === 'ward' ? 'A goat is charging you! Ward (Space) facing it, or get out of the way' : 'A goat is charging you! Wall it off (Space) or get out of the way';
+  else if (bound) hint = 'Bound!';
+  else if (rooted) hint = 'Recovering…';
   else if (local.flight) hint = 'Hold E to hover · Space to drop';
   else if (me.carrying) hint = 'F hurl · G set down';
   else if (now < local.stunUntil) hint = 'Stunned!';
-  else if (tkHover) hint = 'F lift';
+  else if (local.fHold) hint = 'Cursing…';
+  else if (tkHover) hint = K.utility === 'trapped_relic' ? (tkHover.data.id === cursedProp ? 'Your relic · F lift (removes the curse)' : 'F lift · hold F to curse') : 'F lift';
+  else if (slowed) hint = 'Slowed by frost';
   ui.hint.textContent = hint; ui.hint.classList.toggle('on', !!hint); ui.hint.classList.toggle('danger', hunted);
+  ui.hint.classList.toggle('bound', !hunted && (bound || rooted)); ui.hint.classList.toggle('frost', !hunted && !bound && !rooted && slowed && hint === 'Slowed by frost');
 
   if (vignetteT > 0) { vignetteT -= dt; if (vignetteT <= 0) ui.vignette.classList.remove('hit'); }
 
@@ -790,10 +1030,11 @@ function updateHud(dt) {
 // Charge hum (rising in pitch), ward hum and footsteps follow each wizard around.
 function updateWizardAudio(w, dt) {
   const pos = wpos(w);
-  const charging = w.charging && !w.dead, warding = w.blocking && !w.dead;
+  const charging = (w.charging || w.lashT >= 0) && !w.dead, warding = w.blocking && !w.dead;
   if (charging && !w.sndCharge) w.sndCharge = sfx.loop('charge_loop', { pos, vol: 0.55, rate: 0.6 });
   else if (!charging && w.sndCharge) { w.sndCharge.stop(0.08); w.sndCharge = null; }
-  if (w.sndCharge) { w.sndCharge.setPos(pos); w.sndCharge.setRate(0.6 + Math.min(1, w.chargeT / C.SPELLS.heavy.chargeTime) * 0.9); }
+  // the lash hum sits lower and rises over its longer wind-up
+  if (w.sndCharge) { w.sndCharge.setPos(pos); w.sndCharge.setRate(w.lashT >= 0 ? 0.4 + Math.min(1, w.lashT / LASH.windup) * 0.5 : 0.6 + Math.min(1, w.chargeT / C.SPELLS.heavy.chargeTime) * 0.9); }
   if (warding && !w.sndWard) w.sndWard = sfx.loop('ward_loop', { pos, vol: 0.45, fadeIn: 0.12 });
   else if (!warding && w.sndWard) { w.sndWard.stop(0.2); w.sndWard = null; }
   if (w.sndWard) w.sndWard.setPos(pos);
@@ -827,6 +1068,13 @@ function frame(t) {
       if (w.wasAir && !air && !w.dead) { effects.land([w.targetPos.x, 0, w.targetPos.z]); sfx.land([w.targetPos.x, 0.2, w.targetPos.z]); }
       w.wasAir = air;
     }
+    for (const d of decoys.values()) {
+      const owner = players.get(d.owner);
+      if (owner) d.wiz.hp = owner.hp;
+      d.wiz.interpolate(dt);
+      d.wiz.updateAnimation(true, dt);
+      d.wiz.faceCamera(camera);
+    }
     for (const w of players.values()) w.faceCamera(camera);
     updateHud(dt);
     if (input.justPressed('KeyM')) { sfx.muted = !sfx.muted; ui.mute.checked = sfx.muted; feed(sfx.muted ? 'Sound muted (M)' : 'Sound on'); }
@@ -854,4 +1102,4 @@ function frame(t) {
 requestAnimationFrame(frame);
 
 // Debug handle (used by the automated smoke test; harmless in production).
-window.__wa = { input, net, local, players, props, goats, effects, scene, camera, sfx };
+window.__wa = { input, net, local, players, props, goats, effects, scene, camera, sfx, decoys, walls, C, get cursedProp() { return cursedProp; } };

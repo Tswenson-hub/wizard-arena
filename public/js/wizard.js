@@ -10,7 +10,26 @@ const moteMat = new THREE.MeshBasicMaterial({ color: 0xd9c4ff, transparent: true
 const shellMat = new THREE.MeshBasicMaterial({ color: TK_COLOR, transparent: true, opacity: 0.35, wireframe: true, blending: THREE.AdditiveBlending, depthWrite: false });
 const BEAM_MOTES = 12;
 
-const CYC = C.SPELLBOOK.cyclone;
+const CYC = C.SPELLBOOK.cyclone, LASH = C.SPELLBOOK.sanguine_lash;
+
+// Sanguine Lash: the whip coiling around the caster during the wind-up (a helix of blood-red light).
+const coilGeo = (() => {
+  const pts = [];
+  for (let i = 0; i <= 120; i++) {
+    const k = i / 120, a = k * Math.PI * 2 * 3.2;
+    const r = 0.55 + Math.sin(k * Math.PI) * 0.25;
+    pts.push(new THREE.Vector3(Math.sin(a) * r, 0.15 + k * 1.9, Math.cos(a) * r));
+  }
+  return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 160, 0.035, 5, false);
+})();
+const coilMat = new THREE.MeshBasicMaterial({ color: 0xff2a3c, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false });
+// Bound wizards: crimson chain rings around the body.
+const chainGeo = new THREE.TorusGeometry(0.62, 0.045, 5, 28);
+const chainMat = new THREE.MeshBasicMaterial({ color: 0xff3048, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false });
+const linkGeo = new THREE.OctahedronGeometry(0.08, 0);
+// Slowed wizards: frost crystals around the legs.
+const frostGeo = new THREE.ConeGeometry(0.07, 0.42, 4);
+const frostMat = new THREE.MeshBasicMaterial({ color: 0xbfeaff, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false });
 
 // Arcane Cyclone telegraph: a purple runic circle drawn once on a canvas, shared by every wizard.
 let runeTex = null;
@@ -146,7 +165,42 @@ export class Wizard {
     this.shadow.add(landRing);
     this.shadow.visible = false;
     scene.add(this.shadow);
-    this.loadout = info.loadout || C.DEFAULT_LOADOUT;
+
+    // Sanguine Lash wind-up coil, bind chains (with a crimson rune underfoot), frost when slowed
+    this.coil = new THREE.Mesh(coilGeo, coilMat.clone());
+    this.coil.visible = false;
+    this.group.add(this.coil);
+    this.lashT = -1;             // seconds into our lash wind-up; -1 = none
+    this.chains = new THREE.Group();
+    for (let i = 0; i < 3; i++) {
+      const ring = new THREE.Mesh(chainGeo, chainMat);
+      ring.position.y = 0.45 + i * 0.5;
+      ring.rotation.x = Math.PI / 2 + (i - 1) * 0.35;
+      for (let k = 0; k < 8; k++) {
+        const link = new THREE.Mesh(linkGeo, chainMat);
+        const a = k / 8 * Math.PI * 2;
+        link.position.set(Math.sin(a) * 0.62, Math.cos(a) * 0.62, 0);
+        ring.add(link);
+      }
+      this.chains.add(ring);
+    }
+    const bindRune = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 2.2).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ map: runeTexture(), color: 0xff2040, transparent: true, opacity: 0.75, blending: THREE.AdditiveBlending, depthWrite: false }));
+    bindRune.position.y = 0.13;
+    this.chains.add(bindRune);
+    this.chains.visible = false;
+    this.group.add(this.chains);
+    this.frost = new THREE.Group();
+    for (let i = 0; i < 9; i++) {
+      const c = new THREE.Mesh(frostGeo, frostMat);
+      const a = i / 9 * Math.PI * 2;
+      c.position.set(Math.sin(a) * 0.38, 0.12 + (i % 3) * 0.16, Math.cos(a) * 0.38);
+      c.rotation.set(Math.cos(a) * 0.6, 0, -Math.sin(a) * 0.6);
+      this.frost.add(c);
+    }
+    this.frost.visible = false;
+    this.group.add(this.frost);
+    this.bound = false; this.slowed = false; this.lashing = false;
 
     this.nameplate = makeNameplate(this.bot ? `${info.name} · ${this.bot}` : info.name, info.color);
     this.nameplate.position.y = 2.25;
@@ -215,6 +269,19 @@ export class Wizard {
 
   inOneShot() { return performance.now() / 1000 < this.oneShotUntil; }
 
+  startLash() { this.lashT = 0; }
+  endLash() { this.lashT = -1; }
+  // Own decoys are drawn see-through on the caster's screen.
+  makeGhost() {
+    this.model.traverse(o => {
+      if (!o.isMesh) return;
+      o.material = o.material.clone();
+      o.material.transparent = true; o.material.opacity = 0.32; o.material.depthWrite = false;
+      o.castShadow = false;
+    });
+    this.nameplate.material.opacity = 0.4;
+  }
+
   startCyclone() { this.cycloneT = 0; }
   cancelCyclone() { this.cycloneT = -1; }
   // The pulse: two full turns over the spin, with the dash clip underneath.
@@ -228,7 +295,7 @@ export class Wizard {
   updateAnimation(moving, dt) {
     if (this.dead) { this.setBase('stun', 0.1); }
     else if (!this.inOneShot()) {
-      if (this.charging || (this.cycloneT >= 0 && this.cycloneT < CYC.windup)) this.setBase('cast_heavy', 0.1);
+      if (this.charging || this.lashT >= 0 || (this.cycloneT >= 0 && this.cycloneT < CYC.windup)) this.setBase('cast_heavy', 0.1);
       else if (this.blocking) this.setBase('block');
       else if (moving) this.setBase('run');
       else this.setBase('idle', 0.25);
@@ -258,6 +325,7 @@ export class Wizard {
 
     this.updateCyclone(dt);
     this.updateShadow();
+    this.updateBinds(dt);
 
     // health bar
     this.hpFill.scale.x = Math.max(0.001, this.hp / 100);
@@ -295,6 +363,30 @@ export class Wizard {
     this.rune.rotation.y += dt * (1.2 + k * 3);
     this.rune.material.opacity = this.cycloneT <= CYC.windup ? 0.35 + 0.55 * k + Math.sin(this.cycloneT * 40) * 0.05
       : 0.9 * (1 - (this.cycloneT - CYC.windup) / (fadeOut - CYC.windup));
+  }
+
+  // Lash coil (tightening and brightening over the wind-up), chains when bound, frost when slowed.
+  updateBinds(dt) {
+    const now = performance.now() / 1000;
+    if (this.dead) this.lashT = -1;
+    if (this.lashT >= 0) {
+      this.lashT += dt;
+      const k = Math.min(1, this.lashT / LASH.windup);
+      this.coil.visible = true;
+      this.coil.rotation.y += dt * (2 + k * 9);
+      const s = 1.35 - k * 0.4 + Math.sin(this.lashT * 25) * 0.03 * k;
+      this.coil.scale.set(s, 0.6 + k * 0.4, s);
+      this.coil.material.opacity = 0.35 + 0.6 * k;
+      if (this.lashT > LASH.windup + 0.6) this.lashT = -1;   // missed the release message
+    } else this.coil.visible = false;
+    this.chains.visible = this.bound && !this.dead;
+    if (this.chains.visible) {
+      this.chains.children.forEach((c, i) => { if (i < 3) c.rotation.z += dt * (i % 2 ? -2.2 : 2.6); });
+      this.chains.children[3].rotation.y += dt * 1.5;
+      this.chains.scale.setScalar(1 + Math.sin(now * 14) * 0.03);
+    }
+    this.frost.visible = this.slowed && !this.dead;
+    if (this.frost.visible) this.frost.rotation.y += dt * 0.6;
   }
 
   updateShadow() {

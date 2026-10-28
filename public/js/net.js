@@ -7,12 +7,12 @@ export class Net {
     this.onClose = null;
   }
 
-  connect(name, loadout) {
+  connect(name, wizard) {
     return new Promise((resolve, reject) => {
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
       const ws = new WebSocket(`${proto}://${location.host}`);
       this.ws = ws;
-      ws.onopen = () => { this.connected = true; this.send({ t: 'join', name, loadout }); };
+      ws.onopen = () => { this.connected = true; this.send({ t: 'join', name, wizard }); };
       ws.onmessage = (e) => {
         let msg; try { msg = JSON.parse(e.data); } catch { return; }
         if (msg.t === 'welcome') resolve(msg);

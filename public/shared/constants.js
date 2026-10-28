@@ -1,7 +1,9 @@
 // Shared between server and client. Keep this file dependency-free.
 // Map layout (arena size, obstacles, props, goats, spawns) lives in map.js and is re-exported here.
 import { COLLIDERS, ARENA_RADIUS, LOS_HEIGHT } from './map.js';
+import { WIZARDS, DEFAULT_WIZARD } from './wizards.js';
 export * from './map.js';
+export * from './wizards.js';
 
 export const TICK_RATE = 60;          // server simulation Hz
 export const SNAPSHOT_RATE = 20;      // server -> client state broadcast Hz
@@ -57,6 +59,28 @@ export const SPELLS = {
     staminaCost: 25,
     knockback: 4,
   },
+  skim: {                // Glacial Skim: one of three ice shards skimming along the ground
+    damage: 11,
+    stun: 0,
+    speed: 26,
+    radius: 0.2,
+    life: 0.85,
+    staminaCost: 6,
+    knockback: 0.6,
+    height: 0.35,        // flight height; a wizard in the air is above it
+    slow: 0.35,          // movement slowed by this fraction...
+    slowTime: 2,         // ...for this long (refreshed by a new hit, never stacked)
+  },
+  lash: {                // Sanguine Lash: a fast whip that pierces every wizard on its path
+    damage: 12,
+    stun: 0,
+    speed: 28,
+    radius: 0.35,
+    life: 22 / 28,       // about 22 m
+    staminaCost: 40,     // a ward facing the caster blocks it
+    knockback: 0,        // a bound wizard doesn't move, knockback included
+    bind: 1.25,          // rooted and silenced
+  },
 };
 
 export const TELEPORT = {
@@ -65,28 +89,36 @@ export const TELEPORT = {
 };
 
 // ---------------------------------------------------------------- spellbook
-// Players choose which spell sits in each ability slot. Adding a spell = one entry here plus its
-// handler on the server (server.js) and client (main.js). `cooldown` is per slot: swapping spells
-// doesn't reset it.
-export const LOADOUT_SLOTS = {
-  primary:  { key: 'LMB', label: 'Primary' },
-  power:    { key: 'RMB', label: 'Power' },
-  mobility: { key: 'E',   label: 'Mobility' },
+// Every spell, keyed by id. Each wizard (wizards.js) has a fixed kit of one spell per slot.
+// Adding a spell = one entry here plus its handler on the server (server.js) and client (main.js).
+// `short` is the ability bar label. `cooldown` is per slot.
+export const SLOT_INFO = {
+  primary:  { key: 'LMB',   label: 'Primary' },
+  power:    { key: 'RMB',   label: 'Power' },
+  mobility: { key: 'E',     label: 'Mobility' },
+  guard:    { key: 'Space', label: 'Guard' },
+  utility:  { key: 'F',     label: 'Utility' },
 };
 
 export const SPELLBOOK = {
   spark: {
-    id: 'spark', slot: 'primary', name: 'Spark',
+    id: 'spark', slot: 'primary', name: 'Spark', short: 'Spark',
     blurb: 'Quick bolt. Low damage, briefly stuns.',
     cooldown: SPELLS.fast.cooldown,
   },
+  glacial_skim: {
+    id: 'glacial_skim', slot: 'primary', name: 'Glacial Skim', short: 'Skim',
+    blurb: 'Three ice shards skim the ground. Each hit slows by 35% for 2 s. Fences stop them.',
+    shards: 3, spreadDeg: 6,
+    cooldown: 0.6,
+  },
   meteor: {
-    id: 'meteor', slot: 'power', name: 'Meteor',
+    id: 'meteor', slot: 'power', name: 'Meteor', short: 'Meteor',
     blurb: '1.25 s wind-up, then a heavy fireball. Being hit cancels it.',
     cooldown: SPELLS.heavy.cooldown, windup: SPELLS.heavy.chargeTime,
   },
   cyclone: {
-    id: 'cyclone', slot: 'power', name: 'Arcane Cyclone',
+    id: 'cyclone', slot: 'power', name: 'Arcane Cyclone', short: 'Cyclone',
     blurb: 'Short wind-up, then spin: hits everyone within 5.5 m and flings them outward.',
     windup: 0.45,        // can't ward, move at CHARGE_MOVE_SPEED; being hit cancels it
     spin: 0.5,           // two full turns; the damage pulse fires at the start
@@ -98,13 +130,20 @@ export const SPELLBOOK = {
     staminaCost: 35,     // a ward facing the caster blocks it for this much stamina
     cooldown: 5,
   },
+  sanguine_lash: {
+    id: 'sanguine_lash', slot: 'power', name: 'Sanguine Lash', short: 'Lash',
+    blurb: '1.5 s wind-up, then a piercing whip: binds everyone it hits for 1.25 s. Miss and you are rooted.',
+    windup: 1.5,         // can't ward, move at CHARGE_MOVE_SPEED; being hit cancels it
+    missRoot: 1.0,       // the caster's recovery when the whip hits nobody
+    cooldown: 13,
+  },
   blink: {
-    id: 'blink', slot: 'mobility', name: 'Blink',
+    id: 'blink', slot: 'mobility', name: 'Blink', short: 'Blink',
     blurb: 'Teleport 9 m in the direction you face.',
     cooldown: TELEPORT.cooldown,
   },
   skyward: {
-    id: 'skyward', slot: 'mobility', name: 'Skyward Flash',
+    id: 'skyward', slot: 'mobility', name: 'Skyward Flash', short: 'Skyward',
     blurb: 'Flash 7 m straight up and float down. Hold E to hover, Space to drop.',
     height: 7,           // launch height (m)
     maxHeight: 8,        // the server never accepts a wizard higher than this
@@ -115,22 +154,46 @@ export const SPELLBOOK = {
     airSpeed: 4.5,       // horizontal steering speed while airborne
     cooldown: 6,         // from launch
   },
+  mirror_step: {
+    id: 'mirror_step', slot: 'mobility', name: 'Mirror Step', short: 'Mirror',
+    blurb: 'Dash 7 m and split three ways: you take one path, two decoys run the others.',
+    distance: 7,
+    spreadDeg: 30,       // the side paths
+    decoyTime: 2.5,      // decoys run this long at run speed, then fade
+    cooldown: 7,
+  },
+  ward: {
+    id: 'ward', slot: 'guard', name: 'Ward', short: 'Ward',
+    blurb: 'Hold to block spells from the front. Drains stamina.',
+    cooldown: 0,
+  },
+  glacial_bulwark: {
+    id: 'glacial_bulwark', slot: 'guard', name: 'Glacial Bulwark', short: 'Bulwark',
+    blurb: 'Tap to raise an ice wall ahead that blocks everything. 10 s or 120 damage.',
+    dist: 2.5, width: 2.7, height: 2.7,
+    circles: 5, r: 0.35,  // collider chain
+    life: 10, hp: 120,
+    cooldown: 12,
+  },
+  telekinesis: {
+    id: 'telekinesis', slot: 'utility', name: 'Telekinesis', short: 'Lift',
+    blurb: 'Lift an object, then hurl it. It shields you while held.',
+    cooldown: 0.6,
+  },
+  trapped_relic: {
+    id: 'trapped_relic', slot: 'utility', name: 'Trapped Relic', short: 'Relic',
+    blurb: 'Telekinesis, plus: hold F on an object to curse it. It explodes on the next enemy who lifts it.',
+    hold: 0.5,           // seconds of holding F that curse instead of lift
+    damage: 45, radius: 3.5,
+    stun: 0.4,
+    knockback: 7,
+    staminaCost: 40,     // a ward facing the blast blocks it
+    cooldown: 0.6,
+  },
 };
 
-export const DEFAULT_LOADOUT = { primary: 'spark', power: 'meteor', mobility: 'blink' };
-
-// The spells a slot can hold, in display order.
-export const spellsFor = (slot) => Object.values(SPELLBOOK).filter(s => s.slot === slot);
-
-// A valid loadout built from `want`, falling back slot by slot to `base` for unknown ids.
-export function sanitizeLoadout(want, base = DEFAULT_LOADOUT) {
-  const out = { ...base };
-  for (const slot of Object.keys(LOADOUT_SLOTS)) {
-    const id = want?.[slot];
-    if (typeof id === 'string' && Object.hasOwn(SPELLBOOK, id) && SPELLBOOK[id].slot === slot) out[slot] = id;
-  }
-  return out;
-}
+// The kit (slot -> spell id) of wizard `id`, falling back to the default wizard.
+export const kitOf = (id) => (WIZARDS[id] || WIZARDS[DEFAULT_WIZARD]).kit;
 
 // Damage/stun/knockback/stamina spec for a `hit` kind: a projectile kind or a spellbook id.
 export const hitSpec = (kind) => SPELLS[kind] || SPELLBOOK[kind];
@@ -139,7 +202,7 @@ export const hitSpec = (kind) => SPELLS[kind] || SPELLBOOK[kind];
 export const FLIGHT_MAX_TIME = SPELLBOOK.skyward.floatTime + SPELLBOOK.skyward.maxHeight / SPELLBOOK.skyward.dropSpeed + 0.6;
 
 export const PICKUP_RANGE = 2.6;      // grab the nearest prop at point-blank range, wherever you aim
-export const THROW_COOLDOWN = 0.6;
+export const THROW_COOLDOWN = SPELLBOOK.telekinesis.cooldown;
 export const SPARK_STUN_IMMUNITY = 0.6; // after a spark stun ends, further sparks don't re-stun for this long
 
 // Telekinesis: aim at a prop and lift it from range; it floats beside you until thrown.
@@ -189,10 +252,10 @@ export const MAX_NAME_LEN = 14;
 
 // Where a blink lands. Used by the server (authoritative) and the client (prediction),
 // so the two must agree exactly.
-export function computeTeleport(from, dir) {
+export function computeTeleport(from, dir, distance = TELEPORT.distance) {
   const l = Math.hypot(dir[0], dir[2]) || 1;
   const dx = dir[0] / l, dz = dir[2] / l;
-  let to = [from[0] + dx * TELEPORT.distance, 0, from[2] + dz * TELEPORT.distance];
+  let to = [from[0] + dx * distance, 0, from[2] + dz * distance];
   const r = Math.hypot(to[0], to[2]);
   if (r > ARENA_RADIUS - 1) { to[0] *= (ARENA_RADIUS - 1) / r; to[2] *= (ARENA_RADIUS - 1) / r; }
   for (const c of COLLIDERS) {
@@ -203,4 +266,41 @@ export function computeTeleport(from, dir) {
     }
   }
   return to;
+}
+
+// Mirror Step: the three end points (centre, then the two side paths) and their directions.
+export function mirrorPaths(from, dir) {
+  const MS = SPELLBOOK.mirror_step;
+  const base = Math.atan2(dir[0], dir[2]);
+  return [0, -1, 1].map(k => {
+    const a = base + k * MS.spreadDeg * Math.PI / 180;
+    const d = [Math.sin(a), 0, Math.cos(a)];
+    return { to: computeTeleport(from, d, MS.distance), dir: d };
+  });
+}
+
+// Glacial Bulwark: the wall raised by a wizard at `p` facing `yaw`, as a chain of collider circles
+// perpendicular to the aim. Server and clients build the same circles from { id, x, z, yaw }.
+export function bulwarkCircles(id, x, z, yaw) {
+  const B = SPELLBOOK.glacial_bulwark;
+  const rx = Math.cos(yaw), rz = -Math.sin(yaw);
+  const span = B.width - 2 * B.r;
+  const out = [];
+  for (let i = 0; i < B.circles; i++) {
+    const k = (i / (B.circles - 1) - 0.5) * span;
+    out.push({ x: x + rx * k, z: z + rz * k, r: B.r, h: B.height, kind: 'bulwark', wall: id });
+  }
+  return out;
+}
+export function bulwarkCentre(p, yaw) {
+  const B = SPELLBOOK.glacial_bulwark;
+  return [p[0] + Math.sin(yaw) * B.dist, p[2] + Math.cos(yaw) * B.dist];
+}
+// Add / remove a wall's circles in the shared collider list (everything collides against it).
+export function addWallColliders(id, x, z, yaw) {
+  removeWallColliders(id);
+  COLLIDERS.push(...bulwarkCircles(id, x, z, yaw));
+}
+export function removeWallColliders(id) {
+  for (let i = COLLIDERS.length - 1; i >= 0; i--) if (COLLIDERS[i].wall === id) COLLIDERS.splice(i, 1);
 }

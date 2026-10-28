@@ -3,7 +3,25 @@ import * as THREE from 'three';
 import * as C from '../shared/constants.js';
 import { makePropMesh, makeFragments } from './world.js';
 
-const SPELL_COLORS = { fast: 0x7ad8ff, heavy: 0xff7a2a, prop: 0xb48cff };
+const SPELL_COLORS = { fast: 0x7ad8ff, heavy: 0xff7a2a, prop: 0xb48cff, skim: 0xbfeaff, lash: 0xff2a3c };
+const BULWARK = C.SPELLBOOK.glacial_bulwark;
+
+// Crack lines for the ice wall, generated once: each wall shows more of them as it takes damage.
+const CRACKS = (() => {
+  let seed = 11;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const out = [];
+  for (let i = 0; i < 14; i++) {
+    let x = (rnd() - 0.5) * BULWARK.width * 0.8, y = 0.3 + rnd() * (BULWARK.height - 0.6);
+    const pts = [];
+    for (let k = 0; k < 5; k++) {
+      const nx = x + (rnd() - 0.5) * 0.7, ny = y + (rnd() - 0.5) * 0.7;
+      pts.push(x, y, nx, ny); x = nx; y = ny;
+    }
+    out.push(pts);
+  }
+  return out;
+})();
 
 export class Effects {
   constructor(scene) {
@@ -46,6 +64,25 @@ export class Effects {
       g.userData.shell = shell;
       light = new THREE.PointLight(color, 8, 12);
       g.add(light);
+    } else if (msg.kind === 'skim') {
+      // an ice shard: a stretched crystal pointing along its flight
+      const shard = new THREE.Mesh(new THREE.OctahedronGeometry(0.16, 0), this.mat(0xe8f8ff));
+      shard.scale.set(0.8, 0.8, 2.4);
+      const glow = new THREE.Mesh(this.sphereGeo, this.mat(0x9adfff, { opacity: 0.35 }));
+      glow.scale.setScalar(0.24);
+      g.add(shard, glow);
+      g.lookAt(msg.v[0], 0, msg.v[2]);
+      g.userData.aim = true;
+    } else if (msg.kind === 'lash') {
+      // the whip: a long blood-red streak with a bright tip
+      const tip = new THREE.Mesh(this.sphereGeo, this.mat(0xffd0d4));
+      tip.scale.setScalar(0.14);
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.13, 2.6, 6, 1, true).rotateX(Math.PI / 2).translate(0, 0, -1.3),
+        this.mat(0xff2a3c, { opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false }));
+      g.add(tip, body);
+      light = new THREE.PointLight(0xff2a3c, 4, 7);
+      g.add(light);
+      g.userData.aimV = new THREE.Vector3(msg.v[0], msg.v[1], msg.v[2]);
     } else {
       const mesh = makePropMesh(msg.propType);
       mesh.position.y = -C.PROP_TYPES[msg.propType].h * 0.5;
@@ -73,6 +110,8 @@ export class Effects {
     if (msg.hit) {
       if (pr.kind === 'heavy') this.burst(p, 0xff7a2a, 34, 7, 0.8);
       else if (pr.kind === 'fast') this.burst(p, 0x7ad8ff, 14, 4, 0.4);
+      else if (pr.kind === 'skim') this.burst(p, 0xdff6ff, 9, 3, 0.25, 4);
+      else if (pr.kind === 'lash') this.burst(p, 0xff2a3c, 14, 4, 0.35);
       // thrown props shatter via the propBreak message
     } else {
       this.burst(p, SPELL_COLORS[pr.kind] || 0xffffff, 6, 1.5, 0.3);
@@ -217,6 +256,148 @@ export class Effects {
     if (type === 'potion') { this.burst(pos, 0x5cf0b0, 22, 5, 0.45); this.burst(pos, 0xd98cff, 14, 3.5, 0.4, -1); }   // potion splash
   }
 
+  // ---------------------------------------------------------------- Sanguine Lash / Mirror Step / Bulwark / Relic
+  // A bound wizard: a crimson snap where the whip caught them.
+  bind(pos) {
+    const p = new THREE.Vector3(pos[0], pos[1] + 1, pos[2]);
+    this.burst(p, 0xff2a3c, 18, 4, 0.4, 0);
+    this.burst(p, 0x5a0010, 10, 2, 0.5, 0);
+  }
+
+  // A decoy bursting (popped) or fading at the end of its run: smoke and glints in the owner's colour.
+  decoyPuff(p, color, popped) {
+    const pos = new THREE.Vector3(p[0], 1, p[2]);
+    this.burst(pos, 0xd8c8e8, popped ? 22 : 12, popped ? 3.5 : 2, 0.55, -1.5);
+    this.burst(pos, color, popped ? 12 : 6, 3, 0.3, 0);
+    const shell = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.6, 1.9, 12, 1, true), this.mat(0xe8dcff, { opacity: 0.5, side: THREE.DoubleSide, depthWrite: false }));
+    shell.position.copy(pos);
+    this.scene.add(shell);
+    this.particles.push({ mesh: shell, vel: new THREE.Vector3(0, 1.5, 0), life: 0, maxLife: popped ? 0.3 : 0.5, grav: 0, grow: 1.2, still: true });
+  }
+
+  // Mirror Step: a flash where the caster stood and a mirror shimmer at each of the three ends.
+  mirror(from, ends) {
+    this.burst(new THREE.Vector3(from[0], 1, from[2]), 0xff6a80, 18, 3.5, 0.4, -2);
+    for (const e of ends) {
+      const pos = new THREE.Vector3(e[0], 1, e[2]);
+      const pane = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 2.2), this.mat(0xffc8d8, { opacity: 0.55, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
+      pane.position.copy(pos);
+      pane.rotation.y = Math.atan2(e[0] - from[0], e[2] - from[2]) + Math.PI / 2;
+      this.scene.add(pane);
+      this.particles.push({ mesh: pane, vel: new THREE.Vector3(), life: 0, maxLife: 0.35, grav: 0, growXZ: -2, still: true });
+      this.burst(pos, 0xffc8d8, 8, 2.5, 0.3, -1);
+    }
+  }
+
+  // Glacial Bulwark: an ice slab with crystals on top. Returns { group, setHp(hp) }.
+  wall(w) {
+    const g = new THREE.Group();
+    g.position.set(w.x, 0, w.z);
+    g.rotation.y = w.yaw;
+    const iceMat = new THREE.MeshStandardMaterial({ color: 0xaee6ff, emissive: 0x3a8fc8, emissiveIntensity: 0.35, roughness: 0.15, metalness: 0.1, transparent: true, opacity: 0.72 });
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(BULWARK.width, BULWARK.height, 0.5), iceMat);
+    slab.position.y = BULWARK.height / 2;
+    slab.castShadow = true;
+    g.add(slab);
+    // jagged crystals along the top and the edges
+    let seed = w.id * 977 + 3;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    for (let i = 0; i < 9; i++) {
+      const c = new THREE.Mesh(new THREE.ConeGeometry(0.16 + rnd() * 0.12, 0.5 + rnd() * 0.7, 5), iceMat);
+      c.position.set((i / 8 - 0.5) * BULWARK.width, BULWARK.height + 0.15, (rnd() - 0.5) * 0.3);
+      c.rotation.z = (rnd() - 0.5) * 0.6;
+      g.add(c);
+    }
+    for (const side of [-1, 1]) {
+      const c = new THREE.Mesh(new THREE.ConeGeometry(0.22, 1.2, 5), iceMat);
+      c.position.set(side * (BULWARK.width / 2 + 0.05), 0.5, 0); c.rotation.z = -side * 0.35;
+      g.add(c);
+    }
+    // cracks on both faces, revealed as the wall takes damage
+    const crackMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 });
+    const cracks = CRACKS.map(pts => {
+      const geo = new THREE.BufferGeometry();
+      // each segment twice: on the front face and on the back face
+      const arr = [];
+      for (let i = 0; i < pts.length; i += 4) for (const z of [0.26, -0.26]) arr.push(pts[i], pts[i + 1], z, pts[i + 2], pts[i + 3], z);
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(arr, 3));
+      const l = new THREE.LineSegments(geo, crackMat);
+      l.visible = false;
+      g.add(l);
+      return l;
+    });
+    g.scale.y = 0.05;
+    this.scene.add(g);
+    const pos = new THREE.Vector3(w.x, 0.3, w.z);
+    for (let i = 0; i < 5; i++) this.dust(pos, 2);
+    this.burst(pos.clone().setY(1), 0xdff6ff, 16, 3, 0.35, 2);
+    const entry = {
+      group: g, rise: 0,
+      setHp: (hp) => {
+        const k = 1 - Math.max(0, hp) / BULWARK.hp;
+        cracks.forEach((c, i) => { c.visible = i < Math.round(k * cracks.length * 1.1); });
+        iceMat.opacity = 0.72 - k * 0.2;
+      },
+    };
+    entry.setHp(w.hp);
+    (this.walls ??= new Set()).add(entry);
+    return entry;
+  }
+  wallHit(entry, p) {
+    this.burst(new THREE.Vector3(p[0], p[1], p[2]), 0xdff6ff, 8, 3, 0.25, 4);
+  }
+  wallShatter(entry, w) {
+    this.walls?.delete(entry);
+    this.scene.remove(entry.group);
+    const rx = Math.cos(w.yaw), rz = -Math.sin(w.yaw);
+    const shardMat = this.mat(0xc8eeff, { opacity: 0.9 });
+    for (let i = 0; i < 34; i++) {
+      const k = (Math.random() - 0.5) * BULWARK.width;
+      const m = new THREE.Mesh(new THREE.TetrahedronGeometry(0.12 + Math.random() * 0.16, 0), shardMat);
+      m.position.set(w.x + rx * k, 0.2 + Math.random() * BULWARK.height, w.z + rz * k);
+      this.scene.add(m);
+      this.debris.push({
+        mesh: m, life: 0, maxLife: 1.4 + Math.random() * 0.8,
+        vel: new THREE.Vector3((Math.random() - 0.5) * 5, 1 + Math.random() * 4, (Math.random() - 0.5) * 5),
+        spin: new THREE.Vector3(Math.random() * 10 - 5, Math.random() * 10 - 5, Math.random() * 10 - 5),
+      });
+    }
+    this.burst(new THREE.Vector3(w.x, 1.3, w.z), 0xe8f8ff, 26, 5, 0.4, 3);
+  }
+
+  // Trapped Relic: a crimson blast at the lifter's hold point.
+  relicBlast(p, radius) {
+    const pos = new THREE.Vector3(p[0], p[1], p[2]);
+    this.burst(pos, 0xff2a3c, 40, 8, 0.7);
+    this.burst(pos, 0x2a0008, 22, 4, 0.8);
+    this.burst(pos, 0xffd0a0, 16, 6, 0.4, 2);
+    const orb = new THREE.Mesh(this.sphereGeo, this.mat(0xff3048, { opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false }));
+    orb.position.copy(pos); orb.scale.setScalar(0.5);
+    this.scene.add(orb);
+    this.particles.push({ mesh: orb, vel: new THREE.Vector3(), life: 0, maxLife: 0.3, grav: 0, grow: (radius - 0.5) / 0.3, still: true });
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.85, 1, 48).rotateX(-Math.PI / 2),
+      this.mat(0xff3048, { opacity: 0.9, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
+    ring.position.set(p[0], 0.13, p[2]); ring.scale.setScalar(0.5);
+    this.scene.add(ring);
+    this.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0, maxLife: 0.35, grav: 0, grow: (radius - 0.5) / 0.35, still: true });
+  }
+
+  // The faint red glyph over a prop we've cursed (only its curser ever sees it).
+  curseGlyph() {
+    const c = document.createElement('canvas'); c.width = c.height = 128;
+    const g = c.getContext('2d');
+    g.translate(64, 64); g.strokeStyle = '#ff6070'; g.lineWidth = 6; g.lineCap = 'round';
+    g.shadowColor = '#ff2040'; g.shadowBlur = 10;
+    g.beginPath(); g.arc(0, 0, 50, 0, Math.PI * 2); g.stroke();
+    g.beginPath(); g.moveTo(0, -36); g.lineTo(0, 36); g.moveTo(-26, -14); g.lineTo(0, 8); g.lineTo(26, -14); g.moveTo(-18, 26); g.lineTo(18, 26); g.stroke();
+    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.55, depthWrite: false }));
+    sp.scale.setScalar(0.7);
+    sp.visible = false;
+    this.scene.add(sp);
+    return sp;
+  }
+
   // ---------------------------------------------------------------- update
   update(dt) {
     this.clock += dt;
@@ -226,20 +407,24 @@ export class Effects {
       pr.pos.addScaledVector(pr.vel, dt);
       pr.group.position.copy(pr.pos);
       if (pr.group.userData.shell) { pr.group.userData.shell.rotation.x += dt * 6; pr.group.userData.shell.rotation.y += dt * 4; }
+      if (pr.group.userData.aimV) pr.group.lookAt(pr.pos.clone().add(pr.vel));
       if (pr.group.userData.spin) { const s = pr.group.userData.spin; pr.group.rotation.x += s.x * dt; pr.group.rotation.y += s.y * dt; pr.group.rotation.z += s.z * dt; }
       // trail
       pr.trail += dt;
-      const interval = pr.kind === 'heavy' ? 0.025 : 0.035;
+      const interval = pr.kind === 'heavy' || pr.kind === 'lash' ? 0.025 : 0.035;
       if (pr.trail > interval) {
         pr.trail = 0;
         const m = new THREE.Mesh(this.sphereGeo, this.mat(SPELL_COLORS[pr.kind], { opacity: 0.5 }));
         m.position.copy(pr.pos);
         if (pr.kind === 'prop') m.position.add(new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(0.6));
-        m.scale.setScalar(pr.kind === 'heavy' ? 0.5 : pr.kind === 'prop' ? 0.14 : 0.2);
+        m.scale.setScalar(pr.kind === 'heavy' ? 0.5 : pr.kind === 'prop' ? 0.14 : pr.kind === 'skim' ? 0.11 : pr.kind === 'lash' ? 0.13 : 0.2);
         this.scene.add(m);
         this.particles.push({ mesh: m, vel: new THREE.Vector3(), life: 0, maxLife: pr.kind === 'heavy' ? 0.4 : 0.25, grav: 0, shrink: true });
       }
     }
+
+    // walls rise out of the ground
+    for (const w of this.walls || []) if (w.rise < 1) { w.rise = Math.min(1, w.rise + dt / 0.15); w.group.scale.y = 0.05 + 0.95 * (1 - Math.pow(1 - w.rise, 3)); }
 
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const p = this.particles[i];

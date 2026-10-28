@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import * as C from './public/shared/constants.js';
-import { createBot, updateBots, botKnockback, BOT_LIMIT } from './server/bots.js';
+import { createBot, updateBots, botKnockback, botNoteRelic, BOT_LIMIT } from './server/bots.js';
 import * as Goats from './server/goats.js';
 const { createGoats, updateGoats, angerGoat, goatPublic } = Goats;
 
@@ -38,6 +38,9 @@ const projectiles = new Map();
 const props = new Map();
 const goats = createGoats();
 let nextProjId = 1;
+const decoys = new Map();    // Mirror Step decoys: id -> { id, owner, p, dir, yaw, until }
+const walls = new Map();     // Glacial Bulwark walls: id -> { id, owner, x, z, yaw, hp, until }
+let nextFxId = 1;            // ids for decoys and walls
 
 // ---------------------------------------------------------------- props
 C.PROP_SPAWNS.forEach(([type, x, z], i) => {
@@ -51,20 +54,24 @@ function propPublic(p) {
 const isHeld = (prop) => prop.state === 'lifting' || prop.state === 'carried';
 
 // ---------------------------------------------------------------- players
-function newPlayer(id, name, loadout = C.DEFAULT_LOADOUT) {
+function newPlayer(id, name, wizard = C.DEFAULT_WIZARD) {
   const sp = C.SPAWN_POINTS[(id - 1) % C.SPAWN_POINTS.length];
+  if (!C.isWizard(wizard)) wizard = C.DEFAULT_WIZARD;
   return {
     id, name,
-    color: C.PLAYER_COLORS[(id - 1) % C.PLAYER_COLORS.length],
+    wizard, pendingWizard: null,   // a switch waits here while a cast is in progress (or until respawn)
+    color: C.WIZARDS[wizard].color,
     p: [sp[0], 0, sp[2]], yaw: 0, anim: 'idle',
     hp: C.MAX_HP, st: C.MAX_STAMINA,
     blocking: false, blockReleasedAt: -10,
     stunUntil: 0, stunImmuneUntil: 0, dead: false, respawnAt: 0,
     kills: 0, deaths: 0,
-    cd: { fast: 0, power: 0, mobility: 0, throw: 0 },   // per slot, whichever spell is in it
-    loadout: C.sanitizeLoadout(loadout), pendingLoadout: null,
+    cd: { fast: 0, power: 0, mobility: 0, guard: 0, throw: 0 },   // per slot, whichever spell is in it
     charging: false, chargeStart: 0,
     cyclone: null,                // { start, pulseAt, endAt, pulsed } during an Arcane Cyclone
+    lash: null,                   // { start } during a Sanguine Lash wind-up
+    slowUntil: 0,                 // Glacial Skim slow
+    rootUntil: 0, silenceUntil: 0,   // Sanguine Lash bind (both), or a missed lash's recovery (root only)
     flightStart: 0, flightUntil: 0,   // Skyward Flash window: y may exceed 0 only inside it
     carrying: null,
     lastHitBy: null,
@@ -80,38 +87,42 @@ function playerPublic(p) {
     blocking: p.blocking, charging: p.charging,
     stun: p.stunUntil > now(), dead: p.dead,
     carrying: p.carrying, kills: p.kills, deaths: p.deaths,
-    loadout: p.loadout,
+    wizard: p.wizard, lashing: !!p.lash,
+    slow: p.slowUntil > now(), bound: p.silenceUntil > now(), rooted: p.rootUntil > now(),
     bot: p.bot ? p.bot.difficulty : undefined,
   };
 }
 
 const isStunned = (p) => p.stunUntil > now();
-const canAct = (p) => !p.dead && !isStunned(p);
+const isBound = (p) => p.silenceUntil > now();     // no spells, ward or telekinesis
+const isRooted = (p) => p.rootUntil > now();       // no movement, knockback included
+const canAct = (p) => !p.dead && !isStunned(p) && !isBound(p);
 const isAirborne = (p) => p.flightUntil > now();
-const CYCLONE = C.SPELLBOOK.cyclone, SKY = C.SPELLBOOK.skyward;
+const kit = (p) => C.kitOf(p.wizard);
+const CYCLONE = C.SPELLBOOK.cyclone, SKY = C.SPELLBOOK.skyward, LASH = C.SPELLBOOK.sanguine_lash;
+const MIRROR = C.SPELLBOOK.mirror_step, BULWARK = C.SPELLBOOK.glacial_bulwark, RELIC = C.SPELLBOOK.trapped_relic;
+const SKIM = C.SPELLBOOK.glacial_skim;
 
-// ---------------------------------------------------------------- loadouts
-// A slot that's mid-cast keeps its spell until the cast ends; the change waits in pendingLoadout.
-const slotBusy = (p, slot) => slot === 'power' ? p.charging || !!p.cyclone : slot === 'mobility' ? isAirborne(p) : false;
-function setLoadout(p, want) {
-  const next = C.sanitizeLoadout(want, { ...p.loadout, ...p.pendingLoadout });
-  const now_ = {}, later = {};
-  for (const slot of Object.keys(next)) (slotBusy(p, slot) ? later : now_)[slot] = next[slot];
-  p.pendingLoadout = Object.keys(later).length ? later : null;
-  applyLoadout(p, now_);
+// ---------------------------------------------------------------- wizard choice
+// A switch applies at once if the player is alive and not mid-cast, else when the cast ends or at respawn.
+const midCast = (p) => p.charging || !!p.cyclone || !!p.lash || isAirborne(p);
+function requestWizard(p, id) {
+  if (!C.isWizard(id)) return;
+  p.pendingWizard = id === p.wizard ? null : id;
+  flushPendingWizard(p);
 }
-function applyLoadout(p, part) {
-  const merged = { ...p.loadout, ...part };
-  if (Object.keys(merged).every(k => merged[k] === p.loadout[k])) return;
-  p.loadout = merged;
-  broadcast({ t: 'loadout', id: p.id, loadout: p.loadout });
+function flushPendingWizard(p) {
+  if (!p.pendingWizard || p.dead || midCast(p)) return;
+  applyWizard(p, p.pendingWizard);
 }
-function flushPendingLoadout(p) {
-  if (!p.pendingLoadout) return;
-  const ready = {}, still = {};
-  for (const [slot, id] of Object.entries(p.pendingLoadout)) (slotBusy(p, slot) ? still : ready)[slot] = id;
-  p.pendingLoadout = Object.keys(still).length ? still : null;
-  applyLoadout(p, ready);
+function applyWizard(p, id) {
+  p.pendingWizard = null;
+  if (id === p.wizard) return;
+  p.wizard = id;
+  p.color = C.WIZARDS[id].color;
+  if (p.blocking && kit(p).guard !== 'ward') { p.blocking = false; p.blockReleasedAt = now(); }
+  if (kit(p).utility !== 'trapped_relic') clearCurse(p);
+  broadcast({ t: 'wizard', id: p.id, wizard: id, color: p.color });
 }
 
 function send(id, msg) {
@@ -136,6 +147,7 @@ function spawnProjectile(owner, kind, origin, dir, propType = null) {
     radius: spec.radius,
     born: now(), life: spec.life,
   };
+  if (kind === 'lash') { proj.pierce = true; proj.hitIds = new Set(); proj.landed = 0; }
   projectiles.set(id, proj);
   broadcast({ t: 'proj', id, kind, owner: owner.id, propType, p: proj.p, v: proj.v, g: proj.g, r: proj.radius, life: proj.life });
   return proj;
@@ -143,6 +155,14 @@ function spawnProjectile(owner, kind, origin, dir, propType = null) {
 
 function endProjectile(proj, hit, extra = {}) {
   projectiles.delete(proj.id);
+  // A lash that bound nobody leaves its caster rooted in recovery.
+  if (proj.kind === 'lash' && !proj.landed) {
+    const caster = players.get(proj.owner);
+    if (caster && !caster.dead) {
+      caster.rootUntil = Math.max(caster.rootUntil, now() + LASH.missRoot);
+      broadcast({ t: 'lashMiss', id: caster.id, root: LASH.missRoot });
+    }
+  }
   if (proj.propId) {
     // A thrown prop shatters wherever it lands.
     const prop = props.get(proj.propId);
@@ -189,18 +209,29 @@ function applyHit(target, proj) {
       target.stunUntil = Math.max(target.stunUntil, t + spec.stun);
       if (proj.kind === 'fast') target.stunImmuneUntil = target.stunUntil + C.SPARK_STUN_IMMUNITY;
     }
-    // Being hit cancels a heavy wind-up or a cyclone that hasn't spun yet.
+    // Being hit cancels a heavy wind-up, a lash wind-up or a cyclone that hasn't spun yet.
     if (target.charging) { target.charging = false; broadcast({ t: 'chargeCancel', id: target.id }); }
     cancelCyclone(target);
+    cancelLash(target);
+    // Glacial Skim slows (refreshed, never stacked); Sanguine Lash binds: rooted and silenced.
+    if (spec.slow) target.slowUntil = t + spec.slowTime;
+    if (spec.bind) {
+      target.rootUntil = Math.max(target.rootUntil, t + spec.bind);
+      target.silenceUntil = Math.max(target.silenceUntil, t + spec.bind);
+      if (target.blocking) { target.blocking = false; target.blockReleasedAt = t; }
+    }
   }
 
   target.hp -= dmg;
   if (dmg > 0) target.lastHitBy = proj.owner;
-  if (target.bot) botKnockback(target, norm3([proj.v[0], 0, proj.v[2]]), blocked ? spec.knockback * 0.3 : spec.knockback);
+  const kb = isRooted(target) ? 0 : blocked ? spec.knockback * 0.3 : spec.knockback;
+  if (target.bot && kb) botKnockback(target, norm3([proj.v[0], 0, proj.v[2]]), kb);
 
   broadcast({
     t: 'hit', target: target.id, attacker: proj.owner, kind: proj.kind, dmg, blocked,
-    kb: blocked ? spec.knockback * 0.3 : spec.knockback, dir: norm3([proj.v[0], 0, proj.v[2]]),
+    kb, dir: norm3([proj.v[0], 0, proj.v[2]]),
+    ...(!blocked && spec.slow ? { slow: spec.slowTime } : {}),
+    ...(!blocked && spec.bind ? { bind: spec.bind } : {}),
   });
 
   if (target.hp <= 0 && !target.dead) killPlayer(target, attacker);
@@ -212,6 +243,9 @@ function killPlayer(target, attacker, cause = null) {
   target.hp = 0;
   target.charging = false;
   cancelCyclone(target);
+  cancelLash(target);
+  target.slowUntil = target.rootUntil = target.silenceUntil = 0;
+  for (const d of [...decoys.values()]) if (d.owner === target.id) endDecoy(d, false);
   target.flightUntil = 0; target.p[1] = 0;
   target.blocking = false;
   target.deaths++;
@@ -225,7 +259,9 @@ function respawn(p) {
   const sp = C.SPAWN_POINTS[Math.floor(Math.random() * C.SPAWN_POINTS.length)];
   p.p = [sp[0] + rand(-1, 1), 0, sp[2] + rand(-1, 1)];
   p.hp = C.MAX_HP; p.st = C.MAX_STAMINA;
-  p.dead = false; p.stunUntil = 0; p.blocking = false; p.charging = false; p.cyclone = null; p.flightUntil = 0;
+  p.dead = false; p.stunUntil = 0; p.blocking = false; p.charging = false; p.cyclone = null; p.lash = null; p.flightUntil = 0;
+  p.slowUntil = p.rootUntil = p.silenceUntil = 0;
+  if (p.pendingWizard) applyWizard(p, p.pendingWizard);
   broadcast({ t: 'respawn', id: p.id, p: p.p });
 }
 
@@ -257,14 +293,19 @@ function cyclonePulse(p) {
   p.cyclone.pulsed = true;
   p.cd.power = t + CYCLONE.cooldown;
   const hits = [];
+  const wallsHit = new Set();
   for (const q of players.values()) {
     if (q === p || q.dead) continue;
     const d = dist2D(q.p, p.p);
     if (d > CYCLONE.radius + C.PLAYER_RADIUS || Math.abs(q.p[1] - p.p[1]) > CYCLONE.height) continue;
+    const wall = wallBetween(p.p, q.p);
+    if (wall) { wallsHit.add(wall); continue; }
     const out = d > 0.01 ? [(q.p[0] - p.p[0]) / d, 0, (q.p[2] - p.p[2]) / d] : [Math.sin(q.yaw), 0, Math.cos(q.yaw)];
     const { dmg, blocked } = applyHit(q, { kind: 'cyclone', owner: p.id, v: out });
     hits.push({ id: q.id, dmg, blocked });
   }
+  for (const id of wallsHit) damageWall(id, CYCLONE.damage);
+  for (const d of [...decoys.values()]) if (d.owner !== p.id && dist2D(d.p, p.p) < CYCLONE.radius + C.PLAYER_RADIUS && p.p[1] < CYCLONE.height) endDecoy(d, true);
   if (p.p[1] < 1) {
     for (const prop of props.values()) {
       if (prop.state !== 'idle') continue;
@@ -280,10 +321,115 @@ function cyclonePulse(p) {
 }
 
 function breakProp(prop, at) {
+  if (prop.cursedBy) { const c = players.get(prop.cursedBy); prop.cursedBy = null; if (c) send(c.id, { t: 'curse', id: null }); }
+  prop.trap = null;
   prop.state = 'broken';
   prop.carrier = null;
   prop.respawnAt = now() + C.PROP_RESPAWN_TIME;
   broadcast({ t: 'propBreak', id: prop.id, p: at });
+}
+
+// ---------------------------------------------------------------- Sanguine Lash
+function cancelLash(p) {
+  if (!p.lash) return;
+  p.lash = null;
+  broadcast({ t: 'lashCancel', id: p.id });
+}
+
+// ---------------------------------------------------------------- Mirror Step decoys
+// Decoys run straight along their path at run speed. To everyone else they are the caster.
+const decoyPublic = (d) => ({ id: d.id, owner: d.owner, p: d.p, yaw: d.yaw });
+function endDecoy(d, popped) {
+  decoys.delete(d.id);
+  broadcast({ t: 'decoyEnd', id: d.id, popped, p: d.p });
+}
+function updateDecoys(dt, t) {
+  for (const d of [...decoys.values()]) {
+    if (t >= d.until) { endDecoy(d, false); continue; }
+    d.p[0] += d.dir[0] * C.MOVE_SPEED * dt; d.p[2] += d.dir[2] * C.MOVE_SPEED * dt;
+    for (const c of C.COLLIDERS) {
+      const dx = d.p[0] - c.x, dz = d.p[2] - c.z, dd = Math.hypot(dx, dz);
+      if (dd < c.r + C.PLAYER_RADIUS && dd > 1e-4) { const k = (c.r + C.PLAYER_RADIUS - dd) / dd; d.p[0] += dx * k; d.p[2] += dz * k; }
+    }
+    const r = Math.hypot(d.p[0], d.p[2]);
+    if (r > C.ARENA_RADIUS) { d.p[0] *= C.ARENA_RADIUS / r; d.p[2] *= C.ARENA_RADIUS / r; }
+    // a charging goat runs it down
+    if (goats.some(g => g.state === 'charge' && Math.hypot(g.x - d.p[0], g.z - d.p[2]) < C.GOAT.radius + C.PLAYER_RADIUS + 0.25)) endDecoy(d, true);
+  }
+}
+// The decoy (not owned by `ownerId`) a sphere at `pos` with radius `r` touches, if any.
+function decoyAt(pos, r, ownerId) {
+  for (const d of decoys.values()) {
+    if (d.owner === ownerId) continue;
+    if (Math.hypot(pos[0] - d.p[0], pos[1] - C.HIT_CENTER_Y, pos[2] - d.p[2]) < C.HIT_RADIUS + r) return d;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------- Glacial Bulwark walls
+function wallPublic(w) { return { id: w.id, owner: w.owner, x: w.x, z: w.z, yaw: w.yaw, hp: w.hp }; }
+function raiseWall(p, yaw) {
+  const [x, z] = C.bulwarkCentre(p.p, yaw);
+  const w = { id: nextFxId++, owner: p.id, x, z, yaw, hp: BULWARK.hp, until: now() + BULWARK.life };
+  walls.set(w.id, w);
+  C.addWallColliders(w.id, x, z, yaw);
+  broadcast({ t: 'wallUp', wall: wallPublic(w) });
+}
+function wallDown(w, broken) {
+  walls.delete(w.id);
+  C.removeWallColliders(w.id);
+  broadcast({ t: 'wallDown', id: w.id, broken });
+}
+function damageWall(id, dmg) {
+  const w = walls.get(id);
+  if (!w || !(dmg > 0)) return;
+  w.hp -= dmg;
+  if (w.hp <= 0) wallDown(w, true);
+  else broadcast({ t: 'wallHit', id, hp: w.hp });
+}
+// Id of a standing wall that the 2D segment a→b crosses, or null.
+function wallBetween(a, b) {
+  const sx = b[0] - a[0], sz = b[2] - a[2], ll = sx * sx + sz * sz || 1;
+  for (const c of C.COLLIDERS) {
+    if (c.kind !== 'bulwark') continue;
+    const k = clamp(((c.x - a[0]) * sx + (c.z - a[2]) * sz) / ll, 0, 1);
+    if (Math.hypot(a[0] + sx * k - c.x, a[2] + sz * k - c.z) < c.r) return c.wall;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------- Trapped Relic
+// One cursed prop per caster. The curse is known only to the server and the caster.
+function clearCurse(p) {
+  let had = false;
+  for (const prop of props.values()) if (prop.cursedBy === p.id) { prop.cursedBy = null; had = true; }
+  if (had) send(p.id, { t: 'curse', id: null });
+}
+// The cursed prop reached its lifter's hold point: it explodes there.
+function relicBlast(prop, victim) {
+  const curserId = prop.cursedBy;
+  const at = C.holdPoint(victim.p, victim.yaw);
+  if (victim.carrying === prop.id) victim.carrying = null;
+  broadcast({ t: 'relicBlast', p: at, by: curserId, victim: victim.id });
+  breakProp(prop, at);
+  if (victim.bot) botNoteRelic(victim, prop.id, now());
+  const hits = [];
+  const wallsHit = new Set();
+  for (const q of players.values()) {
+    if (q.dead || q.id === curserId) continue;
+    const c = [q.p[0], q.p[1] + C.HIT_CENTER_Y, q.p[2]];
+    const d = Math.hypot(c[0] - at[0], c[1] - at[1], c[2] - at[2]);
+    if (d > RELIC.radius + C.HIT_RADIUS * 0.5) continue;
+    const wall = q !== victim && wallBetween(at, q.p);
+    if (wall) { wallsHit.add(wall); continue; }
+    const dx = q.p[0] - at[0], dz = q.p[2] - at[2], l = Math.hypot(dx, dz);
+    const out = l > 0.05 ? [dx / l, 0, dz / l] : [-Math.sin(q.yaw), 0, -Math.cos(q.yaw)];
+    const { dmg, blocked } = applyHit(q, { kind: 'trapped_relic', owner: curserId, v: out });
+    hits.push({ id: q.id, dmg, blocked });
+  }
+  for (const id of wallsHit) damageWall(id, RELIC.damage);
+  for (const d of [...decoys.values()]) if (Math.hypot(d.p[0] - at[0], d.p[2] - at[2]) < RELIC.radius) endDecoy(d, true);
+  return hits;
 }
 
 // ---------------------------------------------------------------- simulation
@@ -291,6 +437,8 @@ function simulate(dt) {
   const t = now();
   updateBots(dt, world);
   updateGoats(goats, dt, goatCtx);
+  updateDecoys(dt, t);
+  for (const w of [...walls.values()]) if (t >= w.until) wallDown(w, true);
 
   for (const p of players.values()) {
     if (p.dead) {
@@ -310,6 +458,8 @@ function simulate(dt) {
     }
     // a stun interrupts charging
     if (p.charging && isStunned(p)) { p.charging = false; broadcast({ t: 'chargeCancel', id: p.id }); }
+    // a lash wind-up: a stun interrupts it, and one never released (lost client) lapses
+    if (p.lash && (isStunned(p) || t > p.lash.start + LASH.windup + 1)) cancelLash(p);
     if (p.cyclone) {
       if (!p.cyclone.pulsed && isStunned(p)) cancelCyclone(p);
       else if (!p.cyclone.pulsed && t >= p.cyclone.pulseAt) cyclonePulse(p);
@@ -317,7 +467,7 @@ function simulate(dt) {
     }
     // Skyward Flash: the flight ends when the wizard reports touching down, or when time runs out
     if (p.flightUntil && (t >= p.flightUntil || (p.p[1] <= 0.01 && t > p.flightStart + 0.3))) { p.flightUntil = 0; p.p[1] = 0; }
-    flushPendingLoadout(p);
+    flushPendingWizard(p);
   }
 
   // projectiles
@@ -333,11 +483,13 @@ function simulate(dt) {
       endProjectile(proj, true, { surface: 'ground' });
       continue;
     }
-    // pillars
+    // pillars, trees, fences (for anything flying low enough), ice walls (which take the damage)
     let done = false;
     for (const c of C.COLLIDERS) {
       if (proj.p[1] < c.h && Math.hypot(proj.p[0] - c.x, proj.p[2] - c.z) < c.r + proj.radius) {
-        endProjectile(proj, true, { surface: c.kind }); done = true; break;
+        endProjectile(proj, true, { surface: c.kind });
+        if (c.kind === 'bulwark') damageWall(c.wall, C.SPELLS[proj.kind].damage);
+        done = true; break;
       }
     }
     if (done) continue;
@@ -357,18 +509,30 @@ function simulate(dt) {
     }
     if (done) continue;
 
-    // players
+    // players (a lash pierces: it hits each wizard on its path once, unless a ward stops it)
     for (const pl of players.values()) {
       if (pl.dead || pl.id === proj.owner) continue;
+      if (proj.pierce && proj.hitIds.has(pl.id)) continue;
       const c = [pl.p[0], pl.p[1] + C.HIT_CENTER_Y, pl.p[2]];
       const d = Math.hypot(proj.p[0] - c[0], proj.p[1] - c[1], proj.p[2] - c[2]);
       if (d < C.HIT_RADIUS + proj.radius) {
-        applyHit(pl, proj);
+        const { blocked } = applyHit(pl, proj);
+        if (proj.pierce) {
+          proj.hitIds.add(pl.id);
+          if (!blocked) { proj.landed++; continue; }
+        }
         endProjectile(proj, true, { surface: 'player', target: pl.id });
         done = true; break;
       }
     }
     if (done) continue;
+
+    // decoys: one touch and they burst (projectiles stop on them; a lash cuts through)
+    const dec = decoyAt(proj.p, proj.radius, proj.owner);
+    if (dec) {
+      endDecoy(dec, true);
+      if (!proj.pierce) { endProjectile(proj, true, { surface: 'decoy' }); continue; }
+    }
 
     // goats: no damage, but now it's angry at whoever cast or threw this
     for (const g of goats) {
@@ -396,6 +560,10 @@ function simulate(dt) {
   // prop respawns / lifts finishing
   for (const prop of props.values()) {
     if (prop.state === 'lifting' && t >= prop.liftUntil) {
+      // a Trapped Relic lifted by someone other than its curser explodes at their hold point
+      const victim = prop.trap && players.get(prop.trap);
+      if (victim && !victim.dead && victim.carrying === prop.id) { relicBlast(prop, victim); continue; }
+      prop.trap = null;
       prop.state = 'carried';
       broadcast({ t: 'prop', prop: propPublic(prop) });
     }
@@ -427,6 +595,9 @@ function handle(p, msg) {
         y = clamp(msg.p[1], floor, ceil);
       }
       const np = [clamp(msg.p[0], -C.ARENA_RADIUS, C.ARENA_RADIUS), y, clamp(msg.p[2], -C.ARENA_RADIUS, C.ARENA_RADIUS)];
+      // bound or recovering from a missed lash: the wizard stays put (a slowed one is just slower,
+      // which the speed check below already allows)
+      if (isRooted(p)) { np[0] = p.p[0]; np[2] = p.p[2]; }
       const maxStep = (C.MOVE_SPEED + C.SPELLS.heavy.knockback + 2) * dt + 0.6;
       const d = dist2D(np, p.p);
       if (p.lastStateAt && d > maxStep && !p.justTeleported) {
@@ -445,23 +616,35 @@ function handle(p, msg) {
     }
     case 'block': {
       const on = !!msg.on;
-      if (on && (!canAct(p) || p.st <= 2 || p.charging || p.cyclone || isAirborne(p))) break;
+      if (on && (kit(p).guard !== 'ward' || !canAct(p) || p.st <= 2 || p.charging || p.cyclone || p.lash || isAirborne(p))) break;
       if (p.blocking && !on) p.blockReleasedAt = t;
       p.blocking = on;
       break;
     }
     case 'cast': {
-      if (!canAct(p) || p.blocking || p.charging || p.cyclone || p.carrying) break;
-      if (msg.kind !== 'fast') break;
+      if (!canAct(p) || p.blocking || p.charging || p.cyclone || p.lash || p.carrying) break;
+      const primary = kit(p).primary;
       if (t < p.cd.fast) break;
-      p.cd.fast = t + C.SPELLS.fast.cooldown;
-      const origin = sanitizeOrigin(p, msg.origin);
-      spawnProjectile(p, 'fast', origin, sanitizeDir(msg.dir, p));
+      if (msg.kind === 'fast' && primary === 'spark') {
+        p.cd.fast = t + C.SPELLS.fast.cooldown;
+        const origin = sanitizeOrigin(p, msg.origin);
+        spawnProjectile(p, 'fast', origin, sanitizeDir(msg.dir, p));
+      } else if (msg.kind === 'skim' && primary === 'glacial_skim') {
+        // three shards in a tight fan, skimming the ground just ahead of the caster's feet
+        p.cd.fast = t + SKIM.cooldown;
+        const d = sanitizeDir([msg.dir?.[0] ?? 0, 0, msg.dir?.[2] ?? 0], p);
+        const base = Math.atan2(d[0], d[2]);
+        for (let i = 0; i < SKIM.shards; i++) {
+          const a = base + (i - (SKIM.shards - 1) / 2) * SKIM.spreadDeg * Math.PI / 180;
+          const dir = [Math.sin(a), 0, Math.cos(a)];
+          spawnProjectile(p, 'skim', [p.p[0] + dir[0] * 0.5, C.SPELLS.skim.height, p.p[2] + dir[2] * 0.5], dir);
+        }
+      }
       break;
     }
     case 'chargeStart': {
-      if (p.loadout.power !== 'meteor') break;
-      if (!canAct(p) || p.blocking || p.charging || p.cyclone || p.carrying || isAirborne(p)) break;
+      if (kit(p).power !== 'meteor') break;
+      if (!canAct(p) || p.blocking || p.charging || p.cyclone || p.lash || p.carrying || isAirborne(p)) break;
       if (t < p.cd.power) break;
       p.charging = true; p.chargeStart = t;
       broadcast({ t: 'chargeStart', id: p.id });
@@ -481,7 +664,7 @@ function handle(p, msg) {
       break;
     }
     case 'cyclone': {
-      const ok = p.loadout.power === 'cyclone' && canAct(p) && !p.blocking && !p.charging && !p.cyclone
+      const ok = kit(p).power === 'cyclone' && canAct(p) && !p.blocking && !p.charging && !p.cyclone && !p.lash
         && !p.carrying && !isAirborne(p) && t >= p.cd.power;
       // tell a refused caster, so its client drops the wind-up it predicted
       if (!ok) { if (!p.cyclone) send(p.id, { t: 'cycloneCancel', id: p.id }); break; }
@@ -489,9 +672,65 @@ function handle(p, msg) {
       broadcast({ t: 'cycloneStart', id: p.id, p: p.p });
       break;
     }
+    case 'lashStart': {
+      const ok = kit(p).power === 'sanguine_lash' && canAct(p) && !p.blocking && !p.charging && !p.cyclone && !p.lash
+        && !p.carrying && !isAirborne(p) && t >= p.cd.power;
+      if (!ok) { if (!p.lash) send(p.id, { t: 'lashCancel', id: p.id }); break; }
+      p.lash = { start: t };
+      broadcast({ t: 'lashStart', id: p.id });
+      break;
+    }
+    case 'lashRelease': {
+      if (!p.lash) break;
+      const early = t - p.lash.start < LASH.windup - 0.05;
+      if (early || !canAct(p)) { cancelLash(p); break; }
+      p.lash = null;
+      p.cd.power = t + LASH.cooldown;
+      spawnProjectile(p, 'lash', sanitizeOrigin(p, msg.origin), sanitizeDir(msg.dir, p));
+      break;
+    }
+    case 'mirror': {
+      if (kit(p).mobility !== 'mirror_step' || !canAct(p) || isRooted(p) || p.charging || p.cyclone || p.lash || isAirborne(p) || t < p.cd.mobility) break;
+      const dir = sanitizeDir([msg.dir?.[0] ?? 0, 0, msg.dir?.[2] ?? 1], p);
+      const from = Array.isArray(msg.from) && msg.from.length === 3 && msg.from.every(Number.isFinite) && dist2D(msg.from, p.p) < 3 ? [msg.from[0], 0, msg.from[2]] : p.p.slice();
+      const paths = C.mirrorPaths(from, dir);
+      const mine = Math.floor(Math.random() * paths.length);
+      p.cd.mobility = t + MIRROR.cooldown;
+      p.p = paths[mine].to; p.justTeleported = true;
+      if (p.blocking) { p.blocking = false; p.blockReleasedAt = t; }
+      // the caster keeps running along its path; each decoy runs along one of the others
+      const out = [];
+      paths.forEach((path, i) => {
+        if (i === mine) return;
+        const d = { id: nextFxId++, owner: p.id, p: path.to.slice(), dir: path.dir, yaw: Math.atan2(path.dir[0], path.dir[2]), until: t + MIRROR.decoyTime };
+        decoys.set(d.id, d);
+        out.push({ id: d.id, p: d.p, yaw: d.yaw });
+      });
+      broadcast({ t: 'mirror', id: p.id, from, to: p.p, yaw: Math.atan2(paths[mine].dir[0], paths[mine].dir[2]), decoys: out });
+      break;
+    }
+    case 'bulwark': {
+      if (kit(p).guard !== 'glacial_bulwark' || !canAct(p) || p.charging || p.cyclone || p.lash || isAirborne(p) || t < p.cd.guard) break;
+      p.cd.guard = t + BULWARK.cooldown;
+      raiseWall(p, Number.isFinite(msg.yaw) ? msg.yaw : p.yaw);
+      break;
+    }
+    case 'curse': {
+      if (kit(p).utility !== 'trapped_relic' || !canAct(p) || p.carrying || p.blocking) break;
+      const prop = tkTarget(p, msg.aimOrigin, msg.aimDir);
+      if (!prop) break;
+      clearCurse(p);
+      prop.cursedBy = p.id;
+      send(p.id, { t: 'curse', id: prop.id });   // nobody else hears of it
+      break;
+    }
+    case 'wizard': {
+      requestWizard(p, msg.id);
+      break;
+    }
     case 'skyward': {
       // tell a refused flier, so its client comes back down from the flight it predicted
-      if (p.loadout.mobility !== 'skyward' || !canAct(p) || p.charging || p.cyclone || isAirborne(p) || t < p.cd.mobility) {
+      if (kit(p).mobility !== 'skyward' || !canAct(p) || p.charging || p.cyclone || p.lash || isAirborne(p) || t < p.cd.mobility) {
         if (!isAirborne(p)) send(p.id, { t: 'skywardCancel', id: p.id });
         break;
       }
@@ -502,13 +741,9 @@ function handle(p, msg) {
       broadcast({ t: 'skyward', id: p.id, p: [p.p[0], 0, p.p[2]], top: SKY.height });
       break;
     }
-    case 'loadout': {
-      setLoadout(p, msg);
-      break;
-    }
     case 'teleport': {
-      if (p.loadout.mobility !== 'blink') break;
-      if (!canAct(p) || p.charging || p.cyclone) break;
+      if (kit(p).mobility !== 'blink') break;
+      if (!canAct(p) || isRooted(p) || p.charging || p.cyclone || p.lash) break;
       if (t < p.cd.mobility) break;
       const dir = sanitizeDir([msg.dir?.[0] ?? 0, 0, msg.dir?.[2] ?? 1], p);
       // The client predicts the same landing spot, so its next position report lines up.
@@ -521,9 +756,12 @@ function handle(p, msg) {
       break;
     }
     case 'pickup': {
-      if (!canAct(p) || p.carrying || p.charging || p.cyclone || p.blocking) break;
+      if (!canAct(p) || p.carrying || p.charging || p.cyclone || p.lash || p.blocking) break;
       const best = tkTarget(p, msg.aimOrigin, msg.aimDir);
       if (!best) break;
+      // a Trapped Relic: its curser just lifts it (and the curse is gone); anyone else sets it off
+      if (best.cursedBy === p.id) clearCurse(p);
+      else if (best.cursedBy) best.trap = p.id;
       best.state = 'lifting'; best.carrier = p.id; best.liftUntil = t + C.TK.liftTime;
       p.carrying = best.id;
       broadcast({ t: 'prop', prop: propPublic(best) });
@@ -557,7 +795,7 @@ function handle(p, msg) {
       if (p.bot) break;
       const n = [...players.values()].filter(q => q.bot).length;
       if (n >= BOT_LIMIT) break;
-      addBot(['easy', 'normal', 'hard'].includes(msg.difficulty) ? msg.difficulty : 'normal', msg.loadout);
+      addBot(['easy', 'normal', 'hard'].includes(msg.difficulty) ? msg.difficulty : 'normal', msg.wizard);
       break;
     }
     case 'removeBots': {
@@ -572,31 +810,33 @@ function handle(p, msg) {
 // Bots are ordinary players without a socket. Their AI (server/bots.js) acts through handle(),
 // so they obey exactly the same rules and cooldowns as everyone else.
 const BOT_NAMES = ['Zaltar', 'Morgra', 'Ebonyx', 'Vexlith', 'Grimble', 'Oswin', 'Thistle', 'Pipsqueak', 'Quillon', 'Sorrow'];
-// `loadout` (optional) pins some of its spells; anything missing or unknown is rolled at random.
-function addBot(difficulty, loadout = null) {
+// `wizard` (optional) pins which wizard it plays; otherwise it picks one at random.
+function addBot(difficulty, wizard = null) {
   const id = nextId++;
   const taken = new Set([...players.values()].map(q => q.name));
   const name = BOT_NAMES.find(n => !taken.has(n)) || `Bot${id}`;
-  const p = newPlayer(id, name);
+  const ids = Object.keys(C.WIZARDS);
+  const p = newPlayer(id, name, C.isWizard(wizard) ? wizard : ids[Math.floor(Math.random() * ids.length)]);
   const sp = C.SPAWN_POINTS[Math.floor(Math.random() * C.SPAWN_POINTS.length)];
   p.p = [sp[0], 0, sp[2]];
   p.bot = createBot(difficulty);
-  p.loadout = C.sanitizeLoadout(loadout, C.sanitizeLoadout(p.bot.loadout));
   players.set(id, p);
   broadcast({ t: 'joined', player: playerPublic(p) });
-  console.log(`[+] bot ${name} (${difficulty}, ${p.loadout.power}/${p.loadout.mobility}) joined. ${players.size} online`);
+  console.log(`[+] bot ${name} (${difficulty}, ${p.wizard}) joined. ${players.size} online`);
 }
 
 function removePlayer(id) {
   const p = players.get(id);
   if (!p) return;
   if (p.carrying) dropProp(p, false);
+  clearCurse(p);
+  for (const d of [...decoys.values()]) if (d.owner === id) endDecoy(d, false);
   players.delete(id); sockets.delete(id);
   broadcast({ t: 'leave', id });
 }
 
 // cycloneStopsGoats: the goat module can knock a charging goat dizzy (bots then answer a charge with a cyclone)
-const world = { players, props, projectiles, goats, handle, now, cycloneStopsGoats: !!Goats.dizzyGoat };
+const world = { players, props, projectiles, goats, decoys, walls, handle, now, cycloneStopsGoats: !!Goats.dizzyGoat };
 const goatCtx = {
   players, props, now, broadcast, breakProp, killPlayer,
   // humans apply goat knockback themselves from the goatRam message
@@ -657,7 +897,7 @@ wss.on('connection', (ws) => {
       if (msg.t !== 'join') return;
       id = nextId++;
       const name = String(msg.name || 'Wizard').replace(/[^\w \-'!?.]/g, '').trim().slice(0, C.MAX_NAME_LEN) || `Wizard${id}`;
-      const p = newPlayer(id, name, msg.loadout);
+      const p = newPlayer(id, name, msg.wizard);
       players.set(id, p);
       sockets.set(id, ws);
       ws.send(JSON.stringify({
@@ -666,6 +906,8 @@ wss.on('connection', (ws) => {
         props: [...props.values()].map(propPublic),
         goats: goats.map(goatPublic),
         projectiles: [...projectiles.values()].map(pr => ({ id: pr.id, kind: pr.kind, owner: pr.owner, propType: pr.propType, p: pr.p, v: pr.v, g: pr.g, r: pr.radius, life: pr.life - (now() - pr.born) })),
+        walls: [...walls.values()].map(wallPublic),
+        decoys: [...decoys.values()].map(decoyPublic),
       }));
       broadcast({ t: 'joined', player: playerPublic(p) });
       console.log(`[+] ${name} (#${id}) joined. ${players.size} online`);
@@ -702,7 +944,7 @@ setInterval(() => {
 
 setInterval(() => {
   if (players.size === 0) return;
-  broadcast({ t: 'snap', time: now(), players: [...players.values()].map(playerPublic), goats: goats.map(goatPublic) });
+  broadcast({ t: 'snap', time: now(), players: [...players.values()].map(playerPublic), goats: goats.map(goatPublic), decoys: [...decoys.values()].map(decoyPublic) });
 }, 1000 / C.SNAPSHOT_RATE);
 
 httpServer.listen(PORT, () => console.log(`Wizard Arena listening on http://localhost:${PORT}`));

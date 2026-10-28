@@ -175,6 +175,43 @@ export class Sfx {
   skyward(pos) { this.play('blink', { pos, vol: 0.8, rate: 1.45, jitter: 0.04 }); }
   land(pos) { this.play('footstep', { pos, vol: 0.9, rate: 0.7, jitter: 0.1 }); }
   goatBonk(pos) { this.play('impact_small', { pos, vol: 1, rate: 0.55 }); }
+  // Glacial Skim: a bright, glassy flick; shards tinkle on impact.
+  castSkim(pos) {
+    this.play('spark_cast', { pos, vol: 0.45, rate: 1.6, jitter: 0.06 });
+    this.play('impact_small', { pos, vol: 0.25, rate: 1.9, jitter: 0.08, delay: 0.02 });
+  }
+  shardHit(pos) { this.play('impact_small', { pos, vol: 0.45, rate: 1.7, jitter: 0.1 }); }
+  // Sanguine Lash: a low rising hum (the charge loop, see main.js), then a crack; a bind lands with a snap.
+  lashCrack(pos) {
+    this.play('tk_throw', { pos, vol: 1.0, rate: 1.5, jitter: 0.04 });
+    this.play('impact_small', { pos, vol: 0.7, rate: 0.8, jitter: 0.05, delay: 0.04 });
+  }
+  bind(pos) {
+    this.play('ward_break', { pos, vol: 0.7, rate: 0.6, jitter: 0.04 });
+    this.play('hit_body', { pos, vol: 0.8, rate: 0.7 });
+  }
+  // Mirror Step: the blink, doubled and detuned. Decoys pop like soap bubbles.
+  mirror(pos) {
+    this.play('blink', { pos, vol: 0.7, rate: 1.15, jitter: 0.03 });
+    this.play('blink', { pos, vol: 0.4, rate: 0.85, jitter: 0.03, delay: 0.05 });
+  }
+  decoyPop(pos) { this.play('impact_small', { pos, vol: 0.55, rate: 1.4, jitter: 0.1 }); }
+  // Glacial Bulwark: a deep crunch rising out of the ground; cracking on hits; a shatter at the end.
+  wallUp(pos) {
+    this.play('impact_big', { pos, vol: 0.8, rate: 1.3, jitter: 0.05 });
+    this.play('prop_shatter_stone', { pos, vol: 0.5, rate: 0.7, jitter: 0.05, delay: 0.05 });
+  }
+  wallHit(pos) { this.play('ward_block', { pos, vol: 0.55, rate: 0.75, jitter: 0.08 }); }
+  wallShatter(pos) {
+    this.play('ward_break', { pos, vol: 1, rate: 1.2 });
+    this.play('prop_shatter_stone', { pos, vol: 0.9, rate: 1.25, delay: 0.03 });
+  }
+  // Trapped Relic: a quiet hiss when you lay the curse; a deep blast when it goes off.
+  curse() { this.play('tk_lift', { vol: 0.35, rate: 0.45, jitter: 0.03 }); }
+  relicBlast(pos) {
+    this.play('impact_big', { pos, vol: 1.2, rate: 0.75, jitter: 0.04 });
+    this.play('meteor_cast', { pos, vol: 0.6, rate: 0.6, jitter: 0.04, delay: 0.02 });
+  }
 
   // Synthesized goat bleat: a buzzy tone with a fast wobble, shaped by a nasal formant filter.
   bleat(pos, angry = true) {

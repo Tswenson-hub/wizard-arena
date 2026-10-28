@@ -30,12 +30,12 @@
       <select id="botCount"><option value="0">None</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select>
       <select id="botDiff"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard</option></select>
     </div>
-    <h3 class="book-title">Spellbook</h3>
-    <div class="spellbook" id="joinBook"></div>
+    <h3 class="book-title">Choose your wizard</h3>
+    <div class="wizard-pick" id="joinPicker"></div>
     <div class="controls">
-      <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move &nbsp; <kbd>Mouse</kbd> look &nbsp; <kbd>LMB</kbd> <kbd>RMB</kbd> <kbd>E</kbd> your spells</div>
-      <div><kbd>Space</kbd> hold: Ward — blocks spells from the front, drains stamina</div>
-      <div><kbd>F</kbd> Telekinesis — aim at an object to lift it, <kbd>F</kbd> again to hurl it. It shields you while held</div>
+      <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move &nbsp; <kbd>Mouse</kbd> look &nbsp; <kbd>LMB</kbd> <kbd>RMB</kbd> <kbd>E</kbd> <kbd>Space</kbd> <kbd>F</kbd> your wizard's five spells</div>
+      <div><kbd>Space</kbd> Ward (hold) blocks spells from the front and drains stamina. Rime raises an ice wall instead</div>
+      <div><kbd>F</kbd> Telekinesis: aim at an object to lift it, <kbd>F</kbd> again to hurl it. It shields you while held</div>
       <div>Don't hit the goats. An angry goat charges and kills in one hit, unless your ward faces it</div>
       <div><kbd>G</kbd> set it down &nbsp; <kbd>Tab</kbd> scoreboard &nbsp; <kbd>M</kbd> mute &nbsp; <kbd>Esc</kbd> menu</div>
     </div>
@@ -69,14 +69,14 @@
 
   <div id="scoreboard" class="hidden">
     <h2>Scoreboard</h2>
-    <table><thead><tr><th>Wizard</th><th>Spells</th><th>Kills</th><th>Deaths</th></tr></thead><tbody></tbody></table>
+    <table><thead><tr><th>Player</th><th>Wizard</th><th>Kills</th><th>Deaths</th></tr></thead><tbody></tbody></table>
   </div>
   <div id="clickToPlay" class="hidden">
     <div class="pause panel">
       <h2>Paused</h2>
       <button id="resumeBtn" class="primary">Resume</button>
-      <h3>Spellbook <span class="book-note">changes apply right away (after a cast in progress)</span></h3>
-      <div class="spellbook" id="pauseBook"></div>
+      <h3>Wizard <span class="book-note" id="pickNote">switches right away (after a cast in progress, or at respawn)</span></h3>
+      <div class="wizard-pick" id="pausePicker"></div>
       <h3>Practice bots <span id="botTally"></span></h3>
       <div class="btn-row">
         <button data-bot="easy">+ Easy</button><button data-bot="normal">+ Normal</button><button data-bot="hard">+ Hard</button>
