@@ -1,5 +1,5 @@
-// Low-poly farmstead: ground, farmhouse, courtyard, goat pen, crop field, tractor, rune pillars,
-// trees, and prop mesh factories. Layout data lives in shared/map.js; this file only draws it.
+// Low-poly farmstead: ground, farmhouse, farmyard, goat pen, crop field, tractor, the altar and its
+// blast site, trees, and prop mesh factories. Layout data lives in shared/map.js; this file only draws it.
 // Farm pieces are procedural stand-ins until a Meshy model for them is loaded (see loadModels).
 import * as THREE from 'three';
 import * as C from '../shared/constants.js';
@@ -92,26 +92,27 @@ export function buildWorld(scene) {
   floor.position.y = 0.05; floor.receiveShadow = true;
   scene.add(floor);
 
-  // Packed-earth courtyard in front of the house, with paths to the door, the gate and the field.
+  // Packed-earth farmyard in front of the house, with paths to the door, the barn, the gate and the field,
+  // and the old way south past the altar, through the archway into the meadow.
   const dirt = decal(0xb79c6c, 2), path = decal(0xa88d5e, 3);
   {
     const shape = new THREE.Shape();
     for (let i = 0; i <= 32; i++) {
       const a = (i / 32) * Math.PI * 2;
-      const r = 15 + Math.sin(a * 3) * 1.2 + Math.sin(a * 7 + 1) * 0.6;
-      const x = Math.cos(a) * r, z = Math.sin(a) * r * 1.05 + 1;
+      const k = 1 + Math.sin(a * 3) * 0.07 + Math.sin(a * 7 + 1) * 0.04;
+      const x = Math.cos(a) * 12.5 * k, z = Math.sin(a) * 8.5 * k + 13;
       i ? shape.lineTo(x, -z) : shape.moveTo(x, -z);
     }
     const yard = new THREE.Mesh(new THREE.ShapeGeometry(shape).rotateX(-Math.PI / 2), dirt);
     yard.position.y = 0.05; yard.receiveShadow = true;
     scene.add(yard);
   }
-  scene.add(groundStrip([0, 12], [0, C.FARMHOUSE.z - 4], 3.2, path));
-  scene.add(groundStrip([11, C.PEN.gateOut[1]], [C.PEN.x0 + 0.5, C.PEN.gateOut[1]], 2.8, path));
-  scene.add(groundStrip([-12, 4], [C.FIELD.x1 + 0.3, 3], 2.4, path));
-  scene.add(groundStrip([0, -12], [0, -C.ARENA_RADIUS + 2], 2.6, path));
-  // through the barn: courtyard -> arch (south), side door (west) -> the house path
-  scene.add(groundStrip([10.2, 6], [14.6, 13.6], 2.6, path));
+  scene.add(groundStrip([0, 8], [0, C.FARMHOUSE.z - 4], 3.2, path));
+  scene.add(groundStrip([8, 7.5], [C.PEN.x0 + 0.4, C.PEN.gateOut[1]], 2.6, path));
+  scene.add(groundStrip([-10, 10], [C.FIELD.x1 + 0.3, 8.5], 2.4, path));
+  scene.add(groundStrip([0, 8], [0, -C.ARENA_RADIUS + 2], 2.6, path));
+  // through the barn: farmyard -> arch (south), side door (west) -> the house path
+  scene.add(groundStrip([9, 9.5], [14.6, 13.4], 2.6, path));
   scene.add(groundStrip([12.6, 22], [1.6, 20.6], 2.4, path));
   // cobbles around the well
   const cobble = new THREE.Mesh(new THREE.RingGeometry(C.WELL.r + 0.1, C.WELL.r + 1.4, 14).rotateX(-Math.PI / 2), decal(0x8d9196, 4));
@@ -132,6 +133,7 @@ export function buildWorld(scene) {
     rim.add(stone);
   }
 
+  buildBlastSite(scene);
   buildRunePillars(scene);
   buildTrees(scene);
   buildPen(scene);
@@ -145,6 +147,17 @@ export function buildWorld(scene) {
   standin('barn', makeBarn(), C.BARN, scene);
   standin('silo', makeSilo(), C.SILO, scene);
   for (const [x, z] of C.HAY_STACKS) standin('haystack', makeHayStack(), { x, z, yaw: Math.random() * Math.PI }, scene);
+  // the silo's cracked footing, where it stood before the blast
+  {
+    const F = C.SILO_FOOTING, g = new THREE.Group();
+    g.add(new THREE.Mesh(new THREE.CircleGeometry(F.r + 0.3, 14).rotateX(-Math.PI / 2), decal(0x8d9196, 4)));
+    for (let i = 0; i < 9; i++) {
+      if (i === 2 || i === 3) continue;   // broken open on the side it fell toward
+      const a = (i / 9) * Math.PI * 2, piece = box(1.2, 0.3 + (i % 3) * 0.08, 0.35, M.darkStone, Math.cos(a) * F.r, 0.15, Math.sin(a) * F.r);
+      piece.rotation.y = -a + Math.PI / 2; g.add(piece);
+    }
+    standin('siloFooting', g, { x: F.x, z: F.z, yaw: C.SILO.yaw }, scene);
+  }
 
   // Scatter some tufts outside the arena for depth
   const tuftMat = flat(0x5d9a48);
@@ -179,8 +192,9 @@ const standins = {};   // name -> [group]
 function standin(name, obj, at, scene) {
   const g = new THREE.Group();
   g.add(shadowy(obj));
-  g.position.set(at.x, 0, at.z);
-  g.rotation.y = at.yaw || 0;
+  g.position.set(at.x, -(at.sink || 0), at.z);
+  // yaw, then a lean of `tilt` toward the model's +z (away from the altar for the blast pieces)
+  g.rotation.set(at.tilt || 0, at.yaw || 0, 0, 'YXZ');
   scene.add(g);
   (standins[name] ??= []).push(g);
   return g;
@@ -199,14 +213,134 @@ function buildRunePillars(scene) {
     const g = new THREE.Group();
     g.add(cyl(p.r * 0.7, p.r * 0.85, p.h, 7, pillarMat, 0, p.h / 2), cyl(p.r * 1.1, p.r * 1.2, 0.4, 7, pillarTop, 0, 0.2));
     g.add(cyl(p.r * 0.75, p.r * 0.78, 0.18, 7, runeMat, 0, p.h * 0.62));
-    standin('pillar', g, { x: p.x, z: p.z, yaw: p.x * 1.7 + p.z }, scene);
-    const crystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.45, 0), runeMat);
-    crystal.position.set(p.x, C.PILLAR_HEIGHT + 0.9, p.z);
+    standin('pillar', g, p, scene);
+    // the crystal floats over the top of the leaning pillar
+    const crystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.45, 0), runeMat), up = C.PILLAR_HEIGHT + 0.9;
+    crystal.position.set(p.x + Math.sin(p.yaw) * Math.sin(p.tilt) * up, Math.cos(p.tilt) * up, p.z + Math.cos(p.yaw) * Math.sin(p.tilt) * up);
     scene.add(crystal);
     spinners.push(crystal);
   }
 }
 const runeMat = new THREE.MeshStandardMaterial({ color: 0x9d6bff, emissive: 0x6a35ff, emissiveIntensity: 1.2, flatShading: true });
+
+// ------------------------------------------------------------ the altar and the blast site
+// Scorched, cracked ground round the altar, broken flagstones pushed outward, the split altar with its
+// crystal, the two fallen pillars and the furrow the obelisk ploughed. Stones and slabs are instanced (SCATTER).
+const ruinStone = flat(0x5d625b), ruinDark = flat(0x484c47), moss = flat(0x56703f);
+function buildBlastSite(scene) {
+  const A = C.ALTAR, R = C.BLAST_RADIUS;
+  const rnd = seeded(11);
+  // scorch: dark at the centre, rays of soot running outward, a ragged edge
+  {
+    const cv = document.createElement('canvas'); cv.width = cv.height = 512;
+    const g = cv.getContext('2d'), c = 256;
+    const grad = g.createRadialGradient(c, c, 0, c, c, c);
+    grad.addColorStop(0, 'rgba(30,22,18,0.92)'); grad.addColorStop(0.3, 'rgba(44,32,24,0.82)');
+    grad.addColorStop(0.6, 'rgba(62,48,34,0.55)'); grad.addColorStop(0.85, 'rgba(80,66,44,0.18)'); grad.addColorStop(1, 'rgba(80,66,44,0)');
+    g.fillStyle = grad; g.fillRect(0, 0, 512, 512);
+    for (let i = 0; i < 70; i++) {
+      const a = rnd() * Math.PI * 2, r0 = c * (0.2 + rnd() * 0.2), r1 = c * (0.65 + rnd() * 0.33), w = 0.02 + rnd() * 0.05;
+      g.fillStyle = `rgba(28,20,16,${0.25 + rnd() * 0.3})`;
+      g.beginPath(); g.moveTo(c + Math.cos(a - w) * r0, c + Math.sin(a - w) * r0);
+      g.lineTo(c + Math.cos(a) * r1, c + Math.sin(a) * r1); g.lineTo(c + Math.cos(a + w) * r0, c + Math.sin(a + w) * r0); g.fill();
+    }
+    // cracks in the ground, dark
+    g.strokeStyle = 'rgba(12,8,8,0.8)'; g.lineWidth = 2.5;
+    for (let i = 0; i < 16; i++) crack(g, c, rnd, 0.12, 0.55 + rnd() * 0.3);
+    const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
+    const m = new THREE.Mesh(new THREE.CircleGeometry(R, 48).rotateX(-Math.PI / 2),
+      new THREE.MeshStandardMaterial({ map: tex, transparent: true, depthWrite: false, roughness: 1, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -16 }));
+    m.position.set(A.x, 0.05, A.z); m.receiveShadow = true;
+    scene.add(m);
+    // the brightest cracks still glow violet near the altar
+    const cv2 = document.createElement('canvas'); cv2.width = cv2.height = 512;
+    const g2 = cv2.getContext('2d');
+    g2.strokeStyle = 'rgba(190,140,255,1)'; g2.shadowColor = 'rgba(140,80,255,1)'; g2.shadowBlur = 10; g2.lineWidth = 3;
+    for (let i = 0; i < 11; i++) crack(g2, c, rnd, 0.2, 0.45 + rnd() * 0.4);
+    const glow = new THREE.Mesh(new THREE.CircleGeometry(R * 0.6, 32).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(cv2), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.85, polygonOffset: true, polygonOffsetFactor: -5, polygonOffsetUnits: -20 }));
+    glow.position.set(A.x, 0.05, A.z);
+    scene.add(glow);
+  }
+  // the furrow the obelisk ploughed: a scar of torn earth, widening toward where it stuck
+  {
+    const { from, to } = C.OBELISK_FURROW;
+    const len = Math.hypot(to[0] - from[0], to[1] - from[1]), shape = new THREE.Shape(), n = 10;
+    const side = (k, sgn) => [sgn * (0.3 + k * 0.35) * (0.85 + rnd() * 0.3), k * len];
+    const pts = [];
+    for (let i = 0; i <= n; i++) pts.push(side(i / n, 1));
+    for (let i = n; i >= 0; i--) pts.push(side(i / n, -1));
+    pts.forEach(([x, y], i) => i ? shape.lineTo(x, -y) : shape.moveTo(x, -y));
+    const scar = new THREE.Mesh(new THREE.ShapeGeometry(shape).rotateX(-Math.PI / 2), decal(0x5a3f28, 5));
+    scar.position.set(from[0], 0.05, from[1]); scar.rotation.y = Math.atan2(to[0] - from[0], to[1] - from[1]);
+    scar.receiveShadow = true; scene.add(scar);
+  }
+  // the altar: a low round dais, the split slab, a crystal over it
+  const altar = new THREE.Group();
+  altar.add(cyl(3.0, 3.15, 0.14, 10, ruinDark, 0, 0.07), cyl(2.15, 2.3, 0.16, 10, ruinStone, 0, 0.22));
+  altar.add(box(1.9, 0.78, 1.1, ruinDark, 0, 0.68, 0));
+  for (const s of [-1, 1]) {
+    const half = box(1.17, 0.24, 1.45, ruinStone, s * 0.66, 1.18, 0);
+    half.rotation.z = -s * 0.07; half.rotation.y = s * 0.04; altar.add(half);
+    altar.add(box(0.06, 0.5, 0.7, runeMat, s * 0.96, 0.7, 0));             // runes on the ends
+  }
+  altar.add(box(0.1, 0.32, 1.38, runeMat, 0, 1.1, 0));                       // light through the split
+  for (const z of [-0.56, 0.56]) altar.add(box(1.4, 0.06, 0.04, runeMat, 0, 0.75, z));
+  standin('altar', altar, { x: A.x, z: A.z }, scene);
+  const heart = new THREE.Mesh(new THREE.OctahedronGeometry(0.42, 0), runeMat);
+  heart.scale.set(0.75, 1.6, 0.75); heart.position.set(A.x, 2.5, A.z);
+  scene.add(heart); spinners.push(heart);
+  for (let i = 0; i < 4; i++) {
+    const a = i * Math.PI / 2 + 0.4, shard = new THREE.Mesh(new THREE.TetrahedronGeometry(0.16, 0), runeMat);
+    shard.position.set(A.x + Math.cos(a) * 0.9, 1.9 + (i % 2) * 0.55, A.z + Math.sin(a) * 0.9);
+    shard.rotation.set(a, a * 2, 0); scene.add(shard); spinners.push(shard);
+  }
+  // flagstones round the dais, heaved up and pushed outward
+  const flags = new THREE.Group();
+  for (let i = 0; i < 22; i++) {
+    const a = (i / 22) * Math.PI * 2 + rnd() * 0.15, d = 3.5 + rnd() * 1.6 + (i % 3) * 0.4;
+    const f = box(0.8 + rnd() * 0.4, 0.12, 0.55 + rnd() * 0.25, i % 4 ? ruinStone : ruinDark, Math.sin(a) * d, 0.04, Math.cos(a) * d);
+    f.rotation.set(-0.08 - rnd() * 0.25, a, (rnd() - 0.5) * 0.2, 'YXZ');      // the inner edge lifted
+    flags.add(f);
+  }
+  standin('flagstones', flags, { x: A.x, z: A.z }, scene);
+  for (const f of C.FALLEN_PILLARS) standin('fallenPillar', makeFallenPillar(f.len), f, scene);
+}
+// A crack from near the centre outward, in canvas pixels (c = centre), with a branch or two.
+function crack(g, c, rnd, r0, r1) {
+  let a = rnd() * Math.PI * 2, r = c * r0;
+  let x = c + Math.cos(a) * r, y = c + Math.sin(a) * r;
+  g.beginPath(); g.moveTo(x, y);
+  while (r < c * r1) {
+    r += 8 + rnd() * 14; a += (rnd() - 0.5) * 0.35;
+    x = c + Math.cos(a) * r; y = c + Math.sin(a) * r; g.lineTo(x, y);
+    if (rnd() < 0.08) { g.moveTo(x, y); g.lineTo(x + Math.cos(a + 0.8) * 20, y + Math.sin(a + 0.8) * 20); g.moveTo(x, y); }
+  }
+  g.stroke();
+}
+// Model space: the broken stump at the origin, the shaft lying along +z in three drums.
+function makeFallenPillar(len) {
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(jitterGeometry(new THREE.CylinderGeometry(0.62, 0.85, 1.15, 7, 2), 0.12), ruinDark).translateY(0.55));
+  g.add(cyl(0.95, 1.05, 0.3, 7, ruinStone, 0, 0.15));
+  for (let i = 0; i < 6; i++) {
+    const a = i * 1.1, rubble = new THREE.Mesh(jitterGeometry(new THREE.DodecahedronGeometry(0.22 + (i % 3) * 0.08, 0), 0.08), ruinStone);
+    rubble.position.set(Math.cos(a) * 1.15, 0.12, Math.sin(a) * 1.15 * 0.8 - 0.2); g.add(rubble);
+  }
+  const drums = [len * 0.36, len * 0.32, len * 0.26];
+  let z = 1.05;
+  drums.forEach((l, i) => {
+    const d = new THREE.Group();
+    d.add(cyl(0.48, 0.5, l, 7, i === 1 ? moss : ruinStone, 0, 0, 0), cyl(0.51, 0.51, 0.14, 7, runeMat, 0, l * 0.2, 0));
+    d.rotation.set(Math.PI / 2, 0, (i - 1) * 0.25);
+    d.position.set((i - 1) * 0.12, 0.46, z + l / 2);
+    d.rotation.y = (i - 1) * 0.1;
+    g.add(d); z += l + 0.12;
+  });
+  const shard = new THREE.Mesh(new THREE.OctahedronGeometry(0.3, 0), runeMat);
+  shard.position.set(0.5, 0.25, z + 0.4); shard.rotation.set(0.9, 0.3, 0.5); g.add(shard);
+  return g;
+}
 
 // Procedural trees, shown only until the Meshy trees load (they become instanced meshes, see SCATTER).
 function buildTrees(scene) {
@@ -497,7 +631,10 @@ function seeded(seed) { return () => { seed = (seed * 16807) % 2147483647; retur
 const SCATTER = { pine: [], oak: [], birch: [], pine_far: [], oak_far: [], birch_far: [], rock_jagged: [], rock_table: [] };
 const SCATTER_STANDINS = { pine: ['treeStandins'], rock_jagged: ['rimStones'] };
 for (const t of C.TREES) SCATTER[t.kind].push([t.x, t.z, t.yaw, t.h]);
-for (const [x, z, yaw, h] of C.TABLE_ROCKS) SCATTER.rock_table.push([x, z, yaw, h]);
+// Blast debris leans away from the altar: [x, z, yaw, height, tilt, yaw of the lean, sink]
+for (const [x, z, yaw, h, tilt] of C.TABLE_ROCKS) SCATTER.rock_table.push([x, z, yaw, h, tilt, C.awayYaw(x, z), h * 0.12]);
+for (const [x, z, h, tilt] of C.BLAST_STONES) SCATTER.rock_jagged.push([x, z, x * 3.1 + z, h, tilt, C.awayYaw(x, z), h * 0.1]);
+for (const [x, z, yaw, h, tilt] of C.BLAST_SHARDS) SCATTER.rock_jagged.push([x, z, yaw, h, tilt, C.awayYaw(x, z), 0.06]);
 {
   // the rim: jagged rocks with a table rock every fourth stone
   const rnd = seeded(7);
@@ -528,13 +665,15 @@ function instanced(gltf, items, shadows = true) {
   const bb = new THREE.Box3().setFromObject(gltf.scene);
   const norm = new THREE.Matrix4().makeScale(1 / (bb.max.y - bb.min.y), 1 / (bb.max.y - bb.min.y), 1 / (bb.max.y - bb.min.y))
     .multiply(new THREE.Matrix4().makeTranslation(-(bb.min.x + bb.max.x) / 2, -bb.min.y, -(bb.min.z + bb.max.z) / 2));
-  const group = new THREE.Group(), m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
+  const group = new THREE.Group(), m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler();
   gltf.scene.traverse(o => {
     if (!o.isMesh) return;
     const geo = o.geometry.clone().applyMatrix4(new THREE.Matrix4().multiplyMatrices(norm, o.matrixWorld));
     const im = new THREE.InstancedMesh(geo, o.material, items.length);
-    items.forEach(([x, z, yaw, h], i) => {
-      m.compose(new THREE.Vector3(x, groundHeight(x, z) - 0.05 * h, z), q.setFromAxisAngle(up, yaw), new THREE.Vector3(h, h, h));
+    items.forEach(([x, z, yaw, h, tilt = 0, lean = 0, sink = 0], i) => {
+      // spin by `yaw`, then lean by `tilt` toward the bearing `lean` (no lean: just the yaw)
+      q.setFromEuler(e.set(tilt, lean, 0, 'YXZ')).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw - lean));
+      m.compose(new THREE.Vector3(x, groundHeight(x, z) - 0.05 * h - sink, z), q, new THREE.Vector3(h, h, h));
       im.setMatrixAt(i, m);
     });
     im.castShadow = shadows; im.receiveShadow = true;
