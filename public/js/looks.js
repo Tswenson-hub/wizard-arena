@@ -56,7 +56,8 @@ function clipsFrom(animations) {
 }
 
 // Per-wizard picks from a model's own clips, chosen by watching them (contact sheets in the hand-off).
-// A string is a clip name; [name, from, to] is the part of a clip between two times (seconds).
+// A string is a clip name; [name, from, to] is the part of a clip between two times (seconds), and
+// [name, from, to, duration] also stretches that part to `duration` seconds.
 // main.js plays the casts from fixed offsets tuned to the base clips (spark: 0.25 s at 2.6x; meteor
 // release: 1.9 s at 1.5x), so a pick must have its key moment at about the same time as the base clip.
 // Keys without a pick come from the model's Meshy-named clips, or are retargeted from the base wizard.
@@ -67,11 +68,27 @@ const MODEL_CLIPS = {
     cast_heavy: 'mage_soell_cast_1',   // gathers, then spreads the arms wide (spread from about 1.6 s: the release window)
     spin: ['Sweeping_Kick', 0.8, 1.7], // the low spinning sweep, for the Arcane Cyclone spin
   },
+  rime: {
+    run: 'Running', walk: 'Walking',
+    cast_fast: 'mage_soell_cast_4',            // arms flung out at 0.6-1.4 s: the spark/skim window
+    cast_heavy: 'Charged_Spell_Cast_1',        // gathers to 1.4 s, then a wide push 1.75-3.1 s: the meteor release window
+    stun: ['Fall2', 0, 0.67, 2.3],             // a knocked-back flinch, stretched to the base stun's length (main.js plays 0.3-1.65 s)
+    death: ['Strangled_and_Fall_Forward', 3.6, 7.3, 2.5],  // kneels and falls flat, squeezed to 2.5 s (respawn is 3 s); extra key
+  },
 };
 
-function subclipByTime(clip, key, from, to) {
+// Props a wizard's own model holds in its right hand. The model is scaled to `length` (m) along its long
+// axis (y) and gripped `grip` m from its bottom end. It is fitted once, in the model's idle pose: upright,
+// with its top leaning `lean` radians forward and `out` radians away from the body, then it follows the hand.
+const PROPS = {
+  rime: { url: '/models/wizards/rime-wand.glb', length: 1.5, grip: 0.6, lean: 0.12, out: 0.1 },
+};
+
+function subclipByTime(clip, key, from, to, duration) {
   const fps = 30;
-  return THREE.AnimationUtils.subclip(clip, key, Math.round(from * fps), Math.round(to * fps), fps);
+  const c = THREE.AnimationUtils.subclip(clip, key, Math.round(from * fps), Math.round(to * fps), fps);
+  if (duration) { const k = duration / c.duration; for (const t of c.tracks) t.scale(k); c.duration = duration; }
+  return c;
 }
 
 // ---------------------------------------------------------------- retargeting base clips
@@ -191,10 +208,10 @@ function ownClips(id, scene, animations) {
   const picks = MODEL_CLIPS[id] || {};
   const out = {};
   for (const [key, pick] of Object.entries(picks)) {
-    const [name, from, to] = Array.isArray(pick) ? pick : [pick];
+    const [name, from, to, duration] = Array.isArray(pick) ? pick : [pick];
     const clip = animations.find(a => a.name === name);
     if (!clip) { console.warn(`[looks] ${id}: no clip '${name}' for ${key}`); continue; }
-    out[key] = from != null ? stripRootMotion(subclipByTime(clip, key, from, to)) : asKey(clip, key);
+    out[key] = from != null ? stripRootMotion(subclipByTime(clip, key, from, to, duration)) : asKey(clip, key);
   }
   for (const [key, names] of Object.entries(CLIP_NAMES)) {
     if (out[key]) continue;
@@ -207,6 +224,37 @@ function ownClips(id, scene, animations) {
   if (missing.length && !canRetarget) return null;
   for (const key of missing) out[key] = retargetClip(scene, baseClips[key], MIXAMO_TO_BASE);
   return out;
+}
+
+// Fit a prop into the right hand of `scene` (unscaled, bind pose) posed with `idle`. Returns the prop
+// template and its transform relative to the RightHand bone, or null.
+function fitProp(cfg, propScene, scene, idle, modelScale) {
+  const body = skeletonClone(scene);
+  const mixer = new THREE.AnimationMixer(body);
+  mixer.clipAction(idle).play(); mixer.setTime(0);
+  body.updateMatrixWorld(true);
+  const hand = body.getObjectByName('RightHand');
+  if (!hand) return null;
+  // the fist: between the wrist and the middle-finger knuckle, if the rig has fingers
+  const grip = new THREE.Vector3(), knuckle = new THREE.Vector3();
+  hand.getWorldPosition(grip);
+  const mid = body.getObjectByName('RightHandMiddle1');
+  if (mid) grip.lerp(mid.getWorldPosition(knuckle), 0.5);
+  // template: long axis on y, the grip point at the origin, `length` m long once the body is scaled
+  prepareMeshes(propScene);
+  propScene.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  const box = new THREE.Box3().setFromObject(propScene);
+  const k = cfg.length / modelScale / (box.max.y - box.min.y);
+  propScene.scale.setScalar(k);
+  propScene.position.set(-(box.min.x + box.max.x) / 2 * k, -box.min.y * k - cfg.grip / modelScale, -(box.min.z + box.max.z) / 2 * k);
+  const prop = new THREE.Group(); prop.name = 'heldProp'; prop.add(propScene);
+  // upright, leaning forward (+z) and out to the body's right (-x); world here is the model's root space
+  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(cfg.lean, 0, cfg.out));
+  const want = new THREE.Matrix4().compose(grip, q, new THREE.Vector3(1, 1, 1));
+  const local = new THREE.Matrix4().copy(hand.matrixWorld).invert().multiply(new THREE.Matrix4().copy(body.matrixWorld)).multiply(want);
+  const t = { p: new THREE.Vector3(), q: new THREE.Quaternion(), s: new THREE.Vector3() };
+  local.decompose(t.p, t.q, t.s);
+  return { prop, t };
 }
 
 // Load each wizard's own model (WIZARDS[id].model). A model that fails to load, or can't be
@@ -231,6 +279,9 @@ export async function loadWizardModels(loader) {
       const clips = sameRig ? baseClips : ownClips(w.id, scene, gltf.animations);
       if (!clips) throw new Error(`skeleton differs from wizard.glb, Meshy's clips are missing and it can't be retargeted`);
       models[w.id] = { scene, clips, scale, offsetY: -box.min.y * scale };
+      const cfg = PROPS[w.id];
+      if (cfg) return loader.loadAsync(cfg.url).then(g => { models[w.id].prop = fitProp(cfg, g.scene, scene, clips.idle, scale); })
+        .catch(err => console.warn(`[looks] ${w.id}: prop ${cfg.url} not used (${err?.message || err})`));
     }).catch(err => console.warn(`[looks] ${w.id}: ${w.model} not used (${err?.message || err}); using the base model`))
   ));
   readyResolve();
@@ -395,10 +446,10 @@ const FLAIR = {
     } }));
   },
   // Rime: clusters of frost shards on both shoulders, and a little snow falling around.
-  rime(model) {
+  rime(model, own) {
     const mat = new THREE.MeshStandardMaterial({ color: 0xbfeaff, emissive: 0x2a6f9a, emissiveIntensity: 0.6, roughness: 0.25, metalness: 0.1, flatShading: true, transparent: true, opacity: 0.92 });
     const geo = new THREE.OctahedronGeometry(1, 0);
-    for (const side of [1, -1]) {
+    for (const side of own ? [] : [1, -1]) {   // a real model brings its own pauldrons
       const cluster = new THREE.Group();
       for (const [x, y, z, len, tilt] of [[0, 0, 0, 0.17, 0.25], [0.05, -0.02, 0.05, 0.12, 0.7], [0.03, -0.02, -0.06, 0.11, -0.5], [-0.04, -0.01, 0.0, 0.09, -0.2]]) {
         const s = new THREE.Mesh(geo, mat);
@@ -461,12 +512,18 @@ export function makeWizardBody(id) {
     inner.position.y = own.offsetY;
     inner.traverse(o => { if (o.isMesh) o.material = o.material.clone(); });
     clips = own.clips;
+    const hand = own.prop && inner.getObjectByName('RightHand');
+    if (hand) {
+      const prop = own.prop.prop.clone();     // shares geometry and materials with the template
+      prop.position.copy(own.prop.t.p); prop.quaternion.copy(own.prop.t.q); prop.scale.copy(own.prop.t.s);
+      hand.add(prop);
+    }
   } else {
     inner = skeletonClone(baseModel);
     inner.traverse(o => { if (o.isMesh) o.material = bodyMaterial(id, o.material); });
     clips = baseClips;
   }
   model.add(inner);
-  FLAIR[id]?.(model);
+  FLAIR[id]?.(model, !!own);
   return { model, clips };
 }

@@ -19,7 +19,7 @@ export const WIZARDS = {
   },
   rime: {
     id: 'rime', name: 'Rime', title: 'the Frost Warden', role: 'Fortress · slows, walls off, shells from cover',
-    color: 0x7fd8ff, tint: 0x8fd4ff, model: null,
+    color: 0x7fd8ff, tint: 0x8fd4ff, model: '/models/wizards/rime.glb',
     kit: { primary: 'glacial_skim', power: 'meteor', mobility: 'skyward', guard: 'glacial_bulwark', utility: 'telekinesis' },
   },
   vesper: {
