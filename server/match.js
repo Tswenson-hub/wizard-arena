@@ -402,7 +402,7 @@ export function createMatch(ctx) {
         if (msg.mode && MODES[msg.mode]) { setMode(msg.mode); startWarmup(); }
         if (msg.skip) {
           if (S.phase === 'live') endMatch('skip');
-          else S.phaseEnd = now();
+          else S.phaseEnd = t();
         }
         return true;
       }
