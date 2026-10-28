@@ -249,3 +249,37 @@ rather than hard-coding them. Examples:
 - Rime warding at 2.6 m/s plays `walk_fight` at about 2.8×.
 - A wizard walking backward at 5.27 m/s would play `back` at 7–9×, which will look hurried. If that reads badly, clamp the
   backward ground speed (or the time scale, at about 4×) and accept a little slide.
+
+## modes → environment: team spawn points for map.js (`TEAM_SPAWNS`)
+Team modes spawn Ember on the north (house) side and Frost on the south (meadow) side. Please export from `map.js`:
+```js
+export const TEAM_SPAWNS = {
+  ember: [[8, 0, 4], [-9, 0, 8], [4, 0, 14], [-5, 0, 14.5], [0, 0, 16]],
+  frost: [[6, 0, -19], [-6, 0, -20], [14, 0, -22], [-14, 0, -22], [-3.5, 0, -30]],
+};
+```
+Adjust freely (3–6 points each side, clear of colliders, not in the pen/field/house). `server/match.js` uses `C.TEAM_SPAWNS`
+when it exists and falls back to the north/south subsets of `SPAWN_POINTS` above until then. Each spawn picks the
+point farthest from living enemies.
+
+## modes → spells: match hooks in server.js / main.js (Sacred Relic and team modes)
+1. **The relic shouldn't shatter.** Today a projectile that hits a held prop (the shield), a hit on a standing prop, a cyclone
+   or Frostfall calls `breakProp`. For the relic I restore it as an idle prop one tick later where it was (so it reads as
+   "knocked away"), but clients see a shatter burst and a pop-in. Nicer: before each `breakProp(prop, at)` call that is a
+   *hit* (not holder death), ask `if (match.protectProp?.(prop)) { /* drop it idle at `at` instead */ }`. I'll add
+   `protectProp(prop)` (true for the relic while live) as soon as you say it's wired; until then the fallback works.
+2. **Ultimate reset between matches:** I call `ctx.resetUlt(p)` if present, else `ctx.addUltCharge(p, -1000)`. Please
+   either clamp addUltCharge at 0 or add `resetUlt` to the ctx.
+3. **Goat reset between matches:** please add `resetGoats()` to the match ctx (goats back in the pen, calm). I call
+   `ctx.resetGoats?.()`.
+4. **Bot difficulty from the join screen:** send `difficulty: ui.botDiff.value` in the `join` message and set
+   `p.botPref = msg.difficulty` before `match.onJoin(p)`. Team-mode fill bots then use it even when the bot count is 0.
+5. **Team colours:** `playerPublic` now carries `team` ('ember' | 'frost' | null) and `teamColor` (0xff6a2a / 0x3aa8ff, null in
+   FFA). Please use `teamColor ?? color` for the ring and nameplate (and rebuild the nameplate when it changes). match-ui.js
+   tints the ring itself in the meantime.
+6. **Bots:** `objectiveFor` hints are in `server/objectives.js`. Notes: in relic the holder bot gets `moveTo` toward its side
+   (it can't cast while holding; it should keep the relic rather than drop it to fight). `world.match.state()` exposes
+   the mode/phase if bots need it. `isEnemy` is false for everyone during the end screen and vote (intermission), and
+   for spectators (a debug flag used by tools/test/modematch.mjs).
+7. **In team modes, `addBot` from the join screen / pause menu is trimmed** back to 3v3 by the fill; "Remove all" is refilled.
+   You may want to grey out those buttons when `snap.match.teams` is true.
