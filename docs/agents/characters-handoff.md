@@ -154,6 +154,35 @@
 
   - Not used: `Walk_Fight_Forward` and `Walk_Fight_Back` are a guarded walk that reads no better as a ward than the retargeted block.
   - **Flair:** the ember glow and sparks at his right hand suit the pyromancer and don't clash, so they stay.
+- **Shared clips from Cinder's re-export** (`Meshy_AI_cinder_pyromancer_rig_All_Animations (1).glb`, 14 clips;
+  `cinder.glb` is now **1.78 MB**). `SHARED_CLIPS` in looks.js gives **all four** wizards these extra keys:
+  Cinder uses them directly, and the others get them retargeted.
+
+  | key | clip | timing |
+  |---|---|---|
+  | `walk_fight` | Walk_Fight_Forward | slow movement: wind-ups, the ward, slowed (Ty's call; `run` stays each model's Running) |
+  | `back` | Walk_Fight_Back | walking backward (it replaces Cinder's Walk_Backward) |
+  | `tk_lift` | mage_soell_cast_6, retimed | the arm peaks overhead at 0.35 s (the lift), then settles by 1.1 s |
+  | `tk_throw` | mage_soell_cast_4, retimed | the arms fling out at 0.1–0.2 s (the release), then follow through to 1.0 s |
+  | `hit_waist` | Hit_Reaction_to_Waist 0.2–1.45 s, squeezed to 0.75 s | hit by a thrown object |
+
+  - `retargetClip` now takes any source rig. Mixamo-style to Mixamo-style uses `MIXAMO_SAME` (same names), and it works
+    on Vesper's 50-bone rig too (close-up: `shared-keys-vesper.png`, no tearing).
+  - The loader now loads every model first, then builds the clips.
+  - **Gait speeds:** each body's `run`, `walk`, `walk_fight` and `back` clips carry `clip.userData.speed`: the natural ground
+    speed in m/s, measured at load from the planted foot (`measureSpeed`). The spells agent sets `timeScale = ground speed / speed`.
+    Measured values:
+
+    | wizard | run | walk_fight | back | walk |
+    |---|---|---|---|---|
+    | Cinder | 4.27 | 0.73 | 0.56 | 1.29 |
+    | Gale | 5.36 | 0.95 | 0.74 | 1.60 |
+    | Rime | 5.06 | 0.92 | 0.69 | 1.52 |
+    | Vesper | 4.88 | 0.76 | 0.66 | 1.47 |
+
+    They differ per wizard because the retargeted stride follows each body's legs.
+  - Walking backward at full speed would need `back` at 7–9×, so the request suggests clamping it.
+  - Not used: Axe_Spin_Attack, Cautious_Crouch_Walk_Left, Charged_Slash and Walk_Backward.
 - **All four wizards now have Ty's models.** The recoloured stand-in (`STAND_IN`, `bodyMaterial`) is only used if a model fails to load.
 
 ## Verification
@@ -182,6 +211,9 @@ All runs used headless Chromium (SwiftShader) against port 4103. Screenshots are
   - The staff is in hand in every pose. `rime-keys.png` shows every key over time; `rime-clips.png` compares his clips with the base clips.
   - The picker card shows him with the staff and snowfall (`rime-picker.png`).
   - No `[looks]` warnings and no console errors. The integrated `e2e.py` still passes (reload keeps `wizardChoice`, 0 errors).
+- **Shared clips in game (`sharedgame.py <wizard>`):** for each wizard, five dummies frozen walking forward (fight walk), walking back,
+  lifting, throwing and taking a waist hit, at two moments each: `shared-game-sheet.png` (rows: Cinder, Gale, Rime, Vesper).
+  Every wizard had all the keys and there were 0 console errors. The contact sheet is `shared-keys.png`; the speed check is `speeds.py`.
 - **Cinder in game (`cindergame.py`):** six Cinder dummies (run, spark, meteor wind-up, meteor release, stagger, death),
   each at two moments: `cinder-game-sheet.png`. Every key over time: `cinder-keys.png`; his clips next to the base clips:
   `cinder-clips.png`. No `[looks]` warnings and no console errors.
@@ -197,13 +229,14 @@ All runs used headless Chromium (SwiftShader) against port 4103. Screenshots are
   - No `[looks]` warnings and no console errors.
 - **Fixed along the way:** flair points were sized by the whole canvas height, so in the picker's small viewports they were
   about 5× too big. They now scale by viewport height, with no change in game.
-- `public/models/wizards/` (`ls`): `gale.glb` 1.71 MB, `rime.glb` 1.43 MB, `rime-wand.glb` 261 KB, `vesper.glb` 1.23 MB, `vesper-wand.glb` 157 KB, `cinder.glb` 1.49 MB (about 6.3 MB in total). The base `wizard.glb` is unchanged at 1.4 MB.
+- `public/models/wizards/` (`ls`): `gale.glb` 1.71 MB, `rime.glb` 1.43 MB, `rime-wand.glb` 261 KB, `vesper.glb` 1.23 MB, `vesper-wand.glb` 157 KB, `cinder.glb` 1.78 MB (about 6.6 MB in total). The base `wizard.glb` is unchanged at 1.4 MB.
 
 ## Known issues and notes
 - **Vesper vs Cinder:** both are red, but Vesper is darker, has smoke and a pool, and has a different nameplate tone.
   At long range they're closest; Ty's models will settle it.
 - **Panel width:** the spells agent answered the 760 px panel request in `requests.md`.
-- **Extra clip keys:** Gale's `spin`, Rime's `float`, `death` (Rime, Vesper, Cinder), Vesper's `lash` and Cinder's `back` need the spells agent's changes
+- **Extra clip keys:** Gale's `spin`, Rime's `float`, `death` (Rime, Vesper, Cinder), Vesper's `lash`, and on everyone
+  `walk_fight`, `back`, `tk_lift`, `tk_throw` and `hit_waist` need the spells agent's changes
   (all requested in `requests.md`) to show in play.
 - **wizards.js:** the spells agent had an uncommitted `frostfall` kit edit in the file, so I staged only my `model` line
   (via `git update-index`). Their change is still in the working tree for them to commit.

@@ -123,7 +123,7 @@ kills by kind, damage taken by kind, Frostfall dodges). `botmatch.mjs` still wor
 
 ## characters → spells: Cinder's `back` clip (walking backward) and `death`
 Cinder now uses Ty's model. `makeWizardBody('cinder').clips` has two extra keys:
-- **`back`** (Walk_Backward, 0.87 s loop): please play it, looping, when a wizard whose body has it moves **backward
+- **`back`** (now Walk_Fight_Back on all four wizards, see the entry below; speeds via `clip.userData.speed`): please play it, looping, when a wizard whose body has it moves **backward
   relative to facing**, for example when the dot product of the velocity and the facing direction is below about -0.3. Use
   roughly the same speed scaling as `run`. Bodies without it keep `run`. Strafing can stay `run`.
 - **`death`** (Fall_Dead_from_Abdominal_Injury, squeezed to 2.4 s, flat by about 1.9 s), as for Rime and Vesper above.
@@ -216,3 +216,36 @@ Until then `goatCtx.killPlayer` in `server.js` refuses to kill a veiled wizard, 
   hide behind one for 6–12 s), while pines and birches are r 0.35.
 - New: archway legs (`kind: 'arch'`, 4 × r 0.75, h 7, with a 2.5 m walk/shoot-through gap on the south path at z −16.5), obelisk (`'obelisk'`, (3.5, −35.2), r 0.9, h 6),
   horse cart (`'cart'`, 3 × r 1.2, h 2), table rocks (`'rock'`, r ~1, h 0.9–1.2, so spells fly over them). One spawn moved from (0, −32) to (−3.5, −30).
+
+## characters → spells: new clip keys on all four bodies (walk_fight, back, tk_lift, tk_throw, hit_waist) and their speeds
+Ty's call: **`run` stays Running at full speed; the fight walk plays when a wizard moves slowly.** All four wizards' bodies
+(`makeWizardBody(id).clips`) now have these extra keys. They come from Cinder's export; Cinder uses them directly and the
+other three get them retargeted. Bodies without a key (the stand-in, if a model fails to load) just don't have it, so
+please fall back to what you do today.
+
+| key | when | clip / timing |
+|---|---|---|
+| `walk_fight` | moving forward slowly: a wind-up (2.0 m/s), the ward (2.6 m/s), slowed by Glacial Skim | Walk_Fight_Forward, loop |
+| `back` | moving backward relative to facing, at any speed | Walk_Fight_Back, loop (Cinder's earlier Walk_Backward is no longer used) |
+| `tk_lift` | telekinesis grab | mage_soell_cast_6, retimed: the arm peaks overhead at **0.35 s** (the lift), then settles by 1.1 s. One-shot from 0 at 1×. |
+| `tk_throw` | telekinesis throw | mage_soell_cast_4, retimed: the arms fling out at **0.1–0.2 s** (the release), then follow through to 1.0 s. One-shot from 0 at 1× on the throw. |
+| `hit_waist` | hit by a thrown object (prop) | Hit_Reaction_to_Waist, 0.75 s: doubles over at about 0.25 s, then recovers. One-shot from 0 at 1×. |
+
+**Speeds, so the feet don't slide.** Each gait clip carries its natural ground speed in **`clip.userData.speed`** (m/s on the
+1.8 m body), measured at load from the planted foot. Set `timeScale = groundSpeed / clip.userData.speed`.
+The current fixed 1.35× on `run` only suits the old base clip. Measured values:
+
+| wizard | `run` (own Running) | `walk_fight` | `back` | `walk` |
+|---|---|---|---|---|
+| Cinder | 4.27 | 0.73 | 0.56 | 1.29 |
+| Gale | 5.36 | 0.95 | 0.74 | 1.60 |
+| Rime | 5.06 | 0.92 | 0.69 | 1.52 |
+| Vesper | 4.88 | 0.76 | 0.66 | 1.47 |
+
+They differ per wizard because the retargeted strides follow each body's leg length, so please read `userData.speed`
+rather than hard-coding them. Examples:
+- Cinder at the slowed full speed (6.2 × 0.85 = 5.27 m/s) plays `run` at about 1.23×.
+- Gale at 6.2 m/s plays `run` at about 1.16×.
+- Rime warding at 2.6 m/s plays `walk_fight` at about 2.8×.
+- A wizard walking backward at 5.27 m/s would play `back` at 7–9×, which will look hurried. If that reads badly, clamp the
+  backward ground speed (or the time scale, at about 4×) and accept a little slide.

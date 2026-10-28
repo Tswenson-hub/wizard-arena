@@ -64,13 +64,13 @@ function clipsFrom(animations) {
 // Keys without a pick come from the model's Meshy-named clips, or are retargeted from the base wizard.
 const MODEL_CLIPS = {
   gale: {
-    run: 'Running', walk: 'Walking',
+    walk: 'Walking',
     cast_fast: 'mage_soell_cast',      // overhead flick thrown forward; same move and timing as the base spark cast
     cast_heavy: 'mage_soell_cast_1',   // gathers, then spreads the arms wide (spread from about 1.6 s: the release window)
     spin: ['Sweeping_Kick', 0.8, 1.7], // the low spinning sweep, for the Arcane Cyclone spin
   },
   rime: {
-    run: 'Running', walk: 'Walking',
+    walk: 'Walking',
     cast_fast: 'mage_soell_cast_4',            // arms flung out at 0.6-1.4 s: the spark/skim window
     cast_heavy: 'Charged_Spell_Cast_1',        // gathers to 1.4 s, then a wide push 1.75-3.1 s: the meteor release window
     // Fall2 is an airborne pose (knees up, arms out): Ty wants it for the Skyward Flash descent, not the stun.
@@ -80,19 +80,34 @@ const MODEL_CLIPS = {
     death: ['Strangled_and_Fall_Forward', 3.6, 7.3, 2.5],  // kneels and falls flat, squeezed to 2.5 s (respawn is 3 s); extra key
   },
   cinder: {
-    run: 'Running', walk: 'Walking',
+    walk: 'Walking',
     cast_fast: 'Right_Hand_Sword_Slash',       // a one-handed slash; the strike (0.7-0.96 s) lands in the spark window
     cast_heavy: 'Charged_Upward_Slash',        // gathers low, then slashes upward at 1.8-2.3 s: the meteor release window
     death: ['Fall_Dead_from_Abdominal_Injury', 0, 2.8, 2.4],  // hunches, kneels, flat by about 1.9 s; extra key
-    back: 'Walk_Backward',                     // extra key: moving backward relative to facing (see requests.md)
   },
   vesper: {
-    run: 'Running', walk: 'Walking',
+    walk: 'Walking',
     cast_fast: ['mage_soell_cast_5', 9.9, 11.36],     // the arm rises overhead, then flings forward and down (the spark window)
     death: 'Dead',                                     // staggers and lands flat by about 2.2 s
     // Sanguine Lash: extra key. The slash strikes at about 0.7-0.85 s; retimed so the crouched wind-up fills the
     // 1.5 s wind-up and the strike lands on the release, then the follow-through. Play it from the wind-up's start at 1x.
     lash: { clip: 'Right_Hand_Sword_Slash', warp: [[0, 0], [0.55, 1.3], [0.85, 1.55], [1.5, 2.1]] },
+  },
+};
+
+// Clips Ty picked from Cinder's export for EVERY wizard: used directly on Cinder and retargeted bone by bone
+// onto the others (they are Mixamo-style rigs too). These override MODEL_CLIPS. 'run' stays each model's own
+// Running (full speed); the fight walks are for slow movement (wind-ups, ward, slowed, backward).
+// Natural speeds (planted foot, 1.8 m body) are in requests.md: time-scale each to ground speed / natural speed.
+const SHARED_CLIPS = {
+  from: 'cinder',
+  keys: {
+    walk_fight: 'Walk_Fight_Forward',          // extra key: a guarded walk forward, for slow movement (about 0.73 m/s at 1x)
+    back: 'Walk_Fight_Back',                   // extra key: walking backward relative to facing (about 0.56 m/s at 1x)
+    // extra keys for telekinesis and props
+    tk_lift: { clip: 'mage_soell_cast_6', warp: [[0, 0], [0.7, 0.1], [1.2, 0.35], [2.3, 1.1]] },   // the arm rises overhead at 0.35 s (the lift), then settles
+    tk_throw: { clip: 'mage_soell_cast_4', warp: [[0, 0], [0.45, 0.08], [0.65, 0.18], [2.2, 1.0]] }, // the arms fling out at 0.1-0.2 s (the release)
+    hit_waist: ['Hit_Reaction_to_Waist', 0.2, 1.45, 0.75],   // doubles over and recovers in 0.75 s (hit by a thrown object)
   },
 };
 
@@ -150,12 +165,15 @@ function rootSpace(root) {
   return out;
 }
 
-// Retarget `clip` from the base wizard onto `target` (a model in its bind pose), bone by bone through
-// `names` (target bone -> base bone). Each bone's rest pose is first lined up with the base's rest
-// direction (so an A-pose and a T-pose agree), then follows the base bone's rotation from its rest.
-// The hips also follow the base hips' movement, scaled to the target's size.
-function retargetClip(target, clip, names, fps = 30) {
-  const src = skeletonClone(baseModel);
+// Mixamo-style rig to Mixamo-style rig: the same names.
+const MIXAMO_SAME = Object.fromEntries(Object.keys(MIXAMO_TO_BASE).map(n => [n, n]));
+
+// Retarget `clip` from `source` (the base wizard unless given; a model in its bind pose) onto `target`
+// (likewise), bone by bone through `names` (target bone -> source bone). Each bone's rest pose is first
+// lined up with the source's rest direction (so an A-pose and a T-pose agree), then follows the source
+// bone's rotation from its rest. The hips also follow the source hips' movement, scaled to the target's size.
+function retargetClip(target, clip, names, source = baseModel, fps = 30) {
+  const src = skeletonClone(source);
   const srcBones = {}; src.traverse(o => { if (o.isBone) srcBones[o.name] = o; });
   const nodes = []; target.traverse(o => nodes.push(o));
   const pairs = new Map();
@@ -237,17 +255,23 @@ export function registerModel(gltf) {
 
 const boneNames = (root) => { const s = new Set(); root.traverse(o => { if (o.isBone) s.add(o.name); }); return s; };
 
+// One clip from `animations` for `key`, as a pick (see MODEL_CLIPS) describes it, or null.
+function pickClip(id, animations, key, pick) {
+  const [name, from, to, duration] = Array.isArray(pick) ? pick : typeof pick === 'object' ? [pick.clip] : [pick];
+  const clip = animations.find(a => a.name === name);
+  if (!clip) { console.warn(`[looks] ${id}: no clip '${name}' for ${key}`); return null; }
+  return pick.warp ? stripRootMotion(warpClip(clip, key, pick.warp))
+    : from != null ? stripRootMotion(subclipByTime(clip, key, from, to, duration)) : asKey(clip, key);
+}
+
 // Clip set for a model with its own skeleton: per-wizard picks, then Meshy-named clips, then the base
 // clips retargeted (if the rig is one we can map), else null.
 function ownClips(id, scene, animations) {
   const picks = MODEL_CLIPS[id] || {};
   const out = {};
   for (const [key, pick] of Object.entries(picks)) {
-    const [name, from, to, duration] = Array.isArray(pick) ? pick : typeof pick === 'object' ? [pick.clip] : [pick];
-    const clip = animations.find(a => a.name === name);
-    if (!clip) { console.warn(`[looks] ${id}: no clip '${name}' for ${key}`); continue; }
-    out[key] = pick.warp ? stripRootMotion(warpClip(clip, key, pick.warp))
-      : from != null ? stripRootMotion(subclipByTime(clip, key, from, to, duration)) : asKey(clip, key);
+    const clip = pickClip(id, animations, key, pick);
+    if (clip) out[key] = clip;
   }
   for (const [key, names] of Object.entries(CLIP_NAMES)) {
     if (out[key]) continue;
@@ -293,18 +317,69 @@ function fitProp(cfg, propScene, scene, idle, modelScale) {
   return { prop, t };
 }
 
+// Natural ground speed of a walk/run cycle (m/s on the normalised body): the median speed of a planted foot
+// (within 3 cm of its lowest point) relative to the hips. Stored as clip.userData.speed so the animation can be
+// time-scaled to the real ground speed without the feet sliding. (Measured on each body's own clip objects.)
+const _a = new THREE.Vector3(), _b = new THREE.Vector3();
+function measureSpeed(scene, clip, scale) {
+  const body = skeletonClone(scene);
+  const hips = body.getObjectByName('Hips');
+  const feet = ['LeftToeBase', 'RightToeBase'].map(n => body.getObjectByName(n)).filter(Boolean);
+  if (!hips || !feet.length) return 0;
+  const mixer = new THREE.AnimationMixer(body);
+  mixer.clipAction(clip).play();
+  const N = 90, dt = clip.duration / N, samples = feet.map(() => []);
+  for (let i = 0; i <= N; i++) {
+    mixer.setTime(Math.min(i * dt, clip.duration - 1e-4));
+    body.updateMatrixWorld(true);
+    hips.getWorldPosition(_a);
+    feet.forEach((f, j) => { f.getWorldPosition(_b); samples[j].push([_b.y, _b.x - _a.x, _b.z - _a.z]); });
+  }
+  const speeds = [];
+  for (const s of samples) {
+    const low = Math.min(...s.map(q => q[0])) + 0.03 / scale;
+    for (let i = 1; i < s.length; i++) if (s[i][0] < low && s[i - 1][0] < low) speeds.push(Math.hypot(s[i][1] - s[i - 1][1], s[i][2] - s[i - 1][2]) / dt * scale);
+  }
+  speeds.sort((x, y) => x - y);
+  return speeds[Math.floor(speeds.length / 2)] || 0;
+}
+const GAIT_KEYS = ['run', 'walk', 'walk_fight', 'back'];
+
+// SHARED_CLIPS for wizard `id`: picked from its own clips when it is the source, otherwise retargeted
+// from the source model (when both are Mixamo-style rigs).
+function sharedClips(id, scene, animations, source) {
+  const out = {};
+  const mine = id === SHARED_CLIPS.from;
+  if (!mine && !source) return out;
+  const has = boneNames(scene);
+  if (!mine && !Object.keys(MIXAMO_SAME).every(n => has.has(n))) return out;
+  for (const [key, pick] of Object.entries(SHARED_CLIPS.keys)) {
+    const clip = pickClip(SHARED_CLIPS.from, mine ? animations : source.animations, key, pick);
+    if (clip) out[key] = mine ? clip : retargetClip(scene, clip, MIXAMO_SAME, source.scene);
+  }
+  return out;
+}
+
 // Load each wizard's own model (WIZARDS[id].model). A model that fails to load, or can't be
-// animated, falls back to the recoloured base model with a console warning.
+// animated, falls back to the recoloured base model with a console warning. All models load first,
+// then the clips are built, because SHARED_CLIPS come from one model and are retargeted onto the others.
 export async function loadWizardModels(loader) {
   const want = boneNames(baseModel);
+  const loaded = {};
   await Promise.all(Object.values(WIZARDS).filter(w => w.model).map(w =>
     loader.loadAsync(w.model).then(gltf => {
-      const scene = gltf.scene;
       // Mixamo-style rigs name bones 'mixamorig:Hips' (three drops the colon); use the plain names, so
       // RightHand and Head are where wizard.js looks for them.
-      scene.traverse(o => { o.name = o.name.replace(/^mixamorig:?/, ''); });
+      gltf.scene.traverse(o => { o.name = o.name.replace(/^mixamorig:?/, ''); });
       for (const a of gltf.animations) for (const t of a.tracks) t.name = t.name.replace(/^mixamorig:?/, '');
-      prepareMeshes(scene);
+      prepareMeshes(gltf.scene);
+      loaded[w.id] = gltf;
+    }).catch(err => console.warn(`[looks] ${w.id}: ${w.model} not loaded (${err?.message || err}); using the base model`))
+  ));
+  const source = loaded[SHARED_CLIPS.from];
+  await Promise.all(Object.entries(loaded).map(async ([id, gltf]) => {
+    try {
+      const scene = gltf.scene;
       // Normalise: 1.8 m tall, feet on y = 0 (measured in the bind pose).
       scene.updateMatrixWorld(true);
       const box = new THREE.Box3().setFromObject(scene);
@@ -312,14 +387,21 @@ export async function loadWizardModels(loader) {
       const has = boneNames(scene);
       const sameRig = [...want].every(n => has.has(n));
       // Same skeleton as the base wizard: the base clips drive it by bone name. Otherwise use its own.
-      const clips = sameRig ? baseClips : ownClips(w.id, scene, gltf.animations);
+      let clips = sameRig ? baseClips : ownClips(id, scene, gltf.animations);
       if (!clips) throw new Error(`skeleton differs from wizard.glb, Meshy's clips are missing and it can't be retargeted`);
-      models[w.id] = { scene, clips, scale, offsetY: -box.min.y * scale };
-      const cfg = PROPS[w.id];
-      if (cfg) return loader.loadAsync(cfg.url).then(g => { models[w.id].prop = fitProp(cfg, g.scene, scene, clips.idle, scale); })
-        .catch(err => console.warn(`[looks] ${w.id}: prop ${cfg.url} not used (${err?.message || err})`));
-    }).catch(err => console.warn(`[looks] ${w.id}: ${w.model} not used (${err?.message || err}); using the base model`))
-  ));
+      if (!sameRig) clips = { ...clips, ...sharedClips(id, scene, gltf.animations, source) };
+      for (const k of GAIT_KEYS) {
+        const c = clips[k];
+        if (!c) continue;
+        c.userData ??= {};      // AnimationClip has no userData in three r170
+        c.userData.speed ??= +measureSpeed(scene, c, scale).toFixed(2);
+      }
+      models[id] = { scene, clips, scale, offsetY: -box.min.y * scale };
+      const cfg = PROPS[id];
+      if (cfg) await loader.loadAsync(cfg.url).then(g => { models[id].prop = fitProp(cfg, g.scene, scene, clips.idle, scale); })
+        .catch(err => console.warn(`[looks] ${id}: prop ${cfg.url} not used (${err?.message || err})`));
+    } catch (err) { console.warn(`[looks] ${id}: ${WIZARDS[id].model} not used (${err?.message || err}); using the base model`); }
+  }));
   readyResolve();
 }
 
