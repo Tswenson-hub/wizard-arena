@@ -95,26 +95,6 @@ function makeNameplate(name, color) {
   return sp;
 }
 
-// Flame Ward's curtain: tongues of flame, white-hot at the base, drawn once and scrolled upward.
-let fireTex = null;
-function fireTexture() {
-  if (fireTex) return fireTex;
-  const W = 128, H = 256, c = document.createElement('canvas'); c.width = W; c.height = H;
-  const g = c.getContext('2d');
-  let seed = 9;
-  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-  for (let i = 0; i < 40; i++) {
-    const x = rnd() * W, w = 6 + rnd() * 14, top = H * (0.05 + rnd() * 0.5);
-    const grad = g.createLinearGradient(0, H, 0, top);
-    grad.addColorStop(0, 'rgba(255,240,180,0.9)'); grad.addColorStop(0.35, 'rgba(255,140,30,0.7)'); grad.addColorStop(1, 'rgba(255,40,0,0)');
-    g.fillStyle = grad;
-    g.beginPath(); g.moveTo(x - w, H); g.quadraticCurveTo(x - w * 0.3, (H + top) / 2, x + (rnd() - 0.5) * 10, top); g.quadraticCurveTo(x + w * 0.3, (H + top) / 2, x + w, H); g.fill();
-  }
-  fireTex = new THREE.CanvasTexture(c); fireTex.colorSpace = THREE.SRGBColorSpace;
-  fireTex.wrapS = fireTex.wrapT = THREE.RepeatWrapping;
-  return fireTex;
-}
-
 export class Wizard {
   constructor(info, scene, isLocal) {
     this.id = info.id; this.name = info.name; this.color = info.color; this.isLocal = isLocal;
@@ -164,21 +144,9 @@ export class Wizard {
       new THREE.MeshBasicMaterial({ color: 0x5cc8ff, transparent: true, opacity: 0.0, depthWrite: false, side: THREE.DoubleSide }));
     this.wardFill.position.y = 1.0;
     this.group.add(this.wardFill);
-    // each ward-style guard has its own look: Cinder's Flame Ward is a curtain of fire, Vesper's Black Death a black shroud
+    // Vesper's Black Death has its own look: a black shroud instead of the blue bubble
     this.guardStyle = C.kitOf(info.wizard).guard;
-    if (this.guardStyle === 'flame_ward') {
-      // a curved sheet of flame in front of her (the ward cone), instead of the bubble
-      this.ward.visible = this.wardFill.visible = false;
-      const mat = () => new THREE.MeshBasicMaterial({ map: fireTexture(), color: 0xffffff, transparent: true, opacity: 0, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false });
-      this.flame = [0, 1].map(i => {
-        const tex = fireTexture().clone(); tex.needsUpdate = true;
-        const m = new THREE.Mesh(new THREE.CylinderGeometry(1.15 + i * 0.12, 1.25 + i * 0.12, 2.4 - i * 0.3, 28, 1, true, -1.0, 2.0), mat());
-        m.material.map = tex;
-        m.position.y = 1.2 - i * 0.15;
-        this.group.add(m);
-        return m;
-      });
-    } else if (this.guardStyle === 'black_death') {
+    if (this.guardStyle === 'black_death') {
       this.ward.material.color.setHex(0x8a0020);
       this.wardFill.material.color.setHex(0x040006);
       this.wardFill.scale.setScalar(1.05);
@@ -483,12 +451,6 @@ export class Wizard {
     const w = this.blocking && !this.dead ? 1 : 0;
     const style = this.guardStyle, tNow = performance.now() / 1000;
     const fill = style === 'black_death' ? 0.97 : 0.12;
-    if (this.flame) this.flame.forEach((m, i) => {
-      m.material.opacity += (w * (0.85 - i * 0.25 + Math.sin(tNow * (21 + i * 7)) * 0.1) - m.material.opacity) * Math.min(1, dt * 16);
-      m.material.map.offset.y = -tNow * (1.4 + i * 0.6);
-      m.material.map.offset.x = Math.sin(tNow * 3 + i) * 0.05;
-      m.scale.y = 1 + Math.sin(tNow * 17 + i * 2) * 0.06;
-    });
     this.ward.material.opacity += (w * 0.55 - this.ward.material.opacity) * Math.min(1, dt * 14);
     this.wardFill.material.opacity += (w * fill - this.wardFill.material.opacity) * Math.min(1, dt * 14);
     this.ward.rotation.y += dt * (style === 'black_death' ? 2.4 : 0.8); this.ward.rotation.x += dt * 0.3;

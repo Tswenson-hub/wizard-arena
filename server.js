@@ -47,6 +47,7 @@ const walls = new Map();     // Glacial Bulwark walls: id -> { id, owner, x, z, 
 const frostfalls = new Map(); // Frostfall ice on its way down: id -> { id, owner, x, z, at }
 const smokes = new Map();     // Smoke Screen clouds: id -> { id, owner, x, z, until }
 const strikes = new Map();    // Cataclysm meteors on their way down: id -> { id, owner, x, z, at }
+const firewalls = new Map();  // Firewalls: id -> { id, owner, x, z, yaw, until, burned: Set }
 const cages = new Map();      // Night Cages: id -> { id, owner, x, z, until, inside: Set, foes: Set }
 let nextFxId = 1;            // ids for decoys and walls
 
@@ -237,7 +238,7 @@ function applyHit(target, proj) {
 
   let dmg = proj.dmg ?? spec.damage;
   if (blocked) {
-    const cost = spec.staminaCost;
+    const cost = spec.staminaCost * (C.SPELLBOOK[kit(target).guard]?.hitCostMul ?? 1);
     const full = dmg;
     if (target.st >= cost) {
       target.st -= cost;
@@ -349,26 +350,13 @@ function dropProp(p, destroy, reason = null) {
   }
 }
 
-// A ward-style guard soaked `absorbed` damage. Black Death charges the next Sanguine Lash with it; Flame Ward
-// lashes back at everyone close in front.
+// A ward-style guard soaked `absorbed` damage. Black Death charges the next Sanguine Lash with it.
 function guardAbsorbed(p, attacker, absorbed, t) {
   const G = kit(p).guard;
   if (G === 'black_death' && absorbed > 0) {
     const B = C.SPELLBOOK.black_death;
     if (kit(p).power === 'sanguine_lash' && p.cd.power > t) p.cd.power = Math.max(t, p.cd.power - absorbed * B.lashCdPerDamage);
     p.lashBonus = Math.min(B.maxBonus, (p.lashBonus || 0) + absorbed * B.bonusPerDamage);
-  } else if (G === 'flame_ward') {
-    const F = C.SPELLBOOK.flame_ward;
-    const fx = Math.sin(p.yaw), fz = Math.cos(p.yaw), cone = Math.cos(F.burnCone / 2 * Math.PI / 180);
-    const hits = [];
-    for (const q of players.values()) {
-      if (q === p || q.dead || !enemies(p, q)) continue;
-      const dx = q.p[0] - p.p[0], dz = q.p[2] - p.p[2], d = Math.hypot(dx, dz);
-      if (d > F.burnRange || (d > 0.5 && (fx * dx + fz * dz) / d < cone) || wallBetween(p.p, q.p)) continue;
-      const { dmg } = applyHit(q, { kind: 'flame_lash', owner: p.id, v: d > 0.05 ? [dx / d, 0, dz / d] : [fx, 0, fz] });
-      hits.push({ id: q.id, dmg });
-    }
-    broadcast({ t: 'flameLash', id: p.id, p: p.p, yaw: p.yaw, hits });
   }
 }
 
@@ -480,6 +468,49 @@ function raiseWall(p, yaw) {
   C.addWallColliders(w.id, x, z, yaw);
   broadcast({ t: 'wallUp', wall: wallPublic(w) });
 }
+// ---------------------------------------------------------------- Firewall
+// Cinder's Firewall: a sheet of flame across her aim. It isn't solid: enemy projectiles (and thrown props) that cross it
+// burn up, and an enemy walking through takes a burn once per wall.
+const FIREWALL = C.SPELLBOOK.firewall;
+const firewallPublic = (w) => ({ id: w.id, owner: w.owner, x: w.x, z: w.z, yaw: w.yaw, left: Math.max(0, w.until - now()) });
+function raiseFirewall(p, yaw) {
+  const [x, z] = C.firewallCentre(p.p, yaw);
+  const w = { id: nextFxId++, owner: p.id, x, z, yaw, until: now() + FIREWALL.life, burned: new Set() };
+  firewalls.set(w.id, w);
+  broadcast({ t: 'firewall', ...firewallPublic(w) });
+}
+// The Firewall (of an enemy of `ownerId`) the segment a→b crosses, if any.
+function firewallCrossed(ownerId, a, b, r) {
+  for (const w of firewalls.values()) {
+    if (!enemyOf(w.owner, players.get(ownerId))) continue;
+    if (Math.max(a[1], b[1]) > FIREWALL.height + r && Math.min(a[1], b[1]) > FIREWALL.height + r) continue;
+    const la = C.firewallLocal(w, a), lb = C.firewallLocal(w, b);
+    const crosses = Math.sign(la.across) !== Math.sign(lb.across) || Math.abs(lb.across) < FIREWALL.thickness / 2 + r;
+    if (!crosses) continue;
+    // where it crosses the plane
+    const k = la.across === lb.across ? 1 : Math.max(0, Math.min(1, la.across / (la.across - lb.across)));
+    if (Math.abs(la.along + (lb.along - la.along) * k) < FIREWALL.width / 2 + r) return w;
+  }
+  return null;
+}
+function updateFirewalls(t) {
+  for (const w of [...firewalls.values()]) {
+    if (t >= w.until) { firewalls.delete(w.id); broadcast({ t: 'firewallEnd', id: w.id }); continue; }
+    const owner = players.get(w.owner);
+    for (const q of players.values()) {
+      if (q.dead || w.burned.has(q.id) || !enemies(owner, q) || q.p[1] > FIREWALL.height) continue;
+      const l = C.firewallLocal(w, q.p);
+      // touching it, or having crossed it since the last tick (a position update can step right over the thin sheet)
+      const side = Math.sign(l.across), prev = (w.side ??= new Map()).get(q.id);
+      w.side.set(q.id, side);
+      const crossed = prev !== undefined && prev !== side;
+      if ((Math.abs(l.across) > FIREWALL.thickness / 2 + C.PLAYER_RADIUS && !crossed) || Math.abs(l.along) > FIREWALL.width / 2 + C.PLAYER_RADIUS) continue;
+      w.burned.add(q.id);
+      applyHit(q, { kind: 'firewall_burn', owner: w.owner, v: [Math.sin(w.yaw), 0, Math.cos(w.yaw)] });
+    }
+  }
+}
+
 // Glacial Bulwark: an enemy touching the wall is frozen (once per wall per enemy every BULWARK.refreeze s).
 function bulwarkTouch(w, t) {
   const owner = players.get(w.owner);
@@ -782,6 +813,7 @@ function simulate(dt) {
   for (const c of [...smokes.values()]) if (t >= c.until) smokes.delete(c.id);   // clients fade it on their own clock
   for (const st of [...strikes.values()]) if (t >= st.at) meteorImpact(st);
   updateCages(t);
+  updateFirewalls(t);
   for (const w of walls.values()) bulwarkTouch(w, t);
 
   for (const p of players.values()) {
@@ -795,7 +827,7 @@ function simulate(dt) {
     if (p.zero && t >= p.zero.at) zeroBlast(p);
     // stamina
     if (p.blocking) {
-      p.st -= C.STAMINA_DRAIN_BLOCKING * dt;
+      p.st -= C.STAMINA_DRAIN_BLOCKING * (C.SPELLBOOK[kit(p).guard]?.drainMul ?? 1) * dt;
       if (p.st <= 0) {
         p.st = 0; p.blocking = false; p.blockReleasedAt = t;
         p.stunUntil = Math.max(p.stunUntil, t + C.BLOCK_BREAK_STUN * 0.6);
@@ -833,6 +865,7 @@ function simulate(dt) {
   for (const proj of [...projectiles.values()]) {
     const age = t - proj.born;
     if (age > proj.life) { endProjectile(proj, false); continue; }
+    const before = proj.p.slice();
     if (proj.curve) {
       // Hex Shards: along the Bézier the client draws too
       const at = C.hexAt(proj.curve, age);
@@ -842,6 +875,11 @@ function simulate(dt) {
       proj.p[0] += proj.v[0] * dt; proj.p[1] += proj.v[1] * dt; proj.p[2] += proj.v[2] * dt;
     }
 
+    // an enemy Firewall burns it up
+    if (firewalls.size && firewallCrossed(proj.owner, before, proj.p, Math.min(proj.radius, 0.6))) {
+      endProjectile(proj, true, { surface: 'firewall' });
+      continue;
+    }
     // ground / arena bounds
     if (proj.p[1] <= proj.radius * 0.5 || proj.p[1] > 40 || Math.hypot(proj.p[0], proj.p[2]) > C.ARENA_RADIUS + 6) {
       proj.p[1] = Math.max(proj.p[1], 0.05);
@@ -946,7 +984,7 @@ function simulate(dt) {
 
 // ---------------------------------------------------------------- messages
 // Gale's tornado and Rime's flare: nothing else can be cast meanwhile (Gale can still move).
-const ULT_LOCKED = new Set(['block', 'cast', 'chargeStart', 'cyclone', 'lashStart', 'frostfall', 'smoke', 'mirror', 'veil', 'bulwark', 'curse', 'skyward', 'teleport', 'pickup', 'throw', 'reload']);
+const ULT_LOCKED = new Set(['block', 'cast', 'chargeStart', 'cyclone', 'lashStart', 'frostfall', 'smoke', 'mirror', 'veil', 'bulwark', 'firewall', 'curse', 'skyward', 'teleport', 'pickup', 'throw', 'reload']);
 function handle(p, msg) {
   const t = now();
   if (unstoppable(p) && ULT_LOCKED.has(msg.t)) return;
@@ -1152,6 +1190,12 @@ function handle(p, msg) {
       broadcast({ t: 'veil', id: p.id, left: VEIL.duration });
       break;
     }
+    case 'firewall': {
+      if (kit(p).guard !== 'firewall' || !canAct(p) || p.charging || p.cyclone || p.lash || isAirborne(p) || t < p.cd.guard) break;
+      p.cd.guard = t + FIREWALL.cooldown;
+      raiseFirewall(p, Number.isFinite(msg.yaw) ? msg.yaw : p.yaw);
+      break;
+    }
     case 'bulwark': {
       if (kit(p).guard !== 'glacial_bulwark' || !canAct(p) || p.charging || p.cyclone || p.lash || isAirborne(p) || t < p.cd.guard) break;
       p.cd.guard = t + BULWARK.cooldown;
@@ -1316,7 +1360,7 @@ function removePlayer(id) {
 }
 
 // cycloneStopsGoats: the goat module can knock a charging goat dizzy (bots then answer a charge with a cyclone)
-const world = { players, props, projectiles, goats, decoys, walls, frostfalls, smokes, strikes, cages, handle, now, cycloneStopsGoats: !!Goats.dizzyGoat };
+const world = { players, props, projectiles, goats, decoys, walls, frostfalls, smokes, strikes, cages, firewalls, handle, now, cycloneStopsGoats: !!Goats.dizzyGoat };
 // Game modes (server/match.js, modes agent). addUltCharge is the spells agent's to implement.
 const match = createMatch({
   players, props, now, broadcast, send, propPublic,
@@ -1431,6 +1475,7 @@ wss.on('connection', (ws) => {
         smokes: [...smokes.values()].map(smokePublic),
         strikes: [...strikes.values()].map(strikePublic),
         cages: [...cages.values()].map(cagePublic),
+        firewalls: [...firewalls.values()].map(firewallPublic),
         decoys: [...decoys.values()].map(decoyPublic),
         ...match.welcomeExtras(p),
       }));

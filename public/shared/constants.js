@@ -285,35 +285,41 @@ export const SPELLBOOK = {
   },
   ward: {
     id: 'ward', slot: 'guard', name: 'Ward', short: 'Ward', ward: true,
-    blurb: 'Hold to block spells from the front. Drains stamina.',
+    blurb: 'Hold to block spells from the front. Drains stamina fast.',
     cooldown: 0,
+    drainMul: 2.5, hitCostMul: 2.5,   // round 6 (Ty: shields much shorter): about 3 s of holding from full
   },
-  flame_ward: {
-    id: 'flame_ward', slot: 'guard', name: 'Flame Ward', short: 'Flame Ward', ward: true,
-    blurb: 'Hold: a curtain of fire blocks spells from the front. Every block lashes back, burning anyone within 6 m in front.',
-    cooldown: 0,
-    burnRange: 6, burnCone: 110,   // who the lash-back reaches
+  firewall: {
+    id: 'firewall', slot: 'guard', name: 'Firewall', short: 'Firewall',
+    blurb: 'Tap: a 5 m wall of flame rises ahead for 2.5 s. It burns up every enemy projectile and thrown object that crosses it. Walking through it burns.',
+    dist: 2.5,           // in front of her, across her aim
+    width: 5, height: 3,
+    life: 2.5,
+    thickness: 0.5,      // how close to its plane counts as touching it
+    cooldown: 10,
   },
   black_death: {
     id: 'black_death', slot: 'guard', name: 'Black Death', short: 'Black Death', ward: true, allSides: true,
-    blurb: 'Hold: a black shroud blocks spells from every side. Damage it absorbs charges your next Lash.',
+    blurb: 'Hold: a black shroud blocks spells from every side, for about 3 s of stamina. Damage it absorbs charges your next Lash.',
     cooldown: 0,
+    drainMul: 2.5,          // stamina drains this much faster than the base ward rate (about 3 s from full)...
+    hitCostMul: 2.5,        // ...and each blocked hit costs this much more
     lashCdPerDamage: 0.1,   // each absorbed point cuts Sanguine Lash's cooldown by this (s)...
     bonusPerDamage: 0.5,    // ...and stores this much bonus damage for the next Lash...
     maxBonus: 14,           // ...up to this
   },
   tempest_veil: {
     id: 'tempest_veil', slot: 'guard', name: 'Tempest Veil', short: 'Veil',
-    blurb: 'Tap: a wind bubble wraps you for 3 s and swallows every spell, from any side. Move and cast freely.',
-    duration: 3,
+    blurb: 'Tap: a wind bubble wraps you for 2 s and swallows every spell, from any side. Move and cast freely.',
+    duration: 2,         // Ty: shields much shorter (was 3 s)
     cooldown: 10,        // from activation; it can't be refreshed while up
   },
   glacial_bulwark: {
     id: 'glacial_bulwark', slot: 'guard', name: 'Glacial Bulwark', short: 'Bulwark',
-    blurb: 'Tap to raise a 6 m ice wall ahead that blocks everything and freezes enemies who touch it. 10 s or 220 damage.',
+    blurb: 'Tap to raise a 6 m ice wall ahead that blocks everything and freezes enemies who touch it. 5 s or 120 damage.',
     dist: 2.8, width: 6, height: 4,
     circles: 9, r: 0.4,   // collider chain
-    life: 10, hp: 220,
+    life: 5, hp: 120,     // Ty: shields much shorter (was 10 s, 220)
     freeze: 1.5,          // an enemy touching it is frozen this long (Frostfall's freeze)...
     refreeze: 3,          // ...at most once per wall per enemy this often
     cooldown: 12,
@@ -362,8 +368,8 @@ export const SPELLBOOK = {
     tick: 0.5, damage: 8, stun: 0, knockback: 0, staminaCost: 10,   // a ward facing her soaks a tick for 10
     height: 3,           // vertical reach
   },
-  flame_lash: {          // Flame Ward's lash-back (a hit kind)
-    id: 'flame_lash', name: 'Flame Ward', damage: 8, stun: 0, knockback: 1.5, staminaCost: 0, unblockable: true, noInterrupt: true,
+  firewall_burn: {       // walking through a Firewall (a hit kind)
+    id: 'firewall_burn', name: 'Firewall', damage: 15, stun: 0, knockback: 0, staminaCost: 0, unblockable: true, noInterrupt: true,
   },
   bulwark_frost: {       // touching an enemy Glacial Bulwark (a hit kind)
     id: 'bulwark_frost', name: 'Glacial Bulwark', damage: 4, stun: 0, knockback: 0, staminaCost: 0, unblockable: true,
@@ -404,9 +410,18 @@ export const primaryMag = (id) => SPELLBOOK[id] || SPELLBOOK.spark;
 // The projectile kind each primary fires, and the kinds that follow the magazine rule (only the finisher interrupts).
 export const PRIMARY_KIND = { spark: 'fast', glacial_skim: 'skim', fireball: 'fireball', gale_shear: 'shear', hex_shards: 'hex' };
 export const PRIMARY_KINDS = new Set(Object.values(PRIMARY_KIND));
-// Ward-style guards (hold Space, drain stamina): the Ward, Flame Ward, Black Death.
+// Ward-style guards (hold Space, drain stamina): the Ward and Black Death.
 export const isWard = (id) => !!SPELLBOOK[id]?.ward;
 // Night Cage: keep `pos` (mutated) on its side of the ring. `inside` says which side it belongs to.
+// Firewall geometry: where `p` sits relative to wall `w` ({ x, z, yaw }): `along` its length and `across` its plane.
+export function firewallLocal(w, p) {
+  const dx = p[0] - w.x, dz = p[2] - w.z;
+  return { across: dx * Math.sin(w.yaw) + dz * Math.cos(w.yaw), along: dx * Math.cos(w.yaw) - dz * Math.sin(w.yaw) };
+}
+export function firewallCentre(p, yaw) {
+  const F = SPELLBOOK.firewall;
+  return [p[0] + Math.sin(yaw) * F.dist, p[2] + Math.cos(yaw) * F.dist];
+}
 export function cageClamp(pos, cage, inside) {
   const R = SPELLBOOK.night_cage.radius, pr = PLAYER_RADIUS;
   if ((pos[1] || 0) > SPELLBOOK.night_cage.flyOver) return false;

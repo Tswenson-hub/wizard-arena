@@ -222,6 +222,7 @@ function onWelcome(msg) {
   for (const f of msg.frostfalls || []) frosts.set(f.id, effects.frostfall(f.p, f.left));
   for (const c of msg.smokes || []) effects.smoke(c.p, c.left);
   for (const st of msg.strikes || []) strikes.set(st.id, effects.meteorStrike(st.p, st.left));
+  for (const f of msg.firewalls || []) firewalls.set(f.id, { data: f, fx: effects.firewall(f) });
   for (const c of msg.cages || []) cages.set(c.id, { ...c, x: c.p[0], z: c.p[2], fx: effects.nightCage(c.p, c.left) });
   me = players.get(myId);
   for (const d of msg.decoys || []) spawnDecoy(d);
@@ -420,6 +421,7 @@ function handleMessage(msg) {
         if (pr.kind === 'heavy') { sfx.bigImpact(msg.p); shake(0.5 / (1 + d * 0.15)); trampleCrops(msg.p[0], msg.p[2], 2.5); }
         else if (msg.surface !== 'player' && pr.kind === 'fast') sfx.impact(msg.p);
         else if (pr.kind === 'skim') sfx.shardHit(msg.p);
+        if (msg.surface === 'firewall') { effects.burnUp(msg.p); sfx.play('meteor_cast', { pos: msg.p, vol: 0.5, rate: 1.6, jitter: 0.1 }); }
       }
       break;
     }
@@ -428,7 +430,7 @@ function handleMessage(msg) {
       if (!target) break;
       const c = target.group.position.clone(); c.y += 1;
       if (msg.veil) { target.veilFlash(); effects.burst(c, 0xe8dcff, 8, 3, 0.25, 0); sfx.block(c); }
-      else if (msg.blocked) { const G = C.kitOf(target.wizard).guard; effects.blockFlash(c, G === 'flame_ward' ? 0xff7a1e : G === 'black_death' ? 0xa0102a : 0x9ae4ff); sfx.block(c); }
+      else if (msg.blocked) { const G = C.kitOf(target.wizard).guard; effects.blockFlash(c, G === 'black_death' ? 0xa0102a : 0x9ae4ff); sfx.block(c); }
       else {
         effects.burst(c, msg.kind === 'skim' ? 0xbfeaff : 0xff3b4e, 10, 3, 0.35);
         // a hurled prop or goat doubles them over (hit_waist); other interrupting hits flinch
@@ -827,11 +829,17 @@ function handleMessage(msg) {
       if (c) { effects.endCage(c.fx); cages.delete(msg.id); }
       break;
     }
-    case 'flameLash': {
-      const w = players.get(msg.id);
-      const p = w === me ? [local.pos.x, local.pos.y, local.pos.z] : msg.p;
-      effects.flameLash(p, w === me ? local.yaw : msg.yaw);
-      sfx.play('meteor_cast', { pos: [p[0], 1, p[2]], vol: 0.45, rate: 1.4, jitter: 0.1 });
+    case 'firewall': {
+      firewalls.set(msg.id, { data: msg, fx: effects.firewall(msg) });
+      const w = players.get(msg.owner);
+      if (w) w.oneShot('cast_fast', 0.45, 2.2, 0.25);
+      sfx.play('spark_cast', { pos: [msg.x, 1, msg.z], vol: 1, rate: 0.55 });   // Ty's fireball sound, deeper: the ignite
+      sfx.play('meteor_cast', { pos: [msg.x, 1, msg.z], vol: 0.6, rate: 0.8, delay: 0.04 });
+      break;
+    }
+    case 'firewallEnd': {
+      const f = firewalls.get(msg.id);
+      if (f) { effects.endFirewall(f.fx); firewalls.delete(msg.id); }
       break;
     }
     default:
@@ -877,6 +885,8 @@ const frosts = new Map();    // id -> effects entry
 const strikes = new Map();   // id -> effects entry
 const cataMark = effects.cataAim();
 function endEye(w) { effects.stopEye(w.eyeFx); w.eyeFx = null; w.eyeOn = false; }
+// Cinder's Firewalls: id -> { data, fx }.
+const firewalls = new Map();
 // Night Cages (id -> { x, z, inside: [ids], foes: [ids], fx }), and Vesper's aim circle for one.
 const cages = new Map();
 const cageMark = effects.cataAim(CAGE.radius, 0x2a0010, 0xff1f3d);
@@ -1127,6 +1137,10 @@ function updateLocal(dt) {
     if (K.guard === 'glacial_bulwark' && input.justPressed('Space') && !airborne && !local.spaceHeld && !busy && now >= local.cd.guard) {
       local.cd.guard = now + BULWARK.cooldown;
       net.send({ t: 'bulwark', yaw: local.yaw });
+    }
+    if (K.guard === 'firewall' && input.justPressed('Space') && !airborne && !local.spaceHeld && !busy && now >= local.cd.guard) {
+      local.cd.guard = now + SPELL.firewall.cooldown;   // tap: the flame stands for its life, no holding
+      net.send({ t: 'firewall', yaw: local.yaw });
     }
 
     // primary
@@ -1398,7 +1412,7 @@ function updateHud(dt) {
   cdFill('block', local.cd.guard, SPELL[K.guard].cooldown);
   if (!me.carrying && !me.carryingGoat && now < local.liftCdUntil) cdFill('throw', local.liftCdUntil, SPELL[K.utility].liftCooldown);   // lift cooldown
   else cdFill('throw', local.cd.throw, C.THROW_COOLDOWN);
-  ui.ab.block.classList.toggle('active', local.blocking || me.veiled || [...walls.values()].some(w => w.data.owner === myId));
+  ui.ab.block.classList.toggle('active', local.blocking || me.veiled || [...walls.values()].some(w => w.data.owner === myId) || [...firewalls.values()].some(f => f.data.owner === myId));
   ui.ab.power.classList.toggle('active', local.charging || !!local.cyclone || !!local.lash || local.frostAim);
   ui.ab.mobility.classList.toggle('active', !!local.flight);
   ui.ab.block.classList.toggle('disabled', bound || (C.isWard(K.guard) && me.st < 3) || !!local.flight);
@@ -1569,4 +1583,4 @@ function frame(t) {
 requestAnimationFrame(frame);
 
 // Debug handle (used by the automated smoke test; harmless in production).
-window.__wa = { input, net, local, players, props, goats, effects, scene, camera, sfx, decoys, walls, frosts, frostMark, strikes, cataMark, cageMark, cages, C, get cursedProp() { return cursedProp; } };
+window.__wa = { input, net, local, players, props, goats, effects, scene, camera, sfx, decoys, walls, frosts, frostMark, strikes, cataMark, cageMark, cages, firewalls, C, get cursedProp() { return cursedProp; } };

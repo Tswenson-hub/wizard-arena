@@ -23,6 +23,26 @@ function emberShadowTexture() {
   emberShadowTex = new THREE.CanvasTexture(c); emberShadowTex.colorSpace = THREE.SRGBColorSpace;
   return emberShadowTex;
 }
+// Cinder's Firewall: tongues of flame, white-hot at the base, drawn once and scrolled upward.
+let fireTex = null;
+function fireTexture() {
+  if (fireTex) return fireTex;
+  const W = 128, H = 256, c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  let seed = 9;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let i = 0; i < 40; i++) {
+    const x = rnd() * W, w = 6 + rnd() * 14, top = H * (0.05 + rnd() * 0.5);
+    const grad = g.createLinearGradient(0, H, 0, top);
+    grad.addColorStop(0, 'rgba(255,240,180,0.9)'); grad.addColorStop(0.35, 'rgba(255,140,30,0.7)'); grad.addColorStop(1, 'rgba(255,40,0,0)');
+    g.fillStyle = grad;
+    g.beginPath(); g.moveTo(x - w, H); g.quadraticCurveTo(x - w * 0.3, (H + top) / 2, x + (rnd() - 0.5) * 10, top); g.quadraticCurveTo(x + w * 0.3, (H + top) / 2, x + w, H); g.fill();
+  }
+  fireTex = new THREE.CanvasTexture(c); fireTex.colorSpace = THREE.SRGBColorSpace;
+  fireTex.wrapS = fireTex.wrapT = THREE.RepeatWrapping;
+  return fireTex;
+}
+
 // Eye of the Storm's funnel walls: soft diagonal streaks of wind, drawn once.
 let windTex = null;
 function windTexture() {
@@ -862,17 +882,44 @@ export class Effects {
   }
   endCage(e) { if (e) e.endAt = Math.min(e.endAt, realNow()); }
 
-  // Flame Ward's lash-back: a tongue of fire licking out in front of Cinder.
-  flameLash(p, yaw) {
-    const fx = Math.sin(yaw), fz = Math.cos(yaw);
-    for (let i = 0; i < 26; i++) {
-      const a = yaw + (Math.random() - 0.5) * 1.6, sp = 6 + Math.random() * 8;
-      const m = new THREE.Mesh(this.particleGeo, this.mat(Math.random() < 0.5 ? 0xff6a1e : 0xffc060, { opacity: 1 }));
-      m.position.set(p[0] + fx * 0.8, (p[1] || 0) + 0.6 + Math.random() * 1.2, p[2] + fz * 0.8);
-      m.scale.setScalar(0.6 + Math.random() * 0.8);
-      this.scene.add(m);
-      this.particles.push({ mesh: m, vel: new THREE.Vector3(Math.sin(a) * sp, 1 + Math.random() * 2, Math.cos(a) * sp), life: 0, maxLife: 0.3 + Math.random() * 0.2, grav: -2, shrink: true });
+  // Cinder's Firewall: a roaring curtain of flame across her aim (layered scrolling sheets, a glowing base, embers).
+  firewall(w) {
+    const F = C.SPELLBOOK.firewall;
+    const g = new THREE.Group();
+    g.position.set(w.x, 0, w.z);
+    g.rotation.y = w.yaw;
+    const sheets = [0, 1, 2].map(i => {
+      const tex = fireTexture().clone(); tex.needsUpdate = true;
+      tex.wrapT = THREE.ClampToEdgeWrapping;   // the tips fade out at the top; only the sideways sway scrolls
+      tex.repeat.set(2.5 + i * 0.7, 1);
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(F.width + i * 0.3, F.height - i * 0.4),
+        new THREE.MeshBasicMaterial({ map: tex, color: [0xffc070, 0xff7a2a, 0xff4a10][i], transparent: true, opacity: 0, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
+      m.position.set(0, (F.height - i * 0.4) / 2, (i - 1) * 0.18);
+      g.add(m);
+      return m;
+    });
+    const base = new THREE.Mesh(new THREE.PlaneGeometry(F.width + 0.6, 0.9).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0xff5a10, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false }));
+    base.position.y = 0.12;
+    const light = new THREE.PointLight(0xff6a1e, 10, 12);
+    light.position.y = 1.4;
+    g.add(base, light);
+    this.scene.add(g);
+    const e = { group: g, sheets, base, light, born: realNow(), endAt: realNow() + w.left, ember: 0 };
+    (this.firewalls ??= new Set()).add(e);
+    // the ignite: a burst along its length
+    for (let i = -2; i <= 2; i++) {
+      const p = new THREE.Vector3(w.x + Math.cos(w.yaw) * i, 0.6, w.z - Math.sin(w.yaw) * i);
+      this.burst(p, i % 2 ? 0xffb040 : 0xff5a1e, 8, 4, 0.5, -2);
     }
+    return e;
+  }
+  endFirewall(e) { if (e) e.endAt = Math.min(e.endAt, realNow()); }
+  // A projectile burning up in a Firewall.
+  burnUp(p) {
+    const pos = new THREE.Vector3(p[0], p[1], p[2]);
+    this.burst(pos, 0xff7a1e, 18, 5, 0.5, -3);
+    this.burst(pos, 0xffd080, 8, 2, 0.3, -1);
   }
 
   // ---------------------------------------------------------------- update
@@ -975,6 +1022,30 @@ export class Effects {
         this.scene.add(m);
         const inx = -Math.sin(a), inz = -Math.cos(a);
         this.particles.push({ mesh: m, vel: new THREE.Vector3((inx * 0.6 + inz) * r * 1.6, 1.5, (inz * 0.6 - inx) * r * 1.6), life: 0, maxLife: 0.45, grav: -2, shrink: true });
+      }
+    }
+    for (const e of this.firewalls || []) {
+      const k = Math.min(1, (rn - e.born) / 0.2), fade = Math.max(0, Math.min(1, (e.endAt - rn) / 0.35));
+      if (fade <= 0) { this.firewalls.delete(e); this.scene.remove(e.group); continue; }
+      e.sheets.forEach((m, i) => {
+        m.material.opacity = ([0.6, 0.55, 0.45][i] + Math.sin(this.clock * (19 + i * 6)) * 0.08) * k * fade;
+        m.material.map.offset.x = this.clock * (0.15 + i * 0.1) * (i % 2 ? -1 : 1) + Math.sin(this.clock * 3 + i) * 0.04;
+        m.scale.y = (0.3 + 0.7 * k) * (1 + Math.sin(this.clock * (13 + i * 4) + i * 2) * 0.1);
+        m.position.y = m.geometry.parameters.height * m.scale.y / 2;
+      });
+      e.base.material.opacity = 0.6 * fade;
+      e.light.intensity = (8 + Math.sin(this.clock * 23) * 3) * fade;
+      // embers drifting up off the flames
+      e.ember += dt;
+      while (e.ember > 0.015) {
+        e.ember -= 0.015;
+        const F = C.SPELLBOOK.firewall, a = (Math.random() - 0.5) * F.width;
+        const m = new THREE.Mesh(this.particleGeo, this.mat(Math.random() < 0.5 ? 0xffb040 : 0xff5a1e, { opacity: 1 }));
+        const yaw = e.group.rotation.y;
+        m.position.set(e.group.position.x + Math.cos(yaw) * a, 0.3 + Math.random() * 2.5, e.group.position.z - Math.sin(yaw) * a);
+        m.scale.setScalar(0.3 + Math.random() * 0.4);
+        this.scene.add(m);
+        this.particles.push({ mesh: m, vel: new THREE.Vector3((Math.random() - 0.5) * 1.2, 2 + Math.random() * 2.5, (Math.random() - 0.5) * 1.2), life: 0, maxLife: 0.5 + Math.random() * 0.4, grav: -1, shrink: true });
       }
     }
     for (const e of this.cages || []) {

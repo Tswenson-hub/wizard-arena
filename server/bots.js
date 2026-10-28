@@ -152,6 +152,13 @@ const mobilityReady = (me, t) => t >= me.cd.mobility && !airborne(me, t) && !roo
 const veiled = (q, t) => q.veilUntil > t;
 const veilReady = (me, t) => kit(me).guard === 'tempest_veil' && t >= me.cd.guard && !veiled(me, t);
 const wallReady = (me, t) => kit(me).guard === 'glacial_bulwark' && t >= me.cd.guard && !airborne(me, t);
+const firewallReady = (me, t) => kit(me).guard === 'firewall' && t >= me.cd.guard && !airborne(me, t);
+const FIREWALL = C.SPELLBOOK.firewall;
+// A Glacial Bulwark or a Firewall toward `toward` (both stop projectiles; only the Bulwark stops anything else).
+function raiseFirewall(me, toward, act) {
+  me.yaw = yawTo(me.p, toward);
+  act({ t: 'firewall', yaw: me.yaw });
+}
 const busyCasting = (q) => q.charging || !!q.lash || cycloneWindingUp(q);
 // the primary can fire now (cooldown, and the magazine isn't reloading)
 const primaryReady = (me, t) => t >= me.cd.fast && !(me.reloadUntil > t) && me.ammo > 0;
@@ -382,8 +389,6 @@ function think(me, world, t) {
 
   // a veiled Gale swallows everything for 3 s: don't waste shots, wait it out (movement backs off)
   if (veiled(target, t)) return;
-  // a Flame Ward facing us burns back every blocked shot within 6 m: back off rather than feed it
-  if (flameWarding(target, me, t)) { b.backOff = t + 0.4; if (!busyCasting(target)) return; }
 
   // ---- punish a meteor, lash or cyclone wind-up with a spark (interrupts it)
   if (busyCasting(target) && los && d < 26) {
@@ -502,7 +507,7 @@ function think(me, world, t) {
     // Cyclone ready: rush in to spin range (the check above fires it), behind a Tempest Veil if we have one
     if (d < 14 && !targetWarded && me.hp > 30 && Math.random() < cfg.aggression * 0.6) {
       b.diveUntil = t + 2.5;
-      if (veilReady(me, t) && d > 4.5 && d < 11 && cfg.blinkDodge) { act({ t: 'veil' }); return; }
+      if (veilReady(me, t) && d > 4.5 && d < 9 && cfg.blinkDodge) { act({ t: 'veil' }); return; }   // the veil lasts 2 s: only from where she can close in
     }
   } else if (K.power === 'sanguine_lash' && powerReady && !targetAir && !me.carrying) {
     // Lash: best when they're stuck in place, or when it can pierce two of them
@@ -679,7 +684,17 @@ function reactToUltimates(me, world, t, act) {
 }
 
 const LASH_RANGE = C.SPELLS.lash.speed * C.SPELLS.lash.life;
-const flameWarding = (q, me, t) => !q.decoy && kit(q).guard === 'flame_ward' && q.blocking && q.st > 15 && dist2D(q.p, me.p) < C.SPELLBOOK.flame_ward.burnRange + 1 && facing(q, me.p);
+// An enemy Firewall between `from` and `to`: our shot would burn up in it.
+function firewallInWay(me, world, from, to) {
+  for (const w of world.firewalls?.values() || []) {
+    if (!foeId(me, w.owner)) continue;
+    const a = C.firewallLocal(w, from), b2 = C.firewallLocal(w, to);
+    if (Math.sign(a.across) === Math.sign(b2.across)) continue;
+    const k = a.across / (a.across - b2.across);
+    if (Math.abs(a.along + (b2.along - a.along) * k) < FIREWALL.width / 2 + 0.4) return true;
+  }
+  return false;
+}
 const newThreat = (cfg, t) => ({ seenAt: t, react: cfg.react * rand(0.8, 1.3), handled: false, ignore: Math.random() > cfg.dodge });
 
 // Our primary spell at the target: a spark, or a Glacial Skim fan along the ground.
@@ -698,6 +713,7 @@ function bolt(me, target, act, cfg, world, kind) {
   const from = [me.p[0], me.p[1] + 1.3, me.p[2]];
   const dir = aimAt(me, from, target, spec.speed, 0, cfg);
   if (lineBlocked(from, dir, dist2D(me.p, target.p), Math.min(spec.radius, 0.5), cfg.goatAware && world.goats)) return;
+  if (firewallInWay(me, world, from, target.p)) return;
   me.yaw = yawTo(me.p, target.p);
   act({ t: 'cast', kind, dir });
 }
@@ -709,7 +725,7 @@ function hex(me, target, act, cfg, world) {
   const d = Math.hypot(target.p[0] - from[0], target.p[2] - from[2]);
   const dir = aimAt(me, from, target, HEX.speed / 1.15, 0, cfg);
   const to = [from[0] + dir[0] * d, Math.max(0.6, from[1] + dir[1] * d), from[2] + dir[2] * d];
-  if (C.pillarBlocks([to[0] - dir[0] * 4, 0, to[2] - dir[2] * 4], to, 0.2)) return;
+  if (C.pillarBlocks([to[0] - dir[0] * 4, 0, to[2] - dir[2] * 4], to, 0.2) || firewallInWay(me, world, from, to)) return;
   me.yaw = yawTo(me.p, target.p);
   act({ t: 'cast', kind: 'hex', dir, target: to });
 }
@@ -721,7 +737,7 @@ function skim(me, target, act, cfg, world, t) {
   const from = [me.p[0], SKIM.height, me.p[2]];
   const dir = aimAt(me, from, target, SKIM.speed, 0, cfg);
   const flat = [dir[0], 0, dir[2]];
-  if (lowLineBlocked(from, flat, range, SKIM.radius) || lineBlocked(from, flat, range, SKIM.radius, cfg.goatAware && world.goats)) return;
+  if (lowLineBlocked(from, flat, range, SKIM.radius) || lineBlocked(from, flat, range, SKIM.radius, cfg.goatAware && world.goats) || firewallInWay(me, world, from, target.p)) return;
   me.yaw = yawTo(me.p, target.p);
   act({ t: 'cast', kind: 'skim', dir: flat });
 }
@@ -730,7 +746,7 @@ function throwProp(me, target, act, cfg, world) {
   me.yaw = yawTo(me.p, target.p);
   const from = C.holdPoint(me.p, me.yaw);
   const dir = aimAt(me, from, target, C.SPELLS.prop.speed, C.SPELLS.prop.gravity, cfg);
-  if (lineBlocked(from, dir, dist2D(from, target.p), C.SPELLS.prop.radius, cfg.goatAware && world.goats)) return;
+  if (lineBlocked(from, dir, dist2D(from, target.p), C.SPELLS.prop.radius, cfg.goatAware && world.goats) || firewallInWay(me, world, from, target.p)) return;
   act({ t: 'throw', dir });   // already gravity-compensated, so no aim point for the server to re-solve
 }
 
@@ -958,7 +974,8 @@ function respondFrostfall(me, f, df, t, act) {
 function lashPlan(me, d, t) {
   const K = kit(me);
   if (wallReady(me, t) && d > BULWARK.dist + 1) return 'wall';
-  if (C.isWard(K.guard) && me.st >= C.SPELLS.lash.staminaCost + 15 && !me.carrying && !airborne(me, t)) return 'ward';
+  if (firewallReady(me, t) && d > FIREWALL.dist + 1.5) return 'fire';
+  if (C.isWard(K.guard) && me.st >= C.SPELLS.lash.staminaCost * (C.SPELLBOOK[K.guard].hitCostMul ?? 1) + 5 && !me.carrying && !airborne(me, t)) return 'ward';
   if (me.bot.cfg.blinkDodge && mobilityReady(me, t) && K.mobility !== 'skyward') return 'whip';
   return 'side';
 }
@@ -966,6 +983,8 @@ function runLashPlan(me, caster, rec, fireAt, d, t, act) {
   const b = me.bot;
   if (rec.plan === 'done' || rec.plan === 'whip' || !canAct(me, t)) return;
   if (rec.plan === 'wall') { if (wallReady(me, t)) raiseWall(me, caster.p, act); rec.plan = 'done'; return; }
+  // the Firewall only lasts 2.5 s: raise it just before the whip flies
+  if (rec.plan === 'fire') { if (t >= fireAt - 0.4) { if (firewallReady(me, t)) raiseFirewall(me, caster.p, act); rec.plan = 'done'; } return; }
   const travel = d / C.SPELLS.lash.speed;
   if (rec.plan === 'ward' && t >= fireAt - 0.3) {
     if (me.charging || me.lash || me.cyclone) return;
@@ -1010,11 +1029,15 @@ function respond(me, world, t, proj, th, act) {
   const projDist = Math.hypot(proj.p[0] - me.p[0], proj.p[2] - me.p[2]);
   if (veiled(me, t)) return;   // nothing gets through
   if (big && veilReady(me, t)) return act({ t: 'veil' });
+  // Firewall: burn it up in the air (always for the big ones, sometimes for anything when hurt)
+  if (firewallReady(me, t) && projDist > FIREWALL.dist + 1 && th.tc > 0.1 && (big || proj.kind === 'prop' || (me.hp < 60 && Math.random() < 0.5))) {
+    return raiseFirewall(me, [me.p[0] + incoming[0], 0, me.p[2] + incoming[2]], act);
+  }
   if (big && wallReady(me, t) && projDist > BULWARK.dist + 1.2 && th.tc > 0.1) {
     return raiseWall(me, [me.p[0] + incoming[0], 0, me.p[2] + incoming[2]], act);
   }
 
-  const canWard = C.isWard(K.guard) && me.st >= Math.min(spec.staminaCost + 5, 60) && !me.carrying && !airborne(me, t);
+  const canWard = C.isWard(K.guard) && me.st >= Math.min(spec.staminaCost * (C.SPELLBOOK[K.guard].hitCostMul ?? 1) + 5, 90) && !me.carrying && !airborne(me, t);
   const sidestep = () => {
     if (rooted(me, t)) return;
     const vx = proj.v[0], vz = proj.v[2];
@@ -1094,7 +1117,6 @@ function moveBot(me, dt, world, t) {
       } else if (!los) fwd = d > 6 ? 0.6 : 0;            // flank around the obstruction
       else if (diving) fwd = d > 3 ? 1 : 0;              // closing in for a cyclone
       else if (veiled(target, t)) fwd = d < 12 ? -1 : 0;  // a veiled Gale is coming: keep away until it drops
-      else if (t < (b.backOff || 0)) fwd = -1;             // a Flame Ward close in front: get out of its reach
       else if (d > range[1]) fwd = 1;
       else if (d < range[0]) fwd = -0.8;
       if (t >= b.strafeUntil) { if (Math.random() < 0.6) b.strafe *= -1; b.strafeUntil = t + rand(0.5, 1.8) / (cfg.dodge + 0.4); }
@@ -1110,6 +1132,12 @@ function moveBot(me, dt, world, t) {
       // nobody to fight: drift toward the middle
       wx = -me.p[0]; wz = -me.p[2];
       if (Math.hypot(wx, wz) < 6) { wx = 0; wz = 0; }
+    }
+    // keep out of enemy Firewalls: walking through one burns
+    for (const w of world.firewalls?.values() || []) {
+      if (!foeId(me, w.owner)) continue;
+      const l = C.firewallLocal(w, me.p);
+      if (Math.abs(l.along) < FIREWALL.width / 2 + 0.8 && Math.abs(l.across) < 1.6) { const sgn = Math.sign(l.across) || 1; wx += Math.sin(w.yaw) * sgn * 2.5; wz += Math.cos(w.yaw) * sgn * 2.5; }
     }
     // keep off enemy ice walls: touching one freezes
     for (const c of C.COLLIDERS) {
