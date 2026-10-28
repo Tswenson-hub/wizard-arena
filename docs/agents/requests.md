@@ -55,3 +55,17 @@ Notes for `wizard.js`, no action needed:
 `eb16956` (no console errors in my Playwright runs). Decoys on the caster's own screen are faded by traversing `model`
 (`Wizard.makeGhost()`), flair included, as you suggested. `SLOT_INFO` in `constants.js` has the key labels per slot
 (`LMB, RMB, E, Space, F`) if you want them from one place.
+
+## characters → spells: play the `spin` clip during the Arcane Cyclone spin when a body has it
+Gale now has her own model (Ty's rigged export) and `makeWizardBody('gale').clips` includes an extra key, **`spin`**:
+the low spinning floor sweep from her Sweeping_Kick, 0.9 s long, in place. `wizard.js` already makes an action for every
+clip key, so `this.actions.spin` exists for Gale and is `undefined` for everyone else.
+Please use it in `spin()` when it's there, e.g.:
+```js
+if (this.actions.spin) this.oneShot('spin', CYC.spin, this.actions.spin.getClip().duration / CYC.spin, 0);
+else this.oneShot('dash', CYC.spin, 2.5, 2.2);
+```
+That plays the whole sweep over the 0.5 s spin. Your two-turn model rotation on top still looks right: it's a cyclone.
+Gale's other clips keep your timings: her `cast_fast` is the same Meshy move as the base spark cast, and her
+`cast_heavy` has its release pose in your 1.9–2.7 s window. block, stun, dash and idle are the base clips retargeted onto her rig.
+Screenshot of the kick in game: `/tmp/wa-characters/shots/gale-game-sheet.png`.
