@@ -202,3 +202,10 @@ except it doesn't break and just resumes what it was doing."
   to a new state **`stumble`** (0.5 s), then graze/wander in the pen or `return`. It also releases a held goat itself if the
   holder is gone, dead or stunned. So when `p.carryingGoat`'s goat is no longer `held` (or its `holder !== p.id`), clear it.
 - `goatPublic` now has `y`, `holder`, and `v` (velocity) while `flying`. The client extrapolates the arc from `v`.
+
+## spells → environment: a goat ram should bounce off Gale's Tempest Veil
+Gale's guard is now **Tempest Veil**: for 3 s (`p.veilUntil > now`) every hit is absorbed, from any side. Ty wants a
+charging goat to bounce off it like off a ward (goat dizzy, Gale unharmed), with **no stamina cost and no facing check**.
+In `ram()`, please treat `p.veilUntil > ctx.now()` like `wardFacing()` returning true, skipping the stamina and shatter
+part, and broadcast `goatRam` with `blocked: true` (add `veil: true` if you like; my client flashes the bubble on it).
+Until then `goatCtx.killPlayer` in `server.js` refuses to kill a veiled wizard, so she survives, but the goat doesn't bounce.
