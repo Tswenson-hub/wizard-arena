@@ -1,5 +1,123 @@
 # Spells hand-off
 
+## Round 6: Ty's balance and identity pass
+
+Files: `public/shared/constants.js`, the `kit` fields in `public/shared/wizards.js`, `server.js`, `server/bots.js`,
+`public/js/{main,effects,wizard}.js`, `public/css/style.css`.
+
+| Wizard | LMB | Space | Q |
+|---|---|---|---|
+| Cinder | **Fireball** | **Flame Ward** | Cataclysm |
+| Gale | **Gale Shear** | Tempest Veil | Eye of the Storm |
+| Rime | Glacial Skim | Glacial Bulwark (**6 × 4 m, freezes on touch**) | Absolute Zero |
+| Vesper | **Hex Shards** | **Black Death** | **Night Cage** (replaces Crimson Eclipse) |
+
+### Numbers
+- **Eye of the Storm:** 8 per tick (was 12).
+- **Meteor:** 44 (was 38).
+- **Glacial Skim:** charges the ultimate 30 % less (`SPELLS.skim.ultCharge: 0.7`).
+- **Spark** stays in the spellbook but is in no kit.
+
+### Primaries
+All three keep the magazine: 3 shots, a 1.5 s reload, and only the 3rd stuns or interrupts. `C.PRIMARY_KIND` maps a
+primary to its projectile kind; `C.PRIMARY_KINDS` follow the magazine rule and share the finisher's stun immunity.
+- **Fireball** (`fireball`): 24 m/s, radius 0.45, about 31 m. **20 damage, the 3rd 28** (`finDamage`), knockback 2. It
+  started at the brief's 18/26; I raised it after the first balance runs, where Cinder still trailed in 2 of 3.
+  - Visuals: a white-hot core in a flame shell; the 3rd is bigger, with a spinning ring.
+  - Sound: Ty's `spark_cast`, pitched down.
+- **Gale Shear** (`shear`): a wide (radius 0.85) blade at 30 m/s that's gone after **8 m**. 14 damage, knockback 3.
+  - The 3rd is a wider crescent (radius 1.35, `finRadius`) that interrupts.
+  - Visuals: a flat crescent of wind.
+  - Bots playing Gale keep 2.5–6 m from their target.
+- **Hex Shards** (`hex`): 11 damage. Each shot flies a quadratic Bézier from the hand to the aim point:
+  - shot 1 curves in from the left, shot 2 from the right, and shot 3 lobs high (`C.hexCurve(from, to, i)`, `C.hexAt(curve, age)`);
+  - after the curve's end it flies on along the end tangent;
+  - the server and clients both run `hexAt`, so the drawn path is the real one;
+  - the curve is sent as `proj.curve`, and the aim point is the client's `aimPoint()` (`cast.target`), clamped to 28 m;
+  - it is blocked only by what it actually touches, so it bends around thin cover;
+  - each shot is a spinning crimson glyph: a triangle, a diamond, then a crescent.
+
+### Shields
+`C.isWard(id)` is true for the Ward, Flame Ward and Black Death (hold Space, the stamina rules unchanged).
+- **Flame Ward** (Cinder): a front-cone ward, drawn as a scrolling curtain of fire in front of her (two cylinder arcs).
+  - **Every hit it blocks lashes back:** every enemy within 6 m in her 110° front cone takes 8 (`flame_lash`;
+    unblockable, so two Flame Wards can't loop; never interrupts). Message: `flameLash {id, p, yaw, hits}`.
+  - Bots don't feed shots into a Flame Ward facing them inside 7 m; they back off instead.
+- **Black Death** (Vesper): blocks from **every** side (`allSides`), drawn as a near-opaque black shroud with a crimson
+  lattice. Blocked hits flash crimson, and Flame Ward's flash orange.
+  - **Absorbed damage charges the Lash:** it cuts the Lash cooldown by 0.1 s per point and stores +0.5 bonus damage per
+    point (up to +14) for the next whip. Measured: a whip did 12 + 14 = 26.
+  - Snapshot `lashBonus`. The RMB slot gets a crimson conic ring (`--whip`), and `body.setWhipGlow(bonus / 14)` is called.
+  - Bots treat a Black Death as warded from every side (they hold fire into it).
+- **Glacial Bulwark:** 6 m wide and 4 m tall (9 circles of r 0.4), 220 HP.
+  - **An enemy touching it is frozen 1.5 s** (`bulwark_frost`: 4 damage plus Frostfall's freeze), at most once per wall
+    per enemy every 3 s. Rime and teammates are unaffected.
+  - Bots steer away from enemy walls.
+
+### Night Cage (Vesper's Q, replaces Crimson Eclipse)
+- **Casting:** hold Q to aim a 7 m circle (max 24 m away; a crimson-rimmed aim ring), release. For 4 s the ring is a
+  barrier to **enemies only**: those inside at the cast can't get out, and everyone else can't get in. Vesper and
+  teammates cross freely, and spells pass through.
+- **Enforcement:** `C.cageClamp(pos, cage, inside)` is shared:
+  - The server applies it in every `state` update for humans and every tick for bots.
+  - It also applies after a Blink (the `tp` broadcast carries the clamped landing) and a Mirror Step.
+  - The client clamps itself the same way, including its predicted Blink landing. A Smoke Screen dash collides with it like walking.
+- **Flying over:** above 3 m (Skyward Flash) you pass over the ring, and the side you land on becomes yours (`cageSide`).
+- **Messages:** `cage {id, owner, p, left, inside, foes}`, `cageSide`, `cageEnd`, and `welcome.cages`.
+- **Visuals:** a ring of 44 jagged obsidian spikes rising from the ground, and a dark wall shimmering upward.
+- **Bots:** they cage the spot covering the most enemies (2+, or 1 weak or stuck target after holding a full charge 12 s).
+  Trapped bots just fight on (the server keeps them in).
+
+### Whip (characters agent's API, in looks.js)
+`Wizard.startLash` calls `body.setWhip?.('out')`; half a second after the lash ends (released or cancelled),
+`setWhip('coiled')`. `setWhipGlow` follows `lashBonus`. Both are optional calls, so other bodies are unaffected.
+
+### Verification (port 4101)
+**Rules** (`/tmp/wa-spells/t_r6.mjs`, `t_cageblink.mjs`, raw sockets):
+- **Fireball:** 18, 18, 26 with the 3rd interrupting (run before the bump to 20/28), at 24.0 m/s.
+- **Shear:** 14 / 14 / 14 (the 3rd interrupting, kb 3, its radius 1.35) at 6 m; nothing at 11 m.
+- **Hex:** control points left, right, then up 5.7 m; all three hit the aim point (11, 11, 11 with the 3rd interrupting).
+- **Flame Ward:** 3 shears blocked; the Gale was burned 8 each time.
+- **Black Death:** 3 fireballs from **behind** were all blocked, `lashBonus` 14; a Lash 7 s after the last one was
+  accepted (13 s cooldown cut) and hit for 26, and the bonus went back to 0.
+- **Bulwark:** touching it gave 4 damage + bind 1.5 + freeze; no second freeze within 3 s.
+- **Night Cage:**
+  - the trapped dummy, walking to 10 m, stopped at 6.55 m (7 − 0.45);
+  - an outsider walking to the centre stopped at 7.45 m;
+  - Vesper stood at 3.00 m;
+  - a Gale blinking in landed at 7.45 m;
+  - a Rime flying over was switched to inside (`cageSide`);
+  - `cageEnd` after 4 s.
+
+**Browser** (`t_r6.py`, `t_r6b.py`, `t_r6d.py`; no console errors):
+- The Flame Ward curtain (`r6_flameward_watch.png`), the Black Death shroud (`r6_blackdeath_watch.png`), the whip ring on
+  RMB (`r6_whip_ring.png`), and `setWhip` live (`r6_lash_whip_watch.png`).
+- The Night Cage spikes and wall (`r6_cage_self.png`), its aim ring (`r6_cage_aim.png`), and Hex impacts (`r6_hex_self.png`).
+- The machine was under heavy load (load average about 50 from other agents' browsers), so pages stalled for seconds. Timed
+  in-browser readings (magazine counts, cage containment) lagged; the socket tests are the reliable ones.
+
+**Balance** (4 Hard bots, one per wizard, FFA, 120 s each, with the server restarted between runs; one run where the
+match loop went into an intermission was discarded):
+| Wizard | First pass, Fireball 18/26 (3 runs) | Final, Fireball 20/28 (5 runs) | Final damage |
+|---|---|---|---|
+| Cinder | 4 / 5 (0.8) | **12 / 12 (1.0)** | 1340 |
+| Gale | 10 / 11 (0.9) | 11 / 21 (0.52) | 1777 |
+| Rime | 8 / 6 (1.3) | 20 / 13 (1.54) | 2185 |
+| Vesper | 6 / 6 (1.0) | 8 / 11 (0.73) | 1187 |
+
+- **Cinder no longer trails.** He's mid-pack with K/D 1.0.
+- Fireball lands 33–50 % of shots; his **Meteor** lands only 3 of 69 against Hard bots, which is why Cinder needed the primary bump.
+- **Rime now leads and Gale trails.** Gale dives in to 8 m with Shear and dies more, and the Eye nerf hit her too.
+- Per-run kill counts are small, so this is noisy.
+- I didn't touch Ty's numbers for Rime or Gale. Possible next steps: Shear 14 → 16, or Skim 11 → 10.
+- Difficulty (`botmatch 90 s hard normal easy`): Hard 5/0 with 612 damage, Normal 2/2 with 298, Easy 1/6 with 162.
+
+### Open
+- **Environment** (filed in `requests.md`): `goats.js`'s `wardFacing` should accept Black Death from any side.
+- **README** (coordinator) needs: the new primaries, Flame Ward, Black Death, the bigger Bulwark, and Night Cage; the messages
+  `flameLash` and `cage/cageSide/cageEnd`; `proj.curve`, `cast.target`; the snapshot field `lashBonus`. Remove
+  `eclipse*` and the snapshot field `eclipse`.
+
 ## Round 5: ultimates (Q) and the game-mode hooks
 
 Files: `public/shared/constants.js` (`ULT_CHARGE`, four `SPELLBOOK` ultimates, `eye_burst`, `SLOT_INFO.ultimate`), the
