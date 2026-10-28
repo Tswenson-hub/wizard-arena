@@ -120,6 +120,7 @@ export function dizzyGoat(g, ctx) {
 // A ward stops the goat if the wizard is facing it (within the usual block cone).
 function wardFacing(p, g) {
   if (!p.blocking || p.st <= 0) return false;
+  if (C.SPELLBOOK[C.kitOf(p.wizard)?.guard]?.allSides) return true;   // Vesper's Black Death covers every side
   const fx = Math.sin(p.yaw), fz = Math.cos(p.yaw);
   const dx = g.x - p.p[0], dz = g.z - p.p[2];
   return (fx * dx + fz * dz) / (Math.hypot(dx, dz) || 1) >= Math.cos((C.BLOCK_CONE_DEG / 2) * Math.PI / 180);
@@ -213,6 +214,14 @@ function charge(g, dt, t, ctx) {
 function ram(g, p, t, ctx) {
   if (g.state !== 'charge') return;             // held and flying goats never ram
   const dir = [g.vx / G.chargeSpeed, 0, g.vz / G.chargeSpeed];
+  if (p.veilUntil > t) {
+    // Gale's Tempest Veil: the goat bounces off from any side, at no cost to her
+    g.yaw = wrap(g.yaw + Math.PI);
+    g.x -= dir[0] * 0.8; g.z -= dir[2] * 0.8;
+    g.state = 'dizzy'; g.until = t + G.dizzyTime;
+    ctx.broadcast({ t: 'goatRam', id: g.id, target: p.id, blocked: true, veil: true, dir, p: [p.p[0], 1, p.p[2]] });
+    return;
+  }
   if (wardFacing(p, g)) {
     // The ward holds. Expensive, and an empty ward shatters, but you live.
     const shattered = p.st < G.blockCost;
