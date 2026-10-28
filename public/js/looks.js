@@ -38,20 +38,134 @@ const CLIP_NAMES = {
   cast_fast: ['cast_fast', 'mage_soell_cast'], cast_heavy: ['cast_heavy', 'Charged_Spell_Cast'],
   stun: ['duck', 'stun', 'Stand_Dodge_2'], dash: ['dash', 'Stand_Dodge_3'],
 };
+// Meshy names clips 'Armature|Running|baselayer'; match on the middle part too.
+const findClip = (animations, names) => animations.find(a => names.some(n => a.name === n || a.name.split('|').includes(n)));
+const asKey = (clip, key) => { const c = stripRootMotion(clip.clone()); c.name = key; return c; };
+// No idle clip was provided; the opening second of the dash clip is a clean standing stance.
+const idleFrom = (dash) => THREE.AnimationUtils.subclip(dash, 'idle', 6, 30, 30);
+
 function clipsFrom(animations) {
-  // Meshy names clips 'Armature|Running|baselayer'; match on the middle part too.
-  const find = (names) => animations.find(a => names.some(n => a.name === n || a.name.split('|').includes(n)));
   const out = {};
   for (const [key, names] of Object.entries(CLIP_NAMES)) {
-    const clip = find(names);
+    const clip = findClip(animations, names);
     if (!clip) return null;
-    out[key] = stripRootMotion(clip.clone());
-    out[key].name = key;
+    out[key] = asKey(clip, key);
   }
-  // No idle clip was provided; the opening second of the dash clip is a clean standing stance.
-  out.idle = THREE.AnimationUtils.subclip(out.dash, 'idle', 6, 30, 30);
+  out.idle = idleFrom(out.dash);
   return out;
 }
+
+// Per-wizard picks from a model's own clips, chosen by watching them (contact sheets in the hand-off).
+// A string is a clip name; [name, from, to] is the part of a clip between two times (seconds).
+// main.js plays the casts from fixed offsets tuned to the base clips (spark: 0.25 s at 2.6x; meteor
+// release: 1.9 s at 1.5x), so a pick must have its key moment at about the same time as the base clip.
+// Keys without a pick come from the model's Meshy-named clips, or are retargeted from the base wizard.
+const MODEL_CLIPS = {
+  gale: {
+    run: 'Running', walk: 'Walking',
+    cast_fast: 'mage_soell_cast',      // overhead flick thrown forward; same move and timing as the base spark cast
+    cast_heavy: 'mage_soell_cast_1',   // gathers, then spreads the arms wide (spread from about 1.6 s: the release window)
+    spin: ['Sweeping_Kick', 0.8, 1.7], // the low spinning sweep, for the Arcane Cyclone spin
+  },
+};
+
+function subclipByTime(clip, key, from, to) {
+  const fps = 30;
+  return THREE.AnimationUtils.subclip(clip, key, Math.round(from * fps), Math.round(to * fps), fps);
+}
+
+// ---------------------------------------------------------------- retargeting base clips
+
+// Mixamo-style rigs (Meshy's "rig ready" export) to the base wizard's Meshy rig, after the
+// 'mixamorig' prefix is stripped. Bones not listed keep their rest pose (fingers, head tips).
+const MIXAMO_TO_BASE = {
+  Hips: 'Hips', Spine: 'Spine02', Spine1: 'Spine01', Spine2: 'Spine', Neck: 'neck', Head: 'Head',
+};
+for (const side of ['Left', 'Right']) {
+  for (const b of ['Shoulder', 'Arm', 'ForeArm', 'Hand', 'UpLeg', 'Leg', 'Foot', 'ToeBase']) MIXAMO_TO_BASE[side + b] = side + b;
+}
+
+// Root-relative world transforms of every node under `root`, as they are now.
+function rootSpace(root) {
+  root.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
+  const out = new Map();
+  const m = new THREE.Matrix4(), p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+  root.traverse(o => {
+    m.multiplyMatrices(inv, o.matrixWorld).decompose(p, q, s);
+    out.set(o, { p: p.clone(), q: q.clone() });
+  });
+  return out;
+}
+
+// Retarget `clip` from the base wizard onto `target` (a model in its bind pose), bone by bone through
+// `names` (target bone -> base bone). Each bone's rest pose is first lined up with the base's rest
+// direction (so an A-pose and a T-pose agree), then follows the base bone's rotation from its rest.
+// The hips also follow the base hips' movement, scaled to the target's size.
+function retargetClip(target, clip, names, fps = 30) {
+  const src = skeletonClone(baseModel);
+  const srcBones = {}; src.traverse(o => { if (o.isBone) srcBones[o.name] = o; });
+  const nodes = []; target.traverse(o => nodes.push(o));
+  const pairs = new Map();
+  for (const o of nodes) if (o.isBone && srcBones[names[o.name]]) pairs.set(o, srcBones[names[o.name]]);
+  const tRest = rootSpace(target), sRest = rootSpace(src);
+
+  // Rest alignment: rotate the target bone so it points along the base bone (towards the first mapped child).
+  const align = new Map();
+  const dir = (rest, a, b) => rest.get(b).p.clone().sub(rest.get(a).p).normalize();
+  for (const o of nodes) {
+    const sb = pairs.get(o);
+    if (!sb) continue;
+    const child = o.name === 'Hips' ? null : o.children.find(c => pairs.has(c));
+    let r = new THREE.Quaternion();
+    if (child) r.setFromUnitVectors(dir(tRest, o, child), dir(sRest, sb, pairs.get(child)));
+    else if (align.has(o.parent)) r = align.get(o.parent).clone();     // hands, head: keep the parent's correction
+    align.set(o, r);
+  }
+  const hipsT = nodes.find(o => o.name === 'Hips'), hipsS = srcBones.Hips;
+  const heightRatio = hipsT && hipsS ? tRest.get(hipsT).p.y / sRest.get(hipsS).p.y : 1;
+
+  const mixer = new THREE.AnimationMixer(src);
+  mixer.clipAction(clip).play();
+  const frames = Math.max(2, Math.round(clip.duration * fps) + 1);
+  const times = new Float32Array(frames);
+  const quats = new Map([...pairs.keys()].map(o => [o, new Float32Array(frames * 4)]));
+  const hipPos = new Float32Array(frames * 3);
+  const world = new Map(), dq = new THREE.Quaternion(), lq = new THREE.Quaternion(), wp = new THREE.Vector3();
+  for (let f = 0; f < frames; f++) {
+    const t = Math.min(clip.duration, f / fps);
+    times[f] = t;
+    mixer.setTime(t);
+    const sNow = rootSpace(src);
+    world.clear();
+    for (const o of nodes) {
+      if (o === target) { world.set(o, new THREE.Quaternion()); continue; }
+      const parentQ = world.get(o.parent) || tRest.get(o.parent)?.q || new THREE.Quaternion();
+      const sb = pairs.get(o);
+      if (!sb) { world.set(o, parentQ.clone().multiply(o.quaternion)); continue; }
+      // world now = (base bone's rotation since its rest) * (aligned target rest)
+      dq.copy(sNow.get(sb).q).multiply(sRest.get(sb).q.clone().invert());
+      const wq = dq.clone().multiply(align.get(o)).multiply(tRest.get(o).q);
+      world.set(o, wq);
+      lq.copy(parentQ).invert().multiply(wq);
+      lq.toArray(quats.get(o), f * 4);
+      if (o === hipsT) {
+        // hips offset from rest, in root space, scaled; then into the hips' parent space
+        wp.copy(sNow.get(sb).p).sub(sRest.get(sb).p).multiplyScalar(heightRatio).add(tRest.get(o).p);
+        const par = tRest.get(o.parent);
+        wp.sub(par.p).applyQuaternion(par.q.clone().invert());
+        const ps = new THREE.Vector3(); o.parent.getWorldScale(ps); const rs = new THREE.Vector3(); target.getWorldScale(rs);
+        wp.multiply(rs.divide(ps));
+        wp.toArray(hipPos, f * 3);
+      }
+    }
+  }
+  const tracks = [...quats].map(([o, v]) => new THREE.QuaternionKeyframeTrack(`${o.name}.quaternion`, times, v));
+  if (hipsT) tracks.push(new THREE.VectorKeyframeTrack(`${hipsT.name}.position`, times, hipPos));
+  return new THREE.AnimationClip(clip.name, clip.duration, tracks);
+}
+
+// ---------------------------------------------------------------- loading
 
 function prepareMeshes(root) {
   root.traverse(o => {
@@ -59,7 +173,7 @@ function prepareMeshes(root) {
     o.castShadow = true; o.receiveShadow = false; o.frustumCulled = false;
     // The physical material from Meshy is heavier than we need.
     const old = o.material;
-    o.material = new THREE.MeshStandardMaterial({ map: old.map, emissiveMap: old.emissiveMap, emissive: old.emissiveMap ? new THREE.Color(0xffffff) : new THREE.Color(0), emissiveIntensity: 0.35, roughness: 0.85, metalness: 0 });
+    o.material = new THREE.MeshStandardMaterial({ map: old.map, normalMap: old.normalMap || null, emissiveMap: old.emissiveMap, emissive: old.emissiveMap ? new THREE.Color(0xffffff) : new THREE.Color(0), emissiveIntensity: 0.35, roughness: 0.85, metalness: 0 });
   });
 }
 
@@ -71,6 +185,30 @@ export function registerModel(gltf) {
 
 const boneNames = (root) => { const s = new Set(); root.traverse(o => { if (o.isBone) s.add(o.name); }); return s; };
 
+// Clip set for a model with its own skeleton: per-wizard picks, then Meshy-named clips, then the base
+// clips retargeted (if the rig is one we can map), else null.
+function ownClips(id, scene, animations) {
+  const picks = MODEL_CLIPS[id] || {};
+  const out = {};
+  for (const [key, pick] of Object.entries(picks)) {
+    const [name, from, to] = Array.isArray(pick) ? pick : [pick];
+    const clip = animations.find(a => a.name === name);
+    if (!clip) { console.warn(`[looks] ${id}: no clip '${name}' for ${key}`); continue; }
+    out[key] = from != null ? stripRootMotion(subclipByTime(clip, key, from, to)) : asKey(clip, key);
+  }
+  for (const [key, names] of Object.entries(CLIP_NAMES)) {
+    if (out[key]) continue;
+    const clip = findClip(animations, names);
+    if (clip) out[key] = asKey(clip, key);
+  }
+  const has = boneNames(scene);
+  const canRetarget = Object.keys(MIXAMO_TO_BASE).every(n => has.has(n));
+  const missing = [...Object.keys(CLIP_NAMES), 'idle'].filter(k => !out[k]);
+  if (missing.length && !canRetarget) return null;
+  for (const key of missing) out[key] = retargetClip(scene, baseClips[key], MIXAMO_TO_BASE);
+  return out;
+}
+
 // Load each wizard's own model (WIZARDS[id].model). A model that fails to load, or can't be
 // animated, falls back to the recoloured base model with a console warning.
 export async function loadWizardModels(loader) {
@@ -78,16 +216,20 @@ export async function loadWizardModels(loader) {
   await Promise.all(Object.values(WIZARDS).filter(w => w.model).map(w =>
     loader.loadAsync(w.model).then(gltf => {
       const scene = gltf.scene;
+      // Mixamo-style rigs name bones 'mixamorig:Hips' (three drops the colon); use the plain names, so
+      // RightHand and Head are where wizard.js looks for them.
+      scene.traverse(o => { o.name = o.name.replace(/^mixamorig:?/, ''); });
+      for (const a of gltf.animations) for (const t of a.tracks) t.name = t.name.replace(/^mixamorig:?/, '');
       prepareMeshes(scene);
-      const has = boneNames(scene);
-      const sameRig = [...want].every(n => has.has(n));
-      // Same skeleton as the base wizard: the base clips drive it by bone name. Otherwise it must bring its own.
-      const clips = sameRig ? baseClips : clipsFrom(gltf.animations);
-      if (!clips) throw new Error(`skeleton differs from wizard.glb and Meshy's clips are missing`);
       // Normalise: 1.8 m tall, feet on y = 0 (measured in the bind pose).
       scene.updateMatrixWorld(true);
       const box = new THREE.Box3().setFromObject(scene);
       const scale = HEIGHT / (box.max.y - box.min.y || HEIGHT);
+      const has = boneNames(scene);
+      const sameRig = [...want].every(n => has.has(n));
+      // Same skeleton as the base wizard: the base clips drive it by bone name. Otherwise use its own.
+      const clips = sameRig ? baseClips : ownClips(w.id, scene, gltf.animations);
+      if (!clips) throw new Error(`skeleton differs from wizard.glb, Meshy's clips are missing and it can't be retargeted`);
       models[w.id] = { scene, clips, scale, offsetY: -box.min.y * scale };
     }).catch(err => console.warn(`[looks] ${w.id}: ${w.model} not used (${err?.message || err}); using the base model`))
   ));
@@ -183,7 +325,10 @@ function motes(count, { size, color, additive = true, place }) {
   const pts = new THREE.Points(geo, mat);
   pts.frustumCulled = false; pts.renderOrder = 3;
   const p = new THREE.Vector3();
-  pts.onBeforeRender = () => {
+  pts.onBeforeRender = (renderer) => {
+    // three sizes points by the whole canvas height; keep them right in a smaller viewport (picker cards)
+    renderer.getCurrentViewport(_vp); renderer.getDrawingBufferSize(_buf);
+    mat.size = size * (_vp.w / (_buf.y || _vp.w || 1));
     const t = performance.now() / 1000;
     const pos = geo.attributes.position, col = geo.attributes.color;
     for (let i = 0; i < count; i++) {
@@ -195,6 +340,7 @@ function motes(count, { size, color, additive = true, place }) {
   return pts;
 }
 
+const _vp = new THREE.Vector4(), _buf = new THREE.Vector2();
 const fract = (x) => x - Math.floor(x);
 const rand = (i, k) => fract(Math.sin(i * 127.1 + k * 311.7) * 43758.5453);
 

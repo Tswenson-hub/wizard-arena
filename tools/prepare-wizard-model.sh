@@ -2,7 +2,8 @@
 # Turn one of Ty's Meshy character exports into public/models/wizards/<id>.glb (characters track).
 #   tools/prepare-wizard-model.sh <rigged-character.glb> <wizard-id> [texture-size]
 # 1. Inspects it: skinned? bone names vs. the base wizard.glb, clips, height.
-# 2. Shrinks it: weld -> resize textures (1024) -> webp -> quantize. No simplify: skinned meshes tear.
+# 2. Shrinks it: weld -> resize textures (1024) -> webp -> resample clips -> quantize. No simplify:
+#    skinned meshes tear. Every clip and the skin are kept.
 # If the bones match the base skeleton, looks.js drives it with the base clips and no animations
 # need exporting. Otherwise it needs Meshy's Running, Walking, Stand_Dodge_2, Stand_Dodge_3,
 # Two_Handed_Parry, Charged_Spell_Cast and mage_soell_cast clips (looks.js maps those names too).
@@ -43,7 +44,8 @@ mkdir -p "$(dirname "$OUT")"
 $G weld "$SRC" "$TMP/a.glb"
 $G resize "$TMP/a.glb" "$TMP/b.glb" --width "$SIZE" --height "$SIZE"
 $G webp "$TMP/b.glb" "$TMP/c.glb" --quality 80
-$G quantize "$TMP/c.glb" "$TMP/d.glb"
+$G resample "$TMP/c.glb" "$TMP/r.glb"          # drops redundant keyframes (2.97 -> 1.71 MB for Gale)
+$G quantize "$TMP/r.glb" "$TMP/d.glb"
 $G prune "$TMP/d.glb" "$OUT"
 rm -rf "$TMP"
 ls -la "$OUT"
