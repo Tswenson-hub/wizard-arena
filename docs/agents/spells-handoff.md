@@ -6,13 +6,16 @@ Gale mobility = Blink), plus request replies (`1d5db26`, `ec01861`).
 Files: `public/shared/constants.js`, `server.js`, `server/bots.js`, `public/js/{main,wizard,effects,audio,net}.js`,
 `public/index.html`, `public/css/style.css`, and the `kit` fields in `public/shared/wizards.js`.
 
-## Kits (current)
-| Wizard | LMB | RMB | E | Space | F |
-|---|---|---|---|---|---|
-| Cinder | Spark | Meteor | Blink | Ward | Telekinesis |
-| Gale | Spark | Arcane Cyclone | **Blink** (was Skyward, Ty's change) | Ward | Telekinesis |
-| Rime | Glacial Skim | **Frostfall** (was Meteor, Ty's change) | Skyward Flash | Glacial Bulwark | Telekinesis |
-| Vesper | Spark | Sanguine Lash | Mirror Step | Ward | Trapped Relic |
+## Kits and speeds (current)
+| Wizard | LMB | RMB | E | Space | F | Run speed |
+|---|---|---|---|---|---|---|
+| Cinder | Spark | Meteor | **Smoke Screen** | Ward | Telekinesis | 5.3 m/s |
+| Gale | Spark | Arcane Cyclone | **Blink** | **Tempest Veil** | Telekinesis | 6.2 m/s |
+| Rime | Glacial Skim | **Frostfall** | Skyward Flash | Glacial Bulwark | Telekinesis | 5.3 m/s |
+| Vesper | Spark | Sanguine Lash | Mirror Step | Ward | Trapped Relic | 5.3 m/s |
+
+Bold entries are Ty's later changes. Speeds are the `speed` field next to `kit` in `wizards.js` (spells-owned). Wind-up
+and ward speeds scale from it (2.0 and 2.6 m/s at 6.2). Backpedalling is capped at 3 m/s for everyone.
 
 ## What I built
 
@@ -75,6 +78,51 @@ props near their target, holding F for 0.5 s like a player, at most one curse pe
 that blew up on them for 40 s. Everyone walks, blinks or flashes out of a Frostfall shadow (react delay by difficulty).
 Rime aims Frostfall where a rooted, stunned, casting or slowed target will be when the ice lands.
 
+## Later changes (after the first hand-off), by commit
+- **Frostfall from the air** (`58497d2`): the one power spell Rime can cast during Skyward Flash (`airCast`). The server
+  accepts it from any height (range measured flat), and the cast pose layers over `float`. Rime bots sometimes flash up first.
+- **Smoke Screen** (Cinder's E, `58497d2`): a 0.25 s backward dash (6.5 m, opposite her facing) that collides like walking;
+  the client predicts it on real time, in small collision steps, and the server allows the dash speed. It leaves a 4 m × 3 m
+  cloud for 5 s (+1 s fade): layered billboard puffs with an ember tint. Anyone inside is faded out (model, ring,
+  nameplate, health bar) for viewers outside the same cloud. Bots can't see into, out of or through it (`C.smokeBlocks`):
+  they drop a hidden target and head for where they last saw it. Bots use it to escape. Cooldown 8 s.
+- **3-shot magazine** (`63ef725`): primary fire is 3 shots (a Skim volley counts as one), then a 1.5 s reload. R, or 2 s
+  idle, reloads a partial magazine (`SPELLBOOK.*.magazine/reload/idleReload`). The server tracks `ammo/reloadUntil` and
+  refuses shots while reloading. Only the 3rd shot (the finisher, `proj.fin`) stuns and interrupts (wind-ups, a lift);
+  shots 1–2 just deal damage (and Skim's slow). `hit.int` tells clients. Spark stun immunity still applies. Skim's
+  finisher cancels but doesn't stun (Skim never stuns, by Ty's first spec). Bots save the finisher for wind-ups (Hard 90 %,
+  Normal 50 %, Easy never). HUD: ammo pips (the finisher's is gold) and a reload sweep.
+  *Reload gesture:* none for now. A short "recharge" clip (about 0.6 s, e.g. a staff tap or a palm-up gather) would help.
+- **Ty's sounds** (`db03fec`): `spark_cast` (fireball primary), `skim_cast` (ice primary, the 3.65–4.45 s burst), `blink`,
+  `mirror_step` (split into 3), `smoke_screen`, `wall_up` (Ice wall; its break keeps the old shatter layers), `ward_loop` (ward
+  shield, a 4 s crossfaded loop, kept quiet) and `kill_sting` (win_duel_kill_enemy: all its sound is in the first ~1 s, so 1.45 s
+  with a fade). The sting plays flat, only for the killer, and restarts instead of stacking. The finisher plays `spark_cast`
+  pitched down with a bright ring. `spark_cast_1–3` were removed. All credited in `public/sounds/CREDITS.md`.
+- **Tempest Veil** (Gale's Space, `412e09b`): tap for a 3 s wind bubble that absorbs **every** hit from any side (damage,
+  stun, slow, bind, knockback; frostfall and relic blasts too). Absorbed hits don't cancel her own casts. No stamina, no
+  refresh; cooldown 10 s from activation. Visual: a swirling violet-white sphere, a gust on cast, a pop at the end and a
+  flash per absorbed hit; the ward hum plays while it's up. Bots veil to dive into cyclone range and against goats,
+  Frostfall and big spells; other bots hold fire on a veiled Gale and back away.
+  **Pending (environment):** a goat ram should bounce off the veil (request in `requests.md`). Until then
+  `goatCtx.killPlayer` refuses to kill a veiled wizard, so she survives, but the goat doesn't bounce.
+- **Throwable goats, telekinesis side** (`dc4f58f`), per Ty's revision: telekinesis targets calm goats as well as props
+  (server and client). A held goat floats at the hold point with the beam, blocks casting like a held prop, and shields its
+  holder. F hurls it like a prop (`SPELLS.goat` = prop numbers, credited to the thrower, "X goated Y" on a kill); G sets
+  it down. Death or stun drops it (goats.js). Lifting, throwing and landing never anger it; only a spell does (held
+  and flying goats included), and spells hit goats at their height. Bots sometimes hurl a goat and dodge flying ones.
+- **Sparks in the caster's colour** (`a7af67c`): `BOLT_COLORS` in `constants.js` (Cinder ember `ff5a1e`, Gale violet
+  `b070ff`, Vesper crimson `ff1f3d`; Rime's Skim stays ice). A white-hot core inside the coloured glow, light, trail and
+  impact burst; the finisher is bigger, with a lighter ring.
+- **Speed, locomotion, gestures, telekinesis cooldown** (`2f37782`, `e09e94e`, `9e31c58`): the per-wizard speed and the
+  backpedal cap above (applied on the client, in the server's speed check, for bots and decoys). Locomotion picks `run`
+  at speed, `walk_fight` when slow (below 3 m/s, or in a wind-up, ward or slow) and `back` when moving backward, each
+  time-scaled to ground speed ÷ the clip's measured speed (`clip.userData.speed`, capped at 6×). `tk_lift` and `tk_throw`
+  play on a lift and a throw; `hit_waist` plays when a hurled prop or goat hits. Hurled objects already interrupt (only
+  primary fire follows the magazine rule); a ward or veil that blocks them means no interrupt. Telekinesis has a 3 s
+  lift cooldown (`liftCooldown`, shared with Trapped Relic) after letting go of anything (thrown, set down, knocked away,
+  dropped) and after laying a curse. The server enforces it (`snap.liftCd`), the client predicts it with the F-button sweep,
+  and bots respect it.
+
 ## Verification
 Harnesses are in `/tmp/wa-spells/` (Playwright scripts `t_*.py`, raw-socket rule checks `t_server.mjs` and
 `t_frost.mjs`, match harness `match.mjs`). There were no console errors in any browser run.
@@ -126,6 +174,37 @@ After those fixes nothing dominates, but **Cinder is consistently the weakest** 
 has no tool the others lack. Frostfall: 20 bot casts, 18 wizards inside a shadow at cast time, 3 caught. It's
 dodgeable, and it pays off on rooted or slowed targets.
 
+### Verification of the later changes
+Raw-socket rule checks (`/tmp/wa-spells/t_*.mjs`) and Playwright (`t_*.py`), port 4101, no console errors:
+- Frostfall from the air: accepted at 6.8 m up (flat range 8.00 m), 50 damage to the dummy; in the browser the cast lands
+  and freezes a dummy (50, bind 1.5), and the watcher sees `float → cast_heavy (0.8 m up) → idle`.
+- Smoke Screen: the dash goes exactly 6.5 m straight back and stops 0.45 m from a pillar behind. A dummy in the cloud is
+  hidden from a viewer outside (fade 1 → invisible), and visible to a viewer inside. A Hard bot fired 5 sparks in 5 s
+  at a visible Cinder, 0 while she stood in her smoke, and 2 once it cleared. (`smoke_outside.png`, `smoke_inside.png`)
+- Magazine: shots 1–2 hit for 9 with `int:false` (no stun, the meteor wind-up survives); shot 3 is `fin` and stuns and
+  cancels. A 4th shot during the reload is refused; firing works again after it. R and idle reloads work. Stun immunity:
+  a second finisher 0.8 s after the first does 9 damage but doesn't re-stun. In the browser, 4 clicks give 3 projectiles,
+  the 3rd `fin`, and pips 3 → 0 → 3. (`mag_reloading.png`)
+- Sounds: all 25 manifest keys decode in Chromium. The sting plays on our kill, restarts on a second, and stays silent for others' kills.
+- Tempest Veil: 4 sparks from front and back absorbed (HP 100); a finisher during the veiled cyclone wind-up is absorbed
+  and the cyclone still pulses; the veil ends at 3.02 s; after it two plain shots land (HP 82) and a finisher cancels the
+  wind-up; a recast is refused on cooldown. (`veil.png`)
+- Goats: a lift doesn't anger; the goat follows its holder; the hurl hits a dummy for 22 (prop numbers) credited to the
+  thrower; the goat lands and grazes; a miss lands calmly too; a spark at a held goat drops it and sends it charging the
+  caster. In the browser: "F lift goat" → lifted → "F hurl goat · G set down" → dummy 100 → 78. (`goat_held2.png`)
+- Spark colours: each caster's sparks arrive in its colour (`bolts_still.png`).
+- Speeds: Cinder 5.29 m/s (`run` 1.13×), Gale 6.19 (`run` 1.30×), both backpedal at 3.0 (`back`). A wind-up walk plays
+  `walk_fight`, and a lift plays `tk_lift`. A thrown crate interrupts a meteor wind-up (22, `int`); a ward facing it blocks, no stun.
+- Telekinesis cooldown: about 2.7 s left right after a throw, a set-down or a curse; lifts are refused during it, and a lift
+  3 s after the throw works.
+
+**Balance with the later changes** (4 Hard bots, one per wizard, 120 s): after the magazine, Cinder 3/8, Gale 9/7,
+Rime 10/7, Vesper 5/6 (3 runs). After the Veil, Gale 10/13 over 4 runs: not dominant, so the cooldown stays at 10 s.
+After the speed change: Cinder 4/3, Gale 2/6, Rime 4/4, Vesper 5/3 (2 runs). Kills are much rarer since the magazine
+and slower movement, so per-run numbers are noisy. Difficulty (botmatch, 3 × 90 s, final code): Hard 5 K / 2 D (damage
+462, 265, n/a), Normal 8/5 (190, 214), Easy 5/12 (146, 182). By damage Hard is clearly ahead; by kills the spread is
+blurrier than before.
+
 ## Known issues and notes
 - **README** (coordinator) still describes the spellbook. It needs the wizard roster, the five kits, the new spells,
   the messages (`wizard`, `lashStart/lashRelease/lashCancel/lashMiss`, `mirror/decoyEnd`, `bulwark/wallUp/wallHit/
@@ -135,6 +214,10 @@ dodgeable, and it pays off on rooted or slowed targets.
   starts its shards on the ground under Rime; Trapped Relic lifts on F release (up to 0.5 s later than before) because a
   hold means curse; Frostfall doesn't hit its caster.
 - Cinder may want a buff if Ty agrees with the numbers above (e.g. Meteor cooldown or damage); I didn't change his spells.
+- Under swiftshader, the first seconds after joining stall while shaders compile (the new scenery and models), and long
+  stalls can miss the 15 s heartbeat (the page then shows "Disconnected"). Tests warm up first. On a real GPU this doesn't happen.
+- Rime's `float` hold, the death clips (no sink: they lie at ground level until the respawn moves them), Vesper's `lash` and
+  Gale's `spin` are all wired; `back` is now the backward fight walk (it loops), and Smoke Screen plays it as a short one-shot.
 - Swiftshader runs at 3–5 fps, so Playwright timing checks use events and the client's velocity, and the death screenshots
   step the animation by hand. On a real GPU none of this matters.
 - Decoys are separate entities on the wire (`decoys` in snapshots), so a modified client could tell them apart.
