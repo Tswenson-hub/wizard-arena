@@ -1,5 +1,62 @@
 # Spells hand-off
 
+## Round 6b: Firewall, and shorter shields (Ty)
+
+**Cinder's guard is now Firewall** (`firewall`; Flame Ward and its `flame_lash`/`flameLash` are gone).
+- **Raising it:** tap Space. A sheet of flame 5 m wide and 3 m tall rises 2.5 m ahead, across her aim, for **2.5 s**.
+  Cooldown 10 s, no stamina.
+- **Projectiles:** every **enemy** projectile that crosses it burns up (`projEnd.surface: 'firewall'`, a fire burst). That
+  covers primaries, Meteor, Lash, Hex and thrown props. The test is a segment-against-plane crossing each tick, so fast shots
+  can't skip it. Her own and her teammates' shots pass. Ultimates, Frostfall, cyclones and goats aren't projectiles, so they
+  aren't stopped.
+- **Walking through:** it doesn't block movement. An enemy walking through takes **15** once per wall
+  (`firewall_burn`, unblockable, never interrupts). Crossing is detected by the side changing between ticks too, because a
+  position update can step right over the thin sheet.
+- **Messages:** `firewall {id, owner, x, z, yaw, left}`, `firewallEnd`, and `welcome.firewalls`. Shared helpers:
+  `C.firewallLocal`, `C.firewallCentre`.
+- **Visuals:** three layered, tinted flame sheets (the fire texture now lives in `effects.js`), a glowing base, a point
+  light, a stream of embers, and an ignite burst along its length. The ignite plays Ty's `spark_cast`, pitched down, under a
+  low `meteor_cast`.
+- **Bots:**
+  - Cinder raises it at incoming Meteors, Lashes and thrown props (and at anything when below 60 HP), and just before an enemy Lash fires.
+  - Every bot avoids shooting through an enemy Firewall and steers around one rather than walking through.
+
+**Shorter shields:**
+- **Glacial Bulwark:** 5 s, 120 HP (was 10 s, 220).
+- **Tempest Veil:** 2 s (was 3).
+- **Black Death:** drains stamina 2.5× faster (`drainMul`) and each blocked hit costs 2.5× (`hitCostMul`), about 3 s from full.
+- **The generic Ward:** the same multipliers. No kit uses it now.
+- **Bots** check their stamina against the scaled hit cost before warding, and Gale veil-dives only from 9 m or closer (was 11).
+
+### Verification (port 4101)
+**Rules** (`/tmp/wa-spells/t_fw.mjs`, raw sockets):
+- **Firewall:** centre 2.50 m ahead, `left` 2.50. Two enemy Hex shots ended on `firewall` with 0 hits on Cinder. Cinder's
+  own fireball passed her wall and hit. Walking through burned 15, and walking back didn't burn again. `firewallEnd` at
+  2.5 s; a recast was refused on cooldown.
+- **Shields:** the Veil lasted 2.01 s; the Bulwark 120 HP and 5.03 s; Black Death broke 2.86 s after being raised from 100 stamina.
+
+**Browser** (`t_fwvis2.py`):
+- A browser Cinder raised the wall and a separately driven enemy Cinder fired two fireballs into it: both `projEnd:firewall`.
+  It then walked through and took `firewall_burn:15`. No console errors.
+- The page stalls for seconds under this machine's load, so the enemy runs from a Node process.
+- The curtain's look: `r6b_firewall_look.png`, rendered with a long life.
+
+**Balance** (4 Hard bots, one per wizard, FFA, 3 × 120 s, server restarted between runs):
+| Wizard | K/D | Damage |
+|---|---|---|
+| Cinder | 9 / 7 (1.29) | 1028 |
+| Gale | 13 / 13 (1.00) | 1382 |
+| Rime | 13 / 14 (0.93) | 1742 |
+| Vesper | 8 / 11 (0.73) | 1078 |
+
+- This is closer than before the change, when Rime led at 1.54 and Gale trailed at 0.52.
+- Vesper is lowest now: Black Death holds for only about 3 s, so she charges her whip less. If that persists, the first knob is `black_death.hitCostMul`.
+- In a 60 s run, the bots raised 3 Firewalls, 3 Veils and 2 Bulwarks.
+
+**Open:** README (coordinator) needs Firewall instead of Flame Ward, the new durations, and the messages `firewall` and
+`firewallEnd`. The goats request (Black Death from any side) still stands; goat rams aren't stopped by a Firewall
+(goats aren't projectiles).
+
 ## Round 6: Ty's balance and identity pass
 
 Files: `public/shared/constants.js`, the `kit` fields in `public/shared/wizards.js`, `server.js`, `server/bots.js`,
