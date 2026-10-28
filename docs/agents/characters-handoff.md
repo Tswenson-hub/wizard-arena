@@ -96,9 +96,34 @@
   - Requested in `requests.md`: the spells agent should play `actions.spin` during the Arcane Cyclone spin when a body has it.
     Until they do, Gale spins with the dash clip like everyone else.
   - Her violet flair motes still swirl around the new model.
-- **Cinder, Rime, Vesper:** the `*_texture.glb` files on the Desktop are static meshes (no skin). Ty is re-exporting them
-  rigged; until then they keep the recoloured base model. A "rig ready" export like Gale's works with the same path:
-  prepare, set `model`, and add `MODEL_CLIPS` picks.
+- **Rime: in the game, with his frost staff.** The source is `Meshy_AI_rime_frost_rigready_3_All_Animations.glb`, now
+  `rime.glb`.
+  - Size: 10.8 MB went down to **1.43 MB**.
+  - Rig: the same Mixamo-style rig as Gale, 1.70 m, normalised to 1.8 m.
+
+    | key | clip | notes |
+    |---|---|---|
+    | run, walk | `Running`, `Walking` | |
+    | cast_fast | `mage_soell_cast_4` | arms and staff flung forward at 0.6–1.4 s, inside the spark/skim window |
+    | cast_heavy | `Charged_Spell_Cast_1` | gathers until about 1.4 s, then a wide push from 1.75 to 3.1 s. The charge hold (1.9 s) and the release window (1.9–2.7 s) both land on the push; it's meant for his Frostfall cast. |
+    | stun | `Fall2`, stretched from 0.67 s to 2.3 s | reads as a stagger. main.js plays stun from 0.3 s at 3×, which fits the base clip's length. |
+    | **death** (new key) | `Strangled_and_Fall_Forward` 3.6–7.3 s, squeezed to 2.5 s | kneels, then falls flat; he's down before the 3 s respawn. Requested in `requests.md`. |
+    | block, dash, idle | retargeted from the base wizard | |
+
+  - **Staff:** `rime-wand.glb` went from 9.4 MB to **261 KB** (simplify 0.25, 512 px textures).
+    `PROPS.rime` in looks.js fits it once, in his idle pose, into the right fist: the midpoint between the wrist and the
+    middle-finger knuckle, 1.5 m long, gripped 0.6 m from the bottom, upright, with the top leaning 0.12 rad forward and 0.1 rad out.
+    It is parented to the `RightHand` bone, so it follows the hand: upright at idle, thrust forward on the quick cast,
+    swept wide on the heavy cast, raised in front of his face in the ward, flung in the stagger, and under him in death.
+    While running it angles down and forward with the arm swing.
+  - **Flair:** the frost-shard clusters are skipped on a real model (his pauldrons are already ice); the snowfall stays.
+    The same body is used in the picker preview.
+- **Vesper's staff** (`Meshy_AI_hemomancer_wand_3d…`) is shrunk to 157 KB at `/tmp/wa-characters/vwand/vesper-wand.glb`.
+  It isn't wired yet because her rigged body hasn't arrived; the stand-in base model already holds a staff.
+  When her body lands: copy the wand to `public/models/wizards/vesper-wand.glb`, add `PROPS.vesper`, and tune `lean`/`out` by eye.
+- **Cinder, Vesper:** their bodies are still to come. Ty is re-exporting them rigged; until then they keep the recoloured base
+  model. A "rig ready" export like Gale's and Rime's works with the same path: prepare, set `model`, and add
+  `MODEL_CLIPS` (and `PROPS`) entries.
 - A render of the static models: `/tmp/wa-characters/shots/desktop-models.png`.
 
 ## Verification
@@ -122,15 +147,22 @@ All runs used headless Chromium (SwiftShader) against port 4103. Screenshots are
   - Every body had all ten clip keys and found `RightHand`/`Head`, with no `[looks]` warnings and no console errors.
   - The skin holds in every pose.
   - The ability bar showed Gale's kit, and the picker card shows the real model (`gale-picker.png`).
+- **Rime in game (`rimegame.py`):** I joined as Rime with five Rime dummies (run, Skim, Frostfall, stagger, death),
+  frozen at two moments each: `rime-game-sheet.png`.
+  - The staff is in hand in every pose. `rime-keys.png` shows every key over time; `rime-clips.png` compares his clips with the base clips.
+  - The picker card shows him with the staff and snowfall (`rime-picker.png`).
+  - No `[looks]` warnings and no console errors. The integrated `e2e.py` still passes (reload keeps `wizardChoice`, 0 errors).
 - **Fixed along the way:** flair points were sized by the whole canvas height, so in the picker's small viewports they were
   about 5× too big. They now scale by viewport height, with no change in game.
-- `public/models/wizards/gale.glb`: 1.71 MB on disk (`ls`); `du` reports 2.5M because of block rounding. The base `wizard.glb` is unchanged at 1.4 MB.
+- `public/models/wizards/` (`ls`): `gale.glb` 1.71 MB, `rime.glb` 1.43 MB, `rime-wand.glb` 261 KB. The base `wizard.glb` is unchanged at 1.4 MB.
 
 ## Known issues and notes
 - **Vesper vs Cinder:** both are red, but Vesper is darker, has smoke and a pool, and has a different nameplate tone.
   At long range they're closest; Ty's models will settle it.
 - **Panel width:** the spells agent answered the 760 px panel request in `requests.md`.
-- **Gale's spin:** it needs the spells agent's `spin()` change (requested) to show in a real cyclone.
+- **Extra clip keys:** Gale's `spin` and Rime's `death` need the spells agent's changes (both requested) to show in play.
+- **wizards.js:** the spells agent had an uncommitted `frostfall` kit edit in the file, so I staged only my `model` line
+  (via `git update-index`). Their change is still in the working tree for them to commit.
 - **Retarget limits:** the retarget works for Mixamo-style rigs (`MIXAMO_TO_BASE`). A rig with other bone names needs its
   own map, or Meshy's seven clips exported with it.
 - **Picker canvases:** each mounted picker holds one WebGL context while it exists (2 for join + pause, plus the game's).
