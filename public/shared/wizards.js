@@ -14,7 +14,7 @@ export const WIZARDS = {
   },
   gale: {
     id: 'gale', name: 'Gale', title: 'the Tempest Dervish', role: 'Diver · drops in and spins',
-    color: 0xb46cff, tint: 0x9a6bff, model: null,
+    color: 0xb46cff, tint: 0x9a6bff, model: '/models/wizards/gale.glb',
     kit: { primary: 'spark', power: 'cyclone', mobility: 'skyward', guard: 'ward', utility: 'telekinesis' },
   },
   rime: {
