@@ -614,7 +614,7 @@ function wallUp(w, fresh = false) {
   if (walls.has(w.id)) return;
   C.addWallColliders(w.id, w.x, w.z, w.yaw);
   const fx = effects.wall(w);
-  if (!fresh) fx.rise = 1;
+  if (!fresh) { fx.rise = 1; fx.group.scale.y = 1; }   // already standing when we joined
   walls.set(w.id, { data: w, fx });
   if (fresh) sfx.wallUp([w.x, 1, w.z]);
 }

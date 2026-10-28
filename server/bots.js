@@ -39,7 +39,7 @@ const DIFFICULTY = {
 };
 
 const CYC = C.SPELLBOOK.cyclone, SKY = C.SPELLBOOK.skyward, LASH = C.SPELLBOOK.sanguine_lash;
-const BULWARK = C.SPELLBOOK.glacial_bulwark, SKIM = C.SPELLS.skim;
+const BULWARK = C.SPELLBOOK.glacial_bulwark, SKIM = C.SPELLS.skim, RELIC = C.SPELLBOOK.trapped_relic;
 const kit = (q) => C.kitOf(q.wizard);
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -290,6 +290,13 @@ function think(me, world, t) {
     if (tgt) me.yaw = yawTo(me.p, tgt.p);
     act({ t: 'lashRelease', dir: tgt ? aimAt(me, from, tgt, C.SPELLS.lash.speed, 0, cfg) : [Math.sin(me.yaw), 0, Math.cos(me.yaw)] });
   }
+  // a curse being laid: like a player, the bot holds F on the prop for RELIC.hold seconds
+  if (b.cursing) {
+    const prop = world.props.get(b.cursing.prop);
+    if (!free || me.carrying || me.blocking || prop?.state !== 'idle') b.cursing = null;
+    else if (t >= b.cursing.at) { b.cursing = null; aimProp(me, prop, (from, dir) => act({ t: 'curse', aimOrigin: from, aimDir: dir })); }
+    return;
+  }
   if (!free || !target || me.blocking || me.charging || me.cyclone || me.lash || t < (b.goatDanger || 0)) return;
   const meAir = airborne(me, t);
 
@@ -327,11 +334,11 @@ function think(me, world, t) {
   }
   b.holdSince = 0;
 
-  // ---- hurt and pressed: get away (Mirror Step) or wall them off (Glacial Bulwark)
+  // ---- hurt and pressed: get away (Mirror Step, Blink) or wall them off (Glacial Bulwark)
   if (me.hp < 40 && d < 10 && los && !target.decoy) {
-    if (K.mobility === 'mirror_step' && cfg.blinkDodge && mobilityReady(me, t) && Math.random() < 0.35 * cfg.dodge) {
-      return mirrorStep(me, [me.p[0] - target.p[0], 0, me.p[2] - target.p[2]], act);
-    }
+    const away = [me.p[0] - target.p[0], 0, me.p[2] - target.p[2]];
+    if (K.mobility === 'mirror_step' && cfg.blinkDodge && mobilityReady(me, t) && Math.random() < 0.35 * cfg.dodge) return mirrorStep(me, away, act);
+    if (K.mobility === 'blink' && cfg.blinkDodge && mobilityReady(me, t) && Math.random() < 0.35 * cfg.dodge) return blinkAway(me, away, act);
     if (wallReady(me, t) && d > 3.5 && Math.random() < 0.4 * cfg.dodge) return raiseWall(me, target.p, act);
   }
 
@@ -343,7 +350,7 @@ function think(me, world, t) {
     const mine = [...world.props.values()].find(pr => pr.cursedBy === me.id);
     if (!mine || mine.state !== 'idle' || dist2D([mine.x, 0, mine.z], target.p) > 9) {
       const prop = curseCandidate(me, target, world);
-      if (prop) { aimProp(me, prop, (from, dir) => act({ t: 'curse', aimOrigin: from, aimDir: dir })); return; }
+      if (prop) { b.cursing = { prop: prop.id, at: t + RELIC.hold }; b.nextCurse = t + rand(8, 14); me.yaw = yawTo(me.p, [prop.x, 0, prop.z]); return; }
     }
   }
 
@@ -554,13 +561,24 @@ function blinkSideways(me, awayFrom, act, along = null) {
   me.bot.vel = [0, 0];
 }
 
-// Mirror Step along `dir` (flattened), nudged toward the middle of the arena if it points outward.
-function mirrorStep(me, dir, act) {
+// `dir` flattened, nudged toward the middle of the arena if it points outward near the rim.
+function inward(me, dir) {
   let [dx, , dz] = dir;
   const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
   const r = Math.hypot(me.p[0], me.p[2]);
   if (r > C.ARENA_RADIUS - 10 && (dx * me.p[0] + dz * me.p[2]) > 0) { dx -= me.p[0] / r; dz -= me.p[2] / r; }
-  act({ t: 'mirror', dir: [dx, 0, dz], from: me.p.slice() });
+  return [dx, 0, dz];
+}
+// Mirror Step along `dir`.
+function mirrorStep(me, dir, act) {
+  act({ t: 'mirror', dir: inward(me, dir), from: me.p.slice() });
+  me.bot.vel = [0, 0];
+}
+// Blink along `dir` (the bot turns that way first: a blink goes where you face).
+function blinkAway(me, dir, act) {
+  const d = inward(me, dir);
+  me.yaw = Math.atan2(d[0], d[2]);
+  act({ t: 'teleport', dir: d, from: me.p.slice() });
   me.bot.vel = [0, 0];
 }
 
