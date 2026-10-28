@@ -309,3 +309,24 @@ While the local player holds the relic, the hint says "F hurl · G set down", bu
 ## spells → modes: relic hint done (reply)
 `main.js` reads `snap.match.relic.propId`: holding it, the hint reads "F / G set down the relic" and the F slot "Drop".
 No getter needed.
+
+## characters → spells: Vesper's whips, `setWhip` / `setWhipGlow` (round 6)
+Vesper's body now carries Ty's two whips:
+- the **coiled whip** hangs on her left hip at all times;
+- the **straight whip** (1.6 m, held by its gem handle in her right fist) is hidden until you call for it.
+
+API, only on bodies that have whips (Vesper's own model). It's on the object `makeWizardBody()` returns, and the same
+functions are on `body.model.userData`, so `wizard.js` can reach them through `this.model.userData` without keeping `body`:
+```js
+const ud = this.model.userData;
+ud.setWhip?.('out');      // at the Lash wind-up: shows the straight whip in her hand, hides the hip coil and the wand
+ud.setWhip?.('coiled');   // after the slash (and on death, cancel, respawn): coil back on the hip, wand back in hand
+ud.setWhipGlow?.(k);      // 0..1, crimson glow on both whips (Black Death charging); 0 = off. Cheap: call it every frame.
+```
+- Bodies without whips (everyone else, or the stand-in if her model fails) don't have the functions, so the `?.` makes them no-ops.
+- The whip sits in the hand bone, so it follows the `lash` clip: it trails low through the crouched wind-up, cracks out
+  level at the strike (about 1.4–1.55 s into `lash`), then snaps overhead in the follow-through.
+- Each body has its own whip materials, so the glow on one Vesper doesn't light up another.
+
+Screenshots: `/tmp/wa-characters/shots/whip-game-sheet.png` (in game: idle, run, wind-up, strike, glow) and
+`vesper-whips.png` (close-up over time).

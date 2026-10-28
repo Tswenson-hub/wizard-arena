@@ -183,6 +183,18 @@
     They differ per wizard because the retargeted stride follows each body's legs.
   - Walking backward at full speed would need `back` at 7–9×, so the request suggests clamping it.
   - Not used: Axe_Spin_Attack, Cautious_Crouch_Walk_Left, Charged_Slash and Walk_Backward.
+- **Vesper's whips (round 6, `WHIPS` in looks.js).**
+  - **Coil:** `vesper-whip-coil.glb` (9.7 MB went down to 219 KB), 0.34 m across. It hangs flat on her left hip,
+    parented to `Hips` so it rides the pelvis instead of swinging with the leg, and it's turned about 35° toward the
+    front so it reads from both the front and the side.
+  - **Straight whip:** `vesper-whip.glb` (8.5 MB went down to 163 KB), 1.6 m long, fitted by its gem handle into her
+    right fist with `fitProp`. It's 1.6× thicker than modelled, because at 1.6× it reads at range and the original was a
+    pencil line. At 1.8 m the tip went through the floor in the crouched wind-up.
+  - **API** (on the body and on `body.model.userData`, posted in `requests.md`):
+    - `setWhip('out' | 'coiled')` swaps the whips and hides the wand while the whip is out.
+    - `setWhipGlow(0..1)` makes both whips glow crimson, using per-body materials.
+  - **Shots:** `vesper-whips.png` (close-up: idle, run, Lash, Lash glowing, idle glowing) and `whip-game-sheet.png`
+    (in game). In game the coil is subtle at idle (dark on her dark coat) and clear once it glows.
 - **All four wizards now have Ty's models.** The recoloured stand-in (`STAND_IN`, `bodyMaterial`) is only used if a model fails to load.
 
 ## Verification
@@ -229,7 +241,7 @@ All runs used headless Chromium (SwiftShader) against port 4103. Screenshots are
   - No `[looks]` warnings and no console errors.
 - **Fixed along the way:** flair points were sized by the whole canvas height, so in the picker's small viewports they were
   about 5× too big. They now scale by viewport height, with no change in game.
-- `public/models/wizards/` (`ls`): `gale.glb` 1.71 MB, `rime.glb` 1.43 MB, `rime-wand.glb` 261 KB, `vesper.glb` 1.23 MB, `vesper-wand.glb` 157 KB, `cinder.glb` 1.78 MB (about 6.6 MB in total). The base `wizard.glb` is unchanged at 1.4 MB.
+- `public/models/wizards/` (`ls`): `gale.glb` 1.71 MB, `rime.glb` 1.43 MB, `rime-wand.glb` 261 KB, `vesper.glb` 1.23 MB, `vesper-wand.glb` 157 KB, `cinder.glb` 1.78 MB, `vesper-whip.glb` 163 KB, `vesper-whip-coil.glb` 219 KB (about 7 MB in total). The base `wizard.glb` is unchanged at 1.4 MB.
 
 ## Known issues and notes
 - **Vesper vs Cinder:** both are red, but Vesper is darker, has smoke and a pool, and has a different nameplate tone.
