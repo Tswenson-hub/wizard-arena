@@ -151,6 +151,7 @@ export const SPELLBOOK = {
     knockback: 0,
     bind: 1.5,           // frozen: rooted and silenced, like the lash's bind
     unblockable: true,   // it comes from above: wards and ice walls don't stop it
+    airCast: true,       // the one power spell Rime can cast during a Skyward Flash
     cooldown: 14,
   },
   blink: {
@@ -177,6 +178,17 @@ export const SPELLBOOK = {
     spreadDeg: 30,       // the side paths
     decoyTime: 2.5,      // decoys run this long at run speed, then fade
     cooldown: 7,
+  },
+  smoke_screen: {
+    id: 'smoke_screen', slot: 'mobility', name: 'Smoke Screen', short: 'Smoke',
+    blurb: 'Leap 6.5 m backwards, leaving a cloud of smoke for 5 s. Nobody outside can see who is inside it.',
+    distance: 6.5,
+    dashTime: 0.25,      // a fast dash, not a teleport: it collides like walking
+    radius: 4,           // the cloud
+    height: 3,
+    life: 5,             // then it fades over `fade`
+    fade: 1,
+    cooldown: 8,
   },
   ward: {
     id: 'ward', slot: 'guard', name: 'Ward', short: 'Ward',
@@ -320,3 +332,18 @@ export function addWallColliders(id, x, z, yaw) {
 export function removeWallColliders(id) {
   for (let i = COLLIDERS.length - 1; i >= 0; i--) if (COLLIDERS[i].wall === id) COLLIDERS.splice(i, 1);
 }
+
+// Smoke Screen: does the 2D segment a→b pass through a smoke cloud (or start or end inside one)?
+// Clouds are { x, z } with SPELLBOOK.smoke_screen.radius; anything above the cloud's top sees over it.
+export function smokeBlocks(a, b, clouds) {
+  const S = SPELLBOOK.smoke_screen;
+  if ((a[1] || 0) > S.height && (b[1] || 0) > S.height) return false;
+  const sx = b[0] - a[0], sz = b[2] - a[2], ll = sx * sx + sz * sz || 1;
+  for (const c of clouds) {
+    const k = Math.max(0, Math.min(1, ((c.x - a[0]) * sx + (c.z - a[2]) * sz) / ll));
+    if (Math.hypot(a[0] + sx * k - c.x, a[2] + sz * k - c.z) < S.radius) return true;
+  }
+  return false;
+}
+export const inSmoke = (p, clouds) => (p[1] || 0) < SPELLBOOK.smoke_screen.height
+  && clouds.some(c => Math.hypot(p[0] - c.x, p[2] - c.z) < SPELLBOOK.smoke_screen.radius);

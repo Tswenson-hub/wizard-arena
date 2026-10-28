@@ -65,6 +65,7 @@ const local = {
   slowUntil: 0,                // Glacial Skim slow
   rootUntil: 0,                // bound by a lash, or recovering from our own missed lash
   silenceUntil: 0,             // bound: no spells, ward or telekinesis
+  dash: null,                  // { start, dir } during our own Smoke Screen dash
   frostAim: false,             // RMB held with Frostfall: aiming the circle
   frozenUntil: 0,              // frozen by a Frostfall (the bind, shown as ice)
   fHold: null,                 // { start } while F is held with nothing carried (Trapped Relic: hold to curse)
@@ -86,7 +87,7 @@ let wantWizard = C.DEFAULT_WIZARD;
 try { const w = localStorage.getItem('wizardChoice'); if (C.isWizard(w)) wantWizard = w; } catch {}
 const kit = () => C.kitOf(me ? me.wizard : wantWizard);
 const SPELL = C.SPELLBOOK;
-const FROST = SPELL.frostfall;
+const FROST = SPELL.frostfall, SMOKE = SPELL.smoke_screen;
 const LASH = SPELL.sanguine_lash, MIRROR = SPELL.mirror_step, BULWARK = SPELL.glacial_bulwark, RELIC = SPELL.trapped_relic, SKIM = SPELL.glacial_skim;
 
 function chooseWizard(id) {
@@ -201,6 +202,7 @@ function onWelcome(msg) {
   for (const g of msg.goats || []) goats.set(g.id, new GoatView(g, scene));
   for (const w of msg.walls || []) wallUp(w);
   for (const f of msg.frostfalls || []) frosts.set(f.id, effects.frostfall(f.p, f.left));
+  for (const c of msg.smokes || []) effects.smoke(c.p, c.left);
   me = players.get(myId);
   for (const d of msg.decoys || []) spawnDecoy(d);
   local.pos.set(me.targetPos.x, 0, me.targetPos.z);
@@ -503,6 +505,16 @@ function handleMessage(msg) {
       removeDecoy(msg.id);
       break;
     }
+    case 'smoke': {
+      effects.smoke(msg.p, msg.left);
+      const w = players.get(msg.owner);
+      if (w) {
+        if (w.actions.back) w.oneShot('back', SMOKE.dashTime + 0.1, w.actions.back.getClip().duration / (SMOKE.dashTime + 0.1) * 0.5, 0);
+        else w.oneShot('dash', SMOKE.dashTime + 0.1, 2.5, 2.2);
+        sfx.smoke([msg.p[0], 1, msg.p[2]]);
+      }
+      break;
+    }
     case 'frostfall': {
       frosts.set(msg.id, effects.frostfall(msg.p, msg.left));
       const w = players.get(msg.owner);
@@ -642,6 +654,7 @@ function updateDecoys(list) {
 const walls = new Map();     // id -> { data, fx }
 // Frostfall warnings on the ground (everyone sees them), and our own targeting circle.
 const frosts = new Map();    // id -> effects entry
+let lastDashDir = [0, 0];
 const frostMark = effects.frostAim();
 function wallUp(w, fresh = false) {
   if (walls.has(w.id)) return;
@@ -650,6 +663,17 @@ function wallUp(w, fresh = false) {
   if (!fresh) { fx.rise = 1; fx.group.scale.y = 1; }   // already standing when we joined
   walls.set(w.id, { data: w, fx });
   if (fresh) sfx.wallUp([w.x, 1, w.z]);
+}
+
+// Smoke Screen: anyone inside a cloud is hidden from us unless we're inside the same cloud.
+function updateSmokeHiding(dt) {
+  const t = performance.now() / 1000;
+  const clouds = [...(effects.smokes || [])].filter(c => t < c.endAt);
+  const cloudsAt = (p) => clouds.filter(c => p.y < SMOKE.height && Math.hypot(p.x - c.x, p.z - c.z) < SMOKE.radius);
+  const mine = cloudsAt(local.pos);
+  const check = (w) => { const theirs = cloudsAt(w.group.position); w.setHidden(theirs.length > 0 && !theirs.some(c => mine.includes(c)), dt); };
+  for (const w of players.values()) if (w !== me) check(w);
+  for (const d of decoys.values()) check(d.wiz);
 }
 
 // Trapped Relic: the prop we've cursed (the server tells only us), marked with a faint glyph.
@@ -842,7 +866,7 @@ function updateLocal(dt) {
       }
     }
     // power slot
-    if (input.rmbPressed && !local.blocking && !busy && !airborne && !me.carrying && now >= local.cd.power) {
+    if (input.rmbPressed && !local.blocking && !busy && (!airborne || SPELL[K.power].airCast) && !me.carrying && now >= local.cd.power) {
       if (K.power === 'meteor') {
         // wind-up: press to start, fires automatically when fully charged
         local.charging = true; local.chargeStart = now; local.chargeSent = false;
@@ -860,7 +884,7 @@ function updateLocal(dt) {
       }
     }
     if (local.frostAim) {
-      if (busy || airborne || me.carrying || local.blocking || K.power !== 'frostfall') local.frostAim = false;
+      if (busy || me.carrying || local.blocking || K.power !== 'frostfall') local.frostAim = false;   // fine from the air
       else if (!input.rmb) {
         local.frostAim = false;
         local.cd.power = now + FROST.cooldown;
@@ -895,6 +919,12 @@ function updateLocal(dt) {
         local.flight = { start: now, last: now, drop: false };
         local.pos.y = SKY.height;
         net.send({ t: 'skyward' });
+      } else if (K.mobility === 'smoke_screen') {
+        // a fast dash straight back from where we face; the smoke stays where we stood
+        local.cd.mobility = now + SMOKE.cooldown;
+        local.dash = { start: now, dir: [-Math.sin(local.yaw), -Math.cos(local.yaw)] };
+        lastDashDir = local.dash.dir;
+        net.send({ t: 'smoke', yaw: local.yaw, from: [local.pos.x, 0, local.pos.z] });
       } else if (K.mobility === 'mirror_step') {
         // along the movement keys, forward if none; the server picks which of the three paths is us
         const d = (mx || mz) ? tmp.v3.set(0, 0, 0).addScaledVector(fwd, mz).addScaledVector(right, mx).normalize() : fwd;
@@ -944,6 +974,17 @@ function updateLocal(dt) {
   const accel = Math.min(1, dt * 12);
   local.vel.x += (wish.x - local.vel.x) * accel;
   local.vel.z += (wish.z - local.vel.z) * accel;
+  // Smoke Screen dash: straight back, covering the distance over dashTime of real time (so a slow
+  // frame rate doesn't shorten it), in small steps that collide like walking
+  let dashMove = 0;
+  if (local.dash) {
+    const end = local.dash.start + SMOKE.dashTime;
+    const t0 = Math.min(local.dash.last ?? local.dash.start, end), t1 = Math.min(now, end);
+    if (!stunned && !rooted && !me.dead) dashMove = Math.max(0, t1 - t0) * SMOKE.distance / SMOKE.dashTime;
+    local.dash.last = t1;
+    if (now >= end || stunned || rooted || me.dead) local.dash = null;
+    local.vel.set(0, 0, 0);
+  }
   if (rooted) local.vel.set(0, 0, 0);
   if (!me.dead) local.pos.addScaledVector(local.vel, dt);
 
@@ -956,6 +997,13 @@ function updateLocal(dt) {
   };
   // airborne, we pass over anything lower than our feet
   const y = local.pos.y;
+  if (dashMove > 0) {
+    const n = Math.ceil(dashMove / 0.25), step = dashMove / n;
+    for (let i = 0; i < n; i++) {
+      local.pos.x += lastDashDir[0] * step; local.pos.z += lastDashDir[1] * step;
+      for (const c of C.COLLIDERS) if (y < c.h) pushOut(c.x, c.z, c.r);
+    }
+  }
   for (const c of C.COLLIDERS) if (y < c.h) pushOut(c.x, c.z, c.r);
   if (y < 1) for (const e of props.values()) if (e.data.state === 'idle') pushOut(e.data.x, e.data.z, C.PROP_TYPES[e.data.type].r * 0.8);
   for (const w of players.values()) if (w !== me && !w.dead && Math.abs(w.group.position.y - y) < C.PLAYER_HEIGHT) pushOut(w.group.position.x, w.group.position.z, pr);
@@ -1041,7 +1089,7 @@ function updateHud(dt) {
   ui.ab.throw.classList.toggle('active', !!me.carrying || !!local.fHold);
   ui.ab.throw.classList.toggle('disabled', bound);
   ui.ab.fast.classList.toggle('disabled', !!me.carrying || bound);
-  ui.ab.power.classList.toggle('disabled', !!me.carrying || !!local.flight || bound);
+  ui.ab.power.classList.toggle('disabled', !!me.carrying || (!!local.flight && !SPELL[K.power].airCast) || bound);
   ui.ab.mobility.classList.toggle('disabled', bound || (now < local.rootUntil && K.mobility !== 'skyward'));
 
   // our cursed prop: a faint red glyph above it
@@ -1140,6 +1188,7 @@ function frame(t) {
       d.wiz.updateAnimation(true, dt);
       d.wiz.faceCamera(camera);
     }
+    updateSmokeHiding(dt);
     for (const w of players.values()) w.faceCamera(camera);
     updateHud(dt);
     if (input.justPressed('KeyM')) { sfx.muted = !sfx.muted; ui.mute.checked = sfx.muted; feed(sfx.muted ? 'Sound muted (M)' : 'Sound on'); }

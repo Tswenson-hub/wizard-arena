@@ -117,7 +117,7 @@ export class Wizard {
     this.actions.stun.setLoop(THREE.LoopOnce); this.actions.stun.clampWhenFinished = true;
     this.actions.dash.setLoop(THREE.LoopOnce); this.actions.dash.clampWhenFinished = true;
     // optional clips some bodies have (looks.js): a death fall, Gale's cyclone sweep
-    for (const k of ['death', 'spin', 'lash', 'float']) if (this.actions[k]) { this.actions[k].setLoop(THREE.LoopOnce); this.actions[k].clampWhenFinished = true; }
+    for (const k of ['death', 'spin', 'lash', 'float', 'back']) if (this.actions[k]) { this.actions[k].setLoop(THREE.LoopOnce); this.actions[k].clampWhenFinished = true; }
 
     this.current = null;
     this.oneShotUntil = 0;
@@ -288,6 +288,31 @@ export class Wizard {
   inOneShot() { return performance.now() / 1000 < this.oneShotUntil; }
 
   // A body with its own lash clip (Vesper) plays it from the start: the strike lands on the 1.5 s release.
+  // Smoke Screen: hidden from a viewer outside the cloud. Fades the body, ring, nameplate and health bar.
+  setHidden(hidden, dt) {
+    const want = hidden ? 1 : 0;
+    const k = this.hideK ?? 0;
+    if (k === want) { this.hideAt = undefined; return; }
+    // a quick linear fade on the real clock (0.2 s), whatever the frame rate
+    const t = performance.now() / 1000, real = Math.min(0.5, t - (this.hideAt ?? t)); this.hideAt = t;
+    this.hideK = want > k ? Math.min(1, k + real * 5) : Math.max(0, k - real * 5);
+    const vis = 1 - this.hideK;
+    this.model.traverse(o => {
+      if (!o.material) return;
+      for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+        if (m.userData.baseOpacity === undefined) { m.userData.baseOpacity = m.opacity; m.userData.baseTransparent = m.transparent; }
+        m.transparent = m.userData.baseTransparent || vis < 1;
+        m.opacity = m.userData.baseOpacity * vis;
+      }
+    });
+    this.ring.material.opacity = (this.dead ? 0.1 : 0.75) * vis;
+    this.nameplate.material.opacity = vis;
+    for (const c of this.hpBar.children) c.material.opacity = (c === this.hpFill ? 1 : 0.6) * vis;
+    this.group.visible = this.hideK < 0.98;
+    if (this.carry) this.carry.holder.visible = this.group.visible;
+    if (!this.group.visible) this.beam.visible = false;
+  }
+
   startLash() { this.lashT = 0; if (this.actions.lash) this.oneShot('lash', LASH.windup + 0.6, 1, 0); }
   endLash() {
     if (this.lashT >= 0 && this.current === 'lash' && this.lashT < LASH.windup - 0.1) this.oneShotUntil = 0;   // cancelled: back to the base state

@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import * as C from './public/shared/constants.js';
-import { createBot, updateBots, botKnockback, botNoteRelic, BOT_LIMIT } from './server/bots.js';
+import { createBot, updateBots, botKnockback, botNoteRelic, botDash, BOT_LIMIT } from './server/bots.js';
 import * as Goats from './server/goats.js';
 const { createGoats, updateGoats, angerGoat, goatPublic } = Goats;
 
@@ -41,6 +41,7 @@ let nextProjId = 1;
 const decoys = new Map();    // Mirror Step decoys: id -> { id, owner, p, dir, yaw, until }
 const walls = new Map();     // Glacial Bulwark walls: id -> { id, owner, x, z, yaw, hp, until }
 const frostfalls = new Map(); // Frostfall ice on its way down: id -> { id, owner, x, z, at }
+const smokes = new Map();     // Smoke Screen clouds: id -> { id, owner, x, z, until }
 let nextFxId = 1;            // ids for decoys and walls
 
 // ---------------------------------------------------------------- props
@@ -103,7 +104,7 @@ const isAirborne = (p) => p.flightUntil > now();
 const kit = (p) => C.kitOf(p.wizard);
 const CYCLONE = C.SPELLBOOK.cyclone, SKY = C.SPELLBOOK.skyward, LASH = C.SPELLBOOK.sanguine_lash;
 const MIRROR = C.SPELLBOOK.mirror_step, BULWARK = C.SPELLBOOK.glacial_bulwark, RELIC = C.SPELLBOOK.trapped_relic;
-const SKIM = C.SPELLBOOK.glacial_skim, FROST = C.SPELLBOOK.frostfall;
+const SKIM = C.SPELLBOOK.glacial_skim, FROST = C.SPELLBOOK.frostfall, SMOKE = C.SPELLBOOK.smoke_screen;
 
 // ---------------------------------------------------------------- wizard choice
 // A switch applies at once if the player is alive and not mid-cast, else when the cast ends or at respawn.
@@ -402,6 +403,7 @@ function wallBetween(a, b) {
 }
 
 // ---------------------------------------------------------------- Frostfall
+const smokePublic = (c) => ({ id: c.id, owner: c.owner, p: [c.x, 0, c.z], left: Math.max(0, c.until - now()) });
 const frostPublic = (f) => ({ id: f.id, owner: f.owner, p: [f.x, 0, f.z], left: Math.max(0, f.at - now()) });
 // The ice lands: everyone in the circle on (or near) the ground is crushed and frozen. Wards and walls
 // don't help: it comes from above.
@@ -470,6 +472,7 @@ function simulate(dt) {
   updateDecoys(dt, t);
   for (const w of [...walls.values()]) if (t >= w.until) wallDown(w, true);
   for (const f of [...frostfalls.values()]) if (t >= f.at) frostfallImpact(f);
+  for (const c of [...smokes.values()]) if (t >= c.until) smokes.delete(c.id);   // clients fade it on their own clock
 
   for (const p of players.values()) {
     if (p.dead) {
@@ -629,7 +632,8 @@ function handle(p, msg) {
       // bound or recovering from a missed lash: the wizard stays put (a slowed one is just slower,
       // which the speed check below already allows)
       if (isRooted(p)) { np[0] = p.p[0]; np[2] = p.p[2]; }
-      const maxStep = (C.MOVE_SPEED + C.SPELLS.heavy.knockback + 2) * dt + 0.6;
+      const dashing = p.dashUntil > t;   // Smoke Screen's dash is much faster than running
+      const maxStep = ((dashing ? SMOKE.distance / SMOKE.dashTime : C.MOVE_SPEED) + C.SPELLS.heavy.knockback + 2) * dt + 0.6;
       const d = dist2D(np, p.p);
       if (p.lastStateAt && d > maxStep && !p.justTeleported) {
         // Moving faster than any legitimate wizard can: let the server's copy catch up at the
@@ -721,7 +725,8 @@ function handle(p, msg) {
       break;
     }
     case 'frostfall': {
-      if (kit(p).power !== 'frostfall' || !canAct(p) || p.blocking || p.charging || p.cyclone || p.lash || p.carrying || isAirborne(p) || t < p.cd.power) break;
+      // the one power spell allowed during a Skyward Flash; range is measured flat from the caster
+      if (kit(p).power !== 'frostfall' || !canAct(p) || p.blocking || p.charging || p.cyclone || p.lash || p.carrying || t < p.cd.power) break;
       if (!Array.isArray(msg.at) || msg.at.length < 2 || !Number.isFinite(msg.at[0]) || !Number.isFinite(msg.at[msg.at.length - 1])) break;
       let x = msg.at[0], z = msg.at[msg.at.length - 1];
       // at most `range` from the caster, inside the arena
@@ -733,6 +738,22 @@ function handle(p, msg) {
       const f = { id: nextFxId++, owner: p.id, x, z, at: t + FROST.delay };
       frostfalls.set(f.id, f);
       broadcast({ t: 'frostfall', ...frostPublic(f) });
+      break;
+    }
+    case 'smoke': {
+      // Smoke Screen: a fast dash backwards (the client moves itself; the server lets it go that fast),
+      // leaving a cloud where it started
+      if (kit(p).mobility !== 'smoke_screen' || !canAct(p) || isRooted(p) || p.charging || p.cyclone || p.lash || isAirborne(p) || t < p.cd.mobility) break;
+      const yaw = Number.isFinite(msg.yaw) ? msg.yaw : p.yaw;
+      const from = validVec(msg.from) && dist2D(msg.from, p.p) < 3 ? [msg.from[0], 0, msg.from[2]] : p.p.slice();
+      const dir = [-Math.sin(yaw), 0, -Math.cos(yaw)];
+      p.cd.mobility = t + SMOKE.cooldown;
+      p.dashUntil = t + SMOKE.dashTime + 0.35;
+      if (p.blocking) { p.blocking = false; p.blockReleasedAt = t; }
+      if (p.bot) botDash(p, dir, t + SMOKE.dashTime);
+      const c = { id: nextFxId++, owner: p.id, x: from[0], z: from[2], until: t + SMOKE.life };
+      smokes.set(c.id, c);
+      broadcast({ t: 'smoke', ...smokePublic(c), dir });
       break;
     }
     case 'mirror': {
@@ -882,7 +903,7 @@ function removePlayer(id) {
 }
 
 // cycloneStopsGoats: the goat module can knock a charging goat dizzy (bots then answer a charge with a cyclone)
-const world = { players, props, projectiles, goats, decoys, walls, frostfalls, handle, now, cycloneStopsGoats: !!Goats.dizzyGoat };
+const world = { players, props, projectiles, goats, decoys, walls, frostfalls, smokes, handle, now, cycloneStopsGoats: !!Goats.dizzyGoat };
 const goatCtx = {
   players, props, now, broadcast, breakProp, killPlayer,
   // humans apply goat knockback themselves from the goatRam message
@@ -954,6 +975,7 @@ wss.on('connection', (ws) => {
         projectiles: [...projectiles.values()].map(pr => ({ id: pr.id, kind: pr.kind, owner: pr.owner, propType: pr.propType, p: pr.p, v: pr.v, g: pr.g, r: pr.radius, life: pr.life - (now() - pr.born) })),
         walls: [...walls.values()].map(wallPublic),
         frostfalls: [...frostfalls.values()].map(frostPublic),
+        smokes: [...smokes.values()].map(smokePublic),
         decoys: [...decoys.values()].map(decoyPublic),
       }));
       broadcast({ t: 'joined', player: playerPublic(p) });

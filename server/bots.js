@@ -40,6 +40,8 @@ const DIFFICULTY = {
 
 const CYC = C.SPELLBOOK.cyclone, SKY = C.SPELLBOOK.skyward, LASH = C.SPELLBOOK.sanguine_lash;
 const BULWARK = C.SPELLBOOK.glacial_bulwark, SKIM = C.SPELLS.skim, RELIC = C.SPELLBOOK.trapped_relic, FROST = C.SPELLBOOK.frostfall;
+const SMOKE = C.SPELLBOOK.smoke_screen;
+let clouds = [];   // Smoke Screen clouds this tick: nobody sees into, out of or through them
 const kit = (q) => C.kitOf(q.wizard);
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -77,6 +79,11 @@ export function botKnockback(p, dir, kb) {
   p.bot.vel[1] += dir[2] * kb;
 }
 
+// Smoke Screen: the server moves a bot through its backward dash (clients do this themselves).
+export function botDash(p, dir, until) {
+  p.bot.dash = { dir, until };
+}
+
 // A Trapped Relic went off as this bot lifted it.
 export function botNoteRelic(p, propId, t) {
   if (p.bot.cfg.relicMemory) p.bot.burned.set(propId, t);
@@ -105,6 +112,7 @@ function trackVelocities(players, t) {
 
 export function updateBots(dt, world) {
   const t = world.now();
+  clouds = [...(world.smokes?.values() || [])].filter(c => t < c.until);
   let any = false;
   for (const p of world.players.values()) {
     if (!p.bot) continue;
@@ -181,7 +189,8 @@ function threatOf(me, proj) {
 
 function yawTo(from, to) { return Math.atan2(to[0] - from[0], to[2] - from[2]); }
 
-function hasLOS(a, b) { return !C.pillarBlocks(a, b, 0.25); }
+function hasLOS(a, b) { return !C.pillarBlocks(a, b, 0.25) && !C.smokeBlocks(a, b, clouds); }
+const smokeHides = (a, b) => C.smokeBlocks(a, b, clouds);
 
 // ---------------------------------------------------------------- decisions (20 Hz)
 function think(me, world, t) {
@@ -191,10 +200,13 @@ function think(me, world, t) {
   const K = kit(me);
 
   // ---- target selection: who hurt us, who's weak, who's close; a small preference for humans
+  // a target that vanished into smoke is lost: remember where, and pick someone we can see
+  const cur = world.players.get(b.targetId);
+  if (cur && !cur.dead && smokeHides(me.p, cur.p)) { b.lastSeen = cur.p.slice(); b.lastSeenUntil = t + 3; b.targetId = null; b.decoyId = null; }
   if (t >= b.retargetAt || !world.players.get(b.targetId) || world.players.get(b.targetId).dead) {
     let best = null, bs = Infinity;
     for (const q of world.players.values()) {
-      if (q === me || q.dead) continue;
+      if (q === me || q.dead || smokeHides(me.p, q.p)) continue;
       let s = dist2D(me.p, q.p) + q.hp * 0.06;
       if (q.id === me.lastHitBy) s -= 7;
       if (!q.bot) s -= 3;
@@ -352,6 +364,7 @@ function think(me, world, t) {
     const away = [me.p[0] - target.p[0], 0, me.p[2] - target.p[2]];
     if (K.mobility === 'mirror_step' && cfg.blinkDodge && mobilityReady(me, t) && Math.random() < 0.35 * cfg.dodge) return mirrorStep(me, away, act);
     if (K.mobility === 'blink' && cfg.blinkDodge && mobilityReady(me, t) && Math.random() < 0.35 * cfg.dodge) return blinkAway(me, away, act);
+    if (K.mobility === 'smoke_screen' && mobilityReady(me, t) && Math.random() < 0.35 * Math.max(cfg.dodge, 0.5)) return smokeAway(me, away, act);
     if (wallReady(me, t) && d > 3.5 && Math.random() < 0.4 * cfg.dodge) return raiseWall(me, target.p, act);
   }
 
@@ -406,7 +419,9 @@ function think(me, world, t) {
       if (me.lash) b.lashFireAt = t + LASH.windup + 0.02;
       return;
     }
-  } else if (K.power === 'frostfall' && powerReady && !targetAir && !me.carrying && d < FROST.range) {
+  } else if (K.power === 'frostfall' && t >= me.cd.power && !targetAir && !me.carrying && d < FROST.range) {
+    // Rime can cast it during a Skyward Flash: sometimes go up first and drop it from above
+    if (!meAir && K.mobility === 'skyward' && cfg.blinkDodge && mobilityReady(me, t) && d > 7 && Math.random() < 0.25) { act({ t: 'skyward' }); return; }
     // Frostfall: where a slowed, bound or stunned target will still be when the ice lands
     const stuck = rooted(target, t) || isStunned(target, t) || busyCasting(target);
     const slowed = target.slowUntil > t;
@@ -516,6 +531,7 @@ function respondGoat(me, world, g, vel, tc, t, act) {
   }
   if (K.mobility === 'blink' && mobilityReady(me, t)) return blinkSideways(me, null, act, vel);
   if (K.mobility === 'mirror_step' && mobilityReady(me, t)) return mirrorStep(me, [-vel[2], 0, vel[0]], act);
+  if (K.mobility === 'smoke_screen' && mobilityReady(me, t)) return smokeAway(me, [-vel[2] * b.strafe, 0, vel[0] * b.strafe], act);
   const l = Math.hypot(vel[0], vel[2]) || 1;
   b.dodgeVec = [-vel[2] / l * b.strafe, vel[0] / l * b.strafe];
   b.dodgeUntil = t + 0.6;
@@ -607,6 +623,13 @@ function blinkAway(me, dir, act) {
   me.bot.vel = [0, 0];
 }
 
+// Smoke Screen: the dash goes backwards, so turn our back to where we want to go.
+function smokeAway(me, dir, act) {
+  const d = inward(me, dir);
+  me.yaw = Math.atan2(-d[0], -d[2]);
+  act({ t: 'smoke', yaw: me.yaw, from: me.p.slice() });
+}
+
 // Glacial Bulwark between us and `toward`.
 function raiseWall(me, toward, act) {
   me.yaw = yawTo(me.p, toward);
@@ -627,6 +650,7 @@ function respondCyclone(me, caster, t, act) {
   if (cfg.blinkDodge && mobilityReady(me, t)) {
     if (K.mobility === 'skyward') return act({ t: 'skyward' });
     if (K.mobility === 'mirror_step') return mirrorStep(me, away, act);
+    if (K.mobility === 'smoke_screen') return smokeAway(me, away, act);
     return blinkSideways(me, caster.p, act, away);
   }
   if (wallReady(me, t) && d > BULWARK.dist + 0.6) return raiseWall(me, caster.p, act);
@@ -663,6 +687,7 @@ function respondFrostfall(me, f, df, t, act) {
     if (K.mobility === 'skyward') return act({ t: 'skyward' });
     if (K.mobility === 'mirror_step') return mirrorStep(me, out, act);
     if (K.mobility === 'blink') return blinkAway(me, out, act);
+    if (K.mobility === 'smoke_screen') return smokeAway(me, out, act);
   }
   if (me.charging || me.lash) act({ t: me.charging ? 'chargeRelease' : 'lashRelease', dir: [Math.sin(me.yaw), 0, Math.cos(me.yaw)] });
   b.dodgeVec = [out[0], out[2]];
@@ -702,6 +727,7 @@ function runLashPlan(me, caster, rec, fireAt, d, t, act) {
 function evade(me, act, along) {
   const K = kit(me);
   if (K.mobility === 'skyward') return act({ t: 'skyward' });
+  if (K.mobility === 'smoke_screen') return smokeAway(me, [-along[2] * me.bot.strafe, 0, along[0] * me.bot.strafe], act);
   if (K.mobility === 'mirror_step') return mirrorStep(me, [-along[2] * me.bot.strafe, 0, along[0] * me.bot.strafe], act);
   blinkSideways(me, null, act, along);
 }
@@ -769,8 +795,15 @@ function moveBot(me, dt, world, t) {
     me.p[1] = Math.max(0, me.p[1] - rate * dt);
   }
 
+  // Smoke Screen dash: straight back at dash speed, colliding as usual
+  if (b.dash && t < b.dash.until && !stunned) {
+    const v = SMOKE.distance / SMOKE.dashTime;
+    b.vel = [b.dash.dir[0] * v, b.dash.dir[2] * v];
+  } else b.dash = null;
+
   let wx = 0, wz = 0;
-  if (!stunned) {
+  if (b.dash) { /* the dash carries us */ }
+  else if (!stunned) {
     if (t < b.dodgeUntil && b.dodgeVec) { wx = b.dodgeVec[0]; wz = b.dodgeVec[1]; }
     else if (target && !target.dead) {
       const dx = target.p[0] - me.p[0], dz = target.p[2] - me.p[2];
@@ -795,6 +828,9 @@ function moveBot(me, dt, world, t) {
       const fg = me.blocking && b.faceGoat ? world.goats.find(g => g.id === b.faceGoat) : null;
       if (fg) me.yaw = Math.atan2(fg.x - me.p[0], fg.z - me.p[2]);
       else if (!me.blocking) me.yaw = Math.atan2(fx, fz);
+    } else if (b.lastSeen && t < b.lastSeenUntil && dist2D(me.p, b.lastSeen) > SMOKE.radius + 1) {
+      // lost them in smoke: go toward where they were last seen (but not into the cloud)
+      wx = b.lastSeen[0] - me.p[0]; wz = b.lastSeen[2] - me.p[2];
     } else {
       // nobody to fight: drift toward the middle
       wx = -me.p[0]; wz = -me.p[2];
@@ -814,7 +850,7 @@ function moveBot(me, dt, world, t) {
   if (rooted(me, t)) { speed = 0; b.vel = [0, 0]; }
   const tx = wl > 0.01 ? wx / wl * speed : 0, tz = wl > 0.01 ? wz / wl * speed : 0;
   const k = Math.min(1, dt * 12);
-  b.vel[0] += (tx - b.vel[0]) * k; b.vel[1] += (tz - b.vel[1]) * k;
+  if (!b.dash) { b.vel[0] += (tx - b.vel[0]) * k; b.vel[1] += (tz - b.vel[1]) * k; }
   me.p[0] += b.vel[0] * dt; me.p[2] += b.vel[1] * dt;
 
   // collisions, same as the client's

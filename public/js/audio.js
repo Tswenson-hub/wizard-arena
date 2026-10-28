@@ -206,6 +206,11 @@ export class Sfx {
     this.play('ward_break', { pos, vol: 1, rate: 1.2 });
     this.play('prop_shatter_stone', { pos, vol: 0.9, rate: 1.25, delay: 0.03 });
   }
+  // Smoke Screen: a low whoosh and a puff.
+  smoke(pos) {
+    this.play('tk_throw', { pos, vol: 0.9, rate: 0.55, jitter: 0.05 });
+    this.play('blink', { pos, vol: 0.4, rate: 0.6, jitter: 0.05, delay: 0.04 });
+  }
   // Frostfall: a cold rising chime as it's cast; a crushing crash of ice on impact.
   frostCast(pos) {
     this.play('tk_lift', { pos, vol: 0.7, rate: 1.4, jitter: 0.04 });

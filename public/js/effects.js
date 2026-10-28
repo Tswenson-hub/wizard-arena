@@ -4,7 +4,25 @@ import * as C from '../shared/constants.js';
 import { makePropMesh, makeFragments } from './world.js';
 
 const SPELL_COLORS = { fast: 0x7ad8ff, heavy: 0xff7a2a, prop: 0xb48cff, skim: 0xbfeaff, lash: 0xff2a3c };
-const BULWARK = C.SPELLBOOK.glacial_bulwark, FROST = C.SPELLBOOK.frostfall;
+const BULWARK = C.SPELLBOOK.glacial_bulwark, FROST = C.SPELLBOOK.frostfall, SMOKE = C.SPELLBOOK.smoke_screen;
+
+// Smoke Screen puff: a soft lumpy blob, drawn once.
+let puffTex = null;
+function puffTexture() {
+  if (puffTex) return puffTex;
+  const S = 128, c = document.createElement('canvas'); c.width = c.height = S;
+  const g = c.getContext('2d');
+  let seed = 5;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let i = 0; i < 14; i++) {
+    const x = S / 2 + (rnd() - 0.5) * S * 0.4, y = S / 2 + (rnd() - 0.5) * S * 0.4, r = S * (0.18 + rnd() * 0.2);
+    const grad = g.createRadialGradient(x, y, 0, x, y, r);
+    grad.addColorStop(0, 'rgba(255,255,255,0.55)'); grad.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grad; g.fillRect(0, 0, S, S);
+  }
+  puffTex = new THREE.CanvasTexture(c); puffTex.colorSpace = THREE.SRGBColorSpace;
+  return puffTex;
+}
 
 // Frostfall's warning: a dark shadow with a frosty rim, drawn once.
 let frostShadowTex = null;
@@ -415,6 +433,39 @@ export class Effects {
     return sp;
   }
 
+  // ---------------------------------------------------------------- Smoke Screen
+  // A dense grey-brown cloud of layered billboard puffs that drift and churn, a few ember-lit ones low
+  // down, for `left` seconds, then a SMOKE.fade fade. Timed on the real clock.
+  smoke(p, left) {
+    const g = new THREE.Group();
+    g.position.set(p[0], 0, p[2]);
+    const puffs = [];
+    const N = 34;
+    for (let i = 0; i < N; i++) {
+      const ember = i < 6;
+      const shade = ember ? new THREE.Color(0xc0643a) : new THREE.Color().setHSL(0.07, 0.12 + Math.random() * 0.1, 0.32 + Math.random() * 0.16);
+      const mat = new THREE.SpriteMaterial({ map: puffTexture(), color: shade, transparent: true, opacity: 0, depthWrite: false, rotation: Math.random() * Math.PI * 2 });
+      const sp = new THREE.Sprite(mat);
+      const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * SMOKE.radius * 0.8;
+      const y = ember ? 0.4 + Math.random() * 0.5 : 0.5 + Math.random() * (SMOKE.height - 0.6);
+      sp.position.set(Math.sin(a) * r, y, Math.cos(a) * r);
+      const size = (ember ? 1.4 : 2.4) + Math.random() * 1.4;
+      sp.scale.setScalar(size * 0.3);
+      sp.renderOrder = 3;
+      g.add(sp);
+      puffs.push({ sp, size, base: sp.position.clone(), phase: Math.random() * 6.28, spin: (Math.random() - 0.5) * 0.6, alpha: ember ? 0.55 : 0.82 });
+    }
+    this.scene.add(g);
+    const pos = new THREE.Vector3(p[0], 0.8, p[2]);
+    this.burst(pos, 0x8a7a6a, 22, 4, 0.6, -1);
+    this.burst(pos, 0xff8a3c, 12, 3, 0.25, -2);
+    for (let i = 0; i < 6; i++) this.dust(pos, 2);
+    const now = performance.now() / 1000;
+    const e = { group: g, puffs, born: now, endAt: now + left, x: p[0], z: p[2] };
+    (this.smokes ??= new Set()).add(e);
+    return e;
+  }
+
   // ---------------------------------------------------------------- Frostfall
   // The warning everyone sees: a shadow growing to the full circle with a pale frost ring, and the
   // block of ice dropping out of the sky for the last FROST.fall seconds. `left` = seconds to impact.
@@ -532,6 +583,21 @@ export class Effects {
         e.ice.rotation.y += dt * 2;
       }
       if (e.left < -1) { this.frosts.delete(e); this.scene.remove(e.group); }   // lost the impact message
+    }
+
+    // smoke clouds: billow out, churn, then fade
+    const tNow = performance.now() / 1000;
+    for (const e of this.smokes || []) {
+      const grow = Math.min(1, (tNow - e.born) / 0.35);
+      const fade = Math.max(0, Math.min(1, (e.endAt + SMOKE.fade - tNow) / SMOKE.fade));
+      if (fade <= 0) { this.smokes.delete(e); this.scene.remove(e.group); continue; }
+      for (const q of e.puffs) {
+        const w = tNow * 0.6 + q.phase;
+        q.sp.position.set(q.base.x + Math.sin(w) * 0.35, q.base.y + Math.sin(w * 0.7) * 0.15 + (1 - fade) * 0.6, q.base.z + Math.cos(w * 0.8) * 0.35);
+        q.sp.scale.setScalar(q.size * (0.3 + 0.7 * (1 - Math.pow(1 - grow, 3))) * (1 + (1 - fade) * 0.3));
+        q.sp.material.rotation += q.spin * dt;
+        q.sp.material.opacity = q.alpha * grow * fade;
+      }
     }
 
     // walls rise out of the ground
