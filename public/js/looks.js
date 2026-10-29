@@ -154,6 +154,16 @@ const SHARED_CLIPS = [{
     combo3: { yaw: 45, clip: 'Triple_Combo_Attack', from: 1.85, to: 3.3, warp: [[1.85, 0], [2.3, 0.15], [2.6, 0.4], [3.3, 0.8]] },  // the high finisher, then back to the stance
   },
 }, {
+  // Cinder's Fireball (Ty): the same three strikes, cut so each lands at 0.08 s, as the 0.08 s cross-fade into the
+  // one-shot completes. The bolt spawns the moment main.js plays the key, and the 0.30 s cast root then covers the
+  // follow-through. Shots are at least 0.5 s apart; combo3 (the finisher) also recovers to the stance.
+  from: 'embibe', to: ['cinder'],
+  keys: {
+    combo1: { yaw: 45, clip: 'Triple_Combo_Attack', from: 0.6, to: 1.0, warp: [[0.6, 0], [0.76, 0.08], [1.0, 0.45]] },
+    combo2: { yaw: 45, clip: 'Triple_Combo_Attack', from: 1.36, to: 1.85, warp: [[1.36, 0], [1.5, 0.08], [1.85, 0.45]] },
+    combo3: { yaw: 45, clip: 'Triple_Combo_Attack', from: 2.14, to: 3.3, warp: [[2.14, 0], [2.28, 0.08], [2.6, 0.35], [3.3, 0.8]] },
+  },
+}, {
   from: 'embibe', to: ['gale'],
   keys: { death: 'dying_backwards' },        // Gale was the last hero who sank: staggers back, flat by about 1.4 s
 }];
