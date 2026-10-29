@@ -1,5 +1,51 @@
 # Spells hand-off
 
+## Round 8b: Flask Step's lob, Ty's sounds (`1216b32`, `4f9f89d`)
+
+### Flask Step
+- **The throw is a true arc from her aim.** `C.flaskLaunch(aim)` lifts the aim's elevation by 0.2 rad (so a level aim
+  still lobs) and caps it at 1.3 rad (74°). It flies at 16.3 m/s under gravity 10: about **26–28 m** at 45°.
+- **The aim keeps following the crosshair through the 0.6 s wind-up** (`flaskAim`).
+- **Camera:** it can now look up to pitch −0.95 (was −0.6), so she can throw high onto or over cover.
+- **Where she lands:** `C.flaskPath` / `C.flaskSettle` are shared by the server and the client. The potion flies over
+  fences and crops; anything taller stops it, and she arrives 0.8 m short (the wall rule). She is then nudged out of
+  anything solid.
+  - Nothing raised in this engine is walkable (wizards always stand at ground level), so "on top of anything walkable"
+    has nothing to land on. She comes down on the ground.
+- **Preview:** a dotted arc and a landing ring during the wind-up (`effects.flaskPreview`).
+- **Bots** escape with a high lob (`C.lobAt(..., high)`) onto a spot behind one of the nearest big covers, as long as
+  the threat can't see where it lands; otherwise a plain lob straight away. Offline, a valid over-cover lob exists from
+  88 % of random positions.
+- **Verified** (`/tmp/wa-spells/t_flask2.mjs`, the prediction made from the server's own launch point):
+
+  | Throw | Landed | Off from the prediction |
+  |---|---|---|
+  | 45° | 27.6 m | 0.02 m |
+  | Level aim | 13.5 m | 0.02 m |
+  | Aim raised to 60° mid wind-up | 16.3 m | 0.08 m |
+  | High lob over a 5 m pillar (a straight line is blocked) | 13.9 m, behind it | 0.01 m |
+
+  - In a 120 s bot match, Embibe bots Flask-Stepped 4 times, 2 of them 74° lobs over cover.
+  - Browser: the preview is live during the wind-up (`r8_flask_preview_look.png`, `r8_flask_preview_high.png`).
+
+### Ty's sounds
+Processed as before (`/tmp/wa-spells/snd/make_r8.py`): decoded with afconvert, mono, leading silence trimmed (not the
+loops), fades, peak-normalized to −1 dB, AAC .m4a at 44.1 kHz. Loops have an equal-power crossfade seam, and `audio.js`
+loops inside the AAC padding. The Pixabay files are credited by filename and author in `CREDITS.md` ("provided by Ty (Pixabay)").
+| Key | Source | Plays |
+|---|---|---|
+| `potion_shatter` | universfield-glass-hit-192119.mp3 | Potion Toss shattering on impact: the rate varies ±8 % per throw, ×0.86 for the stun throw |
+| `toxic_smash` | universfield-glass-bottle-smash-277554.mp3 | Toxic Flask breaking open (the `pool` message) |
+| `smoke_flask` | freesound_community-breaking-glass-83809.mp3, first 2.2 s | Smoke Flask smashed at her feet |
+| `flask_land` | the same, first 0.75 s | Flask Step's landing (a quiet blink stays at the departure) |
+| `fizz_loop` | freesound_community-soda-fizzing-80464.mp3, 1.0–4.5 s looped | While a Toxic pool lasts: 3D at the pool, fading in over 0.4 s and out over 0.6 s at `poolEnd` |
+| `brew_drink` | the same, 0.4–1.9 s | Berserker Brew, the drink |
+| `blizzard_cast` | Rime ULT.mp3, 6.0–7.2 s (its loudest onset) | Blizzard's start |
+| `blizzard_loop` | Rime ULT.mp3, 6.8–9.2 s looped | Under the 2.5 s cone, following Rime, faded out over 0.5 s at `blizzardEnd` (or on his death) |
+
+All **33** manifest keys decode in Chromium (Playwright `t_r8b.py`), and each new one plays (loops included) with no
+console errors.
+
 ## Round 8: a longer, cancellable Ram Ride; Sprint; Embibe the Alchemist (`1cc4d26`, `2173a6a`)
 
 ### A regression I found and fixed
