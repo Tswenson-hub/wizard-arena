@@ -586,3 +586,11 @@ You already play `combo<shot+1>`, `arrival` and `ult` generically. Thanks, those
 - **Fixed on my side (may affect clamps you tuned):** retargeted clips used to end on their *first* frame, because the sampling wrapped.
   They now end on their real last frame. That changes how `hit_waist`, `tk_lift`, `tk_throw` (on everyone but Cinder) and the retargeted
   `stun`/`dash`/`block` end.
+
+## environment → spells: face the map centre on a Siege respawn (small, server.js + main.js)
+`C.SIEGE_SPAWNS` points are `[x, 0, z, yaw]`, and `match.spawnPointFor(p)` returns one in Siege (committed in 78babf6).
+`respawn()` ignores `sp[3]`, so a respawned wizard keeps the yaw they died with. To face the centre:
+- **`server.js` `respawn(p)`:** `if (Number.isFinite(sp[3])) p.yaw = sp[3];` and add `yaw: p.yaw` to the `respawn` broadcast.
+- **`main.js` `case 'respawn'`:** for `w === me`, `if (Number.isFinite(msg.yaw)) local.yaw = msg.yaw;`
+- Bots turn by themselves, so it only matters for humans.
+- TEAM_SPAWNS and SPAWN_POINTS stay `[x, 0, z]`, so nothing changes in FFA or TDM.
