@@ -12,12 +12,14 @@ export const WIZARDS = {
     model: '/models/wizards/cinder.glb',   // null = base wizard.glb, tinted by `tint`
     kit: { primary: 'fireball', power: 'meteor', mobility: 'smoke_screen', guard: 'firewall', utility: 'telekinesis', ultimate: 'meteor_rain' },
     speed: 3.0,               // walk speed (m/s; Ty: normal movement is a walk); spells track, like kit
+    sprint: 5.5,              // Shift: a run that drains stamina (round 8)
   },
   gale: {
     id: 'gale', name: 'Gale', title: 'the Tempest Dervish', role: 'Diver · blinks in and spins',
     color: 0xb46cff, tint: 0x9a6bff, model: '/models/wizards/gale.glb',
     kit: { primary: 'gale_shear', power: 'cyclone', mobility: 'blink', guard: 'tempest_veil', utility: 'telekinesis', ultimate: 'eye_of_storm' },
     speed: 3.6,               // Gale stays the fastest
+    sprint: 6.2,              // Shift (round 8)
   },
   rime: {
     id: 'rime', name: 'Rime', title: 'the Frost Warden', role: 'Fortress · slows, walls off, shells from cover',
@@ -44,7 +46,7 @@ export const WIZARDS = {
   embibe: {
     id: 'embibe', name: 'Embibe', title: 'the Alchemist', role: 'Potion thrower · pools, splashes, a brutal brew',
     color: 0x7fd34a, tint: 0x6a3a9a, model: null,
-    kit: { primary: 'fireball', power: 'frostfall', mobility: 'blink', guard: 'tempest_veil', utility: 'telekinesis', ultimate: 'eye_of_storm' },
+    kit: { primary: 'potion_toss', power: 'toxic_flask', mobility: 'flask_step', guard: 'smoke_flask', utility: 'telekinesis', ultimate: 'berserker_brew' },
     speed: 3.0,
   },
 };
