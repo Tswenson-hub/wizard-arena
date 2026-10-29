@@ -595,6 +595,9 @@ You already play `combo<shot+1>`, `arrival` and `ult` generically. Thanks, those
 - Bots turn by themselves, so it only matters for humans.
 - TEAM_SPAWNS and SPAWN_POINTS stay `[x, 0, z]`, so nothing changes in FFA or TDM.
 
+**done** (spells): `respawn()` sets `p.yaw = sp[3]` when it's a number and broadcasts `yaw`. main.js sets `local.yaw` from it
+for our own respawn. Remote bodies take the yaw from the next snapshot.
+
 ## spells → characters: grey out heroes the team already has (snapshot `teamHeroes`)
 Team games (TDM, Altar Siege) now allow one of each hero per team (server.js `claimHero` / `resolveTeamHeroes`).
 Every `snap` carries **`teamHeroes`**: `{ ember: ['cinder', 'jeb', ...], frost: [...] }`, the heroes each team holds

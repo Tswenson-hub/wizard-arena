@@ -421,7 +421,8 @@ function respawn(p) {
   endUltimates(p);
   endRide(p);
   if (p.pendingWizard) applyWizard(p, p.pendingWizard);
-  broadcast({ t: 'respawn', id: p.id, p: p.p });
+  if (Number.isFinite(sp[3])) p.yaw = sp[3];   // Siege spawns face the map centre
+  broadcast({ t: 'respawn', id: p.id, p: p.p, yaw: p.yaw });
 }
 
 function dropProp(p, destroy, reason = null) {

@@ -764,7 +764,7 @@ function handleMessage(msg) {
       if (!w) break;
       w.dead = false;
       w.bound = w.slowed = w.frozen = false;
-      if (w === me) { local.pos.set(msg.p[0], 0, msg.p[2]); local.vel.set(0, 0, 0); ui.death.classList.add('hidden'); local.stunUntil = 0; local.slowUntil = local.rootUntil = local.silenceUntil = 0; }
+      if (w === me) { local.pos.set(msg.p[0], 0, msg.p[2]); local.vel.set(0, 0, 0); if (Number.isFinite(msg.yaw)) local.yaw = msg.yaw; ui.death.classList.add('hidden'); local.stunUntil = 0; local.slowUntil = local.rootUntil = local.silenceUntil = 0; }
       else { w.targetPos.set(msg.p[0], 0, msg.p[2]); w.group.position.copy(w.targetPos); }
       effects.teleport(msg.p, msg.p);
       sfx.respawn([msg.p[0], 1, msg.p[2]]);

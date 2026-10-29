@@ -38,6 +38,8 @@
   - `MATCH_DEBUG=1 node tools/test/modematch-unit.mjs`: all ok.
   - modematch: siege, tdm (`--target 4`) and ffa all PASS, with 0 friendly-fire hits and 3v3 throughout.
   - botmatch is fine.
+- **Siege respawn facing** (environment's request): `respawn()` uses `sp[3]` as the yaw and broadcasts it, and main.js turns
+  our camera to it. Checked: each respawn's yaw matches the direction to the centre within 0.03 rad.
 - **Note (not from this change):** under heavy machine load (a 5-minute page load), a headless page's socket closed
   with 1006 about 20 s after join. That timing matches the server's 15 s ping heartbeat dropping a stalled client.
 
