@@ -306,6 +306,105 @@ export const SIEGE_SPAWNS = {
 export const SPAWN_POINTS = [...TEAM_SPAWNS.ember, ...TEAM_SPAWNS.frost, [-13.5, 0, 1.5], [12.5, 0, 1.5]];
 
 
+// ------------------------------------------------------------ walkable surfaces (platforms and ramps)
+// High ground you can stand on: boxes (a flat top) and ramps (a top sloping along the piece's local +z).
+//   { kind: 'box',  x, z, w, d, yaw, top,    name }   footprint w (local x) by d (local z), solid from the ground to `top`
+//   { kind: 'ramp', x, z, w, d, yaw, y0, y1, name }   the top rises linearly from y0 at local z = -d/2 to y1 at +d/2
+// yaw follows Object3D.rotation.y (local +z points along (sin yaw, cos yaw)). Everything is solid below its top:
+// a piece's sides are walls for anyone whose feet are more than STEP_UP below the top there, and shots and
+// line of sight are blocked below the top (they pass over). Surfaces are not in COLLIDERS (those block at any
+// height); every system asks the helpers below instead. Goats stay on the ground and treat whole footprints as
+// obstacles (surfacePushOut with footY -1).
+export const STEP_UP = 0.45;      // the highest rise a wizard steps onto without jumping
+export const SURFACES = [];       // filled in by the pieces further down
+const sLocal = (s, x, z) => {
+  const dx = x - s.x, dz = z - s.z, c = Math.cos(s.yaw || 0), n = Math.sin(s.yaw || 0);
+  return [dx * c - dz * n, dx * n + dz * c];
+};
+const sWorld = (s, lx, lz) => {
+  const c = Math.cos(s.yaw || 0), n = Math.sin(s.yaw || 0);
+  return [s.x + lx * c + lz * n, s.z - lx * n + lz * c];
+};
+// The top of `s` at local (lx, lz) (no bounds check).
+const sTop = (s, lz) => s.kind === 'ramp' ? s.y0 + (s.y1 - s.y0) * Math.max(0, Math.min(1, lz / s.d + 0.5)) : s.top;
+const sInside = (s, lx, lz, pad = 0) => Math.abs(lx) <= s.w / 2 + pad && Math.abs(lz) <= s.d / 2 + pad;
+
+// The solid top under (x, z): the highest surface there, or 0 (the ground).
+export function surfaceTopAt(x, z) {
+  let h = 0;
+  for (const s of SURFACES) { const [lx, lz] = sLocal(s, x, z); if (sInside(s, lx, lz)) h = Math.max(h, sTop(s, lz)); }
+  return h;
+}
+// Where a wizard with feet at footY stands at (x, z): the highest top there that is at most STEP_UP above the
+// feet (so you step up stairs and ramps, stay on what you stand on, and drop off edges), or 0 (the ground).
+export function surfaceHeight(x, z, footY = 0) {
+  let h = 0;
+  for (const s of SURFACES) {
+    const [lx, lz] = sLocal(s, x, z);
+    if (!sInside(s, lx, lz)) continue;
+    const t = sTop(s, lz);
+    if (t <= footY + STEP_UP && t > h) h = t;
+  }
+  return h;
+}
+// Walls: push a circle (x, z, r) with feet at footY out of every piece whose top there is more than STEP_UP above
+// the feet. Returns [x, z] (unchanged if nothing is hit). Iterates a few times for corners between pieces.
+export function surfacePushOut(x, z, footY, r) {
+  for (let it = 0; it < 3; it++) {
+    let moved = false;
+    for (const s of SURFACES) {
+      const [lx, lz] = sLocal(s, x, z);
+      if (!sInside(s, lx, lz, r)) continue;
+      const cx = Math.max(-s.w / 2, Math.min(s.w / 2, lx)), cz = Math.max(-s.d / 2, Math.min(s.d / 2, lz));
+      if (sTop(s, cz) <= footY + STEP_UP) continue;            // low enough to step onto here
+      let nx, nz;
+      if (cx === lx && cz === lz) {
+        // centre inside the footprint: out through the nearest side
+        const ex = s.w / 2 - Math.abs(lx), ez = s.d / 2 - Math.abs(lz);
+        if (ex < ez) { nx = Math.sign(lx || 1) * (s.w / 2 + r); nz = lz; } else { nx = lx; nz = Math.sign(lz || 1) * (s.d / 2 + r); }
+      } else {
+        const dx = lx - cx, dz = lz - cz, dd = Math.hypot(dx, dz);
+        if (dd >= r) continue;
+        nx = cx + dx / dd * r; nz = cz + dz / dd * r;
+      }
+      [x, z] = sWorld(s, nx, nz); moved = true;
+    }
+    if (!moved) break;
+  }
+  return [x, z];
+}
+// The first point where the segment a -> b ([x, y, z] each) enters a piece (side or top), as
+// { t (0..1 along the segment), p: [x, y, z], surface }, or null. For projectiles and line of sight.
+export function surfaceSegmentHit(a, b) {
+  let best = null;
+  for (const s of SURFACES) {
+    const [ax, az] = sLocal(s, a[0], a[2]), [bx, bz] = sLocal(s, b[0], b[2]);
+    const ymax = s.kind === 'ramp' ? Math.max(s.y0, s.y1) : s.top;
+    // clip to the piece's bounding box in local space (slabs)
+    let t0 = 0, t1 = 1, ok = true;
+    for (const [p0, d, lo, hi] of [[ax, bx - ax, -s.w / 2, s.w / 2], [az, bz - az, -s.d / 2, s.d / 2], [a[1], b[1] - a[1], -1e9, ymax]]) {
+      if (Math.abs(d) < 1e-9) { if (p0 < lo || p0 > hi) { ok = false; break; } continue; }
+      let u0 = (lo - p0) / d, u1 = (hi - p0) / d;
+      if (u0 > u1) [u0, u1] = [u1, u0];
+      t0 = Math.max(t0, u0); t1 = Math.min(t1, u1);
+      if (t0 > t1) { ok = false; break; }
+    }
+    if (!ok) continue;
+    let t = t0;
+    if (s.kind === 'ramp') {
+      // inside the box, the gap above the ramp's top is linear in t: find where it first reaches 0
+      const gap = (u) => (a[1] + (b[1] - a[1]) * u) - sTop(s, az + (bz - az) * u);
+      const g0 = gap(t0), g1 = gap(t1);
+      if (g0 > 0) { if (g1 > 0) continue; t = t0 + (t1 - t0) * g0 / (g0 - g1); }
+    }
+    if (!best || t < best.t) best = { t, surface: s, p: [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t] };
+  }
+  return best;
+}
+export const surfaceBlocks = (a, b) => !!surfaceSegmentHit(a, b);
+// Footprint corners in world space (for drawing, overlays and the goats' detour boxes).
+export const surfaceCorners = (s) => [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([i, k]) => sWorld(s, i * s.w / 2, k * s.d / 2));
+
 // Everything solid, as circles. Movement (players, bots, goats) collides with all of them;
 // projectiles pass over anything lower than their height (`h`); line-of-sight checks
 // (telekinesis, bot aiming, cover) only count colliders at least LOS_HEIGHT tall.

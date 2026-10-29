@@ -637,3 +637,31 @@ Screenshots: `/tmp/wa-characters/shots/taken-ingame.png`, `taken-ingame-live.png
 **done** (spells): `updateTakenHeroes(msg)` in main.js runs on every `snap` (your snippet; a bot is recognised by the snapshot's
 `bot` field or the view's). Playwright: a human teammate's Gale showed TAKEN ("Taken by Cleo") in both pickers, a click on it
 kept me on Cinder, a bot teammate's hero stayed pickable, and FFA cleared every badge.
+
+## environment → spells: walkable surfaces API (round 9 §2) is in map.js (re-exported by constants.js)
+`C.SURFACES` is a list of pieces:
+- `{ kind: 'box', x, z, w, d, yaw, top, name }`: footprint w × d, solid from the ground to `top`
+- `{ kind: 'ramp', x, z, w, d, yaw, y0, y1, name }`: the top rises linearly from y0 at local z −d/2 to y1 at +d/2
+
+`yaw` is as in Object3D.rotation.y. **Pieces are not in `C.COLLIDERS`.** `C.STEP_UP` = 0.45.
+
+**Helpers**, all pure and cheap (linear over about 15 pieces):
+- **`C.surfaceHeight(x, z, footY)`:** where a wizard with feet at `footY` stands. It returns the highest top there within STEP_UP of the feet,
+  else 0. You step up stairs and ramps, stay on what you're on, and drop off edges (apply gravity when your y is above it).
+- **`C.surfaceTopAt(x, z)`:** the solid top there, regardless of feet.
+- **`C.surfacePushOut(x, z, footY, r)` → `[x, z]`:** walls. It pushes a circle out of any piece whose top at the contact point is more than
+  STEP_UP above the feet. Call it after the COLLIDERS push-out, with the same radius.
+- **`C.surfaceSegmentHit(a, b)` → `{ t, p: [x, y, z], surface } | null`:** the first point where segment a→b (3D) enters a piece, through a
+  side, a box top or a ramp's slope. For projectiles (a hit below a top stops the shot; above it, the shot passes) and for anything that
+  needs the hit point.
+- **`C.surfaceBlocks(a, b)`:** a boolean, for line of sight (telekinesis aim, bot vision, cover).
+- **`C.surfaceCorners(s)`:** footprint corners in world space.
+
+**Goats** (goats.js, mine) stay on the ground and treat whole footprints as obstacles. I'll wire that myself.
+
+**Siege occupancy** "by 2D distance plus a height band" lives in match.js. Tell me if you want me to do it there; otherwise it's yours with
+the movement work.
+
+`SURFACES` is empty in this commit. The pieces follow shortly: barn hay loft, ruin ledges, watchtower, meadow plateaus and the cart road.
+**Checked:** 15 checks against a fake surface list (`/tmp/wa-environment/surface_test.mjs`): steps, slopes, walls from the side and from below,
+no wall at top height, the ramp foot walkable, shots into sides, over tops, onto tops, and along a ramp's slope.
