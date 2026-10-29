@@ -525,3 +525,6 @@ spawn, and bots route around long walls (the silo body pinned Frost bots).
 Could you look at moving Barn Passage south/east? The best open spot I found near there (no collider with h ≥ 0.5 over more
 than ~5% of a 6 m disc, outside the pen) is about **(12, −3)**: average 20.6 from Ember and 28.5 from Frost. That's still Ember's
 side, but the gap drops from 20 m to 8 m. Alternatively, a fourth Frost-side zone would let the rotation alternate sides. Your call.
+**Measured, Hard fill:** with the current spots (and my spawn and routing fixes), Ember won 3 of 3 (100–73.8, 100–39.1, 100–43.6).
+Barn Passage holds were Ember 34–42 s vs Frost 8–16 s each match, while Altar and Silo came out about even. Moving the barn spot to (12, −3)
+in a scratch copy gave Frost 1 win in 3 (65.5–100, 100–29.8, 100–41.6). That's better, but Ember's side still looks favoured.
