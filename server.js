@@ -46,7 +46,6 @@ const decoys = new Map();    // Mirror Step decoys: id -> { id, owner, p, dir, y
 const walls = new Map();     // Glacial Bulwark walls: id -> { id, owner, x, z, yaw, hp, until }
 const frostfalls = new Map(); // Frostfall ice on its way down: id -> { id, owner, x, z, at }
 const smokes = new Map();     // Smoke Screen clouds: id -> { id, owner, x, z, until }
-const strikes = new Map();    // Cataclysm meteors on their way down: id -> { id, owner, x, z, at }
 const firewalls = new Map();  // Firewalls: id -> { id, owner, x, z, yaw, until, burned: Set }
 const cages = new Map();      // Night Cages: id -> { id, owner, x, z, until, inside: Set, foes: Set }
 let nextFxId = 1;            // ids for decoys and walls
@@ -86,7 +85,9 @@ function newPlayer(id, name, wizard = C.DEFAULT_WIZARD) {
     veilUntil: 0,                 // Tempest Veil: every hit is absorbed until then
     ult: 0,                       // ultimate charge, 0–100 (C.ULT_CHARGE); kept through death
     eye: null,                    // Eye of the Storm: { until, nextTick, nextPull }
-    zero: null,                   // Absolute Zero's flare: { at }
+    ultWind: null,                // an ultimate's wind-up: { U, at, until }
+    blizz: null,                  // Blizzard: { until, yaw, next, exposure: Map, frozen: Set }
+    mrain: null,                  // Meteor Rain: { phase: 'rise' | 'hover' | 'dive', ... }
     flightStart: 0, flightUntil: 0,   // Skyward Flash window: y may exceed 0 only inside it
     carrying: null,
     lastHitBy: null,
@@ -107,7 +108,10 @@ function playerPublic(p) {
     veil: p.veilUntil > now(), liftCd: p.cd.lift > now() ? +(p.cd.lift - now()).toFixed(2) : 0,
     ammo: p.ammo, reload: p.reloadUntil > now() ? +(p.reloadUntil - now()).toFixed(2) : 0,
     slow: p.slowUntil > now(), bound: p.silenceUntil > now(), rooted: p.rootUntil > now(), frozen: p.frozenUntil > now(),
-    ult: Math.floor(p.ult), eye: !!p.eye, zero: !!p.zero, lashBonus: Math.round(p.lashBonus || 0),
+    ult: Math.floor(p.ult), eye: !!p.eye, lashBonus: Math.round(p.lashBonus || 0),
+    ultWind: p.ultWind ? p.ultWind.U : null,
+    blizz: p.blizz ? +p.blizz.yaw.toFixed(3) : null,
+    mrain: p.mrain ? p.mrain.phase : null,
     ride: p.ride ? (now() < p.ride.rideAt ? 'mount' : now() < p.ride.dismountAt ? 'ride' : 'dismount') : null,
     ramGuard: p.ramGuardUntil > now(),
     bot: p.bot ? p.bot.difficulty : undefined,
@@ -125,16 +129,19 @@ const MIRROR = C.SPELLBOOK.mirror_step, BULWARK = C.SPELLBOOK.glacial_bulwark, R
 const SKIM = C.SPELLBOOK.glacial_skim, FROST = C.SPELLBOOK.frostfall, SMOKE = C.SPELLBOOK.smoke_screen, VEIL = C.SPELLBOOK.tempest_veil;
 const isVeiled = (p) => p.veilUntil > now();
 const holding = (p) => !!(p.carrying || p.carryingGoat);   // a prop or a goat floats beside us
-const CATA = C.SPELLBOOK.cataclysm, EYE = C.SPELLBOOK.eye_of_storm, ZERO = C.SPELLBOOK.absolute_zero, CAGE = C.SPELLBOOK.night_cage;
+const EYE = C.SPELLBOOK.eye_of_storm, CAGE = C.SPELLBOOK.night_cage, BLIZ = C.SPELLBOOK.blizzard, MRAIN = C.SPELLBOOK.meteor_rain;
 // Eye of the Storm and Absolute Zero's flare can't be interrupted (no stun, cancel, bind, slow or knockback)
-const unstoppable = (p) => !!p.eye || !!p.zero;
+// (Gale's tornado and Rime's Blizzard)
+const unstoppable = (p) => !!p.eye || !!p.blizz;
+// busy with an ultimate: its wind-up, the channel, or Cinder up in the sky
+const inUltimate = (p) => !!p.ultWind || unstoppable(p) || !!p.mrain || !!p.mrainFall;
 // May `a` hurt `b`? Game modes: no friendly fire. A missing owner (left the game) still hurts.
 const enemies = (a, b) => !a || !b || (a.id !== b.id && match.isEnemy(a, b));
 const enemyOf = (ownerId, q) => enemies(players.get(ownerId), q);
 
 // ---------------------------------------------------------------- wizard choice
 // A switch applies at once if the player is alive and not mid-cast, else when the cast ends or at respawn.
-const midCast = (p) => p.charging || !!p.cyclone || !!p.lash || isAirborne(p) || unstoppable(p) || !!p.ride;
+const midCast = (p) => p.charging || !!p.cyclone || !!p.lash || isAirborne(p) || inUltimate(p) || !!p.ride;
 function requestWizard(p, id) {
   if (!C.isWizard(id)) return;
   p.pendingWizard = id === p.wizard ? null : id;
@@ -263,7 +270,10 @@ function applyHit(target, proj) {
       target.stunUntil = Math.max(target.stunUntil, t + spec.stun);
       if (primaryShot) target.stunImmuneUntil = target.stunUntil + C.SPARK_STUN_IMMUNITY;
     }
-    // Being hit cancels a heavy wind-up, a lash wind-up, a cyclone that hasn't spun yet, and a lift
+    // Being hit cancels a heavy wind-up, a lash wind-up, a cyclone that hasn't spun yet, an ultimate's wind-up
+    // (it fizzles), Meteor Rain's hover (she falls), and a lift
+    if (target.ultWind) fizzleUlt(target);
+    if (target.mrain && target.mrain.phase !== 'dive') mrainKnockedDown(target);
     if (target.charging) { target.charging = false; broadcast({ t: 'chargeCancel', id: target.id }); }
     cancelCyclone(target);
     cancelLash(target);
@@ -278,7 +288,8 @@ function applyHit(target, proj) {
       target.rootUntil = Math.max(target.rootUntil, t + spec.bind);
       target.silenceUntil = Math.max(target.silenceUntil, t + spec.bind);
       if (target.blocking) { target.blocking = false; target.blockReleasedAt = t; }
-      if (freeze) target.frozenUntil = t + spec.bind;   // Frostfall, Absolute Zero: the bind, shown as ice
+      if (freeze) target.frozenUntil = t + spec.bind;   // Frostfall, Blizzard: the bind, shown as ice
+      if (target.ultWind) fizzleUlt(target);
     }
   }
 
@@ -820,9 +831,11 @@ function addUltCharge(p, pct) {
 // An ultimate in progress ends early (death, respawn, a wizard switch). Cataclysm meteors already falling still land.
 function endUltimates(p) {
   if (p.eye) { p.eye = null; broadcast({ t: 'eyeEnd', id: p.id }); }
-  if (p.zero) { p.zero = null; broadcast({ t: 'zeroCancel', id: p.id }); }
+  if (p.ultWind) fizzleUlt(p);
+  if (p.blizz) { p.blizz = null; broadcast({ t: 'blizzardEnd', id: p.id }); }
+  if (p.mrain) { p.mrain = null; broadcast({ t: 'mrainEnd', id: p.id }); }
+  p.mrainFall = null;
 }
-const strikePublic = (s) => ({ id: s.id, p: [s.x, 0, s.z], left: Math.max(0, s.at - now()) });
 // Everyone in sight of `from` (pillars, trees, buildings and ice walls block it).
 const inSight = (from, q) => !C.pillarBlocks(from, q.p, 0);
 const outward = (from, q) => { const dx = q.p[0] - from[0], dz = q.p[2] - from[2], l = Math.hypot(dx, dz); return l > 0.05 ? [dx / l, 0, dz / l] : [Math.sin(q.yaw), 0, Math.cos(q.yaw)]; };
@@ -839,45 +852,6 @@ function crushArea(ownerId, x, z, r) {
     if (g.holder === ownerId || g.owner === ownerId || Math.hypot(g.x - x, g.z - z) > r + C.GOAT.radius * 0.5) continue;
     stirGoat(g, ownerId);
   }
-}
-
-// Cinder, Cataclysm: meteors on random, spread-out spots inside the circle, landing one after another.
-function castCataclysm(p, at) {
-  const t = now();
-  let [x, z] = at;
-  const d = Math.hypot(x - p.p[0], z - p.p[2]);
-  if (d > CATA.range) { x = p.p[0] + (x - p.p[0]) * CATA.range / d; z = p.p[2] + (z - p.p[2]) * CATA.range / d; }
-  const r = Math.hypot(x, z);
-  if (r > C.ARENA_RADIUS) { x *= C.ARENA_RADIUS / r; z *= C.ARENA_RADIUS / r; }
-  const spots = [];
-  for (let i = 0; i < CATA.meteors; i++) {
-    let best = null, bestGap = -1;
-    for (let k = 0; k < 12; k++) {   // the candidate farthest from the others: spread out, but random
-      const a = Math.random() * Math.PI * 2, rr = Math.sqrt(Math.random()) * (CATA.radius - CATA.impact * 0.5);
-      const c = [x + Math.sin(a) * rr, z + Math.cos(a) * rr];
-      const gap = Math.min(Infinity, ...spots.map(s => Math.hypot(s[0] - c[0], s[1] - c[1])));
-      if (gap > bestGap) { bestGap = gap; best = c; }
-    }
-    spots.push(best);
-  }
-  const out = spots.map(([sx, sz], i) => {
-    const s = { id: nextFxId++, owner: p.id, x: sx, z: sz, cx: x, cz: z, at: t + CATA.warn + i * CATA.spread / (CATA.meteors - 1) };
-    strikes.set(s.id, s);
-    return strikePublic(s);
-  });
-  broadcast({ t: 'cataclysm', id: p.id, p: [x, 0, z], strikes: out });
-}
-function meteorImpact(s) {
-  strikes.delete(s.id);
-  const at = [s.x, 0, s.z];
-  const hits = [];
-  for (const q of players.values()) {
-    if (q.dead || q.id === s.owner || !enemyOf(s.owner, q) || q.p[1] > CATA.height || dist2D(q.p, at) > CATA.impact + C.PLAYER_RADIUS) continue;
-    const { dmg } = applyHit(q, { kind: 'cataclysm', owner: s.owner, v: outward(at, q) });
-    hits.push({ id: q.id, dmg });
-  }
-  crushArea(s.owner, s.x, s.z, CATA.impact);
-  broadcast({ t: 'meteorHit', id: s.id, p: at, hits });
 }
 
 // Gale, Eye of the Storm: a tornado for EYE.duration. Ticks damage and pulls enemies in; the end flings them out.
@@ -916,23 +890,6 @@ function updateEye(p, t) {
     broadcast({ t: 'eyeBurst', id: p.id, p: p.p, hits });
     broadcast({ t: 'eyeEnd', id: p.id });
   }
-}
-
-// Rime, Absolute Zero: after the flare, everyone in sight within the radius is crushed and frozen.
-function zeroBlast(p) {
-  p.zero = null;
-  const from = [p.p[0], p.p[1] + C.HIT_CENTER_Y, p.p[2]];
-  const hits = [];
-  for (const q of players.values()) {
-    if (q === p || q.dead || !enemies(p, q)) continue;
-    const c = [q.p[0], q.p[1] + C.HIT_CENTER_Y, q.p[2]];
-    if (Math.hypot(c[0] - from[0], c[1] - from[1], c[2] - from[2]) > ZERO.radius + C.PLAYER_RADIUS || !inSight(p.p, q)) continue;
-    const { dmg } = applyHit(q, { kind: 'absolute_zero', owner: p.id, v: outward(p.p, q) });
-    hits.push({ id: q.id, dmg });
-  }
-  for (const d of [...decoys.values()]) if (enemyOf(p.id, players.get(d.owner)) && dist2D(d.p, p.p) < ZERO.radius && !C.pillarBlocks(p.p, d.p, 0)) endDecoy(d, true);
-  for (const g of allGoats()) if (g.owner !== p.id && Math.hypot(g.x - p.p[0], g.z - p.p[2]) < ZERO.radius && !C.pillarBlocks(p.p, [g.x, 0, g.z], 0)) { if (g.summoned) stirGoat(g, p.id); else Goats.dizzyGoat?.(g, goatCtx); }
-  broadcast({ t: 'zeroBlast', id: p.id, p: p.p, hits });
 }
 
 // Vesper, Night Cage: a ring that enemies can't cross for CAGE.duration. Those inside at the cast stay in; everyone
@@ -975,33 +932,170 @@ function updateCages(t) {
   }
 }
 
-// Q: cast the wizard's ultimate. Needs a full charge; spends all of it.
+// Q: an ultimate. Needs a full charge. Every ultimate winds up first (C.ULT_CHARGE.windup: a cast pose, a glow, a hum);
+// an interrupting hit in that time fizzles it, keeping C.ULT_CHARGE.fizzleKeep of the charge. Then it fires and the
+// charge is spent.
+const AIMED = new Set(['stampede', 'night_cage']);
 function castUltimate(p, msg) {
   const t = now();
   const U = kit(p).ultimate;
-  const free = canAct(p) && !p.charging && !p.cyclone && !p.lash && !holding(p) && !unstoppable(p);
+  const free = canAct(p) && !p.charging && !p.cyclone && !p.lash && !holding(p) && !inUltimate(p) && !p.ride;
   const refuse = () => send(p.id, { t: 'ultRefused' });
   if (!U || p.ult < C.ULT_CHARGE.max || !free || isAirborne(p)) return refuse();
-  if (U === 'cataclysm') {
+  let at = null;
+  if (AIMED.has(U)) {
     if (!Array.isArray(msg.at) || msg.at.length < 2 || !Number.isFinite(msg.at[0]) || !Number.isFinite(msg.at[msg.at.length - 1])) return refuse();
-    castCataclysm(p, [msg.at[0], msg.at[msg.at.length - 1]]);
-  } else if (U === 'eye_of_storm') {
+    at = [msg.at[0], msg.at[msg.at.length - 1]];
+  }
+  p.ultWind = { U, at, until: t + C.ULT_CHARGE.windup };
+  if (p.blocking) { p.blocking = false; p.blockReleasedAt = t; }
+  broadcast({ t: 'ultWindup', id: p.id, ult: U, left: C.ULT_CHARGE.windup });
+}
+function fizzleUlt(p) {
+  if (!p.ultWind) return;
+  const U = p.ultWind.U;
+  p.ultWind = null;
+  p.ult = Math.min(p.ult, C.ULT_CHARGE.fizzleKeep);
+  broadcast({ t: 'ultFizzle', id: p.id, ult: U });
+}
+function updateUltWindup(p, t) {
+  if (isStunned(p) || isBound(p)) return fizzleUlt(p);
+  if (t < p.ultWind.until) return;
+  const { U, at } = p.ultWind;
+  p.ultWind = null;
+  p.ult = 0;
+  if (U === 'eye_of_storm') {
     p.eye = { until: t + EYE.duration, nextTick: t + EYE.tick * 0.5, nextPull: t };
     broadcast({ t: 'eyeStart', id: p.id, left: EYE.duration });
-  } else if (U === 'absolute_zero') {
-    p.zero = { at: t + ZERO.windup };
-    p.rootUntil = Math.max(p.rootUntil, p.zero.at);
-    broadcast({ t: 'zeroStart', id: p.id, p: p.p, left: ZERO.windup });
-  } else if (U === 'stampede') {
-    if (!Array.isArray(msg.at) || msg.at.length < 2 || !Number.isFinite(msg.at[0]) || !Number.isFinite(msg.at[msg.at.length - 1])) return refuse();
-    castStampede(p, [msg.at[0], msg.at[msg.at.length - 1]]);
-  } else if (U === 'night_cage') {
-    if (!Array.isArray(msg.at) || msg.at.length < 2 || !Number.isFinite(msg.at[0]) || !Number.isFinite(msg.at[msg.at.length - 1])) return refuse();
-    castNightCage(p, [msg.at[0], msg.at[msg.at.length - 1]]);
-  } else return refuse();
-  p.ult = 0;
-  if (p.blocking) { p.blocking = false; p.blockReleasedAt = t; }
+  } else if (U === 'stampede') castStampede(p, at);
+  else if (U === 'night_cage') castNightCage(p, at);
+  else if (U === 'blizzard') {
+    p.blizz = { until: t + BLIZ.duration, yaw: p.yaw, next: t, exposure: new Map(), frozen: new Set(), nextPush: t };
+    p.rootUntil = Math.max(p.rootUntil, p.blizz.until);   // he plants his feet and points his staff
+    broadcast({ t: 'blizzard', id: p.id, yaw: p.yaw, left: BLIZ.duration });
+  } else if (U === 'meteor_rain') {
+    p.mrain = { phase: 'rise', from: [p.p[0], p.p[2]], start: t, hoverAt: t + MRAIN.rise, hoverUntil: t + MRAIN.rise + MRAIN.hover, at: null, aimSentAt: 0 };
+    p.flightUntil = 0;
+    broadcast({ t: 'mrainLeap', id: p.id, p: [p.p[0], 0, p.p[2]], top: MRAIN.height, rise: MRAIN.rise, hover: MRAIN.hover });
+  }
   broadcast({ t: 'ult', id: p.id, ult: U });
+}
+
+// Rime, Blizzard: a cone of snow along his facing (it turns toward where he looks at BLIZ.turnRate). Enemies in it
+// (and in sight: walls and pillars shelter them; wards don't) are pushed back, chipped, and frozen once they've
+// spent BLIZ.freezeAfter seconds in it.
+function inBlizzard(p, q) {
+  const dx = q.p[0] - p.p[0], dz = q.p[2] - p.p[2], d = Math.hypot(dx, dz);
+  if (d > BLIZ.range + C.PLAYER_RADIUS || Math.abs(q.p[1] - p.p[1]) > BLIZ.height || d < 0.1) return false;
+  const off = Math.atan2(Math.sin(Math.atan2(dx, dz) - p.blizz.yaw), Math.cos(Math.atan2(dx, dz) - p.blizz.yaw));
+  if (Math.abs(off) > BLIZ.cone / 2 * Math.PI / 180 + Math.atan2(C.PLAYER_RADIUS, d)) return false;
+  return inSight(p.p, q);
+}
+function updateBlizzard(p, t) {
+  const B = p.blizz;
+  if (t >= B.until || p.dead) { p.blizz = null; broadcast({ t: 'blizzardEnd', id: p.id }); return; }
+  const dt = Math.min(0.1, t - (B.last ?? t)); B.last = t;
+  const turn = Math.atan2(Math.sin(p.yaw - B.yaw), Math.cos(p.yaw - B.yaw));
+  B.yaw += clamp(turn, -BLIZ.turnRate * dt, BLIZ.turnRate * dt);
+  const tick = t >= B.next, pushNow = t >= B.nextPush;
+  if (tick) B.next += BLIZ.tick;
+  if (pushNow) B.nextPush = t + 0.1;
+  const pulls = [];
+  for (const q of players.values()) {
+    if (q === p || q.dead || !enemies(p, q) || !inBlizzard(p, q)) continue;
+    B.exposure.set(q.id, (B.exposure.get(q.id) || 0) + dt);
+    const out = outward(p.p, q);
+    if (pushNow && !isVeiled(q) && !isRooted(q)) {
+      const v = [out[0] * BLIZ.push, out[2] * BLIZ.push];
+      q.pulledUntil = t + 0.3;
+      if (q.bot) botPull(q, v, t + 0.15); else pulls.push({ id: q.id, v });
+    }
+    if (tick) applyHit(q, { kind: 'blizzard_chip', owner: p.id, v: out });
+    if (!q.dead && !B.frozen.has(q.id) && B.exposure.get(q.id) >= BLIZ.freezeAfter) {
+      B.frozen.add(q.id);
+      applyHit(q, { kind: 'blizzard_freeze', owner: p.id, v: out });
+    }
+  }
+  if (pulls.length) broadcast({ t: 'eyePull', id: p.id, pulls });
+  for (const d of [...decoys.values()]) if (enemyOf(p.id, players.get(d.owner)) && inBlizzard(p, { p: d.p })) endDecoy(d, true);
+}
+
+// Cinder, Meteor Rain: up (MRAIN.rise), hover while aiming (MRAIN.hover at most), then dive on the circle. The
+// server owns her position throughout. An interrupting hit while she hovers knocks her down: she falls, ult spent.
+function mrainAim(p, at) {
+  const M = p.mrain;
+  let [x, z] = at;
+  const d = Math.hypot(x - M.from[0], z - M.from[1]);
+  if (d > MRAIN.range) { x = M.from[0] + (x - M.from[0]) * MRAIN.range / d; z = M.from[1] + (z - M.from[1]) * MRAIN.range / d; }
+  const r = Math.hypot(x, z);
+  if (r > C.ARENA_RADIUS - 1) { x *= (C.ARENA_RADIUS - 1) / r; z *= (C.ARENA_RADIUS - 1) / r; }
+  M.at = [x, z];
+  const t = now();
+  if (t - M.aimSentAt > 0.15) { M.aimSentAt = t; broadcast({ t: 'mrainAim', id: p.id, at: M.at }); }   // everyone sees where she's aiming
+}
+function mrainDive(p) {
+  const M = p.mrain, t = now();
+  if (!M.at) M.at = M.from.slice();
+  M.phase = 'dive'; M.diveStart = t; M.hit = new Set();
+  M.diveFrom = [M.from[0], MRAIN.height, M.from[1]]; M.diveTo = [M.at[0], 0, M.at[1]];
+  broadcast({ t: 'mrainDive', id: p.id, from: M.diveFrom, to: M.diveTo, left: MRAIN.dive });
+}
+function mrainKnockedDown(p) {
+  p.mrain = null;
+  p.mrainFall = { from: p.p[1] };
+  broadcast({ t: 'mrainFall', id: p.id, p: p.p });
+}
+function mrainKill(p, q, dir) {
+  if (q.dead || p.mrain.hit.has(q.id)) return;
+  p.mrain.hit.add(q.id);
+  applyHit(q, { kind: 'meteor_rain_hit', owner: p.id, v: dir });
+}
+function updateMeteorRain(p, t, dt) {
+  if (p.mrainFall) {
+    // knocked out of the sky: a plain fall (Skyward's drop speed)
+    p.p[1] = Math.max(0, p.p[1] - C.SPELLBOOK.skyward.dropSpeed * dt);
+    if (p.p[1] <= 0) { p.mrainFall = null; broadcast({ t: 'mrainEnd', id: p.id, p: p.p }); }
+    return;
+  }
+  const M = p.mrain;
+  if (M.phase === 'rise' || M.phase === 'hover') {
+    const k = Math.min(1, (t - M.start) / MRAIN.rise);
+    p.p = [M.from[0], MRAIN.height * (1 - (1 - k) * (1 - k)), M.from[1]];
+    if (M.phase === 'rise' && t >= M.hoverAt) M.phase = 'hover';
+    if (t >= M.hoverUntil) mrainDive(p);
+    return;
+  }
+  // the dive: a straight blazing line from the hover point to the circle
+  const k = Math.min(1, (t - M.diveStart) / MRAIN.dive);
+  const prev = p.p.slice();
+  const pos = [0, 1, 2].map(i => M.diveFrom[i] + (M.diveTo[i] - M.diveFrom[i]) * k * k);   // accelerating
+  // an ice wall in her path stops her: she hits the wall instead of the ground
+  const wall = pos[1] < C.SPELLBOOK.glacial_bulwark.height && wallBetween(prev, pos);
+  if (wall) {
+    damageWall(wall, 999);
+    p.p = [prev[0], 0, prev[2]]; p.mrain = null;
+    broadcast({ t: 'mrainLand', id: p.id, p: p.p, wall: true, hits: [] });
+    return;
+  }
+  p.p = pos;
+  const dir = [(M.diveTo[0] - M.diveFrom[0]), 0, (M.diveTo[2] - M.diveFrom[2])], dl = Math.hypot(dir[0], dir[2]) || 1;
+  for (const q of players.values()) {
+    if (q === p || !enemies(p, q) || q.dead) continue;
+    const c = [q.p[0], q.p[1] + C.HIT_CENTER_Y, q.p[2]];
+    if (Math.hypot(c[0] - pos[0], c[1] - pos[1], c[2] - pos[2]) < MRAIN.pathRadius + C.HIT_RADIUS * 0.5) mrainKill(p, q, [dir[0] / dl, 0, dir[2] / dl]);
+  }
+  if (k < 1) return;
+  // the landing: everyone in the circle
+  const hits = [];
+  for (const q of players.values()) {
+    if (q === p || !enemies(p, q) || q.dead || q.p[1] > 2.5 || dist2D(q.p, M.diveTo) > MRAIN.radius + C.PLAYER_RADIUS) continue;
+    mrainKill(p, q, outward(M.diveTo, q));
+  }
+  for (const id of p.mrain.hit) hits.push(id);
+  crushArea(p.id, M.diveTo[0], M.diveTo[2], MRAIN.radius);
+  p.p = [M.diveTo[0], 0, M.diveTo[2]]; p.justTeleported = true;
+  p.mrain = null;
+  broadcast({ t: 'mrainLand', id: p.id, p: p.p, hits });
 }
 
 // ---------------------------------------------------------------- simulation
@@ -1014,7 +1108,6 @@ function simulate(dt) {
   for (const w of [...walls.values()]) if (t >= w.until) wallDown(w, true);
   for (const f of [...frostfalls.values()]) if (t >= f.at) frostfallImpact(f);
   for (const c of [...smokes.values()]) if (t >= c.until) smokes.delete(c.id);   // clients fade it on their own clock
-  for (const st of [...strikes.values()]) if (t >= st.at) meteorImpact(st);
   updateCages(t);
   updateFirewalls(t);
   updateRams(dt, t);
@@ -1030,7 +1123,9 @@ function simulate(dt) {
     p.ult = Math.min(C.ULT_CHARGE.max, p.ult + C.ULT_CHARGE.passive * dt);
     if (p.eye) updateEye(p, t);
     if (p.ride) updateRide(p, t);
-    if (p.zero && t >= p.zero.at) zeroBlast(p);
+    if (p.ultWind) updateUltWindup(p, t);
+    if (p.blizz) updateBlizzard(p, t);
+    if (p.mrain || p.mrainFall) updateMeteorRain(p, t, dt);
     // stamina
     if (p.blocking) {
       p.st -= C.STAMINA_DRAIN_BLOCKING * (C.SPELLBOOK[kit(p).guard]?.drainMul ?? 1) * dt;
@@ -1199,10 +1294,20 @@ function simulate(dt) {
 const ULT_LOCKED = new Set(['ult', 'ram', 'ramGuard', 'ride', 'block', 'cast', 'chargeStart', 'cyclone', 'lashStart', 'frostfall', 'smoke', 'mirror', 'veil', 'bulwark', 'firewall', 'curse', 'skyward', 'teleport', 'pickup', 'throw', 'reload']);
 function handle(p, msg) {
   const t = now();
-  if ((unstoppable(p) || p.ride) && ULT_LOCKED.has(msg.t)) return;   // a tornado, a rune flare or a ram ride: nothing else
+  if ((inUltimate(p) || p.ride) && ULT_LOCKED.has(msg.t)) return;   // a tornado, a rune flare or a ram ride: nothing else
   switch (msg.t) {
     case 'ult': {
       castUltimate(p, msg);
+      break;
+    }
+    case 'mrainAim': {
+      if (p.mrain && p.mrain.phase !== 'dive' && Array.isArray(msg.at) && Number.isFinite(msg.at[0]) && Number.isFinite(msg.at[msg.at.length - 1])) mrainAim(p, [msg.at[0], msg.at[msg.at.length - 1]]);
+      break;
+    }
+    case 'mrainDive': {
+      if (!p.mrain || p.mrain.phase !== 'hover') break;
+      if (Array.isArray(msg.at) && Number.isFinite(msg.at[0]) && Number.isFinite(msg.at[msg.at.length - 1])) mrainAim(p, [msg.at[0], msg.at[msg.at.length - 1]]);
+      mrainDive(p);
       break;
     }
     case 'debugCharge': {
@@ -1212,6 +1317,7 @@ function handle(p, msg) {
     }
     case 'state': {
       if (p.dead) break;
+      if (p.mrain || p.mrainFall) { if (Number.isFinite(msg.yaw)) p.yaw = msg.yaw; p.lastStateAt = t; break; }   // Meteor Rain: the server flies her
       if (!Array.isArray(msg.p) || msg.p.length !== 3 || !msg.p.every(Number.isFinite)) break;
       // loose anti-cheat: clamp to arena and to a plausible speed
       const dt = Math.max(0.016, t - (p.lastStateAt || t));
@@ -1232,7 +1338,7 @@ function handle(p, msg) {
       const d = dist2D(np, p.p);
       // the fastest this wizard can go this way: its run speed, the backpedal cap against its facing, or a dash
       const run = C.backpedalSpeed(C.speedOf(p.wizard) * (p.eye ? EYE.speedMul : 1), np[0] - p.p[0], np[2] - p.p[2], Number.isFinite(msg.yaw) ? msg.yaw : p.yaw)
-        + (p.pulledUntil > t ? EYE.pull : 0);   // dragged by an Eye of the Storm
+        + (p.pulledUntil > t ? Math.max(EYE.pull, BLIZ.push) : 0);   // dragged by an Eye of the Storm, pushed by a Blizzard
       const maxStep = ((dashing ? SMOKE.distance / SMOKE.dashTime : galloping(p, t) ? RIDE.speed + 1 : run) + C.SPELLS.heavy.knockback + 2) * dt + 0.6;
       if (p.lastStateAt && d > maxStep && !p.justTeleported) {
         // Moving faster than any legitimate wizard can: let the server's copy catch up at the
@@ -1251,7 +1357,7 @@ function handle(p, msg) {
     }
     case 'block': {
       const on = !!msg.on;
-      if (on && (!C.isWard(kit(p).guard) || !canAct(p) || p.st <= 2 || p.charging || p.cyclone || p.lash || isAirborne(p))) break;
+      if (on && (!C.isWard(kit(p).guard) || p.ultWind || !canAct(p) || p.st <= 2 || p.charging || p.cyclone || p.lash || isAirborne(p))) break;
       if (p.blocking && !on) p.blockReleasedAt = t;
       p.blocking = on;
       break;
@@ -1602,7 +1708,7 @@ function removePlayer(id) {
 }
 
 // cycloneStopsGoats: the goat module can knock a charging goat dizzy (bots then answer a charge with a cyclone)
-const world = { players, props, projectiles, goats, decoys, walls, frostfalls, smokes, strikes, cages, firewalls, rams, stampedes, handle, now, cycloneStopsGoats: !!Goats.dizzyGoat };
+const world = { players, props, projectiles, goats, decoys, walls, frostfalls, smokes, cages, firewalls, rams, stampedes, handle, now, cycloneStopsGoats: !!Goats.dizzyGoat };
 // Game modes (server/match.js, modes agent). addUltCharge is the spells agent's to implement.
 const match = createMatch({
   players, props, now, broadcast, send, propPublic,
@@ -1718,7 +1824,6 @@ wss.on('connection', (ws) => {
         walls: [...walls.values()].map(wallPublic),
         frostfalls: [...frostfalls.values()].map(frostPublic),
         smokes: [...smokes.values()].map(smokePublic),
-        strikes: [...strikes.values()].map(strikePublic),
         cages: [...cages.values()].map(cagePublic),
         firewalls: [...firewalls.values()].map(firewallPublic),
         decoys: [...decoys.values()].map(decoyPublic),

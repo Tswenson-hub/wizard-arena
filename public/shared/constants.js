@@ -94,7 +94,7 @@ export const SPELLS = {
     knockback: 2,
   },
   shear: {               // Gale's primary: a short wind blade, gone after about 8 m
-    damage: 14,
+    damage: 16,          // balance match at walking speed: 14 left Gale last (closing to 8 m takes a while now)
     stun: 0.45,
     speed: 30,
     radius: 0.85,        // wide: it's an arc of wind, not a bolt
@@ -181,6 +181,8 @@ export const ULT_CHARGE = {
   perDamage: 1 / 3,    // % per point of damage dealt to an enemy
   passive: 0.5,        // % per second while alive
   kill: 5,             // % per kill
+  windup: 1.3,         // every ultimate: a readable 1.3 s cast first, interrupted like any wind-up...
+  fizzleKeep: 50,      // ...and an interrupted one fizzles, keeping this much charge
 };
 
 export const SPELLBOOK = {
@@ -205,7 +207,7 @@ export const SPELLBOOK = {
   },
   gale_shear: {
     id: 'gale_shear', slot: 'primary', name: 'Gale Shear', short: 'Shear',
-    blurb: 'A blade of wind out to 8 m, 3 to a charge. The 3rd is a wide crescent that breaks a wind-up.',
+    blurb: 'A blade of wind out to 8 m (16 damage), 3 to a charge. The 3rd is a wide crescent that breaks a wind-up.',
     cooldown: SPELLS.shear.cooldown,
     magazine: 3, reload: 1.5, idleReload: 2,
   },
@@ -382,20 +384,36 @@ export const SPELLBOOK = {
   },
 
   // ---- ultimates (Q). `ult: true` hits never charge the ultimate. Each one cannot be cancelled once cast.
-  cataclysm: {
-    id: 'cataclysm', slot: 'ultimate', name: 'Cataclysm', short: 'Cataclysm', ult: true,
-    blurb: 'Hold Q to aim a 10 m circle, release: 8 meteors rain down on it over 3 s. 30 damage each, with knockback.',
-    radius: 10,          // the area
-    range: 26,           // farthest centre from the caster
-    meteors: 8,
-    spread: 3,           // first to last impact
-    warn: 1.1,           // each meteor's shadow shows this long before it lands
-    fall: 0.45,          // the fireball is seen falling for this long
-    impact: 2.3,         // each meteor's blast radius
-    height: 2,           // feet higher than this are out of reach
-    castPose: 0.6,
-    damage: 30, stun: 0.3, knockback: 7, staminaCost: 0,
-    unblockable: true,   // from above, like Frostfall
+  meteor_rain: {
+    id: 'meteor_rain', slot: 'ultimate', name: 'Meteor Rain', short: 'Meteor Rain', ult: true,
+    blurb: 'Leap 12 m into the sky and hover up to 4 s, aiming a 4 m circle; Q or a click dives on it as a falling blaze. Everything in it, or in her path, dies. A hit that interrupts knocks her down.',
+    height: 12,          // the leap
+    rise: 0.5,           // seconds to get up there
+    hover: 4,            // longest hover; then she dives on her last aim
+    radius: 4,           // the landing circle
+    range: 24,           // farthest landing from where she leapt
+    dive: 0.6,
+    pathRadius: 1.2,     // anyone this close to her dive path is caught too
+  },
+  meteor_rain_hit: {     // what the dive does to an enemy (a hit kind): death, unless a Tempest Veil absorbs it
+    id: 'meteor_rain_hit', name: 'Meteor Rain', ult: true, damage: 1000, stun: 0, knockback: 6, staminaCost: 0, unblockable: true,
+  },
+  blizzard: {
+    id: 'blizzard', slot: 'ultimate', name: 'Blizzard', short: 'Blizzard', ult: true,
+    blurb: 'A 70° cone of snow, 14 m long, for 2.5 s (turn slowly to steer it): it pushes enemies back, chips 10 a second, and freezes anyone caught in it for 0.8 s. Walls block it; wards don\'t.',
+    cone: 70, range: 14, height: 5,
+    duration: 2.5,
+    turnRate: 0.9,       // rad/s the cone follows his facing
+    push: 3.2,           // m/s away from him
+    freezeAfter: 0.8,    // seconds inside it (in total) before the freeze
+    tick: 0.25,
+  },
+  blizzard_chip: {       // a Blizzard tick (a hit kind): 10 damage a second
+    id: 'blizzard_chip', name: 'Blizzard', ult: true, damage: 2.5, stun: 0, knockback: 0, staminaCost: 0, unblockable: true, noInterrupt: true,
+  },
+  blizzard_freeze: {     // a Blizzard's freeze (a hit kind): Frostfall's ice block
+    id: 'blizzard_freeze', name: 'Blizzard', ult: true, damage: 0, stun: 0, knockback: 0, staminaCost: 0, unblockable: true,
+    bind: 2.5, freeze: true,
   },
   eye_of_storm: {
     id: 'eye_of_storm', slot: 'ultimate', name: 'Eye of the Storm', short: 'Eye', ult: true,
@@ -420,15 +438,6 @@ export const SPELLBOOK = {
   eye_burst: {           // the final fling (a hit kind, not a spell in a kit)
     id: 'eye_burst', name: 'Eye of the Storm', ult: true,
     damage: 15, stun: 0.6, knockback: 8, staminaCost: 30, launch: 2.2,   // launch: visual hop height (m)
-  },
-  absolute_zero: {
-    id: 'absolute_zero', slot: 'ultimate', name: 'Absolute Zero', short: 'Zero', ult: true,
-    blurb: 'A 1 s rune flare, then a 12 m blast: every enemy in sight takes 40 and is frozen 2.5 s. Wards don\'t help; cover does.',
-    windup: 1,           // the flare: Rime is rooted and can't be interrupted
-    radius: 12,
-    damage: 40, stun: 0, knockback: 0, staminaCost: 0,
-    bind: 2.5, freeze: true,   // Frostfall's freeze
-    unblockable: true,
   },
   stampede: {
     id: 'stampede', slot: 'ultimate', name: 'Stampede', short: 'Stampede', ult: true,

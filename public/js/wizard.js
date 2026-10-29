@@ -463,7 +463,11 @@ export class Wizard {
     }
 
     // charge orb follows the staff hand
-    if (this.charging && !this.dead) {
+    // the staff hand glows through a heavy wind-up, and gold through an ultimate's wind-up
+    const glowing = (this.charging || this.ultWinding) && !this.dead;
+    if (glowing) {
+      const gold = this.ultWinding && !this.charging;
+      this.chargeOrb.material.color.setHex(gold ? 0xffd860 : 0xff8a3c); this.chargeLight.color.setHex(gold ? 0xffc040 : 0xff7a2a);
       this.chargeT += dt;
       const hp = new THREE.Vector3(); this.hand.getWorldPosition(hp);
       this.chargeOrb.visible = true;

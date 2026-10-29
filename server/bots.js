@@ -43,7 +43,7 @@ const DIFFICULTY = {
 const CYC = C.SPELLBOOK.cyclone, SKY = C.SPELLBOOK.skyward, LASH = C.SPELLBOOK.sanguine_lash;
 const BULWARK = C.SPELLBOOK.glacial_bulwark, SKIM = C.SPELLS.skim, RELIC = C.SPELLBOOK.trapped_relic, FROST = C.SPELLBOOK.frostfall;
 const SMOKE = C.SPELLBOOK.smoke_screen;
-const CATA = C.SPELLBOOK.cataclysm, EYE = C.SPELLBOOK.eye_of_storm, ZERO = C.SPELLBOOK.absolute_zero, CAGE = C.SPELLBOOK.night_cage;
+const EYE = C.SPELLBOOK.eye_of_storm, CAGE = C.SPELLBOOK.night_cage, BLIZ = C.SPELLBOOK.blizzard, MRAIN = C.SPELLBOOK.meteor_rain;
 const SHEAR = C.SPELLS.shear, HEX = C.SPELLS.hex, FIRE = C.SPELLS.fireball;
 const SHEAR_RANGE = SHEAR.speed * SHEAR.life;
 const SLING_S = C.SPELLS.sling, BRAM = C.SPELLBOOK.battering_ram, RGUARD = C.SPELLBOOK.ram_guard, RIDE = C.SPELLBOOK.ram_ride, STAMP = C.SPELLBOOK.stampede;
@@ -163,7 +163,8 @@ function raiseFirewall(me, toward, act) {
   me.yaw = yawTo(me.p, toward);
   act({ t: 'firewall', yaw: me.yaw });
 }
-const busyCasting = (q) => q.charging || !!q.lash || cycloneWindingUp(q);
+// winding something up that a well-timed interrupt stops (an ultimate's wind-up, and Meteor Rain's hover, included)
+const busyCasting = (q) => q.charging || !!q.lash || cycloneWindingUp(q) || !!q.ultWind || (!!q.mrain && q.mrain.phase !== 'dive');
 // the primary can fire now (cooldown, and the magazine isn't reloading)
 const primaryReady = (me, t) => t >= me.cd.fast && !(me.reloadUntil > t) && me.ammo > 0;
 
@@ -369,7 +370,9 @@ function think(me, world, t) {
     else if (t >= b.cursing.at) { b.cursing = null; aimProp(me, prop, (from, dir) => act({ t: 'curse', aimOrigin: from, aimDir: dir })); }
     return;
   }
-  if (me.eye || me.zero || me.ride) return;   // our tornado, flare or ram ride: nothing else can be cast (moveBot steers)
+  if (me.mrain) return flyMeteorRain(me, world, t, act);
+  if (me.blizz) return steerBlizzard(me, world, t);
+  if (me.eye || me.ultWind || me.mrainFall || me.ride) return;   // our tornado, wind-up, fall or ram ride: nothing else (moveBot steers)
 
   // ---- objective: lift the prop the mode wants lifted (a generic hint; no mode sends it now)
   if (obj?.lift != null && free && !me.carrying && !me.carryingGoat && !me.blocking && !busyCasting(me) && t >= me.cd.lift) {
@@ -582,6 +585,11 @@ function foesNear(me, world, at, r, t, { ground = false, sight = false } = {}) {
 function tryUltimate(me, world, t, act, target) {
   const b = me.bot, cfg = b.cfg, U = kit(me).ultimate;
   const patient = t - b.ultFullAt > 12;   // sitting on a full charge: settle for one target
+  // every ultimate has a 1.3 s wind-up that an interrupt fizzles: don't pop one in the open while an enemy in sight
+  // holds a loaded finisher or a prop ready to throw at us
+  const exposed = [...world.players.values()].some(q => foe(me, q) && !q.dead && dist2D(q.p, me.p) < 24 && hasLOS(q.p, me.p)
+    && ((q.ammo === 1 && !(q.reloadUntil > t)) || (q.carrying && world.props.get(q.carrying)?.state === 'carried')) && !busyCasting(q) && !isStunned(q, t));
+  if (exposed && Math.random() < 0.85) return false;
   const lowHp = me.hp < 45;
   if (U === 'stampede') {
     // the lane (from us toward an enemy) that runs over the most grounded enemies
@@ -597,30 +605,27 @@ function tryUltimate(me, world, t, act, target) {
     act({ t: 'ult', at: [best.p[0], best.p[2]] });
     return me.ult < C.ULT_CHARGE.max;
   }
-  if (U === 'cataclysm') {
-    // the spot that covers the most enemies (each enemy is a candidate centre), led a little
-    let best = null, bn = 0;
-    for (const q of foesNear(me, world, me.p, CATA.range + 4, t, { ground: true })) {
-      const n = foesNear(me, world, q.p, 6, t, { ground: true });
-      const stuck = rooted(q, t) || isStunned(q, t) || busyCasting(q);
-      const score = n.length + (stuck ? 0.6 : 0);
-      if (score > bn) { bn = score; best = n; }
+  if (U === 'meteor_rain') {
+    // leap when someone is reachable: we'll pick the spot from up there
+    if (airborne(me, t) || !foesNear(me, world, me.p, MRAIN.range - 2, t, { ground: true }).length) return false;
+    b.mrainCommit = null;
+    act({ t: 'ult' });
+  } else if (U === 'blizzard') {
+    // the facing that puts the most enemies in the cone
+    if (airborne(me, t)) return false;
+    const near = foesNear(me, world, me.p, BLIZ.range - 2, t, { sight: true });
+    let bestYaw = null, bn = 0;
+    for (const q of near) {
+      const yaw = yawTo(me.p, q.p);
+      const n = near.filter(o => Math.abs(Math.atan2(Math.sin(yawTo(me.p, o.p) - yaw), Math.cos(yawTo(me.p, o.p) - yaw))) < BLIZ.cone / 2 * Math.PI / 180 * 0.8).length;
+      if (n > bn) { bn = n; bestYaw = yaw; }
     }
-    if (!best || !(bn >= 2 || (patient && bn >= 1))) return false;
-    let x = 0, z = 0;
-    for (const q of best) { const tr = tracks.get(q.id); x += q.p[0] + (tr ? tr.v[0] : 0) * 0.6 * cfg.lead; z += q.p[2] + (tr ? tr.v[1] : 0) * 0.6 * cfg.lead; }
-    x /= best.length; z /= best.length;
-    if (Math.hypot(x - me.p[0], z - me.p[2]) < CATA.radius * 0.6) return false;   // not on our own head
-    me.yaw = yawTo(me.p, [x, 0, z]);
-    act({ t: 'ult', at: [x, z] });
+    if (bestYaw == null || !(bn >= 2 || (bn >= 1 && (patient || lowHp)))) return false;
+    me.yaw = bestYaw;
+    act({ t: 'ult' });
   } else if (U === 'eye_of_storm') {
     const n = foesNear(me, world, me.p, EYE.radius - 0.5, t, { ground: true }).length;
     if (!(n >= 2 || (n >= 1 && (patient || lowHp) && dist2D(me.p, target?.p || [1e9, 0, 1e9]) < 4.5))) return false;
-    act({ t: 'ult' });
-  } else if (U === 'absolute_zero') {
-    if (airborne(me, t)) return false;
-    const n = foesNear(me, world, me.p, ZERO.radius - 1, t, { sight: true }).length;
-    if (!(n >= 2 || (n >= 1 && (patient || lowHp)))) return false;
     act({ t: 'ult' });
   } else if (U === 'night_cage') {
     // cage the most enemies we can (centred on them), or one weak or stuck target; we fight on inside with them
@@ -640,11 +645,11 @@ function tryUltimate(me, world, t, act, target) {
   return me.ult < C.ULT_CHARGE.max;
 }
 
-// Enemy ultimates: walk (or blink) out of a Cataclysm and its meteors, run from a tornado, break line
-// of sight before Absolute Zero goes off, and pull a Crimson Eclipse tether out of range or sight.
+// Enemy ultimates: run from a tornado, get out of a Blizzard's cone (or behind cover), and clear out of the circle
+// a hovering Meteor Rain is aiming at.
 function reactToUltimates(me, world, t, act) {
   const b = me.bot, cfg = b.cfg, K = kit(me);
-  if (me.eye || me.zero) return;
+  if (me.eye || me.blizz || me.mrain) return;
   const run = C.speedOf(me.wizard) * cfg.speed * (me.slowUntil > t ? 1 - SKIM.slow : 1);
   const canMove = !rooted(me, t) && !isStunned(me, t);
   const mobOut = (dir) => {
@@ -656,32 +661,7 @@ function reactToUltimates(me, world, t, act) {
     return true;
   };
   const threat = (key) => { let rec = b.threats.get(key); if (!rec) { rec = newThreat(cfg, t); b.threats.set(key, rec); } return rec; };
-  for (const k of b.threats.keys()) if (typeof k === 'string' && /^(cata|eye|zero|ecl)/.test(k) && t > (b.threats.get(k).until ?? Infinity)) b.threats.delete(k);
-
-  // Cataclysm: the circle (meteors already falling, grouped by caster)
-  const circles = new Map();
-  for (const s of world.strikes?.values() || []) {
-    if (!foeId(me, s.owner)) continue;
-    const c = circles.get(s.owner) || { x: s.cx, z: s.cz, last: 0, next: [] };
-    c.last = Math.max(c.last, s.at); c.next.push(s);
-    circles.set(s.owner, c);
-  }
-  for (const [owner, c] of circles) {
-    const rec = threat('cata' + owner); rec.until = c.last + 0.2;
-    if (rec.ignore || t < rec.seenAt + rec.react || airborne(me, t)) continue;
-    const dc = Math.hypot(me.p[0] - c.x, me.p[2] - c.z);
-    if (dc > CATA.radius + 1) continue;
-    const out = dc > 0.05 ? [(me.p[0] - c.x) / dc, 0, (me.p[2] - c.z) / dc] : [Math.sin(me.yaw), 0, Math.cos(me.yaw)];
-    // a meteor about to land on us: that's the one to get out from under
-    const soon = c.next.filter(s => s.at - t < CATA.warn && Math.hypot(me.p[0] - s.x, me.p[2] - s.z) < CATA.impact + 0.8).sort((a, b2) => a.at - b2.at)[0];
-    if (soon && !rec.mob && (CATA.impact + 1 - Math.hypot(me.p[0] - soon.x, me.p[2] - soon.z)) > (soon.at - t) * run) {
-      if (veilReady(me, t)) { act({ t: 'veil' }); rec.mob = true; continue; }
-      if (mobOut(out)) { rec.mob = true; continue; }
-    }
-    if (!canMove) continue;
-    b.dodgeVec = [out[0], out[2]];
-    b.dodgeUntil = t + 0.25;
-  }
+  for (const k of b.threats.keys()) if (typeof k === 'string' && /^(eye|bliz|mrain)/.test(k) && t > (b.threats.get(k).until ?? Infinity)) b.threats.delete(k);
 
   for (const q of world.players.values()) {
     if (q === me || q.dead || !foe(me, q)) continue;
@@ -698,33 +678,67 @@ function reactToUltimates(me, world, t, act) {
       }
       if (canMove) { b.dodgeVec = [out[0], out[2]]; b.dodgeUntil = t + 0.25; }
     }
-    // Absolute Zero: break line of sight before the flare goes off (cover, a wall, a veil, or distance)
-    if (q.zero) {
-      const rec = threat('zero' + q.id); rec.until = q.zero.at + 0.2;
-      const d = Math.hypot(me.p[0] - q.p[0], me.p[1] - q.p[1], me.p[2] - q.p[2]);
-      if (rec.ignore || rec.handled || t < rec.seenAt + rec.react || d > ZERO.radius + 1.5 || C.pillarBlocks(q.p, me.p, 0)) continue;
-      rec.handled = true;
-      const left = q.zero.at - t;
-      const out = [me.p[0] - q.p[0], 0, me.p[2] - q.p[2]];
-      if (veilReady(me, t)) { act({ t: 'veil' }); continue; }
-      if (wallReady(me, t) && canAct(me, t) && dist2D(me.p, q.p) > BULWARK.dist + 0.6) { raiseWall(me, q.p, act); continue; }
+    // Blizzard: sideways out of the cone (it turns slowly), or behind cover; a Veil shrugs it off
+    if (q.blizz || (q.ultWind?.U === 'blizzard')) {
+      const yaw = q.blizz ? q.blizz.yaw : q.yaw;
+      const dx = me.p[0] - q.p[0], dz = me.p[2] - q.p[2], d = Math.hypot(dx, dz);
+      const off = Math.atan2(Math.sin(Math.atan2(dx, dz) - yaw), Math.cos(Math.atan2(dx, dz) - yaw));
+      const rec = threat('bliz' + q.id); rec.until = t + 0.5;
+      if (rec.ignore || t < rec.seenAt + rec.react || d > BLIZ.range + 2 || Math.abs(off) > BLIZ.cone / 2 * Math.PI / 180 + 0.25 || C.pillarBlocks(q.p, me.p, 0)) continue;
+      if (veilReady(me, t) && q.blizz) { act({ t: 'veil' }); continue; }
+      if (wallReady(me, t) && canAct(me, t) && d > BULWARK.dist + 0.6) { raiseWall(me, q.p, act); continue; }
+      const side = Math.sign(off) || b.strafe;
+      const out = [Math.sin(yaw + side * Math.PI / 2), 0, Math.cos(yaw + side * Math.PI / 2)];
+      if (!rec.mob && mobOut(out)) { rec.mob = true; continue; }
+      if (!canMove) continue;
+      // the shorter way out: across the cone's edge on our side, unless cover is closer
       const cover = coverPoint(me, q);
-      const coverTime = cover ? Math.hypot(cover[0] - me.p[0], cover[1] - me.p[2]) / run : Infinity;
-      const outTime = (ZERO.radius + 1.2 - dist2D(me.p, q.p)) / run;
-      if (canMove && Math.min(coverTime, outTime) < left - 0.05) {
-        const to = coverTime < outTime ? [cover[0] - me.p[0], cover[1] - me.p[2]] : [out[0], out[2]];
-        const l = Math.hypot(to[0], to[1]) || 1;
-        b.dodgeVec = [to[0] / l, to[1] / l]; b.dodgeUntil = q.zero.at + 0.1;
-        continue;
-      }
-      if (mobOut(out)) continue;
-      if (canMove) { const l = Math.hypot(out[0], out[2]) || 1; b.dodgeVec = [out[0] / l, out[2] / l]; b.dodgeUntil = q.zero.at + 0.1; }
+      const to = cover && Math.hypot(cover[0] - me.p[0], cover[1] - me.p[2]) < 4 ? [cover[0] - me.p[0], cover[1] - me.p[2]] : [out[0], out[2]];
+      const l = Math.hypot(to[0], to[1]) || 1;
+      b.dodgeVec = [to[0] / l, to[1] / l]; b.dodgeUntil = t + 0.25;
+    }
+    // Meteor Rain: she shows where she's aiming; get out of that circle (she may switch, so keep watching)
+    if (q.mrain && q.mrain.at) {
+      const [cx, cz] = q.mrain.phase === 'dive' ? [q.mrain.diveTo[0], q.mrain.diveTo[2]] : q.mrain.at;
+      const dc = Math.hypot(me.p[0] - cx, me.p[2] - cz);
+      const rec = threat('mrain' + q.id); rec.until = t + 0.5;
+      if (rec.ignore || t < rec.seenAt + rec.react || dc > MRAIN.radius + 2.5) continue;
+      const out = dc > 0.05 ? [(me.p[0] - cx) / dc, 0, (me.p[2] - cz) / dc] : [Math.sin(me.yaw), 0, Math.cos(me.yaw)];
+      if (veilReady(me, t) && q.mrain.phase === 'dive') { act({ t: 'veil' }); continue; }
+      if (!rec.mob && dc < MRAIN.radius + 0.5 && mobOut(out)) { rec.mob = true; continue; }
+      if (canMove) { b.dodgeVec = [out[0], out[2]]; b.dodgeUntil = t + 0.25; }
     }
     // (a Night Cage needs no reaction: the server keeps everyone on their side)
   }
 }
 
 const LASH_RANGE = C.SPELLS.lash.speed * C.SPELLS.lash.life;
+
+// Meteor Rain, from up there: aim at the best target (where it will be by the time we land), and dive after a short
+// look (sooner if they're stuck); the server dives on its own at the end of the hover.
+function flyMeteorRain(me, world, t, act) {
+  const b = me.bot, M = me.mrain;
+  if (M.phase !== 'hover') return;
+  b.mrainCommit ??= t + rand(0.6, 1.8);
+  let best = null, bs = -Infinity;
+  for (const q of world.players.values()) {
+    if (!foe(me, q) || q.dead || airborne(q, t) || dist2D(q.p, [M.from[0], 0, M.from[1]]) > MRAIN.range) continue;
+    const near = [...world.players.values()].filter(o => foe(me, o) && !o.dead && dist2D(o.p, q.p) < MRAIN.radius).length;
+    const sc = near * 2 - q.hp * 0.02 + (rooted(q, t) || isStunned(q, t) ? 1.5 : 0);
+    if (sc > bs) { bs = sc; best = q; }
+  }
+  if (!best) return;
+  const tr = tracks.get(best.id), lead = (MRAIN.dive + 0.1) * b.cfg.lead;
+  const at = [best.p[0] + (tr ? tr.v[0] : 0) * lead, best.p[2] + (tr ? tr.v[1] : 0) * lead];
+  act({ t: 'mrainAim', at });
+  if (t >= b.mrainCommit || rooted(best, t) || isStunned(best, t)) { b.mrainCommit = null; act({ t: 'mrainDive', at }); }
+}
+// Blizzard: keep the cone on the nearest enemies (the server turns it slowly toward our facing).
+function steerBlizzard(me, world, t) {
+  let best = null, bd = BLIZ.range + 3;
+  for (const q of world.players.values()) if (foe(me, q) && !q.dead && !(q.frozenUntil > t) && dist2D(q.p, me.p) < bd && hasLOS(me.p, q.p)) { bd = dist2D(q.p, me.p); best = q; }
+  if (best) me.yaw = yawTo(me.p, best.p);
+}
 
 // Is `p` inside the lane that starts at `from` and runs `len` along `dir`, `width` wide?
 function inLane(p, from, dir, width, len) {
@@ -1175,6 +1189,7 @@ function moveBot(me, dt, world, t) {
   } else b.dash = null;
 
   // Ram Ride: galloping straight along our facing (the server times the mount, the ride and the dismount)
+  if (me.mrain || me.mrainFall) { b.vel = [0, 0]; me.anim = 'idle'; return; }   // Meteor Rain: the server flies her
   if (me.ride && t >= me.ride.rideAt && t < me.ride.dismountAt && !stunned) {
     b.vel = [Math.sin(me.yaw) * RIDE.speed, Math.cos(me.yaw) * RIDE.speed];
     me.p[0] += b.vel[0] * dt; me.p[2] += b.vel[1] * dt;
