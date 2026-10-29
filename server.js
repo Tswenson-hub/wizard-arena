@@ -70,6 +70,7 @@ function newPlayer(id, name, wizard = C.DEFAULT_WIZARD) {
     wizard, pendingWizard: null,   // a switch waits here while a cast is in progress (or until respawn)
     color: C.WIZARDS[wizard].color,
     p: [sp[0], 0, sp[2]], yaw: 0, anim: 'idle',
+    jump: null, crouch: false,    // round 9: { start, y0 } while a jump is in the air; crouched (C / Ctrl)
     hp: C.MAX_HP, st: C.MAX_STAMINA,
     blocking: false, blockReleasedAt: -10,
     stunUntil: 0, stunImmuneUntil: 0, dead: false, respawnAt: 0,
@@ -113,7 +114,7 @@ function playerPublic(p) {
     ultWind: p.ultWind ? p.ultWind.U : null,
     blizz: p.blizz ? +p.blizz.yaw.toFixed(3) : null,
     mrain: p.mrain ? p.mrain.phase : null,
-    sprint: !!p.sprinting, castRoot: castRooted(p),
+    sprint: !!p.sprinting, castRoot: castRooted(p), crouch: !!p.crouch, jump: !!p.jump,
     ride: p.ride ? (now() < p.ride.rideAt ? 'mount' : now() < p.ride.dismountAt ? 'ride' : 'dismount') : null,
     ramGuard: p.ramGuardUntil > now(),
     bot: p.bot ? p.bot.difficulty : undefined,
@@ -125,6 +126,11 @@ const isBound = (p) => p.silenceUntil > now();     // no spells, ward or telekin
 const isRooted = (p) => p.rootUntil > now();       // no movement, knockback included
 const canAct = (p) => !p.dead && !isStunned(p) && !isBound(p);
 const isAirborne = (p) => p.flightUntil > now();
+// Round 9: the floor under a point, for a wizard whose feet are at footY (map.js SURFACES once they exist; else 0)
+const groundAt = (x, z, footY = 0) => (C.surfaceHeight ? C.surfaceHeight(x, z, footY) : 0);
+const isJumping = (p) => !!p.jump;
+// Casting in a jump: nothing for JUMP.castLock s after take-off, then only the primary (and movement abilities)
+const JUMP_LOCKED = new Set(['chargeStart', 'cyclone', 'lashStart', 'frostfall', 'ult', 'veil', 'bulwark', 'smokeFlask', 'ramGuard', 'firewall', 'block', 'toxic', 'curse', 'pickup', 'throw', 'ram', 'ride']);
 const kit = (p) => C.kitOf(p.wizard);
 const CYCLONE = C.SPELLBOOK.cyclone, SKY = C.SPELLBOOK.skyward, LASH = C.SPELLBOOK.sanguine_lash;
 const MIRROR = C.SPELLBOOK.mirror_step, BULWARK = C.SPELLBOOK.glacial_bulwark, RELIC = C.SPELLBOOK.trapped_relic;
@@ -317,6 +323,7 @@ function applyHit(target, proj) {
 
   let dmg = proj.dmg ?? spec.damage;
   if (attacker?.brewUntil > t && BREW_KINDS.has(proj.kind)) dmg = Math.round(dmg * C.SPELLBOOK.berserker_brew.damageMul);   // Berserker Brew
+  let absorbedAmt = 0;   // what a block soaked (the BLOCKED number)
   if (blocked) {
     const cost = spec.staminaCost * (C.SPELLBOOK[kit(target).guard]?.hitCostMul ?? 1);
     const full = dmg;
@@ -333,6 +340,7 @@ function applyHit(target, proj) {
       broadcast({ t: 'blockBreak', id: target.id });
     }
     guardAbsorbed(target, attacker, full - dmg, t);
+    absorbedAmt = full - dmg;
   } else if (interrupt) {
     // Sparks can't chain-stun: once a spark stun ends there's a short window where sparks only sting.
     const primaryShot = C.PRIMARY_KINDS.has(proj.kind);
@@ -377,17 +385,19 @@ function applyHit(target, proj) {
   broadcast({
     t: 'hit', target: target.id, attacker: proj.owner, kind: proj.kind, dmg, blocked,
     kb, dir: norm3([proj.v[0], 0, proj.v[2]]), int: interrupt,
+    ...(proj.fin ? { fin: true } : {}), ...(spec.ult ? { ult: true } : {}),   // (combat feedback: bigger numbers)
+    ...(blocked ? { absorbed: absorbedAmt } : {}),
     ...(!blocked && spec.slow ? { slow: spec.slowTime } : {}),
     ...(!blocked && !steady && spec.bind ? { bind: spec.bind } : {}),
     ...(freeze ? { freeze: true } : {}),
     ...(!blocked && !steady && spec.launch ? { launch: spec.launch } : {}),
   });
 
-  if (target.hp <= 0 && !target.dead) killPlayer(target, attacker, proj.kind === 'goat' ? 'goated' : null);
+  if (target.hp <= 0 && !target.dead) killPlayer(target, attacker, proj.kind === 'goat' ? 'goated' : null, proj.kind);
   return { dmg, blocked };
 }
 
-function killPlayer(target, attacker, cause = null) {
+function killPlayer(target, attacker, cause = null, kind = cause) {   // kind: the spell or thing that did it (the kill feed's icon)
   target.dead = true;
   target.hp = 0;
   target.charging = false;
@@ -408,14 +418,14 @@ function killPlayer(target, attacker, cause = null) {
   if (target.carryingGoat) { const g = goatById(target.carryingGoat); target.carryingGoat = null; if (g && g.holder === target.id) Goats.releaseGoat?.(g, goatCtx); }
   if (attacker && attacker.id !== target.id) { attacker.kills++; addUltCharge(attacker, C.ULT_CHARGE.kill); }
   match.onKill(target, attacker, cause);
-  broadcast({ t: 'death', id: target.id, killer: attacker ? attacker.id : null, cause });
+  broadcast({ t: 'death', id: target.id, killer: attacker ? attacker.id : null, cause, kind });
 }
 
 function respawn(p) {
   const sp = match.spawnPointFor(p) || C.SPAWN_POINTS[Math.floor(Math.random() * C.SPAWN_POINTS.length)];
   p.p = [sp[0] + rand(-1, 1), 0, sp[2] + rand(-1, 1)];
   p.hp = C.MAX_HP; p.st = C.MAX_STAMINA;
-  p.dead = false; p.stunUntil = 0; p.blocking = false; p.charging = false; p.cyclone = null; p.lash = null; p.flightUntil = 0;
+  p.dead = false; p.stunUntil = 0; p.blocking = false; p.charging = false; p.cyclone = null; p.lash = null; p.flightUntil = 0; p.jump = null; p.crouch = false;
   p.slowUntil = p.rootUntil = p.silenceUntil = p.frozenUntil = 0;
   p.ammo = C.primaryMag(kit(p).primary).magazine; p.reloadUntil = 0;
   endUltimates(p);
@@ -454,8 +464,10 @@ function guardAbsorbed(p, attacker, absorbed, t) {
 // Healing (Black Death's blocks, a Night Cage): up to max HP; `shimmer` s of the crimson healing glow on clients.
 function heal(p, amount, t, shimmer = 0.3) {
   if (p.dead || !(amount > 0) || p.hp >= C.MAX_HP) return;   // nothing to heal: no glow
+  const before = p.hp;
   p.hp = Math.min(C.MAX_HP, p.hp + amount);
   p.healUntil = Math.max(p.healUntil || 0, t + shimmer);
+  p.healAcc = (p.healAcc || 0) + (p.hp - before);   // shown as green numbers, batched (healFlush)
 }
 
 // ---------------------------------------------------------------- casting roots
@@ -475,7 +487,7 @@ function castRooted(p, t = now()) {
 // Sprint on or off. It needs stamina (and STAMINA SPRINT.restart of it to start again after running dry), and
 // none of: a wind-up, a ward, telekinesis, a root, the air, a ram ride, an ultimate in progress.
 function canSprint(p, t) {
-  return !p.dead && !p.blocking && !p.charging && !p.cyclone && !p.lash && !holding(p) && !isRooted(p) && !isStunned(p)
+  return !p.dead && !p.crouch && !p.blocking && !p.charging && !p.cyclone && !p.lash && !holding(p) && !isRooted(p) && !isStunned(p)
     && !isAirborne(p) && !p.ride && !inUltimate(p) && !p.flaskWind && !castRooted(p, t) && p.st > 0 && (p.sprinting || p.st >= C.SPRINT.restart);
 }
 function setSprint(p, want, t) {
@@ -604,8 +616,8 @@ function potionSplash(proj, directId) {
   const owner = players.get(proj.owner);
   for (const q of players.values()) {
     if (q.dead || q.id === directId || q.id === proj.owner || !enemies(owner, q)) continue;
-    const c = [q.p[0], q.p[1] + C.HIT_CENTER_Y, q.p[2]];
-    if (Math.hypot(c[0] - proj.p[0], (c[1] - proj.p[1]) * 0.6, c[2] - proj.p[2]) > P.splash + C.HIT_RADIUS * 0.6) continue;
+    const c = [q.p[0], q.p[1] + C.hitCenterOf(q), q.p[2]];
+    if (Math.hypot(c[0] - proj.p[0], (c[1] - proj.p[1]) * 0.6, c[2] - proj.p[2]) > P.splash + C.hitRadiusOf(q) * 0.6) continue;
     const dx = q.p[0] - proj.p[0], dz = q.p[2] - proj.p[2], l = Math.hypot(dx, dz) || 1;
     applyHit(q, { kind: 'potion_splash', owner: proj.owner, dmg: base, v: [dx / l, 0, dz / l] });
   }
@@ -1370,6 +1382,18 @@ function simulate(dt) {
     }
     // Skyward Flash: the flight ends when the wizard reports touching down, or when time runs out
     if (p.flightUntil && (t >= p.flightUntil || (p.p[1] <= 0.01 && t > p.flightStart + 0.3))) { p.flightUntil = 0; p.p[1] = 0; }
+    // a jump: bots fly the arc here (humans report theirs); a lost landing report ends it anyway
+    if (p.jump && (isAirborne(p) || p.mrain || p.mrainFall || p.dead)) p.jump = null;
+    // heals show as one green number about every 0.4 s, not one per tick
+    if (p.healAcc >= 1 && t >= (p.healShownAt || 0) + 0.4) { broadcast({ t: 'heal', id: p.id, amt: Math.round(p.healAcc) }); p.healAcc = 0; p.healShownAt = t; }
+    if (p.jump) {
+      const e = t - p.jump.start;
+      if (p.bot) {
+        const floor = groundAt(p.p[0], p.p[2], p.p[1]);
+        p.p[1] = Math.max(floor, p.jump.y0 + C.jumpY(e));
+        if (e > C.JUMP.airTime * 0.5 && p.p[1] <= floor + 0.001) { p.p[1] = floor; p.jump = null; }
+      } else if (e > C.JUMP.airTime + 0.6) p.jump = null;
+    }
     flushPendingWizard(p);
     // goats.js drops a held goat itself (holder dead, stunned or gone); forget it when it's no longer ours
     if (p.carryingGoat) { const g = goatById(p.carryingGoat); if (!g || g.state !== 'held' || g.holder !== p.id) p.carryingGoat = null; }
@@ -1461,9 +1485,9 @@ function simulate(dt) {
     for (const pl of players.values()) {
       if (pl.dead || pl.id === proj.owner || !enemies(shooter, pl)) continue;   // teammates: it flies through
       if (proj.pierce && proj.hitIds.has(pl.id)) continue;
-      const c = [pl.p[0], pl.p[1] + C.HIT_CENTER_Y, pl.p[2]];
+      const c = [pl.p[0], pl.p[1] + C.hitCenterOf(pl), pl.p[2]];   // crouched: a smaller, lower sphere
       const d = Math.hypot(proj.p[0] - c[0], proj.p[1] - c[1], proj.p[2] - c[2]);
-      if (d < C.HIT_RADIUS + proj.radius) {
+      if (d < C.hitRadiusOf(pl) + proj.radius) {
         const { blocked, dmg: dealt } = applyHit(pl, proj);
         if (proj.kind === 'sling' && !blocked && dealt > 0 && shooter && !pl.dead) callRamOn(pl, shooter);   // Shepherd's Sling
         if (proj.pierce) {
@@ -1521,6 +1545,7 @@ const ULT_LOCKED = new Set(['toxic', 'flaskStep', 'smokeFlask', 'ult', 'ram', 'r
 function handle(p, msg) {
   const t = now();
   if ((inUltimate(p) || p.ride || p.flaskWind) && ULT_LOCKED.has(msg.t)) return;   // a tornado, a rune flare or a ram ride: nothing else
+  if (p.jump && (JUMP_LOCKED.has(msg.t) || (msg.t === 'cast' && t < p.jump.start + C.JUMP.castLock)) && !(msg.t === 'block' && !msg.on)) return;
   switch (msg.t) {
     case 'ult': {
       castUltimate(p, msg);
@@ -1549,8 +1574,14 @@ function handle(p, msg) {
       const dt = Math.max(0.016, t - (p.lastStateAt || t));
       // Feet stay on the ground except inside a Skyward Flash, where the height may only fall
       // (never faster than a drop, never slower than the slowest hover).
-      let y = 0;
-      if (isAirborne(p)) {
+      let y = groundAt(msg.p[0], msg.p[2], p.p[1]);
+      if (p.jump && isAirborne(p)) p.jump = null;   // a Skyward Flash out of a jump: the flight's rules now
+      if (p.jump) {
+        // a jump: anywhere between the floor and the apex (plus a little); it ends when we report landing
+        const e = t - p.jump.start;
+        y = clamp(msg.p[1], y, p.jump.y0 + C.JUMP.height + 0.2);
+        if ((e > 0.15 && msg.p[1] <= y + 0.02) || e > C.JUMP.airTime + 0.6) p.jump = null;
+      } else if (isAirborne(p)) {
         const e = t - p.flightStart;
         const ceil = clamp(SKY.height + 0.5 - Math.max(0, e - 0.3) * SKY.slowFallSpeed * 0.9, 0, SKY.maxHeight);
         const floor = clamp(p.p[1] - (SKY.dropSpeed * dt * 1.5 + 0.4), 0, ceil);
@@ -1563,7 +1594,8 @@ function handle(p, msg) {
       const dashing = p.dashUntil > t;   // Smoke Screen's dash is much faster than running
       // Sprint: granted while Shift is held (msg.sprint), there's stamina, and nothing forbids it
       const fwdOk = (() => { const mx = msg.p[0] - p.p[0], mz = msg.p[2] - p.p[2], ml = Math.hypot(mx, mz); const y = Number.isFinite(msg.yaw) ? msg.yaw : p.yaw; return ml < 0.02 || (mx * Math.sin(y) + mz * Math.cos(y)) / ml > 0.2; })();
-      setSprint(p, !!msg.sprint && fwdOk, t);
+      p.crouch = !!msg.crouch && !p.jump && !isAirborne(p) && !p.ride && !p.eye && !p.mrain;
+      setSprint(p, !!msg.sprint && fwdOk && !p.crouch, t);
       const d = dist2D(np, p.p);
       // the fastest this wizard can go this way: its run speed, the backpedal cap against its facing, or a dash
       const run = C.backpedalSpeed(C.speedOf(p.wizard) * (p.eye ? EYE.speedMul : 1), np[0] - p.p[0], np[2] - p.p[2], Number.isFinite(msg.yaw) ? msg.yaw : p.yaw)
@@ -1572,6 +1604,7 @@ function handle(p, msg) {
       // 0.6 m of slack per update let a client run about 20 m/s faster than its walk)
       const own = dashing ? SMOKE.distance / SMOKE.dashTime : galloping(p, t) ? RIDE.speed * 1.1 : isAirborne(p) ? Math.max(run, SKY.airSpeed)
         : castRooted(p, t) ? 0   // casting: no translation (the budget's small burst covers latency)
+        : p.crouch && !(p.sprintEndedAt > t - 0.3) ? Math.min(run, C.CROUCH.speed)
         : p.sprinting || p.sprintEndedAt > t - 0.3 ? Math.max(run, C.sprintOf(p.wizard) * (p.slowUntil > t ? 1 - C.SPELLS.skim.slow : 1)) : run;
       // A movement budget: it refills at the fastest this wizard may go right now, and holds at most a short burst
       // (about 0.25 s of it, plus 0.25 m), so bunched-up updates from an honest client pass but a steady overspeed
@@ -1595,6 +1628,16 @@ function handle(p, msg) {
       p.lastStateAt = t;
       if (Number.isFinite(msg.yaw)) p.yaw = msg.yaw;
       if (typeof msg.anim === 'string' && msg.anim.length < 16) p.anim = msg.anim;
+      break;
+    }
+    case 'jump': {
+      // Space: a hop. Not while rooted, casting, warding, flying, riding or already up; costs stamina.
+      if (p.dead || p.jump || isAirborne(p) || isRooted(p) || isStunned(p) || castRooted(p, t) || p.blocking || p.ride || p.mrain || p.mrainFall || p.eye
+        || p.flaskWind || p.st < C.JUMP.stamina || p.p[1] > groundAt(p.p[0], p.p[2], p.p[1]) + 0.05) { send(p.id, { t: 'jumpRefused' }); break; }
+      p.st -= C.JUMP.stamina; p.blockReleasedAt = t;   // stamina regen waits, as after a ward
+      p.crouch = false;
+      p.jump = { start: t, y0: p.p[1] };
+      broadcast({ t: 'jump', id: p.id });
       break;
     }
     case 'block': {

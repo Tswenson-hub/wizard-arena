@@ -43,7 +43,7 @@ const ui = {
   join: $('#join'), form: $('#joinForm'), name: $('#nameInput'), joinBtn: $('#joinBtn'), loadStatus: $('#loadStatus'),
   hud: $('#hud'), hp: $('#bars .hp .fill'), st: $('#bars .st .fill'), stBar: $('#bars .st'),
   charge: $('#chargeRing'), chargeFg: $('#chargeRing .fg'),
-  feed: $('#feed'), hint: $('#hint'), status: $('#status'), death: $('#deathScreen'), vignette: $('#vignette'),
+  feed: $('#feed'), killfeed: $('#killfeed'), hint: $('#hint'), status: $('#status'), death: $('#deathScreen'), vignette: $('#vignette'),
   scoreboard: $('#scoreboard'), scoreBody: $('#scoreboard tbody'), clickToPlay: $('#clickToPlay'),
   botCount: $('#botCount'), botDiff: $('#botDiff'), botTally: $('#botTally'), volume: $('#volume'), mute: $('#mute'),
   pickNote: $('#pickNote'),
@@ -86,7 +86,7 @@ const local = {
   ride: null,                  // Jeb's Ram Ride: { start, rideAt, dismountAt, endAt } (predicted; the server's 'ride' confirms)
   fHold: null,                 // { start } while F is held with nothing carried (Trapped Relic: hold to curse)
   flight: null,                // { start, drop } during our own Skyward Flash
-  spaceHeld: false,            // Space was used to drop out of a flight: don't ward until it's released
+  jump: null, crouch: false, crouchToggle: false, cHeld: false,   // round 9: jump (Space), crouch (C toggles, Ctrl holds)
   blocking: false,
   anim: 'idle',
   lastSend: 0,
@@ -304,7 +304,7 @@ function applySnapshot(w, s) {
   w.brewing = !!s.brew;
   w.healing = !!s.heal;   // Night Cage or Black Death healing: the crimson shimmer (per frame)
   if (!s.brew && w.brewFx) { effects.stopAura(w.brewFx); w.brewFx = null; }
-  if (w !== me) { w.sprinting = !!s.sprint; w.castRooted = !!s.castRoot; }
+  if (w !== me) { w.sprinting = !!s.sprint; w.castRooted = !!s.castRoot; w.crouch = !!s.crouch; w.jumping = !!s.jump; }
   w.ultWinding = !!s.ultWind; w.blizz = s.blizz ?? null;
   if (w === me) {
     if (!s.ultWind && local.ultWind && now - local.ultWind.start > 0.5) local.ultWind = null;   // refused, fizzled or fired
@@ -399,7 +399,7 @@ function handleMessage(msg) {
     case 'goatAngry': {
       const g = goats.get(msg.id);
       if (g) { g.apply({ p: [g.target.x, g.target.z], yaw: g.targetYaw, s: 'windup', tgt: msg.target }); sfx.bleat(g.group.position.clone().setY(1), true, { vol: 1.2, owner: g.id }); }   // angered: rearing to charge
-      if (msg.target === myId) feed('You angered a goat! <b>Ward (Space) facing it</b> or get out of the way');
+      if (msg.target === myId) feed('You angered a goat! <b>Ward (R) facing it</b> or get out of the way');
       break;
     }
     case 'goatRam': {
@@ -519,6 +519,7 @@ function handleMessage(msg) {
         if (breaks) { local.frostAim = false; local.cataAim = false; }
       }
       if (msg.attacker === myId && msg.dmg > 0) hitmarker();
+      combatFeedbackHit(msg, target);
       break;
     }
     case 'blockBreak': {
@@ -761,11 +762,9 @@ function handleMessage(msg) {
         local.cataAim = false; local.eyeUntil = local.blizzUntil = 0; local.pull = null; local.ride = null; local.ultWind = null; local.mrain = null;
       }
       if (msg.killer === myId && msg.id !== myId) sfx.killSting();   // our kill (goat kills credited to us too)
-      if (msg.cause === 'goated' && k) feed(`<b>${esc(k.name)}</b> goated <b>${esc(w.name)}</b>`);
-      else if (msg.cause === 'goat') feed(`<b>${esc(w.name)}</b> was rammed by a goat${k && k !== w ? ` (thanks, <b>${esc(k.name)}</b>)` : ''}`);
-      else if (msg.cause === 'ram' && k) feed(`<b>${esc(k.name)}</b>'s ram flattened <b>${esc(w.name)}</b>`);
-      else if (k && k !== w) feed(`<b>${esc(k.name)}</b> vanquished <b>${esc(w.name)}</b>`);
-      else feed(`<b>${esc(w.name)}</b> perished`);
+      killFeed(k && k !== w ? k : null, w, msg.kind || msg.cause);
+      if (msg.killer === myId && msg.id !== myId) killMarker();
+      if (w === me) showKilledBy(k && k !== w ? k : null, msg.kind || msg.cause);
       break;
     }
     case 'respawn': {
@@ -773,7 +772,7 @@ function handleMessage(msg) {
       if (!w) break;
       w.dead = false;
       w.bound = w.slowed = w.frozen = false;
-      if (w === me) { local.pos.set(msg.p[0], 0, msg.p[2]); local.vel.set(0, 0, 0); if (Number.isFinite(msg.yaw)) local.yaw = msg.yaw; ui.death.classList.add('hidden'); local.stunUntil = 0; local.slowUntil = local.rootUntil = local.silenceUntil = 0; }
+      if (w === me) { local.pos.set(msg.p[0], 0, msg.p[2]); local.vel.set(0, 0, 0); if (Number.isFinite(msg.yaw)) local.yaw = msg.yaw; ui.death.classList.add('hidden'); dmgFrom.clear(); killedBy = null; local.stunUntil = 0; local.slowUntil = local.rootUntil = local.silenceUntil = 0; }
       else { w.targetPos.set(msg.p[0], 0, msg.p[2]); w.group.position.copy(w.targetPos); }
       effects.teleport(msg.p, msg.p);
       sfx.respawn([msg.p[0], 1, msg.p[2]]);
@@ -788,6 +787,21 @@ function handleMessage(msg) {
       break;
     }
     case 'notice': feed(esc(msg.text)); break;   // a server note for us (e.g. our hero was already on the team)
+    case 'heal': {   // Night Cage, Black Death: green numbers (ours by the HP bar)
+      const w = players.get(msg.id);
+      if (!w) break;
+      if (w === me) hudNumber(`+${msg.amt}`, 'heal');
+      else if (me && (w.team && w.team === me.team)) floatNumber(w, `+${msg.amt}`, 'heal');
+      break;
+    }
+    case 'jumpRefused':   // (stamina, or a state we predicted wrong): back down
+      if (local.jump) { local.jump = null; local.pos.y = groundAt(local.pos.x, local.pos.z, local.pos.y); }
+      break;
+    case 'jump': {
+      const w = players.get(msg.id);
+      if (w && w !== me) sfx.play('step_grass', { pos: wpos(w), vol: 0.5, rate: 1.15, jitter: 0.05 });
+      break;
+    }
     case 'ultRefused':
       local.cataAim = false;
       break;
@@ -1244,6 +1258,115 @@ let vignetteT = 0;
 function flashVignette() { ui.vignette.classList.add('hit'); vignetteT = 0.25; }
 let shakeAmt = 0;
 function shake(a) { shakeAmt = Math.max(shakeAmt, a); }
+// ---------------------------------------------------------------- combat feedback (round 9)
+// Spell icons (Raven Fantasy Icons, public/textures/icons/CREDITS.md) by hit kind, and names for the feed and card.
+const KIND_ICON = { fireball: 'fireball', heavy: 'heavy', meteor_rain_hit: 'meteor_rain', firewall_burn: 'firewall', shear: 'shear', cyclone: 'cyclone',
+  eye_of_storm: 'eye_of_storm', eye_burst: 'eye_of_storm', skim: 'skim', frostfall: 'frostfall', blizzard_chip: 'blizzard', blizzard_freeze: 'blizzard',
+  bulwark_frost: 'bulwark', hex: 'hex', lash: 'lash', trapped_relic: 'trapped_relic', sling: 'sling', potion: 'potion', potion_splash: 'potion',
+  toxic: 'toxic', toxic_pool: 'toxic', prop: 'prop', goat: 'goat', goated: 'goat', ram: 'ram', ram_shove: 'ram', fast: 'fast', flaskstep: 'flaskstep' };
+const KIND_NAME = { heavy: 'Meteor', fast: 'Spark', shear: 'Gale Shear', hex: 'Hex Shards', skim: 'Glacial Skim', lash: 'Sanguine Lash', sling: "Shepherd's Sling",
+  potion: 'Potion Toss', potion_splash: 'Potion Toss', toxic: 'Toxic Flask', toxic_pool: 'Toxic Flask', prop: 'a thrown object', goat: 'a goat', goated: 'a goat',
+  ram: 'a ram', ram_shove: 'Ram Ride', meteor_rain_hit: 'Meteor Rain', firewall_burn: 'Firewall', eye_burst: 'Eye of the Storm', blizzard_chip: 'Blizzard',
+  blizzard_freeze: 'Blizzard', bulwark_frost: 'Glacial Bulwark', flaskstep: 'Flask Step' };
+const iconFor = (kind) => `/textures/icons/${KIND_ICON[kind] || 'skull'}.png`;
+const kindName = (kind) => KIND_NAME[kind] || C.SPELLBOOK[kind]?.name || C.SPELLS[kind]?.name || (kind ? kind.replace(/_/g, ' ') : 'something');
+const heroHex = (w) => '#' + ((C.WIZARDS[w?.wizard]?.color ?? 0xdddddd).toString(16).padStart(6, '0'));
+const dmgFrom = new Map();   // attacker id -> damage they've done us since we last spawned (the killed-by card)
+let killedBy = null;
+
+// Floating numbers: pooled DOM labels pinned to a world point, drifting up and fading; several on one target stack.
+const dmgLayer = document.createElement('div'); dmgLayer.id = 'dmgLayer'; $('#hud').appendChild(dmgLayer);
+const floats = [];
+function floatNumber(w, text, cls) {
+  const el = document.createElement('div');
+  el.className = 'dn ' + cls; el.textContent = text;
+  dmgLayer.appendChild(el);
+  const stack = floats.filter(f => f.w === w && f.age < 0.35).length;
+  floats.push({ el, w, pos: w.group.position.clone().setY(w.group.position.y + (w.crouch ? 1.2 : 1.9)), age: 0, life: cls.includes('big') || cls.includes('ult') ? 1.2 : 0.9,
+    dx: (Math.random() - 0.5) * 26, stack });
+  while (floats.length > 40) { floats.shift().el.remove(); }
+}
+function updateFloats(dt) {
+  const v = tmp.vf ??= new THREE.Vector3();
+  for (let i = floats.length - 1; i >= 0; i--) {
+    const f = floats[i];
+    f.age += dt;
+    if (f.age >= f.life) { f.el.remove(); floats.splice(i, 1); continue; }
+    v.copy(f.pos).project(camera);
+    if (v.z > 1) { f.el.style.opacity = 0; continue; }
+    const k = f.age / f.life;
+    const x = (v.x + 1) / 2 * innerWidth + f.dx * k, y = (1 - v.y) / 2 * innerHeight - 46 * k - f.stack * 16;
+    f.el.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -50%) scale(${(k < 0.12 ? 0.6 + k / 0.12 * 0.5 : 1.1 - Math.min(0.1, k)).toFixed(3)})`;
+    f.el.style.opacity = k < 0.7 ? 1 : (1 - k) / 0.3;
+  }
+}
+// Numbers about us, by the HP bar: red damage taken, green heals, grey BLOCKED.
+function hudNumber(text, cls) {
+  const el = document.createElement('div');
+  el.className = 'hn ' + cls; el.textContent = text;
+  el.style.left = `${20 + Math.random() * 60}%`;
+  $('#bars').appendChild(el);
+  setTimeout(() => el.remove(), 1100);
+}
+// A red arc round the crosshair, toward where the hit came from.
+function damageArc(msg) {
+  const src = players.get(msg.attacker);
+  let dx, dz;
+  if (src && src !== me) { dx = src.group.position.x - local.pos.x; dz = src.group.position.z - local.pos.z; }
+  else if (msg.dir) { dx = -msg.dir[0]; dz = -msg.dir[2]; }
+  else return;
+  const f = [Math.sin(local.yaw), Math.cos(local.yaw)], rt = [-Math.cos(local.yaw), Math.sin(local.yaw)];
+  const ang = Math.atan2(dx * rt[0] + dz * rt[1], dx * f[0] + dz * f[1]);   // 0 = ahead, + = to the right
+  const el = document.createElement('div');
+  el.className = 'dmgArc' + (msg.dmg >= 25 ? ' heavy' : '');
+  el.style.transform = `rotate(${(ang * 180 / Math.PI).toFixed(1)}deg)`;
+  $('#hud').appendChild(el);
+  setTimeout(() => el.remove(), 900);
+}
+function combatFeedbackHit(msg, target) {
+  const big = msg.ult ? ' ult' : (msg.dmg >= 30 || msg.kind === 'heavy' || msg.kind === 'frostfall' || msg.kind === 'lash') ? ' big' : msg.fin ? ' crit' : '';
+  if (msg.attacker === myId && target !== me) {
+    if (msg.blocked) floatNumber(target, 'BLOCKED', 'blocked');
+    else if (msg.dmg > 0) floatNumber(target, String(Math.round(msg.dmg)), 'dmg' + big);
+  }
+  if (target === me) {
+    if (msg.blocked) hudNumber('BLOCKED', 'blocked');
+    else if (msg.dmg > 0) {
+      hudNumber(`-${Math.round(msg.dmg)}`, 'hurt' + big);
+      damageArc(msg);
+      if (msg.attacker != null && msg.attacker !== myId) dmgFrom.set(msg.attacker, (dmgFrom.get(msg.attacker) || 0) + msg.dmg);
+    }
+  }
+}
+// The kill feed: killer (hero colour), the spell's icon, victim; highlighted when it's us.
+function killFeed(killer, victim, kind) {
+  const el = document.createElement('div');
+  if (killer === me || victim === me) el.className = 'mine';
+  const who = (w) => `<b style="color:${heroHex(w)}">${esc(w.name)}</b>`;
+  el.innerHTML = `${killer ? who(killer) : ''}<img src="${iconFor(kind)}" alt="" title="${esc(kindName(kind))}">${who(victim)}`;
+  ui.killfeed.prepend(el);
+  while (ui.killfeed.children.length > 5) ui.killfeed.lastChild.remove();
+}
+function killMarker() {
+  const m = $('#killMarker');
+  m.classList.remove('show'); void m.offsetWidth; m.classList.add('show');
+}
+// The killed-by card for the respawn wait: their hero, the spell, their HP now and the damage they did us.
+function showKilledBy(k, kind) {
+  const card = ui.death.querySelector('.killedBy');
+  killedBy = k ? { id: k.id, kind } : null;
+  if (!k) { card.innerHTML = `<img src="${iconFor(kind)}" alt=""><div><div class="kb-spell">${esc(kindName(kind))}</div></div>`; return; }
+  card.innerHTML = `<img src="${iconFor(kind)}" alt=""><div>
+    <div class="kb-name" style="color:${heroHex(k)}">${esc(k.name)} <span>${esc(C.WIZARDS[k.wizard]?.name || '')}</span></div>
+    <div class="kb-spell">${esc(kindName(kind))}</div>
+    <div class="kb-stats">dealt you <b>${Math.round(dmgFrom.get(k.id) || 0)}</b> · <span class="kb-hp">HP <b>${Math.max(0, Math.round(k.hp ?? 0))}</b></span></div></div>`;
+}
+function updateKilledBy() {
+  if (!killedBy || ui.death.classList.contains('hidden')) return;
+  const k = players.get(killedBy.id), hp = ui.death.querySelector('.kb-hp b');
+  if (k && hp) hp.textContent = k.dead ? '0' : Math.max(0, Math.round(k.hp ?? 0));
+}
+
 function hitmarker() {
   sfx.hitMarker();
   const ch = $('#crosshair .ring'); ch.style.borderColor = '#ffd25c'; ch.style.transform = 'scale(1.4)';
@@ -1325,7 +1448,7 @@ function aimPoint() {
     const t = tca - Math.sqrt(r * r - d2);
     if (t > 4.5 && t < best) best = t;       // ignore anything between the camera and us
   };
-  for (const w of players.values()) if (w !== me && !w.dead) hitSphere(tmp.v1.copy(w.group.position).setY(w.group.position.y + C.HIT_CENTER_Y), C.HIT_RADIUS + 0.3);
+  for (const w of players.values()) if (w !== me && !w.dead) hitSphere(tmp.v1.copy(w.group.position).setY(w.group.position.y + C.hitCenterOf(w)), C.hitRadiusOf(w) + 0.3);
   for (const d of decoys.values()) if (d.owner !== myId) hitSphere(tmp.v1.copy(d.wiz.group.position).setY(C.HIT_CENTER_Y), C.HIT_RADIUS + 0.3);
   for (const g of goats.values()) if (!(g.state === 'held' && me.carryingGoat === g.id)) hitSphere(tmp.v1.copy(g.group.position).setY(g.group.position.y + C.GOAT.hitY), C.GOAT.radius + 0.2);
   // pillars and trees as vertical cylinders (2D ray vs circle)
@@ -1370,6 +1493,9 @@ tkMarker.visible = false;
 scene.add(tkMarker);
 let tkHover = null;
 
+// The floor under a point for feet at footY (map.js SURFACES once they land; flat until then)
+const groundAt = (x, z, footY = 0) => (C.surfaceHeight ? C.surfaceHeight(x, z, footY) : 0);
+
 function updateLocal(dt) {
   const stunned = now < local.stunUntil || me.stunned;
   const bound = now < local.silenceUntil || me.bound;
@@ -1383,11 +1509,9 @@ function updateLocal(dt) {
   }
 
   const K = kit();
-  if (!input.down('Space')) local.spaceHeld = false;
-
-  // ---- Skyward Flash: float down (slower holding E), drop after floatTime or on Space
+  // ---- Skyward Flash: float down (slower holding E), drop after floatTime or on C (crouch)
   if (local.flight) {
-    if (input.justPressed('Space')) { local.flight.drop = true; local.spaceHeld = true; }
+    if (input.justPressed('KeyC') || input.justPressed('ControlLeft') || input.justPressed('ControlRight')) { local.flight.drop = true; local.cHeld = true; }
     const dropping = local.flight.drop || now - local.flight.start >= SKY.floatTime;
     const rate = dropping ? SKY.dropSpeed : input.down('KeyE') ? SKY.slowFallSpeed : SKY.fallSpeed;
     // real elapsed time, not the frame-clamped dt: the server checks the height against its clock
@@ -1399,6 +1523,8 @@ function updateLocal(dt) {
     }
   }
   const airborne = !!local.flight;
+  // Round 9: a jump is up for JUMP.airTime; nothing is cast in its first JUMP.castLock s, then only the primary
+  const jumping = !!local.jump, jumpLock = jumping && now - local.jump.start < C.JUMP.castLock;
 
   // ---- Arcane Cyclone timing (the server pulses; this keeps our controls honest meanwhile)
   if (local.cyclone && now - local.cyclone.start > CYC.windup + CYC.spin + 0.3) local.cyclone = null;
@@ -1421,7 +1547,6 @@ function updateLocal(dt) {
   // Ram Ride: E again, Space or a primary click gets off early (the normal dismount)
   if (local.ride && now >= local.ride.rideAt && now < local.ride.dismountAt && (input.justPressed('KeyE') || input.justPressed('Space') || input.lmbPressed)) {
     local.ride.dismountAt = now; local.ride.endAt = now + RIDE.dismount;
-    local.spaceHeld = true;   // the Space that got us off doesn't also ward or veil
     net.send({ t: 'rideStop' });
   }
   if (local.ultWind && now - local.ultWind.start > ULT_WIND + 0.6) local.ultWind = null;   // missed the result
@@ -1430,7 +1555,7 @@ function updateLocal(dt) {
   if (canAct) {
     // ultimate (Q): Cataclysm aims a circle (hold, release); the others go off at once
     const U = K.ultimate, ultReady = local.ult >= C.ULT_CHARGE.max, holdingQ = !!(me.carrying || me.carryingGoat);
-    if (input.justPressed('KeyQ') && ultReady && !ultLock && !busy && !holdingQ && !local.cataAim) {
+    if (input.justPressed('KeyQ') && ultReady && !ultLock && !busy && !holdingQ && !local.cataAim && !jumping) {
       if (AIMED_ULTS[U]) local.cataAim = true;
       else if (!airborne) { local.ultWind = { start: now }; net.send({ t: 'ult' }); }
     }
@@ -1445,26 +1570,26 @@ function updateLocal(dt) {
     }
   }
   if (canAct && !ultLock) {
-    // guard: hold to ward, or tap for Rime's ice wall (Space while airborne drops instead)
-    const wantBlock = C.isWard(K.guard) && input.down('Space') && me.st > 2 && !busy && !airborne && !local.spaceHeld;
+    // guard (R): hold to ward, or tap for the tap shields; not in the air, not mid-jump
+    const wantBlock = C.isWard(K.guard) && input.down('KeyR') && me.st > 2 && !busy && !airborne && !jumping;
     if (wantBlock !== local.blocking) { local.blocking = wantBlock; net.send({ t: 'block', on: wantBlock }); }
-    if (K.guard === 'tempest_veil' && input.justPressed('Space') && !airborne && !local.spaceHeld && now >= local.cd.guard && !me.veiled) {
+    if (K.guard === 'tempest_veil' && input.justPressed('KeyR') && !airborne && !jumping && now >= local.cd.guard && !me.veiled) {
       local.cd.guard = now + SPELL.tempest_veil.cooldown;   // tap: the bubble goes up for its duration, no holding
       net.send({ t: 'veil' });   // not rooted: she keeps moving
     }
-    if (K.guard === 'glacial_bulwark' && input.justPressed('Space') && !airborne && !local.spaceHeld && !busy && now >= local.cd.guard) {
+    if (K.guard === 'glacial_bulwark' && input.justPressed('KeyR') && !airborne && !jumping && !busy && now >= local.cd.guard) {
       local.cd.guard = now + BULWARK.cooldown;
       net.send({ t: 'bulwark', yaw: local.yaw }); local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.tapShield);
     }
-    if (K.guard === 'smoke_flask' && input.justPressed('Space') && !airborne && !local.spaceHeld && now >= local.cd.guard) {
+    if (K.guard === 'smoke_flask' && input.justPressed('KeyR') && !airborne && !jumping && now >= local.cd.guard) {
       local.cd.guard = now + SPELL.smoke_flask.cooldown * cdMul();
       net.send({ t: 'smokeFlask' }); local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.tapShield);
     }
-    if (K.guard === 'ram_guard' && input.justPressed('Space') && !airborne && !local.spaceHeld && now >= local.cd.guard) {
+    if (K.guard === 'ram_guard' && input.justPressed('KeyR') && !airborne && !jumping && now >= local.cd.guard) {
       local.cd.guard = now + RGUARD.cooldown;
       net.send({ t: 'ramGuard' }); local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.tapShield);
     }
-    if (K.guard === 'firewall' && input.justPressed('Space') && !airborne && !local.spaceHeld && !busy && now >= local.cd.guard) {
+    if (K.guard === 'firewall' && input.justPressed('KeyR') && !airborne && !jumping && !busy && now >= local.cd.guard) {
       local.cd.guard = now + SPELL.firewall.cooldown;   // tap: the flame stands for its life, no holding
       net.send({ t: 'firewall', yaw: local.yaw }); local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.tapShield);
     }
@@ -1474,11 +1599,11 @@ function updateLocal(dt) {
     if (local.reloadUntil && now >= local.reloadUntil) { local.ammo = MAG.magazine; local.reloadUntil = 0; }
     const startReload = () => { local.ammo = 0; local.reloadUntil = now + MAG.reload; sfx.reload(); };
     if (!local.reloadUntil && local.ammo > 0 && local.ammo < MAG.magazine && now - local.lastShot > MAG.idleReload) startReload();
-    if (input.justPressed('KeyR') && !local.reloadUntil && local.ammo < MAG.magazine) { startReload(); net.send({ t: 'reload' }); }
+    if (input.justPressed('KeyT') && !local.reloadUntil && local.ammo < MAG.magazine) { startReload(); net.send({ t: 'reload' }); }   // (R is the shield now)
     const holding = !!(me.carrying || me.carryingGoat);
     if (local.wasHolding && !holding) local.liftCdUntil = now + SPELL[K.utility].liftCooldown;
     local.wasHolding = holding;
-    if (input.lmbPressed && !local.blocking && !busy && !holding && now >= local.cd.fast && !local.reloadUntil && local.ammo > 0) {
+    if (input.lmbPressed && !local.blocking && !busy && !holding && !jumpLock && now >= local.cd.fast && !local.reloadUntil && local.ammo > 0) {
       computeAim();
       local.ammo--; local.lastShot = now;
       if (!local.ammo) { local.reloadUntil = now + MAG.reload; sfx.reload(); }
@@ -1490,7 +1615,7 @@ function updateLocal(dt) {
       else net.send({ t: 'cast', kind, origin: aimOrigin.toArray(), dir: aimDir.toArray() });
     }
     // power slot
-    if (input.rmbPressed && !local.blocking && !busy && (!airborne || SPELL[K.power].airCast) && !holding && now >= local.cd.power) {
+    if (input.rmbPressed && !local.blocking && !busy && !jumping && (!airborne || SPELL[K.power].airCast) && !holding && now >= local.cd.power) {
       if (K.power === 'meteor') {
         // wind-up: press to start, fires automatically when fully charged
         local.charging = true; local.chargeStart = now; local.chargeSent = false;
@@ -1582,7 +1707,7 @@ function updateLocal(dt) {
     }
     // utility: lift / hurl / set down; with Trapped Relic, holding F on an object curses it instead
     const relic = K.utility === 'trapped_relic';
-    if (input.justPressed('KeyF')) {
+    if (input.justPressed('KeyF') && !jumping) {
       if (me.carryingGoat) {
         // hurl the goat: like a prop, toward what the crosshair is on
         if (now >= local.cd.throw) {
@@ -1664,6 +1789,21 @@ function updateLocal(dt) {
     return;
   }
 
+  // ---- jump (Space) and crouch (C toggles, Ctrl holds)
+  if (!input.down('KeyC') && !input.down('ControlLeft') && !input.down('ControlRight')) local.cHeld = false;
+  if ((input.justPressed('KeyC')) && !local.cHeld && !local.flight) local.crouchToggle = !local.crouchToggle;
+  const ctrl = (input.down('ControlLeft') || input.down('ControlRight')) && !local.cHeld;
+  const floor = groundAt(local.pos.x, local.pos.z, local.pos.y);
+  if (input.justPressed('Space') && canAct && !rooted && !local.jump && !local.flight && !local.ride && !local.mrain && now >= local.eyeUntil && !local.blocking
+    && !local.charging && !local.cyclone && !local.lash && !local.flaskWind && !local.ultWind && now >= local.blizzUntil && !local.fHold && now >= local.castRootUntil
+    && me.st >= C.JUMP.stamina && local.pos.y <= floor + 0.05) {
+    local.jump = { start: now, y0: local.pos.y };
+    local.crouchToggle = false;
+    net.send({ t: 'jump' });
+  }
+  local.crouch = (local.crouchToggle || ctrl) && !local.jump && !local.flight && !local.ride && !local.mrain && now >= local.eyeUntil && !me.dead;
+  if (local.crouch) local.sprinting = false;
+
   // ---- movement (camera-relative); a bound wizard can't move, a silenced one still can
   // Ram Ride: still while getting on and off; at the gallop, straight ahead at full tilt (A/D steer too)
   const galloping = local.ride && now >= local.ride.rideAt && now < local.ride.dismountAt;
@@ -1686,7 +1826,7 @@ function updateLocal(dt) {
   const moving = (mx || mz) && !me.dead && !stunned && !rooted && !castRooted;
   // Sprint: Shift while moving forward (or diagonally forward); stamina from the server's copy, with the same
   // stop-at-0 / restart-above-15 rule, and nothing that forbids it
-  const sprintAllowed = moving && mz > 0 && !castRooted && !local.ride && !local.flight && !local.blocking && !local.charging && !local.cyclone && !local.lash
+  const sprintAllowed = moving && mz > 0 && !local.crouch && !castRooted && !local.ride && !local.flight && !local.blocking && !local.charging && !local.cyclone && !local.lash
     && !local.ultWind && !local.flaskWind && !(me.carrying || me.carryingGoat) && now >= local.blizzUntil && now >= local.eyeUntil;
   const wantSprint = (input.down('ShiftLeft') || input.down('ShiftRight')) && sprintAllowed;
   if (!wantSprint || me.st <= 0.5) local.sprinting = false;
@@ -1696,6 +1836,7 @@ function updateLocal(dt) {
   else if (local.blocking) speed = C.blockSpeedOf(me.wizard);
   else if (local.flight) speed = SKY.airSpeed;
   if (local.sprinting) speed = C.sprintOf(me.wizard);
+  if (local.crouch) speed = Math.min(speed, C.CROUCH.speed);   // crouched: a slow creep
   if (now < local.slowUntil) speed *= 1 - C.SPELLS.skim.slow;     // Glacial Skim
   if (now < local.eyeUntil) speed = C.speedOf(me.wizard) * EYE.speedMul;   // the tornado: fast, and nothing slows it
   if (galloping) speed = RIDE.speed;
@@ -1705,7 +1846,7 @@ function updateLocal(dt) {
     wish.multiplyScalar(C.backpedalSpeed(speed, wish.x, wish.z, local.yaw));   // backpedalling is slower
   }
   // accelerate toward wish velocity; knockback lives in local.vel too
-  const accel = Math.min(1, dt * 12);
+  const accel = Math.min(1, dt * 12 * (local.jump ? C.JUMP.airControl : 1));   // in a jump: 60% steering
   local.vel.x += (wish.x - local.vel.x) * accel;
   local.vel.z += (wish.z - local.vel.z) * accel;
   // Smoke Screen dash: straight back, covering the distance over dashTime of real time (so a slow
@@ -1731,6 +1872,17 @@ function updateLocal(dt) {
   if (!me.dead) local.pos.addScaledVector(local.vel, dt);
   // dragged toward an enemy Eye of the Storm
   if (local.pull && now < local.pull.until && !rooted && !me.dead) { local.pos.x += local.pull.v[0] * dt; local.pos.z += local.pull.v[1] * dt; }
+
+  // ---- height: a jump's arc on real time (the server checks it against its clock), then the floor under us
+  if (local.jump) {
+    const e = now - local.jump.start;
+    const fl = groundAt(local.pos.x, local.pos.z, local.pos.y);
+    local.pos.y = Math.max(fl, local.jump.y0 + C.jumpY(e));
+    if ((e > C.JUMP.airTime * 0.5 && local.pos.y <= fl + 0.001) || me.dead) {
+      local.pos.y = fl; local.jump = null;
+      if (!me.dead) { effects.dust(local.pos, 3); sfx.play('step_grass', { pos: [local.pos.x, 0.1, local.pos.z], vol: 0.6, rate: 0.85, jitter: 0.05, bag: 'land' + myId }); }
+    }
+  }
 
   // ---- collisions (2D circles)
   const pr = C.PLAYER_RADIUS;
@@ -1766,6 +1918,7 @@ function updateLocal(dt) {
   me.riding = !!local.ride;   // predicted: seated on the ram from the moment we mount
   me.sprinting = local.sprinting;
   me.castRooted = local.castRooted;
+  me.crouch = local.crouch; me.jumping = !!local.jump;
   me.charging = local.charging;
   me.slowed = now < local.slowUntil; me.bound = bound && !me.dead; me.frozen = now < local.frozenUntil || (me.frozen && me.bound);
   me.updateAnimation(!!moving, dt);
@@ -1774,7 +1927,7 @@ function updateLocal(dt) {
   // ---- send state (20 Hz)
   if (now - local.lastSend > 1 / 20) {
     local.lastSend = now;
-    net.send({ t: 'state', p: [local.pos.x, local.pos.y, local.pos.z], yaw: local.yaw, anim: local.anim, sprint: local.sprinting });
+    net.send({ t: 'state', p: [local.pos.x, local.pos.y, local.pos.z], yaw: local.yaw, anim: local.anim, sprint: local.sprinting, crouch: local.crouch });
   }
 
   updateCamera(dt);
@@ -1783,7 +1936,8 @@ function updateLocal(dt) {
 // Over-the-shoulder orbit camera (pulled in when something stands between it and us).
 function updateCamera(dt) {
   let camDist = 4.2;
-  const pivot = tmp.v1.set(local.pos.x, local.pos.y + 1.55, local.pos.z);
+  local.camDuck = (local.camDuck ?? 0) + ((local.crouch ? 1 : 0) - (local.camDuck ?? 0)) * Math.min(1, dt * 10);
+  const pivot = tmp.v1.set(local.pos.x, local.pos.y + 1.55 - 0.5 * local.camDuck, local.pos.z);
   const back = tmp.v2.set(-Math.sin(local.yaw) * Math.cos(local.pitch), Math.sin(local.pitch), -Math.cos(local.yaw) * Math.cos(local.pitch));
   const shoulder = tmp.v3.set(Math.cos(local.yaw), 0, -Math.sin(local.yaw)).multiplyScalar(0.7);
   // pull the camera in if a pillar sits between it and the wizard (2D circle test along the boom)
@@ -1913,7 +2067,7 @@ function updateHud(dt) {
     const along = dx * st.dir[0] + dz * st.dir[2], side = -dx * st.dir[2] + dz * st.dir[0];
     return players.get(st.owner) !== me && along > -1 && along < st.length && Math.abs(side) < st.width / 2 + 0.5;
   });
-  if (hunted) hint = C.isWard(K.guard) ? 'A goat is charging you! Ward (Space) facing it, or get out of the way' : 'A goat is charging you! Wall it off (Space) or get out of the way';
+  if (hunted) hint = C.isWard(K.guard) ? 'A goat is charging you! Ward (R) facing it, or get out of the way' : 'A goat is charging you! Shield (R) or get out of the way';
   else if (bound && now < local.frozenUntil) hint = 'Frozen!';
   else if (bound) hint = 'Bound!';
   else if (inFrost) hint = 'Ice falling! Get out of the shadow';
@@ -1932,7 +2086,7 @@ function updateHud(dt) {
   else if (inBlizzard) hint = 'Blizzard! Get out of the cone';
   else if (local.frostAim) hint = 'Release RMB to drop the ice';
   else if (rooted) hint = 'Recovering…';
-  else if (local.flight) hint = 'Hold E to hover · Space to drop';
+  else if (local.flight) hint = 'Hold E to hover · C to drop';
   else if (me.carryingGoat) hint = 'F hurl goat · G set down';
   else if (me.carrying) hint = 'F hurl · G set down';
   else if (now < local.stunUntil) hint = 'Stunned!';
@@ -2024,6 +2178,7 @@ function frame(t) {
     updateMusic();
     updateGoatAudio(dt);
     for (const w of players.values()) updateWizardAudio(w, dt);
+    updateFloats(dt); updateKilledBy();
     // a full ultimate charge glows in the hero's colour
     for (const w of players.values()) if (!w.dead && w.ult >= C.ULT_CHARGE.max && (w.ultFxT = (w.ultFxT || 0) + dt) > (LOW_FX ? 0.2 : 0.08)) { w.ultFxT = 0; effects.ultGlow(w.group.position, C.WIZARDS[w.wizard]?.color ?? 0xffffff); }
     for (const w of players.values()) if (w.healing && !w.dead && (w.healFxT = (w.healFxT || 0) + dt) > 0.05) { w.healFxT = 0; effects.healShimmer(w.group.position.clone().setY(w.group.position.y + 1)); }

@@ -428,6 +428,10 @@ export class Wizard {
     if (floating) this.floatT = (this.floatT ?? 0) + dt; else this.floatT = 0;
     if (this.dead) { this.setBase(this.actions.death ? 'death' : 'stun', 0.1); }
     else if (this.riding && !this.inOneShot()) this.setBase(this.actions.ride ? 'ride' : 'idle', 0.15);   // Jeb's Ram Ride: seated
+    // Round 9: a jump holds an airborne pose (a jump clip when one exists, else the float clip)
+    else if (this.jumping && !this.inOneShot() && (this.actions.jump || this.actions.float)) this.setBase(this.actions.jump ? 'jump' : 'float', 0.08);
+    // crouched: crouch clips when the characters agent adds them (crouch idle, crouch walk); the squash below stands in
+    else if (this.crouch && !this.inOneShot() && (this.actions.crouch || this.actions.crouch_walk)) this.setBase(m.speed > 0.4 && this.actions.crouch_walk ? 'crouch_walk' : this.actions.crouch ? 'crouch' : 'crouch_walk', 0.15);
     else if (floating && !this.inOneShot()) {
       const back = this.current !== 'float';
       this.setBase('float', 0.2);
@@ -448,6 +452,12 @@ export class Wizard {
     const nat = NATURAL_SPEED[this.current] && (this.actions[this.current].getClip().userData?.speed || NATURAL_SPEED[this.current]);
     if (nat && !this.inOneShot()) this.actions[this.current].setEffectiveTimeScale(Math.min(6, Math.max(0.3, m.speed / nat)));
     this.mixer.update(dt);
+    // no crouch clip yet: sink the body a little (scaled from the feet) while crouched
+    if (this.model && !(this.actions.crouch || this.actions.crouch_walk)) {
+      this.crouchBaseY ??= this.model.scale.y;
+      this.crouchK = (this.crouchK ?? 0) + ((this.crouch && !this.dead ? 1 : 0) - (this.crouchK ?? 0)) * Math.min(1, dt * 12);
+      this.model.scale.y = this.crouchBaseY * (1 - 0.3 * this.crouchK);
+    }
 
     // ward bubble
     const w = this.blocking && !this.dead ? 1 : 0;

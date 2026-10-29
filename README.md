@@ -44,8 +44,12 @@ flash bots escape upward, and all of them lead shots at falling targets.
 | Mouse | Look / aim |
 | `LMB` | **Spark** — quick bolt, low damage, briefly stuns the target |
 | `RMB` | **Power spell** from your spellbook: Meteor or Arcane Cyclone (below) |
-| `Space` (hold) | **Ward** — blocks spells and thrown objects arriving from the front. Drains stamina while held and per spell blocked; if stamina runs out the ward shatters and you're staggered. |
-| `E` | **Mobility spell** from your spellbook: Blink or Skyward Flash (below). In the air: hold `E` to float slower, `Space` to drop |
+| `R` | **Shield**: hold to **Ward** (blocks spells and thrown objects arriving from the front; drains stamina while held and per spell blocked; if stamina runs out the ward shatters and you're staggered), or tap for your hero's own shield (Firewall, Glacial Bulwark, Tempest Veil, Smoke Flask, Ram Guard; Vesper holds Black Death) |
+| `Space` | **Jump**: a 1.1 m hop for 10 stamina, steerable in the air; the primary works after a moment, other spells don't |
+| `C` / `Ctrl` | **Crouch** (`C` toggles, `Ctrl` holds): a slow creep with a smaller, lower body, so fences, crops and hay hide you from spells flying over |
+| `Shift` | Sprint (not while crouched) |
+| `T` | Reload early |
+| `E` | **Mobility spell** from your spellbook: Blink or Skyward Flash (below). In the air: hold `E` to float slower, `C` to drop |
 | `F` | **Telekinesis**: aim at an object up to 16 m away to lift it; `F` again hurls it at the crosshair. A held object floats beside you and absorbs one spell aimed at you. |
 | `G` | Set the held object down |
 | `M` | Mute / unmute (volume is in the `Esc` menu) |
@@ -64,7 +68,7 @@ doesn't reset them. The scoreboard shows everyone's spells.
 | RMB | **Meteor** | 1.25 s wind-up, then a heavy fireball: 38 damage, big knockback. Being hit cancels the wind-up. |
 | RMB | **Arcane Cyclone** | 0.45 s wind-up (purple rune grows under you; you can't ward, you move slowly, a hit cancels it), then you spin and blast everything within 5.5 m: 28 damage, stun, knockback outward. Breaks objects, angers goats, and stops a charging goat cold. A ward facing you blocks it. 5 s cooldown. |
 | E | **Blink** | Teleport 9 m forward. 4 s cooldown. |
-| E | **Skyward Flash** | Flash 7 m straight up, then float down with full steering (hold `E` to float slower, `Space` to drop). Spark and telekinesis work in the air; ward and power spells don't. Goats and cyclones can't reach you up there, but you're a slow target. 6 s cooldown. |
+| E | **Skyward Flash** | Flash 7 m straight up, then float down with full steering (hold `E` to float slower, `C` to drop). Spark and telekinesis work in the air; ward and power spells don't. Goats and cyclones can't reach you up there, but you're a slow target. 6 s cooldown. |
 
 ### The farmstead
 

@@ -27,16 +27,18 @@ const DIFFICULTY = {
     fooled: 0.5,        // chance it goes after a Mirror Step decoy instead of the real wizard
     saveFinisher: 0,    // chance it holds the magazine's last (interrupting) shot for an enemy wind-up
     relicMemory: false, // stops re-lifting a prop that just blew up on it
+    jump: 0.15,         // round 9: chance it hops a Glacial Skim volley at its feet
+    crouch: 0,          // chance per check it crouches behind low cover when hurt
   },
   normal: {
     react: 0.25, aimErr: 3.5, lead: 0.6, dodge: 0.6, blinkDodge: true,
     think: 1 / 3, speed: 0.95, range: [8, 14], aggression: 0.8, tk: 0.12, punish: 0.7, goatAware: true,
-    fooled: 0.3, relicMemory: false, saveFinisher: 0.5,
+    fooled: 0.3, relicMemory: false, saveFinisher: 0.5, jump: 0.5, crouch: 0.5,
   },
   hard: {
     react: 0.12, aimErr: 1.2, lead: 1, dodge: 0.9, blinkDodge: true,
     think: 1 / 6, speed: 1, range: [9, 15], aggression: 0.95, tk: 0.1, punish: 1, goatAware: true,
-    fooled: 0.15, relicMemory: true, saveFinisher: 0.9,
+    fooled: 0.15, relicMemory: true, saveFinisher: 0.9, jump: 0.85, crouch: 0.8,
   },
 };
 
@@ -156,11 +158,25 @@ export function updateBots(dt, world) {
 }
 
 // ---------------------------------------------------------------- perception helpers
-const chest = (q) => [q.p[0], q.p[1] + C.HIT_CENTER_Y, q.p[2]];
+const chest = (q) => [q.p[0], q.p[1] + C.hitCenterOf(q), q.p[2]];   // (lower when crouched)
 const isStunned = (q, t) => q.stunUntil > t;
 const canAct = (q, t) => !q.dead && !isStunned(q, t) && !(q.silenceUntil > t);
 const rooted = (q, t) => q.rootUntil > t;
 const airborne = (q, t) => q.flightUntil > t || q.p[1] > 0.05;
+// Round 9: a jump the server will take (it checks the same and more)
+const canJump = (q, t) => !q.jump && !airborne(q, t) && q.st >= C.JUMP.stamina + 15 && !q.blocking && !q.charging && !q.cyclone && !q.lash && !q.ride && !q.eye
+  && !(q.castRootUntil > t) && !(q.rootUntil > t) && !(q.stunUntil > t);
+// a low collider (fence, crops, hay, a table rock) close by, roughly between us and `toward`
+function lowCoverToward(me, toward) {
+  const dx = toward[0] - me.p[0], dz = toward[2] - me.p[2], l = Math.hypot(dx, dz) || 1;
+  for (const c of C.COLLIDERS) {
+    if (c.h < 0.6 || c.h > 1.3) continue;
+    const cx = c.x - me.p[0], cz = c.z - me.p[2], d = Math.hypot(cx, cz);
+    if (d > c.r + 2 || d < 1e-3) continue;
+    if ((cx * dx + cz * dz) / (d * l) > 0.3) return c;
+  }
+  return null;
+}
 const cycloneWindingUp = (q) => q.cyclone && !q.cyclone.pulsed;
 const mobilityReady = (me, t) => t >= me.cd.mobility && !airborne(me, t) && !rooted(me, t);
 const veiled = (q, t) => q.veilUntil > t;
@@ -211,7 +227,7 @@ function aimAt(me, from, target, speed, gravity, cfg) {
   const lead = cfg.lead * ti;
   // a falling target: predict its height, but it can't sink below the ground
   const vy = tr ? tr.vy : 0;
-  let aim = [c[0] + v[0] * lead, Math.max(C.HIT_CENTER_Y, c[1] + vy * lead), c[2] + v[1] * lead];
+  let aim = [c[0] + v[0] * lead, Math.max(C.hitCenterOf(target), c[1] + vy * lead), c[2] + v[1] * lead];
   // keep a led point inside the arena
   const r = Math.hypot(aim[0], aim[2]);
   if (r > C.ARENA_RADIUS) { aim[0] *= C.ARENA_RADIUS / r; aim[2] *= C.ARENA_RADIUS / r; }
@@ -1235,6 +1251,8 @@ function respond(me, world, t, proj, th, act) {
   }
   // Ice shards fly at ankle height: up in the air they can't reach us.
   if (proj.kind === 'skim' && airborne(me, t)) return;
+  // ...so hop them: a jump in the last moment clears the shards (they fly about 0.3 m up)
+  if (proj.kind === 'skim' && th.tc < 0.4 && th.tc > 0.08 && canJump(me, t) && Math.random() < (cfg.jump ?? 0)) return act({ t: 'jump' });
   // Sparks, shards and thrown props: sidestep if there's time to clear the hit sphere, else ward.
   const clearTime = (C.HIT_RADIUS + proj.radius - th.miss + 0.3) / (C.speedOf(me.wizard) * cfg.speed);
   // Black Death heals on every block: when hurt, Vesper would rather soak it than dodge
@@ -1377,6 +1395,17 @@ function moveBot(me, dt, world, t) {
     if (want !== !!me.sprinting || (want && t - (me.sprintAt || 0) > 0.2)) world.handle(me, { t: 'sprint', on: want });
     if (me.sprinting && wl > 0.01) me.yaw = Math.atan2(wx, wz);
   }
+  // Crouch behind low cover when hurt, facing the threat from behind it; up again when they close in or it's gone
+  {
+    const tg = target && !target.dead ? target : null;
+    if (t >= (b.crouchCheckAt || 0)) {
+      b.crouchCheckAt = t + 0.8;
+      const want = !!tg && me.hp < 45 && dist2D(me.p, tg.p) > 7 && !me.jump && !flying && Math.random() < (cfg.crouch ?? 0) && !!lowCoverToward(me, tg.p);
+      me.crouch = want;
+      if (want) { me.sprinting && world.handle(me, { t: 'sprint', on: false }); b.crouchUntil = t + 1.5 + Math.random(); }
+    }
+    if (me.crouch && (t > (b.crouchUntil || 0) || !tg || dist2D(me.p, tg.p) < 6 || me.jump || flying)) me.crouch = false;
+  }
   let speed = run * cfg.speed;
   if (me.sprinting) speed = C.sprintOf(me.wizard) * cfg.speed;
   if (me.eye) speed = run * EYE.speedMul;
@@ -1384,6 +1413,7 @@ function moveBot(me, dt, world, t) {
   else if (me.blocking) speed = C.blockSpeedOf(me.wizard);
   else if (flying) speed = SKY.airSpeed;
   if (t < b.dodgeUntil && !me.cyclone && !flying && !me.charging && !me.lash) speed = Math.max(speed, run * 0.95);
+  if (me.crouch) speed = Math.min(speed, C.CROUCH.speed);
   if (me.slowUntil > t) speed *= 1 - SKIM.slow;
   if (rooted(me, t)) { speed = 0; b.vel = [0, 0]; }
   // casting: no translation (knockback still carries us); stop dead as the cast starts
@@ -1416,7 +1446,12 @@ function moveBot(me, dt, world, t) {
   if (r > C.ARENA_RADIUS) { me.p[0] *= C.ARENA_RADIUS / r; me.p[2] *= C.ARENA_RADIUS / r; }
 
   // stuck against something: switch strafe direction
-  if (b.lastPos && wl > 0.01 && dist2D(b.lastPos, me.p) < speed * dt * 0.25) { b.stuckT += dt; if (b.stuckT > 0.4) { b.strafe *= -1; b.stuckT = 0; } }
+  if (b.lastPos && wl > 0.01 && dist2D(b.lastPos, me.p) < speed * dt * 0.25) {
+    b.stuckT += dt;
+    // stuck on something low (a fence, crops, hay): hop it
+    if (b.stuckT > 0.25 && canJump(me, t) && lowCoverToward(me, [me.p[0] + wx, 0, me.p[2] + wz])) { world.handle(me, { t: 'jump' }); b.stuckT = 0; }
+    else if (b.stuckT > 0.4) { b.strafe *= -1; b.stuckT = 0; }
+  }
   else b.stuckT = 0;
   b.lastPos = me.p.slice();
 

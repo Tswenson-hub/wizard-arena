@@ -73,7 +73,7 @@ kbd {
 .ab.active { border-color: var(--gold); box-shadow: 0 0 12px rgba(255,200,87,0.5); }
 .ab.disabled { opacity: 0.4; }
 
-#feed { position: absolute; right: 24px; top: 20px; display: grid; gap: 4px; justify-items: end; }
+#feed { position: absolute; right: 24px; top: 190px; display: grid; gap: 4px; justify-items: end; }
 #feed div { padding: 5px 10px; border-radius: 6px; background: rgba(0,0,0,0.55); font-size: 13px; animation: fadeout 6s forwards; }
 #feed b { color: var(--gold); }
 @keyframes fadeout { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
@@ -167,3 +167,35 @@ kbd {
   background: conic-gradient(#ff1f3d calc(var(--whip, 0) * 1turn), transparent 0);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; }
 .ab.whip { box-shadow: 0 0 calc(var(--whip, 0) * 16px) rgba(255, 31, 61, 0.8); }
+
+/* ---- round 9: combat feedback ---- */
+#killfeed { position: absolute; right: 24px; top: 20px; display: grid; gap: 4px; justify-items: end; pointer-events: none; }
+#killfeed div { display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-radius: 6px; background: rgba(0,0,0,0.55); font-size: 13px; animation: fadeout 7s forwards; }
+#killfeed div.mine { background: rgba(120,20,30,0.7); box-shadow: 0 0 0 1px rgba(255,210,92,0.7); }
+#killfeed img { width: 24px; height: 24px; image-rendering: pixelated; }
+#dmgLayer { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+#dmgLayer .dn { position: absolute; left: 0; top: 0; font: 800 17px/1 system-ui, sans-serif; color: #fff; text-shadow: 0 1px 0 #000, 0 0 4px rgba(0,0,0,0.8); white-space: nowrap; will-change: transform, opacity; }
+#dmgLayer .dn.crit { color: #ffd25c; font-size: 21px; }
+#dmgLayer .dn.big { color: #ff8a3c; font-size: 26px; }
+#dmgLayer .dn.ult { color: #e080ff; font-size: 30px; }
+#dmgLayer .dn.heal { color: #6dff8a; font-size: 18px; }
+#dmgLayer .dn.blocked { color: #b8bcc8; font-size: 14px; letter-spacing: 1px; }
+#bars { overflow: visible; }
+#bars .hn { position: absolute; bottom: 100%; font: 800 18px/1 system-ui, sans-serif; text-shadow: 0 1px 0 #000, 0 0 4px rgba(0,0,0,0.8); pointer-events: none; animation: hnRise 1.1s ease-out forwards; }
+#bars .hn.hurt { color: #ff4a4a; } #bars .hn.hurt.big, #bars .hn.hurt.ult { font-size: 24px; }
+#bars .hn.heal { color: #6dff8a; } #bars .hn.blocked { color: #b8bcc8; font-size: 14px; letter-spacing: 1px; }
+@keyframes hnRise { from { transform: translateY(0); opacity: 1; } 70% { opacity: 1; } to { transform: translateY(-46px); opacity: 0; } }
+#killMarker { position: absolute; left: 50%; top: 50%; width: 0; height: 0; pointer-events: none; opacity: 0; }
+#killMarker i { position: absolute; left: -17px; top: -2px; width: 34px; height: 4px; border-radius: 2px; background: #ff3b4e; box-shadow: 0 0 6px rgba(255,40,60,0.9), 0 0 0 1px #000; transform: rotate(45deg); }
+#killMarker i + i { transform: rotate(-45deg); }
+#killMarker.show { animation: killPop 0.55s ease-out; }
+@keyframes killPop { 0% { opacity: 1; transform: scale(1.8); } 25% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(1.15); } }
+.dmgArc { position: absolute; left: 50%; top: 50%; width: 260px; height: 260px; margin: -130px 0 0 -130px; border-radius: 50%; pointer-events: none;
+  border: 7px solid transparent; border-top-color: rgba(255,40,40,0.9); filter: drop-shadow(0 0 6px rgba(255,0,0,0.7)); animation: arcFade 0.9s ease-out forwards; }
+.dmgArc.heavy { border-top-width: 11px; }
+@keyframes arcFade { from { opacity: 1; } to { opacity: 0; } }
+#deathScreen .killedBy { display: flex; align-items: center; gap: 14px; margin: 14px auto 6px; padding: 10px 16px; border-radius: 10px; background: rgba(0,0,0,0.6); width: max-content; max-width: 90vw; text-align: left; }
+#deathScreen .killedBy:empty { display: none; }
+#deathScreen .killedBy img { width: 48px; height: 48px; image-rendering: pixelated; }
+#deathScreen .kb-name { font-size: 18px; font-weight: 800; } #deathScreen .kb-name span { font-size: 13px; opacity: 0.8; font-weight: 600; }
+#deathScreen .kb-spell { font-size: 14px; color: #e8dcc0; } #deathScreen .kb-stats { font-size: 13px; opacity: 0.9; } #deathScreen .kb-stats b { color: #ffd25c; }

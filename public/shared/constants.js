@@ -12,6 +12,16 @@ export const PLAYER_HEIGHT = 1.8;
 export const PLAYER_RADIUS = 0.45;
 export const HIT_CENTER_Y = 0.95;     // centre of the hit-sphere above feet
 export const HIT_RADIUS = 0.75;
+// Round 9: jump (Space) and crouch (C toggle, Ctrl hold).
+// A jump is a fixed arc: `height` at the apex, `airTime` up and down (v0 = 4h/T, g = 8h/T²), steered at `airControl`
+// of the ground acceleration. No casting for `castLock` s after take-off; then only the primary.
+export const JUMP = { height: 1.1, airTime: 0.55, airControl: 0.6, stamina: 10, castLock: 0.15 };
+JUMP.v0 = 4 * JUMP.height / JUMP.airTime; JUMP.gravity = 8 * JUMP.height / JUMP.airTime ** 2;
+export const jumpY = (e) => Math.max(0, JUMP.v0 * e - JUMP.gravity * e * e / 2);   // height above take-off, e s in
+// Crouched: slow, and a smaller, lower hit sphere, so low cover (fences, crops, hay, table rocks) hides you.
+export const CROUCH = { speed: 1.6, hitCenter: 0.5, hitRadius: 0.42 };   // top of the sphere 0.92 m: under a chest-high shot
+export const hitCenterOf = (q) => (q?.crouch ? CROUCH.hitCenter : HIT_CENTER_Y);
+export const hitRadiusOf = (q) => (q?.crouch ? CROUCH.hitRadius : HIT_RADIUS);
 
 export const MOVE_SPEED = 3.6;        // m/s: the fastest walk (Gale); each wizard's own is wizards.js `speed` (Ty: normal movement is a walk)
 export const CHARGE_MOVE_SPEED = MOVE_SPEED * 0.32;   // while winding up: the same fraction of a wizard's walk as before
@@ -402,13 +412,13 @@ export const SPELLBOOK = {
   },
   skyward: {
     id: 'skyward', slot: 'mobility', name: 'Skyward Flash', short: 'Skyward',
-    blurb: 'Flash 7 m straight up and float down. Hold E to hover, Space to drop.',
+    blurb: 'Flash 7 m straight up and float down. Hold E to hover, C to drop.',
     height: 7,           // launch height (m)
     maxHeight: 8,        // the server never accepts a wizard higher than this
     floatTime: 2.8,      // after this the wizard drops
     fallSpeed: 2.5,      // m/s default descent
     slowFallSpeed: 1.2,  // m/s holding E
-    dropSpeed: 6,        // m/s after Space or once floatTime runs out
+    dropSpeed: 6,        // m/s after C (crouch) or once floatTime runs out
     airSpeed: 4.5,       // horizontal steering speed while airborne
     cooldown: 6,         // from launch
   },
@@ -600,7 +610,7 @@ export const primaryMag = (id) => SPELLBOOK[id] || SPELLBOOK.spark;
 // The projectile kind each primary fires, and the kinds that follow the magazine rule (only the finisher interrupts).
 export const PRIMARY_KIND = { spark: 'fast', glacial_skim: 'skim', fireball: 'fireball', gale_shear: 'shear', hex_shards: 'hex', sling: 'sling', potion_toss: 'potion' };
 export const PRIMARY_KINDS = new Set(Object.values(PRIMARY_KIND));
-// Ward-style guards (hold Space, drain stamina): the Ward and Black Death.
+// Ward-style guards (hold R, drain stamina): the Ward and Black Death.
 export const isWard = (id) => !!SPELLBOOK[id]?.ward;
 // Night Cage: keep `pos` (mutated) on its side of the ring. `inside` says which side it belongs to.
 // Firewall geometry: where `p` sits relative to wall `w` ({ x, z, yaw }): `along` its length and `across` its plane.

@@ -665,3 +665,15 @@ the movement work.
 `SURFACES` is empty in this commit. The pieces follow shortly: barn hay loft, ruin ledges, watchtower, meadow plateaus and the cart road.
 **Checked:** 15 checks against a fake surface list (`/tmp/wa-environment/surface_test.mjs`): steps, slopes, walls from the side and from below,
 no wall at top height, the ramp foot walkable, shots into sides, over tops, onto tops, and along a ramp's slope.
+
+## spells → characters: round 9 controls in the picker, and jump/crouch clips
+- **select.js `SLOT_KEYS.guard`:** please change `'Space'` to `'R'`. The shield moved to R for every hero; Space is jump now.
+  (The ability bar, the controls panel, the hints and the README already say R.)
+- **Clips, when Ty exports them:** wizard.js now uses `actions.jump` (falling back to `float`) while a jump is up, and `actions.crouch` /
+  `actions.crouch_walk` while crouched (`w.crouch`). Until those exist, it squashes the model to 70% height from the feet. If you retarget
+  Jeb's crouch walk as `crouch_walk` (and a held frame of it as `crouch`) for everyone, the squash switches itself off.
+
+## spells → environment: goats and a crouched wizard (optional)
+`C.hitCenterOf(p)` / `C.hitRadiusOf(p)` give a wizard's hit sphere (crouched: centre 0.5 m, radius 0.42 m; standing: 0.95 / 0.75).
+server/goats.js still uses `C.HIT_CENTER_Y` and `C.HIT_RADIUS` for a ram's contact, which is fine. Switch to the helpers if you want a crouched
+wizard to be a smaller target for goats too.

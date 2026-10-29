@@ -34,11 +34,11 @@
     <h3 class="book-title">Choose your wizard</h3>
     <div class="wizard-pick" id="joinPicker"></div>
     <div class="controls">
-      <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move &nbsp; <kbd>Mouse</kbd> look &nbsp; <kbd>LMB</kbd> <kbd>RMB</kbd> <kbd>E</kbd> <kbd>Space</kbd> <kbd>F</kbd> your wizard's five spells</div>
-      <div><kbd>Space</kbd> Ward (hold) blocks spells from the front and drains stamina. Rime raises an ice wall instead</div>
+      <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move &nbsp; <kbd>Mouse</kbd> look &nbsp; <kbd>LMB</kbd> <kbd>RMB</kbd> <kbd>E</kbd> <kbd>R</kbd> <kbd>F</kbd> your wizard's five spells &nbsp; <kbd>Space</kbd> jump &nbsp; <kbd>C</kbd> / <kbd>Ctrl</kbd> crouch</div>
+      <div><kbd>R</kbd> your shield: hold to Ward (blocks spells from the front, drains stamina), or tap for your hero's own (an ice wall, a wind veil, a firewall...)</div>
       <div><kbd>F</kbd> Telekinesis: aim at an object to lift it, <kbd>F</kbd> again to hurl it. It shields you while held</div>
-      <div>Don't hit the goats. An angry goat charges and kills in one hit, unless your ward faces it</div>
-      <div><kbd>LMB</kbd> fires 3 shots, then reloads (<kbd>R</kbd> to reload early). The 3rd shot stuns and breaks a wind-up</div>
+      <div>Don't hit the goats. An angry goat charges and kills in one hit, unless your ward (<kbd>R</kbd>) faces it</div>
+      <div><kbd>LMB</kbd> fires 3 shots, then reloads (<kbd>T</kbd> to reload early). The 3rd shot stuns and breaks a wind-up</div>
       <div><kbd>G</kbd> set it down &nbsp; <kbd>Tab</kbd> scoreboard &nbsp; <kbd>M</kbd> mute &nbsp; <kbd>Esc</kbd> menu</div>
     </div>
     <p id="loadStatus" class="status">Loading wizard…</p>
@@ -59,16 +59,18 @@
   <div id="abilities">
     <div class="ab" data-ab="fast"><div class="cd"></div><span class="key">LMB</span><span class="name">Spark</span><div class="ammo"><i></i><i></i><i></i></div></div>
     <div class="ab" data-ab="power"><div class="cd"></div><span class="key">RMB</span><span class="name">Meteor</span></div>
-    <div class="ab" data-ab="block"><div class="cd"></div><span class="key">SPACE</span><span class="name">Ward</span></div>
+    <div class="ab" data-ab="block"><div class="cd"></div><span class="key">R</span><span class="name">Ward</span></div>
     <div class="ab" data-ab="mobility"><div class="cd"></div><span class="key">E</span><span class="name">Blink</span></div>
     <div class="ab" data-ab="throw"><div class="cd"></div><span class="key">F</span><span class="name">Lift</span></div>
     <div class="ab ult" data-ab="ult"><svg class="ring" viewBox="0 0 64 64"><circle class="bg" cx="32" cy="32" r="27"/><circle class="fg" cx="32" cy="32" r="27"/></svg><span class="key">Q</span><span class="name">Ultimate</span><span class="pct">0%</span></div>
   </div>
 
+  <div id="killfeed"></div>
   <div id="feed"></div>
+  <div id="killMarker"><i></i><i></i></div>
   <div id="hint"></div>
   <div id="status"></div>
-  <div id="deathScreen" class="hidden"><div class="big">You were vanquished</div><div class="small">Respawning…</div></div>
+  <div id="deathScreen" class="hidden"><div class="big">You were vanquished</div><div class="killedBy"></div><div class="small">Respawning…</div></div>
   <div id="vignette"></div>
 
   <div id="scoreboard" class="hidden">
