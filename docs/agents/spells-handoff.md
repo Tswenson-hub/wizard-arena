@@ -1,5 +1,45 @@
 # Spells hand-off
 
+## Ram Ride speed bug (Ty: "gamebreakingly fast"), fixed in `29dd7fb`
+
+**Root cause: riders were shoved forward every frame by their own mount.**
+- **The push:** main.js places the mount ram under its rider each frame, after the local movement, so it sits one frame
+  behind. The collision pass treated it as a solid body (`pushOut` against goats not in `charge`), so the rider was pushed
+  out of it, about 1 m forward per frame.
+- **Why it compounds:** the faster you move, the further the ram lags and the bigger the push. It's also frame-rate
+  dependent: about 1 m per frame.
+- **Bots** had the same thing server-side. Their exclusion checked `mode === 'mount'`, but goats.js marks mounts by `state`.
+- **The server's sanity check** didn't catch it: it always allowed the run speed + 8.5 m/s (heavy knockback + 2) plus 0.6 m
+  per update.
+
+What I checked:
+- **Velocity:** set, not accumulated (`local.vel` is zeroed through the gallop, which steps on real time).
+- **Timer:** the ride does end on the server's timer (and the client's); a held key doesn't extend it.
+- **Walking:** walk speed isn't added on top.
+
+**Measured in a real browser** (Playwright as Jeb, `local.pos` per frame and the server's `p.p` per snapshot,
+`/tmp/wa-spells/t_ridemeasure.py`, `botride.mjs`):
+| | Before | After |
+|---|---|---|
+| Client gallop | 10.9–11.1 m/s, nominally 14 m | **6.96–7.01 m/s**, 9.1–9.3 m in a ~5 fps browser (10 m at a full frame rate) |
+| Keys held after the ride (velocity 3.0 m/s) | **7.9 m/s** of ground covered at ~7 fps: the push | the walk (no extra) |
+| Server vs client, whole ride | | 9.09 m = 9.09 m |
+| Bot gallops | 10.5–10.8 m/s, 13.4–13.6 m, snapshot peaks to 14.7 | 6.8–6.9 m/s, 9.6–9.9 m (shorter when blocked), peaks 7.5–9.2 |
+
+At about 1 m per frame, the push works out to tens of m/s at 60 fps. I couldn't measure that directly on this loaded machine.
+
+**The fix:**
+- The client and bots never collide with a mount ram.
+- Summoned-ram views missing from a snapshot are dropped, so a missed `goatGone` can't leave a ghost.
+- The server's speed check is tighter: knockback is allowed only for 0.8 s after one actually lands (`kbUntil` / `kbSpeed`,
+  from hits and goat rams); air speed during Skyward; the gallop at 1.1× ride speed; 0.3 m slack.
+
+**Retune:** Ram Ride is now **7 m/s for 10 m** (a 1.4 s burst).
+- The ram follows its own heading, which turns toward where you look (or with A/D) at **1.5 rad/s** at most; measured 1.53
+  rad/s for a 90° look change.
+- It dismounts on the server's timer no matter what.
+- Bots use the same heading and turn rate.
+
 ## Round 7: Jeb the Shepherd, a walking pace, ultimate wind-ups, Blizzard and Meteor Rain
 
 Commits:
@@ -21,7 +61,7 @@ The rams go through the environment agent's contract (`summonRam`, `callRam`, `d
   shooter. They catch 0.35 m wider than their bodies, because three rams cover only about 43 % of the circle otherwise.
   Snapshot `ramGuard`; bots hold fire into it.
 - **Ram Ride:**
-  - The server times it: 0.4 s mount (rooted), a 14 m gallop at 11 m/s along the facing (steer with the mouse or A/D), then
+  - The server times it: 0.4 s mount (rooted), a gallop (now 7 m/s for 10 m, see above; it was 11 m/s for 14 m), then
     a 0.4 s dismount (rooted).
   - A shove does 15 (`ram_shove`), once per enemy per ride. The mount ram is placed under the rider every tick.
   - The client predicts the gallop on real time, and Jeb's model sits 0.55 m up with the `ride` clip.
