@@ -554,3 +554,35 @@ Further north it leans Ember again, so I settled on (11.3, −4.5).
 - Two runs at this spot hit the cap without a winner (75.8–77.9, 81.4–53.8). The harness prints no per-zone split for those.
 - 0 friendly fire in every run.
 - Screenshots: `/tmp/wa-environment/z_barn2_{top,ember,frost}.png`. Goat homing (30/30), the goat throw test and the ram unit test are unchanged after the stone move.
+
+## characters → spells: Embibe's clip keys, the potion props, Gale's combos and death (round 8)
+Embibe's model is in (`embibe.glb`, 20 keys). Every key below is on her body now; times are clip seconds.
+You already play `combo<shot+1>`, `arrival` and `ult` generically. Thanks, those work as they are.
+
+| key | who | what | how to play it |
+|---|---|---|---|
+| `cast_fast` | Embibe | overhand potion throw; the release is at 0.55 s | your usual `oneShot('cast_fast', 0.45, 2.6, 0.25)` lands it |
+| `combo1` `combo2` `combo3` | Embibe, **Gale** | the three strikes of Triple_Combo_Attack, turned 45° to face the aim. Each strikes at **0.15 s**. combo1 0.45 s (overhead rake), combo2 0.45 s (a spinning backhand; it ends facing away, and combo3 starts there), combo3 0.8 s (high finisher, then back to the stance) | as you do now (shot index → key). Gale Shear picks these up automatically, because Gale has the keys. |
+| `cast_heavy` | Embibe | Toxic Flask: crouched scoop, then an overhead lob, on the meteor convention (gather 0–1.9 s, lob peak 2.1 s) | the throw is instant, so `oneShot('cast_heavy', 0.6, 1.5, 1.85)` in the `toxic` branch instead of `cast_fast` |
+| `flask_step` | Embibe | **new**, 0.85 s: crouched charge, then a sidearm lob; the release is at **0.6 s** | in `flaskWind`, `oneShot('flask_step', msg.left + 0.2, 0.6 / msg.left, 0)` instead of `combo1`, so the release lands on the teleport |
+| `arrival` | Embibe | **new**, 0.8 s: lands crouched and rises | (already used) |
+| `ult` | Embibe | Berserker Brew, 1.6 s: the flask is at her lips by 0.55 s, head back at 1.15 s, lowered by 1.6 s | (already used, stretched to `drink`) |
+| `death` | Embibe, **Gale** | dying_backwards, 2.2 s: flat by about 1.4 s | automatic: wizard.js already makes a body with `death` fall instead of sink |
+| `idle` | Embibe | a relaxed stand (her own clip) | automatic |
+
+- **LoopOnce:** please add `combo1`, `combo2`, `combo3`, `flask_step`, `arrival` and `ult` to the LoopOnce + clamp list in the
+  wizard.js constructor (l. 126). As loops, a one-shot that outlasts its clip wraps back to the first frame.
+- **Potions:** `body.holdPotion(kind, hand)`. It's also on `body.model.userData`; other bodies don't have it, so call it as `body.holdPotion?.(…)`.
+  - `kind`: `'purple'` (Potion Toss), `'green'` (Toxic Flask) or `null` (both hands empty). `hand`: `'right'` (default) or `'left'`.
+  - Suggested:
+    - Right-hand purple while she has primary shots loaded; hide it for about 0.25 s after each throw and during the reload.
+    - Right-hand green for the Toxic Flask throw, cleared about 0.3 s after the cast.
+    - Purple during the Flask Step wind-up, cleared at release.
+    - **Left-hand** purple for the Brew drink: the left hand is fitted to the drink, with the cork at her lips. Clear it when the drink ends.
+    - `null` on death.
+  - A green flask hangs on her right hip at all times (decoration).
+- **Natural gait speeds** (m/s at 1×, for your timeScale): run 5.21, walk 1.61, walk_fight 0.84, back 0.72.
+  The other heroes are unchanged.
+- **Fixed on my side (may affect clamps you tuned):** retargeted clips used to end on their *first* frame, because the sampling wrapped.
+  They now end on their real last frame. That changes how `hit_waist`, `tk_lift`, `tk_throw` (on everyone but Cinder) and the retargeted
+  `stun`/`dash`/`block` end.
