@@ -7,4 +7,7 @@ services:
     buildCommand: npm ci --omit=dev
     startCommand: npm start
     healthCheckPath: /healthz
-    autoDeploy: true
+    autoDeployTrigger: commit   # every push to the default branch redeploys
+    envVars:
+      - key: NODE_VERSION       # pin the runtime; package.json only says ">=18"
+        value: "22"

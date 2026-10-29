@@ -1,2 +1,21 @@
 node_modules/
 *.log
+
+# secrets and local config
+.env
+.env.*
+*.pem
+*.p8
+*.key
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# local test output
+/tmp/
+test-results/
+playwright-report/
+__pycache__/
