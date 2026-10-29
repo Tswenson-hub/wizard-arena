@@ -1,5 +1,25 @@
 # Environment hand-off: the farmstead
 
+## Altar Siege zone spots (`SIEGE_ZONES` in map.js)
+Three circles with r 7, in rotation order:
+- **Altar:** (0, −7)
+- **Barn Passage:** (10, 4), the open ground in front of the barn arch between the yard and the pen hay
+- **Fallen Silo:** (−22, −19), north-west of the silo
+
+**How I picked them:** `/tmp/wa-environment/zonepick.mjs` grid-scores candidate centres. The rules:
+- no collider ≥ 1.6 m tall inside, and no fence or crop
+- clear of the rim
+- cover (≥ 1.2 m) within 1 m inside to 3 m outside the edge
+- mean and nearest team-spawn distance
+
+**Results:**
+- Mean spawn distance, Ember / Frost: altar 21 / 23, barn 14 / 34, silo 40 / 25 m. The barn and silo skews roughly cancel over a rotation, leaving Ember about 2 m ahead.
+- I moved the birch at (−22, −17) to (−27.5, −12.5) to clear the silo spot.
+- After the move, layoutcheck is clean and homesim gets all 30 goats home. Botmatch 90 s: goats charging and ramming normally, no server errors.
+- **Screenshots** (ring drawn), all looked at: `z_top`, and `z_{altar,barn,silo}_{ember,frost}` plus `z_silo_frost2`.
+- Details and the fairness note for the modes agent are in requests.md.
+
+
 ## Round 7: Jeb the Shepherd's rams (goat side of the contract in docs/agents/round7-jeb.md)
 **`server/goats.js`:**
 - **`summonRam(opts, ctx)`**: a summoned ram lives in the same `goats` array, with ids from 1000.

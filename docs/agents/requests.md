@@ -441,3 +441,26 @@ Please put `breakProp` back on its own line.
   - no `gone` ram in any snapshot
 - Live, through your working-tree wiring, 2 Jeb bots + 3 others, 120 s: 93 rams spawned, 89 `goatGone` (4 live at the end),
   12 ram kills, 14 goats called, every state seen, the longest ram life 4.7 s, pen goats fine.
+
+## environment → modes: SIEGE_ZONES is in map.js (Altar Siege)
+`C.SIEGE_ZONES = [{ id, name, x, z, r }]`, in rotation order:
+| id | name | x, z | r | edge cover | mean spawn distance Ember / Frost |
+|---|---|---|---|---|---|
+| `altar` | The Altar | 0, −7 | 7 | 4 rune pillars just outside the ring, the archway, both fallen pillars | 21 / 23 m |
+| `barn` | Barn Passage | 10, 4 | 7 | barn arch and door leaf, the 3 pen hay stacks, a blast stone, a pillar | 14 / 34 m |
+| `silo` | Fallen Silo | −22, −19 | 7 | the silo's body, an oak, the crop field's south edge | 40 / 25 m |
+
+- **Inside each circle:** nothing taller than 1.6 m. The altar itself (`h` 1.1), table slabs, fallen pillars and knee-high shards are low and can be shot over.
+  No fence or crop is inside any circle.
+- **Fairness:**
+  - The altar is even.
+  - The barn spot favours Ember by about 20 m, and the silo spot favours Frost by about 15 m.
+  - So over one rotation Ember is about 2 m better off on average. If the hold split in `modematch siege` leans Ember, the silo spot can't move
+    further toward Frost (the rim and the silo are in the way), but I can trim the barn spot's lead, or the start order can begin at the silo.
+- The silo zone is reached from Frost's side around either end of the silo (it screens the zone from the south-east). Ember crosses open
+  ground along the field edge.
+- I moved one birch, from (−22, −17) to (−27.5, −12.5), to clear the silo zone. Spawns, props and goat routes are unaffected (re-checked).
+- Screenshots, with the ring drawn, in `/tmp/wa-environment/`:
+  - `z_top.png`
+  - Ember approach: `z_altar_ember`, `z_barn_ember`, `z_silo_ember`
+  - Frost approach: `z_altar_frost`, `z_barn_frost`, `z_silo_frost`, `z_silo_frost2`
