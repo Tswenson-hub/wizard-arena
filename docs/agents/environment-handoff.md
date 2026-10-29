@@ -1,5 +1,64 @@
 # Environment hand-off: the farmstead
 
+## Painted sky and grass (Ty's assets)
+**Sky.** `public/textures/sky.jpg` (2048×1024, 215 KB) is baked by `tools/make-sky.py` from `~/Desktop/Meshy_AI_fantasy_blue_skybox.png`
+(a 1536×864 panorama; the original is untouched).
+- **Mapping:** the painting fills the upper hemisphere of a 2:1 equirectangular map, horizon at the middle row and linear in elevation, as
+  three.js samples it. The lower half is the horizon colour, #48d7f2. `world.js` loads it as `scene.background` with
+  `EquirectangularReflectionMapping`, so there is no sky sphere and nothing to fit inside the camera's far plane.
+- **The wrap seam:** the last 128 source columns are crossfaded into the first ones and dropped. After the roll, that band sits to the
+  north-west of the arena. Looking straight at it (`sky_seam.png`), the clouds run through with no edge.
+- **Sun alignment:** the panorama is rolled so its brightest sunbeam column sits at the DirectionalLight's bearing (from (30, 50, 20)), so
+  the painted sunbeams are where the shadows say the sun is.
+- **Scene match:** the fog is now `SKY.fog` 0x7cc9de (the horizon cyan softened, so the hills and mountains melt into the horizon), the hemisphere
+  sky colour is 0xd6efff and the sun is a warmer 0xffe9c4 at 2.3.
+- Until the texture loads, the background is the horizon colour.
+
+**Grass.** `public/models/grass_tall.glb` (610 tris, 128 KB) and `grass_clover.glb` (704 tris, 59 KB), from Ty's two Meshy files via
+`optimize-models.sh one … 0.3 512 0.02 <target>`. At 393 tris the clover went blocky, so it was re-run at 760.
+- **Cosmetic only:** no colliders, no LOS effect, no shadows cast.
+- **`GRASS_ITEMS`:** placement is seeded, so all clients match. Clump centres are drawn by rejection sampling from a density field:
+  - strongest along the pen fence and the crop field's edge, and round trees, rocks, stones, the silo, the obelisk, pillars, the scarecrow
+    and the hay stacks
+  - plus the south meadow
+  - a thin fringe at the rim and a little in open ground
+- **Clumps:** 3–8 plants within about 0.3–0.8 m. Tall grass is favoured at edges, clover in the open. Height, yaw and tint vary (brighter than the
+  texture, a touch green, some yellow).
+- **Kept clear:** paths (the `PATHS` list now drives both the path strips and this), the farmyard, the blast scorch, the siege circles, every
+  spawn point, props, the pen floor, the crops, the silo footing, the well and every collider. The Barn Passage siege circle covers the pen's
+  west fence, so that stretch stays bare.
+- **Counts:** 640 tall and 800 clover. `?low` gives 220 and 280.
+- **Rendering:**
+  - one InstancedMesh per 12 m chunk per kind (instance colours for the tint), double-sided
+  - the vertex shader sways the tops (`uTime`) and shrinks each clump into the ground between 20 and 30 m from the camera (`?low`: 14–22)
+  - a `scene.onBeforeRender` hook in world.js advances the clock and hides chunks beyond the fade, so nothing in main.js ticks it
+
+**Per-frame cost** (draw calls / triangles, every pass including shadows, measured with `/tmp/wa-environment/perf.py` from player-eye views
+on a bot-free FFA server; "before" is HEAD served alongside):
+
+| view | before | after | ?low before | ?low after |
+|---|---|---|---|---|
+| farmyard, facing south | 509 / 1.28M | 464 / 1.33M | 278 / 0.65M | 266 / 0.63M |
+| south meadow, facing north | 558 / 1.38M | 549 / 1.80M | 316 / 0.73M | 328 / 0.90M |
+| by the pen fence | 360 / 1.06M | 392 / 1.34M | 154 / 0.41M | 170 / 0.46M |
+| west rim | 438 / 1.27M | 454 / 1.64M | 241 / 0.62M | 241 / 0.71M |
+| by the crop field | 346 / 1.29M | 364 / 1.40M | 140 / 0.63M | 140 / 0.67M |
+
+- The `?low` columns were measured with the 26–38 m fade, before the final tightening.
+- At the first counts, with a 26–38 m fade and 16 m chunks, it cost up to +0.6M triangles. The tighter fade and smaller chunks brought that down
+  to these numbers.
+- The draw-call counts swing by ±40 between runs, because effects and the camera boom vary.
+
+**Verified:**
+- **Screenshots**, all looked at:
+  - sky: `sky_n`, `sky_e`, `sky_s`, `sky_w`, `sky_up`, `sky_seam`, `sky_seam2`, `sky_aerial`, and the join-screen drift camera `sky_join`
+    (dimmed by the join panel, looking down)
+  - grass: `grass_fence`, `grass_field`, `grass_meadow`, `grass_meadow2`, `grass_rim`, `grass_low`, and close-ups `gv_front` / `gv_top`
+- No page errors. Botmatch 4102: bots fight, goats fine, no server errors.
+- One SwiftShader crash on the first join-screen screenshot didn't reproduce on retry or in the 10+ runs since.
+- `tools/make-sky.py` is new and mine, alongside `optimize-models.sh`.
+
+
 ## Altar Siege respawns pushed back (`SIEGE_SPAWNS`, Siege branch of `spawnPointFor`)
 Ty: "it should take a second to get back into the battle once you are killed."
 - **`map.js` `SIEGE_SPAWNS`:** `{ ember, frost }`, 4 points each, as `[x, 0, z, yaw facing the map centre]`.

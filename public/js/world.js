@@ -55,13 +55,23 @@ const M = {
   burlap: flat(0xc8a878), robe: flat(0x5a3a9a), hat: flat(0x3d2a7a), star: flat(0xffd85a, { emissive: 0x6a5010 }),
 };
 
+// The painted sky (textures/sky.jpg, baked from Ty's Meshy panorama by tools/make-sky.py): an equirectangular
+// background with the horizon at the middle row, its sunbeams rolled to the sun's bearing. The fog fades the
+// hills and mountains into its horizon colour.
+export const SKY = { horizon: 0x48d7f2, fog: 0x7cc9de };
 export function buildWorld(scene) {
-  scene.background = new THREE.Color(0x9fc8e8);
-  scene.fog = new THREE.Fog(0x9fc8e8, 60, 175);
+  scene.background = new THREE.Color(SKY.horizon);
+  new THREE.TextureLoader().load('/textures/sky.jpg', (tex) => {
+    tex.mapping = THREE.EquirectangularReflectionMapping;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    scene.background = tex;
+  });
+  scene.fog = new THREE.Fog(SKY.fog, 60, 175);
 
-  const hemi = new THREE.HemisphereLight(0xdfefff, 0x5a7a46, 1.1);
+  // a cool blue sky light and warm sunbeams, as in the painting
+  const hemi = new THREE.HemisphereLight(0xd6efff, 0x5a7a46, 1.1);
   scene.add(hemi);
-  const sun = new THREE.DirectionalLight(0xfff2d8, 2.2);
+  const sun = new THREE.DirectionalLight(0xffe9c4, 2.3);
   sun.position.set(30, 50, 20);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
@@ -107,13 +117,7 @@ export function buildWorld(scene) {
     yard.position.y = 0.05; yard.receiveShadow = true;
     scene.add(yard);
   }
-  scene.add(groundStrip([0, 8], [0, C.FARMHOUSE.z - 4], 3.2, path));
-  scene.add(groundStrip([8, 7.5], [C.PEN.x0 + 0.4, C.PEN.gateOut[1]], 2.6, path));
-  scene.add(groundStrip([-10, 10], [C.FIELD.x1 + 0.3, 8.5], 2.4, path));
-  scene.add(groundStrip([0, 8], [0, -C.ARENA_RADIUS + 2], 2.6, path));
-  // through the barn: farmyard -> arch (south), side door (west) -> the house path
-  scene.add(groundStrip([9, 9.5], [14.6, 13.4], 2.6, path));
-  scene.add(groundStrip([12.6, 22], [1.6, 20.6], 2.4, path));
+  for (const [a, b, w] of PATHS) scene.add(groundStrip(a, b, w, path));
   // cobbles around the well
   const cobble = new THREE.Mesh(new THREE.RingGeometry(C.WELL.r + 0.1, C.WELL.r + 1.4, 14).rotateX(-Math.PI / 2), decal(0x8d9196, 4));
   cobble.position.set(C.WELL.x, 0.05, C.WELL.z); cobble.receiveShadow = true;
@@ -184,6 +188,16 @@ export function buildWorld(scene) {
 }
 
 export const spinners = [];
+
+// Paths: [from, to, width]. Drawn as ground strips; the grass keeps off them.
+const PATHS = [
+  [[0, 8], [0, C.FARMHOUSE.z - 4], 3.2],                        // the door
+  [[8, 7.5], [C.PEN.x0 + 0.4, C.PEN.gateOut[1]], 2.6],          // the pen gate
+  [[-10, 10], [C.FIELD.x1 + 0.3, 8.5], 2.4],                     // the field
+  [[0, 8], [0, -C.ARENA_RADIUS + 2], 2.6],                       // south past the altar, through the arch
+  [[9, 9.5], [14.6, 13.4], 2.6],                                 // the barn arch
+  [[12.6, 22], [1.6, 20.6], 2.4],                                // the barn's side door to the house path
+];
 
 // ------------------------------------------------------------ stand-ins
 // Every farm piece is a group placed at {x, z, yaw}. When its Meshy model loads, swapModel()
@@ -658,6 +672,143 @@ for (const [x, z, yaw, h, tilt] of C.BLAST_SHARDS) SCATTER.rock_jagged.push([x, 
   }
 }
 
+// ------------------------------------------------------------ grass (cosmetic: no colliders, no LOS effect)
+// Ty's Meshy tall-grass clump and clover tuft, scattered in natural clumps: thick along the pen fence, the crop
+// field's edge, round trees and rocks, at the rim and in the south meadow; thin in the open; none on paths, the
+// farmyard, the blast scorch, the siege circles, spawn spots, props or anything solid. Seeded, so every client
+// draws the same. Each kind is split into 12 m chunks (InstancedMesh each), so the frustum and a distance check
+// skip most of them; the vertex shader sways them and shrinks them into the ground between GRASS.fade[0] and [1].
+// ?low (main.js's weak-GPU flag) keeps about a third of them and fades them nearer.
+const LOW = typeof location !== 'undefined' && new URLSearchParams(location.search).has('low');
+export const GRASS = {
+  tall:   { count: LOW ? 220 : 640, h: [0.5, 0.95] },
+  clover: { count: LOW ? 280 : 800, h: [0.18, 0.32] },
+  fade: LOW ? [14, 22] : [20, 30],
+  chunk: 12,
+};
+export const GRASS_ITEMS = { tall: [], clover: [] };   // [x, z, yaw, height, tint r, g, b]
+{
+  const rnd = seeded(91);
+  const segDist = (x, z, [ax, az], [bx, bz]) => {
+    const sx = bx - ax, sz = bz - az, k = Math.max(0, Math.min(1, ((x - ax) * sx + (z - az) * sz) / (sx * sx + sz * sz)));
+    return Math.hypot(ax + sx * k - x, az + sz * k - z);
+  };
+  const spawns = [...C.SPAWN_POINTS, ...C.TEAM_SPAWNS.ember, ...C.TEAM_SPAWNS.frost, ...(C.SIEGE_SPAWNS ? [...C.SIEGE_SPAWNS.ember, ...C.SIEGE_SPAWNS.frost] : [])];
+  const F = C.FIELD;
+  const fieldDist = (x, z) => Math.hypot(Math.max(F.x0 - x, 0, x - F.x1), Math.max(F.z0 - z, 0, z - F.z1));
+  const near = C.COLLIDERS.filter(c => ['tree', 'rock', 'stone', 'silo', 'obelisk', 'arch', 'pillar', 'ruin', 'scarecrow', 'hay'].includes(c.kind) && c.r > 0.3);
+  const blocked = (x, z) => {
+    const r = Math.hypot(x, z);
+    if (r > C.ARENA_RADIUS + 4) return true;
+    if (PATHS.some(([a, b, w]) => segDist(x, z, a, b) < w / 2 + 0.35)) return true;
+    if ((x / 13) ** 2 + ((z - 13) / 9) ** 2 < 1) return true;                         // the farmyard
+    if (Math.hypot(x - C.ALTAR.x, z - C.ALTAR.z) < C.BLAST_RADIUS - 1.5) return true;  // the scorch
+    if ((C.SIEGE_ZONES || []).some(zn => Math.hypot(x - zn.x, z - zn.z) < zn.r + 0.5)) return true;
+    if (spawns.some(([sx, , sz]) => Math.hypot(sx - x, sz - z) < 2.5)) return true;
+    if (C.inPen(x, z, -0.4) || fieldDist(x, z) < 0.4) return true;                     // the pen floor and the crops
+    if (C.PROP_SPAWNS.some(([, px, pz]) => Math.hypot(px - x, pz - z) < 1.0)) return true;
+    if (Math.hypot(x - C.SILO_FOOTING.x, z - C.SILO_FOOTING.z) < C.SILO_FOOTING.r + 0.6) return true;
+    if (Math.hypot(x - C.WELL.x, z - C.WELL.z) < C.WELL.r + 1.6) return true;
+    return C.COLLIDERS.some(c => Math.hypot(c.x - x, c.z - z) < c.r + 0.2);
+  };
+  // How much grass wants to grow here (0 open meadow .. ~3 along a fence by a tree), and how much of it is tall.
+  const want = (x, z) => {
+    const r = Math.hypot(x, z);
+    let w = 0.25, edge = 0;
+    const fd = C.fenceDistance(x, z);
+    if (fd < 2.6 && !C.inPen(x, z)) { w += 3 * (1 - fd / 2.6); edge = 1; }
+    const fl = fieldDist(x, z);
+    if (fl < 2.2) { w += 2.4 * (1 - fl / 2.2); edge = 1; }
+    for (const c of near) {
+      const d = Math.hypot(c.x - x, c.z - z) - c.r;
+      if (d < 2.4) { w += 1.6 * (1 - d / 2.4); edge = Math.max(edge, 0.8); }
+    }
+    if (z < -16 && Math.hypot(x - C.ALTAR.x, z - C.ALTAR.z) > C.BLAST_RADIUS + 1) w += 1.1;    // the south meadow
+    if (Math.hypot(x - C.ALTAR.x, z - C.ALTAR.z) < C.BLAST_RADIUS + 3) w *= 0.35;            // thin near the scorch
+    if (r > C.ARENA_RADIUS - 3) { w = Math.min(w, 0.3) + 0.1; edge = 1; }                     // the rim: a fringe, not a band
+    if (r > C.ARENA_RADIUS + 1.5) w *= 0.4;
+    return [Math.min(w, 3), edge];
+  };
+  const left = { tall: GRASS.tall.count, clover: GRASS.clover.count };
+  for (let tries = 0; tries < 60000 && (left.tall > 0 || left.clover > 0); tries++) {
+    const a = rnd() * Math.PI * 2, rr = Math.sqrt(rnd()) * (C.ARENA_RADIUS + 4);
+    const cx = Math.cos(a) * rr, cz = Math.sin(a) * rr;
+    if (blocked(cx, cz)) continue;
+    const [w, edge] = want(cx, cz);
+    if (rnd() * 3 > w) continue;
+    // a clump: 2-6 plants round the centre; edges grow tall grass, open ground mostly clover
+    const n = 3 + Math.floor(rnd() * 6), spread = 0.3 + rnd() * 0.5, pTall = 0.25 + 0.45 * edge;
+    for (let i = 0; i < n; i++) {
+      const kind = rnd() < pTall ? 'tall' : 'clover';
+      if (left[kind] <= 0) continue;
+      const g1 = rnd() + rnd() - 1, g2 = rnd() + rnd() - 1;
+      const x = cx + g1 * spread * 1.4, z = cz + g2 * spread * 1.4;
+      if (blocked(x, z)) continue;
+      const [h0, h1] = GRASS[kind].h, h = (h0 + (h1 - h0) * rnd()) * (0.8 + 0.25 * Math.min(1, w / 2));
+      // brighter than the texture (it reads dark against the lit meadow), a touch greener, a little yellow in some
+      const v = 1.15 + rnd() * 0.3, warm = rnd() * 0.14;
+      GRASS_ITEMS[kind].push([x, z, rnd() * 6.3, h, v * (0.92 + warm), v * (1.08 + warm * 0.5), v * (0.85 - warm * 0.4)]);
+      left[kind]--;
+    }
+  }
+}
+const grassChunks = [];
+const grassUniforms = { uTime: { value: 0 }, uFade: { value: new THREE.Vector2(...GRASS.fade) } };
+function grassMeshes(gltf, items) {
+  gltf.scene.updateMatrixWorld(true);
+  const bb = new THREE.Box3().setFromObject(gltf.scene), k = 1 / (bb.max.y - bb.min.y);
+  const norm = new THREE.Matrix4().makeScale(k, k, k).multiply(new THREE.Matrix4().makeTranslation(-(bb.min.x + bb.max.x) / 2, -bb.min.y, -(bb.min.z + bb.max.z) / 2));
+  const parts = [];
+  gltf.scene.traverse(o => {
+    if (!o.isMesh) return;
+    const mat = o.material.clone();
+    mat.side = THREE.DoubleSide;
+    mat.onBeforeCompile = (sh) => {
+      Object.assign(sh.uniforms, grassUniforms);
+      sh.vertexShader = sh.vertexShader
+        .replace('void main() {', 'uniform float uTime;\nuniform vec2 uFade;\nvoid main() {')
+        .replace('#include <begin_vertex>', `#include <begin_vertex>
+          #ifdef USE_INSTANCING
+            vec3 gp = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+            float gh = clamp(transformed.y, 0.0, 1.2), gph = gp.x * 0.37 + gp.z * 0.29;
+            transformed.x += sin(uTime * 1.6 + gph) * 0.07 * gh * gh;
+            transformed.z += cos(uTime * 1.2 + gph * 1.3) * 0.05 * gh * gh;
+            transformed *= 1.0 - smoothstep(uFade.x, uFade.y, distance(gp, cameraPosition));
+          #endif`);
+    };
+    parts.push([o.geometry.clone().applyMatrix4(new THREE.Matrix4().multiplyMatrices(norm, o.matrixWorld)), mat]);
+  });
+  const cells = new Map();
+  for (const it of items) {
+    const key = `${Math.floor(it[0] / GRASS.chunk)},${Math.floor(it[1] / GRASS.chunk)}`;
+    (cells.get(key) || cells.set(key, []).get(key)).push(it);
+  }
+  const group = new THREE.Group(), m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), col = new THREE.Color();
+  for (const list of cells.values()) {
+    const c = new THREE.Vector3();
+    for (const [x, z] of list) c.x += x / list.length, c.z += z / list.length;
+    const rad = Math.max(...list.map(([x, z]) => Math.hypot(x - c.x, z - c.z))) + 1;
+    for (const [geo, mat] of parts) {
+      const im = new THREE.InstancedMesh(geo, mat, list.length);
+      list.forEach(([x, z, yaw, h, r, g, b], i) => {
+        im.setMatrixAt(i, m.compose(new THREE.Vector3(x, groundHeight(x, z) - 0.02, z), q.setFromAxisAngle(up, yaw), new THREE.Vector3(h, h, h)));
+        im.setColorAt(i, col.setRGB(r, g, b));
+      });
+      im.castShadow = false; im.receiveShadow = true;
+      im.computeBoundingSphere();
+      grassChunks.push({ im, c, rad });
+      group.add(im);
+    }
+  }
+  return group;
+}
+// Sway clock and distance culling, once per frame from the scene itself (nothing outside this file ticks it).
+function grassTick(camera) {
+  grassUniforms.uTime.value = performance.now() / 1000;
+  const far = GRASS.fade[1];
+  for (const ch of grassChunks) ch.im.visible = camera.position.distanceTo(ch.c) - ch.rad < far;
+}
+
 // One InstancedMesh per mesh in the model, normalised like fitModel (base on y = 0, centred on x/z,
 // 1 m tall) and scaled to each instance's height. Sits on the terrain outside the flat arena.
 function instanced(gltf, items, shadows = true) {
@@ -736,6 +887,11 @@ export function loadModels(loader, scene) {
       scene.add(instanced(g, items, !name.endsWith('_far')));
       for (const s of SCATTER_STANDINS[name] || []) swapModel(s, new THREE.Group());
       if (name === 'rock_jagged') models.rockProp = fitModel({ scene: g.scene.clone() }, C.PROP_TYPES.rock.h);
+    }, () => {})),
+    // Grass: cosmetic clumps, chunked and instanced (see GRASS).
+    ...['tall', 'clover'].map(kind => load(`/models/grass_${kind}.glb`).then(g => {
+      scene.add(grassMeshes(g, GRASS_ITEMS[kind]));
+      scene.onBeforeRender = (renderer, sc, camera) => grassTick(camera);
     }, () => {})),
     // One round bale, two sizes: the throwable prop and the big courtyard cover stacks.
     load('/models/hay.glb').then(g => {
