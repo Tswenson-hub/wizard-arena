@@ -272,6 +272,20 @@
   retargeted clip ended on its first pose. That would have stood Gale's clamped death back up. It now plays the source LoopOnce + clamp.
   This affects how `hit_waist`, `tk_*` (on everyone but Cinder) and the retargeted `stun`/`dash`/`block` end (requested note posted).
 - `tools/prepare-wizard-model.sh` now recognises Mixamo-style rigs in its inspect report. It used to say "RightHand bone: NO".
+- **Cinder's Fireball uses the triple strike (Ty).** `SHARED_CLIPS` has a third Embibe set, `to: ['cinder']`.
+  - The same three Triple_Combo_Attack strikes, retargeted onto Cinder's 66-bone rig.
+  - The cuts start later (0.6, 1.36 and 2.14 s), so each strike lands at once: the server spawns the bolt as it receives the cast,
+    and main.js starts `combo<shot+1>` (at 1×, ≤ 0.7 s) when that spawn reaches the client. Its 0.08 s cross-fade into the one-shot
+    ends right on the strike.
+  - Measured peak right-hand speed: combo1 at 0.067 s, combo2 at 0.042 s, combo3 at 0.067 s (`/tmp/wa-characters/strike.py`).
+    All three are inside the 0.30 s Fireball cast root, and the root ends during the follow-through.
+  - Durations are 0.45, 0.45 and 0.8 s; shots are at least 0.5 s apart. combo2 releases sidearm with the chest turned about 90°.
+  - Gale's and Embibe's combos are unchanged (they strike at 0.13–0.17 s).
+  - Shots:
+    - `cinder-combo-game-sheet.png`: in game, FFA (`MATCH_MODE=ffa`, so Siege bots don't crowd the frame). Top row is each strike
+      at its release, bottom row the follow-through.
+    - `cinder-combo-close.png`: close-ups.
+    - No skin tearing; `allkeys.py` shows every hero's keys and there are no console errors.
 - **One of each hero per team (team modes).** `pk.setTaken(ids | { id: teammateName })` on the picker handle.
   - Taken cards are greyed (CSS `.wp-card.taken`), carry a TAKEN badge (`.wp-taken`), and have a "Taken by …" tooltip and `aria-disabled`.
   - Their preview stops turning and gets a dark veil drawn in the shared canvas, because the card's CSS filter can't reach the WebGL overlay.
