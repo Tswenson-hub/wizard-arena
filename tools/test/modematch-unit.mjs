@@ -1,7 +1,7 @@
 // usage: MATCH_DEBUG=1 node tools/test/modematch-unit.mjs
 // Rule checks for server/match.js against a fake server ctx (no network, simulated clock): teams and bot fill,
-// no friendly fire, the relic (scoring only while held, can't be thrown, reset on holder death, rotation,
-// knocked loose), win conditions, the vote and its tie rule.
+// no friendly fire, Altar Siege (occupancy, fill rates, contest, ultimate charge, hops and the warning, overtime,
+// the win), win conditions, the vote and its tie rule.
 import { createMatch } from '../../server/match.js';
 import * as C from '../../public/shared/constants.js';
 
@@ -51,43 +51,62 @@ ok(!match.isEnemy(h, foe), 'no fighting during the end screen');
 
 // the vote: a tie keeps the current mode, a majority switches
 run(9); ok(S.phase === 'vote', 'end → vote');
-match.handle(h, { t: 'vote', mode: 'ffa' }); match.handle(h2, { t: 'vote', mode: 'relic' });
+match.handle(h, { t: 'vote', mode: 'ffa' }); match.handle(h2, { t: 'vote', mode: 'siege' });
 run(16); ok(S.mode === 'tdm' && S.phase === 'warmup', 'vote tie keeps the current mode');
 S.target = null;
 match.handle(h, { t: 'matchDebug', skip: true }); run(0.1); match.handle(h, { t: 'matchDebug', skip: true }); run(0.1);
 match.handle(h, { t: 'matchDebug', skip: true }); run(0.1);
 ok(S.phase === 'vote', 'skip through to the next vote');
-match.handle(h, { t: 'vote', mode: 'relic' }); match.handle(h2, { t: 'vote', mode: 'relic' });
+match.handle(h, { t: 'vote', mode: 'siege' }); match.handle(h2, { t: 'vote', mode: 'siege' });
 match.handle(h, { t: 'matchDebug', skip: true }); run(0.1);
-ok(S.mode === 'relic', 'majority picks Sacred Relic');
-run(2.5);
-ok(S.phase === 'live' && S.relic && S.relic.propId, `relic spawned on prop ${S.relic?.propId} (${props.get(S.relic?.propId)?.type})`);
-ok(['crate', 'barrel', 'pot', 'hay', 'potion'].includes(props.get(S.relic.propId).type), 'relic is an eligible prop type');
-
-// free relic: no points
-const before = S.scores.ember + S.scores.frost; run(3);
-ok(S.scores.ember + S.scores.frost === before, 'no points while the relic is free');
-// lift it (as server.js does)
-const lift = (p) => { const pr = props.get(S.relic.propId); pr.state = 'carried'; pr.carrier = p.id; p.carrying = pr.id; match.onPickup(p, pr); return pr; };
-let pr = lift(h); ult.set(h.id, 0);
-const s0 = S.scores[h.team]; run(4);
-ok(Math.abs(S.scores[h.team] - s0 - 20) < 0.5, `+5/s while held (${(S.scores[h.team] - s0).toFixed(1)} in 4 s)`);
-ok(Math.abs(ult.get(h.id) - 8) < 0.3, `+2% ult/s while held (${ult.get(h.id).toFixed(1)}% in 4 s)`);
-ok(!match.canThrow(h, pr) && match.canThrow(h, props.get(pr.id === 1 ? 2 : 1)), 'the relic can\'t be thrown, other props can');
-// knocked loose (server.js shatters a held prop that's hit): stays the relic, set down
-const id0 = pr.id;
-match.onPropBroken(pr); h.carrying = null; pr.state = 'broken'; pr.carrier = null; run(0.1);
-ok(S.relic.propId === id0 && pr.state === 'idle', 'a hit knocks the relic loose; it stays the relic, idle');
-// holder dies: reset to a new prop, timer restarts
-pr = lift(h); const rot = S.relic.rotateAt;
-run(5);
-match.onDrop(h, pr, 'destroyed');
-ok(S.relic.propId !== id0 && Math.abs(S.relic.rotateAt - clock - 30) < 0.1, 'holder death: a new relic and a fresh 30 s');
-// rotation after 30 s, even while held
-pr = lift(h); const id1 = pr.id;
-run(30.2);
-ok(S.relic.propId !== id1, 'the relic moves after 30 s even while held');
-ok(match.canThrow(h, pr), 'the old relic is an ordinary prop again (throwable)');
+ok(S.mode === 'siege', 'majority picks Altar Siege');
+ok(team('ember').length === 3 && team('frost').length === 3, 'siege fills to 3v3');
+const Z0 = match.zoneAt(0);
+const away = () => { for (const p of players.values()) { p.p = [0, 0, p.team === 'ember' ? 30 : -35]; p.dead = false; } };
+const into = (p, zone = match.zoneAt(S.zone.i), dx = 0) => { p.p = [zone.x + dx, 0, zone.z]; };
+away(); into(h);
+ok(S.phase === 'warmup' && S.zone && S.zone.i === 0 && match.matchPublic().zone?.name === Z0.name, `warm-up shows the first zone (${Z0.name} at ${Z0.x}, ${Z0.z})`);
+run(1); ok(S.scores.ember + S.scores.frost === 0, 'nothing fills during the warm-up');
+away(); run(1.2); ok(S.phase === 'live', 'siege goes live');
+away();
+let H = h.team, O = H === 'ember' ? 'frost' : 'ember';
+let hmate = team(H).find(p => p.bot), opp = team(O).find(p => p.bot);
+const sides = () => { H = h.team; O = H === 'ember' ? 'frost' : 'ember'; opp = team(O).find(p => p.bot); };
+run(3); ok(S.scores.ember + S.scores.frost === 0 && !S.zone.owner, 'an empty zone fills nothing');
+into(h); ult.set(h.id, 0); run(4);
+ok(Math.abs(S.scores[H] - 4) < 0.1 && S.zone.owner === H, `one wizard alone: 1%/s (${S.scores[H].toFixed(2)} in 4 s)`);
+ok(Math.abs(ult.get(h.id) - 4) < 0.1, `+1% ultimate/s in your held zone (${ult.get(h.id).toFixed(2)})`);
+into(hmate, undefined, 2); run(4);
+ok(Math.abs(S.scores[H] - 10) < 0.1, `two inside: 1.5%/s (${S.scores[H].toFixed(2)} after 4 + 4 s)`);
+into(opp, undefined, -2); const s1 = S.scores[H]; run(3);
+ok(S.zone.contested && S.scores[H] === s1 && S.scores[O] === 0, 'both teams inside: contested, nothing fills');
+ok(match.matchPublic().zone.contested && match.matchPublic().zone.inside[O] === 1, 'snapshot: zone contested, inside counts');
+opp.dead = true; run(1); ok(!S.zone.contested && S.zone.owner === H, 'a dead wizard doesn\'t hold or contest');
+opp.dead = false; opp.p[1] = 6; run(1); ok(!S.zone.contested, 'a wizard high in the air doesn\'t count');
+opp.p[1] = 0;
+// the hop: warning 5 s before, then the next spot
+away(); sent.length = 0;
+const hopAt = S.zone.hopAt; clock = hopAt - 5.5; run(1);
+ok(sent.some(m => m.t === 'matchZone' && m.type === 'warn') && S.zone.i === 0, 'hop warning 5 s before');
+ok(match.matchPublic().zone.next.name === match.zoneAt(1).name, 'snapshot carries the next spot');
+run(5); ok(S.zone.i === 1 && sent.some(m => m.t === 'matchZone' && m.type === 'hop'), `the zone hops after 60 s (now ${match.zoneAt(1).name})`);
+ok(Math.abs(S.zone.hopAt - clock - 60) < 1, 'and the next hop is 60 s later');
+// overtime: the cap hits while contested
+into(h); into(opp, undefined, 1); run(0.1);
+S.phaseEnd = clock + 0.2; run(1);
+ok(S.phase === 'live' && S.overtime, 'cap while contested: overtime, the match goes on');
+opp.p = [0, 0, -35]; run(0.2);
+ok(S.phase === 'end' && S.results.reason === 'overtime' && S.results.winner === H, 'overtime ends when the zone is no longer contested');
+ok(S.results.siege && S.results.siege.hold.length === 3 && S.results.siege.contested > 0, `results carry the per-zone hold split (${JSON.stringify(S.results.siege.hold)})`);
+// a hard 30 s on overtime, and the 100% win
+match.handle(h, { t: 'matchDebug', mode: 'siege' }); run(2.2); away(); sides();
+into(h); into(opp, undefined, 1); S.phaseEnd = clock + 0.1; run(1);
+ok(S.overtime, 'overtime again'); run(30);
+ok(S.phase === 'end' && S.results.reason === 'overtime', 'overtime stops after 30 s even if still contested');
+match.handle(h, { t: 'matchDebug', mode: 'siege' }); run(2.2); away(); sides();
+S.scores[H] = 99.5; into(h); run(1);
+ok(S.phase === 'end' && S.results.reason === 'target' && S.results.winner === H, 'first to 100% wins');
+ok(match.canThrow(h, props.get(1)), 'telekinesis throws normally (no relic special case)');
 
 // FFA: fill bots leave, nobody is a teammate
 match.handle(h, { t: 'matchDebug', mode: 'ffa' }); run(2);

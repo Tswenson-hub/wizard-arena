@@ -1,4 +1,4 @@
-// Match and game modes: FFA / Team Deathmatch 3v3 / Sacred Relic 3v3, teams, scoring, the relic, the
+// Match and game modes: FFA / Team Deathmatch 3v3 / Altar Siege 3v3, teams, scoring, the siege zone, the
 // end-of-match vote and bot fill. Modes agent (round 5); see docs/agents/modes.md.
 //
 // Hooks: server.js calls these. Keep the names and signatures; fill in the bodies.
@@ -10,8 +10,7 @@
 //   onPickup(p, prop)        a prop started rising toward p (telekinesis)
 //   onDrop(p, prop, reason)  'dropped' | 'released' | 'destroyed' | 'thrown'
 //   onPropBroken(prop)
-//   canThrow(p, prop)        false: the server turns the throw into a gentle drop (the relic)
-//   protectProp(prop)        true: a hit knocks the prop loose instead of shattering it (the relic)
+//   canThrow(p, prop)        false: the server turns the throw into a gentle drop (no mode uses it now)
 //   tick(dt)                 every simulation step
 //   handle(p, msg)           messages server.js doesn't know (e.g. { t: 'vote', mode })
 //   playerExtras(p)          merged into playerPublic (e.g. { team })
@@ -24,14 +23,14 @@
 // Loop: warmup (10 s, nothing scores) → live (to the target or the 8 min cap) → end (results) → vote (15 s)
 // → reset (everyone respawns on their side, props and goats reset, ultimate charge 0) → warmup ...
 // Debug (only with MATCH_DEBUG=1 in the server's environment): { t: 'matchDebug', target, cap, warmup,
-// endTime, voteTime, rotate, botDiff, mode, skip: true, spectate: true }.
+// endTime, voteTime, hop, overtime, botDiff, mode, skip: true, spectate: true, dummy: { team, x, z } | false }.
 
 import * as C from '../public/shared/constants.js';
 
 export const MODES = {
   ffa:   { name: 'Free-for-all',    teams: false, target: 15,  cap: 480 },
   tdm:   { name: 'Team Deathmatch', teams: true,  target: 30,  cap: 480 },
-  relic: { name: 'Sacred Relic',    teams: true,  target: 300, cap: 480 },
+  siege: { name: 'Altar Siege',     teams: true,  target: 100, cap: 480 },
 };
 export const TEAMS = {
   ember: { name: 'Ember', color: 0xff6a2a },
@@ -39,7 +38,16 @@ export const TEAMS = {
 };
 const TEAM_IDS = ['ember', 'frost'];
 const TEAM_SIZE = 3;
-const RELIC = { rotate: 30, points: 5, ult: 2, types: new Set(['crate', 'barrel', 'pot', 'hay', 'potion']) };
+// Altar Siege: a 7 m circle hops every 60 s (altar → barn → silo → altar). One team alone inside fills its bar
+// (1%/s, 1.5%/s with 2+ inside); both teams inside is contested. If the cap hits while contested: overtime until
+// it isn't, at most 30 s more.
+const SIEGE = { hop: 60, warn: 5, rate1: 1, rate2: 1.5, ult: 1, overtime: 30, maxY: 2.5 };
+// map.js (environment agent) provides SIEGE_ZONES; until then, open ground by each landmark.
+const ZONE_NAMES = ['Altar', 'Barn', 'Silo'];
+const SIEGE_ZONES = (C.SIEGE_ZONES || [{ x: 0, z: -7.5 }, { x: 23, z: 16.5 }, { x: -21, z: -15 }]).map((zn, i) => {
+  const [x, z, r] = Array.isArray(zn) ? zn : [zn.x, zn.z, zn.r];
+  return { x, z, r: r || 7, name: (!Array.isArray(zn) && zn.name) || ZONE_NAMES[i] || `Zone ${i + 1}` };
+});
 const TIMES = { warmup: 10, end: 8, vote: 15 };
 // Ember north (house side), Frost south (meadow side). map.js may provide TEAM_SPAWNS (requested); until then
 // these are the existing spawn points on each side.
@@ -56,31 +64,25 @@ export function createMatch(ctx) {
     mode: process.env.MATCH_MODE && MODES[process.env.MATCH_MODE] ? process.env.MATCH_MODE : 'ffa',
     phase: 'warmup', phaseEnd: 0, paused: true,   // paused until a human is here
     target: null, cap: null,                       // debug overrides of the mode's numbers
-    times: { ...TIMES }, rotate: RELIC.rotate,
+    times: { ...TIMES }, hop: SIEGE.hop, overtimeMax: SIEGE.overtime,
     scores: { ember: 0, frost: 0 },
-    relic: null,                                   // { propId, rotateAt, restore }
+    zone: null,                                    // siege: { i, hopAt, warned, owner, contested, inside }
+    overtime: null,                                // siege: { until } once the cap hit while contested
     votes: new Map(),                              // human id -> mode
     results: null,
     botDiff: 'normal',                             // the most recent human's bot difficulty
     filling: null,                                 // team for the bot ctx.addBot is adding right now
     fillCheckAt: 0, graceUntil: 0,
-    stats: { ff: 0, relicEvents: [] },             // for the test harness
+    stats: { ff: 0, siege: null },                 // for the test harness
   };
   const t = () => ctx.now();
   const M = () => MODES[S.mode];
   const target = () => S.target ?? M().target;
   const humans = () => [...players.values()].filter(p => !p.bot);
   const fighters = () => [...players.values()].filter(p => !p.spectator);
-  const inTeam = (team) => fighters().filter(p => p.team === team);
+  const inTeam = (team) => fighters().filter(p => p.team === team && !p.dummy);   // a debug dummy doesn't take a slot
   const pub = (p) => ({ id: p.id, name: p.name, team: p.team || null, bot: !!p.bot, wizard: p.wizard,
     kills: p.kills, deaths: p.deaths, dmg: Math.round(p.mDmg || 0), pts: Math.floor(p.mPts || 0) });
-
-  function relicEvent(type, extra = {}) {
-    const e = { type, at: +t().toFixed(2), ...extra };
-    S.stats.relicEvents.push(e);
-    if (S.stats.relicEvents.length > 200) S.stats.relicEvents.shift();
-    ctx.broadcast({ t: 'matchRelic', ...e, relic: relicPublic() });
-  }
 
   // ------------------------------------------------------------ teams and bot fill
   function smallerTeam() {
@@ -106,8 +108,8 @@ export function createMatch(ctx) {
     const hs = humans().filter(p => !p.spectator).sort(() => Math.random() - 0.5);
     const first = Math.random() < 0.5 ? 0 : 1;
     hs.forEach((p, i) => { p.team = TEAM_IDS[(i + first) % 2]; });
-    for (const p of players.values()) if (p.bot) p.team = null;
-    for (const p of players.values()) if (p.bot) p.team = smallerTeamAll();
+    for (const p of players.values()) if (p.bot && !p.dummy) p.team = null;
+    for (const p of players.values()) if (p.bot && !p.dummy) p.team = smallerTeamAll();
   }
   // Team modes: 3v3 (or bigger if there are more humans), topped up with bots, surplus bots leave.
   function fillBots() {
@@ -139,54 +141,84 @@ export function createMatch(ctx) {
     }
   }
 
-  // ------------------------------------------------------------ the relic
-  const relicProp = () => S.relic && props.get(S.relic.propId);
-  function relicHolder() {
-    const prop = relicProp();
-    if (!prop || prop.state !== 'carried') return null;
-    const p = players.get(prop.carrier);
-    return p && !p.dead && p.carrying === prop.id ? p : null;
+  // ------------------------------------------------------------ Altar Siege
+  const zoneAt = (i) => SIEGE_ZONES[((i % SIEGE_ZONES.length) + SIEGE_ZONES.length) % SIEGE_ZONES.length];
+  function newSiegeStats() {
+    return { hold: SIEGE_ZONES.map(() => ({ ember: 0, frost: 0 })), contested: 0, empty: 0, hops: [], overtime: null };
   }
-  function relicPublic() {
-    if (!S.relic) return null;
-    const prop = relicProp(), h = relicHolder();
-    return { propId: S.relic.propId, holder: h ? h.id : null, team: h ? h.team : null,
-      left: Math.max(0, +(S.relic.rotateAt - t()).toFixed(1)), x: prop ? +prop.x.toFixed(2) : 0, z: prop ? +prop.z.toFixed(2) : 0 };
+  function zoneStart() {
+    S.zone = { i: 0, hopAt: t() + S.hop, warned: false, owner: null, contested: false, inside: { ember: 0, frost: 0 } };
+    S.stats.siege = newSiegeStats();
   }
-  // A new relic: a random idle eligible prop (not the current one), or null if there's none right now.
-  function pickRelic(reason) {
-    const prev = S.relic?.propId;
-    const pool = [...props.values()].filter(pr => pr.state === 'idle' && RELIC.types.has(pr.type) && pr.id !== prev && !pr.cursedBy);
-    const pr = pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
-    S.relic = { propId: pr ? pr.id : null, rotateAt: t() + S.rotate, restore: null };
-    relicEvent(reason, { prop: S.relic.propId, prev });
+  function zoneEvent(type, extra = {}) { ctx.broadcast({ t: 'matchZone', type, zone: zonePublic(), ...extra }); }
+  // Living wizards standing in the circle (on the ground, or flying low), by team
+  function occupants() {
+    const z = zoneAt(S.zone.i), by = { ember: [], frost: [] };
+    for (const p of fighters()) {
+      if (p.dead || !p.team || (p.p[1] || 0) > SIEGE.maxY) continue;
+      if (Math.hypot(p.p[0] - z.x, p.p[2] - z.z) <= z.r) by[p.team].push(p);
+    }
+    return by;
   }
-  // Positions of the relic while it's carried (server.js keeps x/z at the spot it was lifted from)
-  function relicPos(prop) {
-    const c = prop.carrier && players.get(prop.carrier);
-    if (c && (prop.state === 'carried' || prop.state === 'lifting')) { const hp = C.holdPoint(c.p, c.yaw); return [hp[0], hp[2]]; }
-    return [prop.x, prop.z];
-  }
-  function relicTick(dt) {
-    const now = t();
-    if (S.relic?.restore) {
-      // a hit knocked the relic away: server.js shattered it; put it back down where it was, still the relic
-      const prop = relicProp(), r = S.relic.restore;
-      if (prop && prop.state === 'broken') {
-        prop.state = 'idle'; prop.carrier = null; prop.respawnAt = 0;
-        prop.x = Math.max(-C.ARENA_RADIUS, Math.min(C.ARENA_RADIUS, r[0])); prop.z = Math.max(-C.ARENA_RADIUS, Math.min(C.ARENA_RADIUS, r[1]));
-        ctx.broadcast({ t: 'prop', prop: ctx.propPublic(prop) });
+  function zoneTick(dt) {
+    const now = t(), Z = S.zone, st = S.stats.siege;
+    // hop (not during overtime: the fight there decides it)
+    if (!S.overtime) {
+      if (!Z.warned && now >= Z.hopAt - SIEGE.warn) { Z.warned = true; zoneEvent('warn', { to: zoneAt(Z.i + 1).name }); }
+      if (now >= Z.hopAt) {
+        st.hops.push(+now.toFixed(2));
+        Z.i = (Z.i + 1) % SIEGE_ZONES.length; Z.hopAt = now + S.hop; Z.warned = false;
+        zoneEvent('hop', { to: zoneAt(Z.i).name });
       }
-      S.relic.restore = null;
     }
-    if (!S.relic || S.relic.propId == null || !relicProp() || now >= S.relic.rotateAt) { pickRelic(S.relic?.propId == null ? 'spawn' : 'rotate'); return; }
-    const h = relicHolder();
-    if (h && h.team) {
-      const pts = RELIC.points * dt;
-      S.scores[h.team] += pts;
-      h.mPts = (h.mPts || 0) + pts;
-      ctx.addUltCharge(h, RELIC.ult * dt);
+    const by = occupants();
+    const e = by.ember.length, f = by.frost.length;
+    Z.inside = { ember: e, frost: f };
+    const wasContested = Z.contested, wasOwner = Z.owner;
+    Z.contested = !!(e && f);
+    Z.owner = Z.contested ? null : e ? 'ember' : f ? 'frost' : null;
+    if (Z.contested) st.contested += dt;
+    else if (!Z.owner) st.empty += dt;
+    else {
+      const team = Z.owner, n = by[team].length;
+      const rate = n >= 2 ? SIEGE.rate2 : SIEGE.rate1;
+      S.scores[team] = Math.min(100, S.scores[team] + rate * dt);
+      st.hold[Z.i][team] += dt;
+      for (const p of by[team]) {
+        p.mPts = (p.mPts || 0) + rate * dt / n;   // each holder's share of the capture
+        ctx.addUltCharge(p, SIEGE.ult * dt);
+      }
     }
+    if (Z.contested !== wasContested || Z.owner !== wasOwner) zoneEvent(Z.contested ? 'contested' : Z.owner ? 'held' : 'empty', { owner: Z.owner });
+  }
+  function siegeSummary() {
+    const st = S.stats.siege;
+    const r1 = (v) => +v.toFixed(1);
+    return { hold: SIEGE_ZONES.map((z, i) => ({ name: z.name, ember: r1(st.hold[i].ember), frost: r1(st.hold[i].frost) })),
+      contested: r1(st.contested), empty: r1(st.empty), hops: st.hops.length, overtime: st.overtime };
+  }
+  // Debug: a pinned, bound bot of `team` at (x, z), for testing contests. dummy: false removes it.
+  function setDummy(by, d) {
+    for (const p of [...players.values()]) if (p.dummy) ctx.removePlayer(p.id);
+    if (!d || !TEAMS[d.team]) return;
+    S.filling = d.team;
+    try { ctx.addBot('easy'); } finally { S.filling = null; }
+    const p = [...players.values()].filter(q => q.bot && q.team === d.team).sort((a, b) => b.id - a.id)[0];
+    if (p) { p.dummy = { x: +d.x || 0, z: +d.z || 0 }; p.fill = false; p.name = 'Dummy'; }
+  }
+  function pinDummies() {
+    const now = t();
+    for (const p of players.values()) {
+      if (!p.dummy || p.dead) continue;
+      p.p = [p.dummy.x, 0, p.dummy.z];
+      p.rootUntil = p.silenceUntil = now + 0.5;
+    }
+  }
+  function zonePublic() {
+    if (!S.zone) return null;
+    const Z = S.zone, z = zoneAt(Z.i), n = zoneAt(Z.i + 1);
+    return { i: Z.i, x: z.x, z: z.z, r: z.r, name: z.name, owner: Z.owner, contested: Z.contested, inside: Z.inside,
+      next: { x: n.x, z: n.z, r: n.r, name: n.name }, nextAt: S.phase === 'live' && !S.overtime ? Math.max(0, +(Z.hopAt - t()).toFixed(1)) : null };
   }
 
   // ------------------------------------------------------------ phases
@@ -198,6 +230,7 @@ export function createMatch(ctx) {
   function clearStats() {
     for (const p of players.values()) { p.kills = 0; p.deaths = 0; p.mDmg = 0; p.mPts = 0; }
     S.scores = { ember: 0, frost: 0 };
+    S.overtime = null;
   }
   function resetUlt(p) { if (ctx.resetUlt) ctx.resetUlt(p); else ctx.addUltCharge(p, -1000); }
   // Between matches: everyone back to their side, props back where they started, goats home, charge 0.
@@ -214,46 +247,50 @@ export function createMatch(ctx) {
     ctx.resetGoats?.();
     for (const p of players.values()) { resetUlt(p); if (!p.spectator) ctx.respawn(p); }
     clearStats();
-    S.relic = null;
+    // siege: the circle stands at its first spot during the warm-up (nothing scores until live)
+    S.zone = null;
+    if (S.mode === 'siege') zoneStart();
   }
   function startWarmup() {
-    S.votes.clear(); S.results = null; S.relic = null;
+    S.votes.clear(); S.results = null;
     resetArena();
     setPhase('warmup', S.times.warmup);
   }
   function startLive() {
     clearStats();
     for (const p of players.values()) resetUlt(p);
-    S.relic = null;
-    if (S.mode === 'relic') pickRelic('spawn');
+    S.zone = null;
+    if (S.mode === 'siege') zoneStart();
     setPhase('live', S.cap ?? M().cap);
   }
-  function mvpScore(p) { return (p.kills || 0) * 100 + (p.mDmg || 0) + (p.mPts || 0) * 4 - (p.deaths || 0) * 30; }
+  function mvpScore(p) { return (p.kills || 0) * 100 + (p.mDmg || 0) + (p.mPts || 0) * 10 - (p.deaths || 0) * 30; }
   function endMatch(reason) {
     const list = fighters();
     let winner = null;
     if (M().teams) {
-      const e = Math.floor(S.scores.ember), f = Math.floor(S.scores.frost);
+      const sc = (v) => S.mode === 'siege' ? Math.round(v * 10) / 10 : Math.floor(v);
+      const e = sc(S.scores.ember), f = sc(S.scores.frost);
       winner = e === f ? null : e > f ? 'ember' : 'frost';
     } else {
       const best = [...list].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
       winner = best[0] && (!best[1] || best[0].kills > best[1].kills) ? best[0].id : null;
     }
+    const e0 = (v) => S.mode === 'siege' ? Math.round(v * 10) / 10 : Math.floor(v);
     const mvp = [...list].sort((a, b) => mvpScore(b) - mvpScore(a))[0];
     S.results = {
       mode: S.mode, reason, winner, mvp: mvp ? mvp.id : null,
-      scores: M().teams ? { ember: Math.floor(S.scores.ember), frost: Math.floor(S.scores.frost) } : null,
+      scores: M().teams ? { ember: e0(S.scores.ember), frost: e0(S.scores.frost) } : null,
       players: list.map(pub).sort((a, b) => b.kills - a.kills || b.pts - a.pts || a.deaths - b.deaths),
       ff: S.stats.ff,
+      siege: S.mode === 'siege' ? siegeSummary() : null,
     };
-    S.relic = null;
     console.log(`[match] ${S.mode} over (${reason}): winner ${winner}, mvp ${mvp?.name}`);
     ctx.broadcast({ t: 'matchEnd', results: S.results });
     setPhase('end', S.times.end);
   }
   function startVote() { S.votes.clear(); setPhase('vote', S.times.vote); }
   function tallyVotes() {
-    const n = { ffa: 0, tdm: 0, relic: 0 };
+    const n = { ffa: 0, tdm: 0, siege: 0 };
     for (const m of S.votes.values()) if (n[m] !== undefined) n[m]++;
     return n;
   }
@@ -285,15 +322,16 @@ export function createMatch(ctx) {
     return {
       mode: S.mode, phase: S.phase, left: S.paused ? null : Math.max(0, +(S.phaseEnd - now).toFixed(1)),
       target: target(), teams: M().teams,
-      scores: { ember: Math.floor(S.scores.ember), frost: Math.floor(S.scores.frost) },
-      relic: S.mode === 'relic' && S.phase === 'live' ? relicPublic() : null,
+      scores: S.mode === 'siege' ? { ember: +S.scores.ember.toFixed(1), frost: +S.scores.frost.toFixed(1) } : { ember: Math.floor(S.scores.ember), frost: Math.floor(S.scores.frost) },
+      zone: S.mode === 'siege' && (S.phase === 'live' || S.phase === 'warmup') ? zonePublic() : null,
+      overtime: S.overtime ? Math.max(0, +(S.overtime.until - now).toFixed(1)) : null,
       votes: S.phase === 'vote' ? tallyVotes() : null,
     };
   }
 
   return {
     // exposed for objectives.js and the test harness
-    state: () => S, modes: MODES, teams: TEAMS, relicHolder, relicProp, matchPublic,
+    state: () => S, modes: MODES, teams: TEAMS, zones: SIEGE_ZONES, zoneAt, occupants: () => S.zone ? occupants() : null, matchPublic,
 
     isEnemy(a, b) {
       if (!a || !b || a.id === b.id || a.spectator || b.spectator) return false;
@@ -330,7 +368,7 @@ export function createMatch(ctx) {
     onLeave(p) {
       S.votes.delete(p.id);
       // last human gone: server.js clears the bots; wait for the next arrival
-      if (!p.bot && !humans().some(q => q !== p)) { S.paused = true; S.phase = 'warmup'; S.relic = null; S.results = null; }
+      if (!p.bot && !humans().some(q => q !== p)) { S.paused = true; S.phase = 'warmup'; S.zone = null; S.results = null; }
     },
     onDamage(target, attacker, dmg) {
       if (!attacker || attacker === target) return;
@@ -344,37 +382,32 @@ export function createMatch(ctx) {
       }
       checkWin();
     },
-    onPickup(p, prop) {
-      if (S.relic && prop.id === S.relic.propId) relicEvent('lift', { by: p.id, team: p.team });
-    },
-    onDrop(p, prop, reason) {
-      if (!S.relic || prop.id !== S.relic.propId) return;
-      if (reason === 'destroyed') {
-        // the holder died: a new relic, and the clock starts over
-        relicEvent('holderDied', { by: p.id, team: p.team });
-        pickRelic('reset');
-      } else relicEvent('drop', { by: p.id, reason });
-    },
-    onPropBroken(prop) {
-      if (!S.relic || prop.id !== S.relic.propId || S.phase !== 'live') return;
-      // fallback if server.js didn't ask protectProp: knocked out of a grip or hit where it stood, it stays the relic, set down
-      const by = prop.carrier;
-      S.relic.restore = relicPos(prop);
-      relicEvent(by ? 'knocked' : 'hit', { by });
-    },
-    // asked by server.js before a hit shatters a prop: the relic is knocked loose (dropped idle where it was hit) instead
-    protectProp(prop) { return !!(S.relic && prop.id === S.relic.propId && S.phase === 'live'); },
-    canThrow(p, prop) { return !(S.relic && prop.id === S.relic.propId && S.phase === 'live'); },
+    onPickup() {},
+    onDrop() {},
+    onPropBroken() {},
+    canThrow() { return true; },
 
     tick(dt) {
       const now = t();
       if (S.paused) return;
       if (S.setPhaseOnTick) { S.setPhaseOnTick = false; balanceTeams(); startWarmup(); }
+      pinDummies();
       if (now >= S.fillCheckAt && now >= S.graceUntil) { S.fillCheckAt = now + 1; fillBots(); }
       if (S.phase === 'live') {
-        if (S.mode === 'relic') relicTick(dt);
+        if (S.mode === 'siege') zoneTick(dt);
         checkWin();
-        if (S.phase === 'live' && now >= S.phaseEnd) endMatch('time');
+        if (S.phase === 'live' && now >= S.phaseEnd) {
+          if (S.mode === 'siege' && S.zone?.contested && !S.overtime) {
+            // the cap hit mid-fight: play on until the zone is clear, at most overtimeMax more
+            S.overtime = { until: now + S.overtimeMax, at: now };
+            S.stats.siege.overtime = { start: +now.toFixed(2) };
+            ctx.broadcast({ t: 'matchOvertime', until: S.overtimeMax });
+          } else if (!S.overtime) endMatch('time');
+          else if (!S.zone.contested || now >= S.overtime.until) {
+            S.stats.siege.overtime.length = +(now - S.overtime.at).toFixed(1);
+            endMatch('overtime');
+          }
+        }
       } else if (now >= S.phaseEnd) {
         if (S.phase === 'warmup') startLive();
         else if (S.phase === 'end') startVote();
@@ -396,7 +429,9 @@ export function createMatch(ctx) {
         if (msg.warmup !== undefined) S.times.warmup = num(msg.warmup, 1, 60) ?? TIMES.warmup;
         if (msg.endTime !== undefined) S.times.end = num(msg.endTime, 1, 60) ?? TIMES.end;
         if (msg.voteTime !== undefined) S.times.vote = num(msg.voteTime, 1, 60) ?? TIMES.vote;
-        if (msg.rotate !== undefined) S.rotate = num(msg.rotate, 3, 120) ?? RELIC.rotate;
+        if (msg.hop !== undefined) S.hop = num(msg.hop, 6, 600) ?? SIEGE.hop;
+        if (msg.overtime !== undefined) S.overtimeMax = num(msg.overtime, 1, 120) ?? SIEGE.overtime;
+        if (msg.dummy !== undefined) setDummy(p, msg.dummy);
         if (DIFFS.includes(msg.botDiff)) S.botDiff = msg.botDiff;
         if (msg.spectate) {
           p.spectator = true; p.team = null;
@@ -411,7 +446,7 @@ export function createMatch(ctx) {
       }
       if (msg.t === 'matchStats') {
         ctx.send(p.id, { t: 'matchStats', stats: S.stats, match: matchPublic(), players: fighters().map(pub),
-          relicProp: relicProp() ? ctx.propPublic(relicProp()) : null });
+          siege: S.mode === 'siege' && S.stats.siege ? siegeSummary() : null });
         return true;
       }
       return false;
