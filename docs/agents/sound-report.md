@@ -41,7 +41,7 @@ Ty's files on ~/Desktop were only read. Processing script: /tmp/wa-spells/snd2/m
 - **Size:** public/sounds is now 3.41 MB (150 sound files, 100 keys).
 - **Verified:**
   - All 100 keys decode in Chromium.
-  - **Hurt cycling:** 20 hits per hero, for all six heroes, with no back-to-back repeat; a 7th grunt inside 0.35 s was suppressed.
+  - **Hurt cycling:** 20 hits per hero, for all six heroes, with no back-to-back repeat; a 21st hit 0.1 s after the 20th played no grunt (the rate limit).
   - **Play test:** a 110 s run with 3 Hard bots had no console errors. Hurt (both sets), death, steps, goat bleats, tk
     lift/throw/hold, and swell/whoosh all fired.
   - `node --check` and botmatch pass.
