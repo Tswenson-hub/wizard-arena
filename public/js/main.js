@@ -79,6 +79,8 @@ const local = {
   ultWind: null,               // { start }: our ultimate's wind-up (predicted; fizzles if interrupted)
   mrain: null,                 // Meteor Rain: { phase, start, from, hoverUntil, diveFrom, diveTo, diveStart, lastAim } (the server flies us)
   pull: null,                  // { v: [x, z], until } dragged by an enemy Eye of the Storm
+  flaskWind: null,             // Embibe's Flask Step wind-up: { start }
+  sprinting: false,            // Shift: running (predicted from our stamina; the server grants it)
   ride: null,                  // Jeb's Ram Ride: { start, rideAt, dismountAt, endAt } (predicted; the server's 'ride' confirms)
   fHold: null,                 // { start } while F is held with nothing carried (Trapped Relic: hold to curse)
   flight: null,                // { start, drop } during our own Skyward Flash
@@ -98,6 +100,8 @@ const CYC = C.SPELLBOOK.cyclone, SKY = C.SPELLBOOK.skyward;
 let wantWizard = C.DEFAULT_WIZARD;
 try { const w = localStorage.getItem('wizardChoice'); if (C.isWizard(w)) wantWizard = w; } catch {}
 const kit = () => C.kitOf(me ? me.wizard : wantWizard);
+// Berserker Brew halves every cooldown of hers (the server's rule; we predict with it)
+const cdMul = () => me?.brewing ? C.SPELLBOOK.berserker_brew.cooldownMul : 1;
 const SPELL = C.SPELLBOOK;
 const FROST = SPELL.frostfall, SMOKE = SPELL.smoke_screen;
 const EYE = SPELL.eye_of_storm, CAGE = SPELL.night_cage, BLIZ = SPELL.blizzard, MRAIN = SPELL.meteor_rain, ULT_WIND = C.ULT_CHARGE.windup;
@@ -226,6 +230,8 @@ function onWelcome(msg) {
   for (const f of msg.frostfalls || []) frosts.set(f.id, effects.frostfall(f.p, f.left));
   for (const c of msg.smokes || []) effects.smoke(c.p, c.left);
   for (const f of msg.firewalls || []) firewalls.set(f.id, { data: f, fx: effects.firewall(f) });
+  for (const pl of msg.pools || []) pools.set(pl.id, { ...pl, fx: effects.toxicPool(pl.p, pl.left) });
+  for (const c of msg.smokeFlasks || []) effects.smokeFlask(c.p, c.left);
   for (const c of msg.cages || []) cages.set(c.id, { ...c, x: c.p[0], z: c.p[2], fx: effects.nightCage(c.p, c.left) });
   me = players.get(myId);
   for (const d of msg.decoys || []) spawnDecoy(d);
@@ -246,6 +252,7 @@ function addGoat(g) {
   return v;
 }
 const stampedeFx = new Map();   // Stampede lanes on the ground: id -> effects entry
+const pools = new Map();        // Toxic Flask pools: id -> { p, owner, fx }
 const laneMark = effects.laneAim(STAMP.width, STAMP.length);
 
 function addPlayer(info) {
@@ -291,6 +298,9 @@ function applySnapshot(w, s) {
   if ((s.lashBonus ?? 0) !== (w.lashBonus ?? 0)) { w.lashBonus = s.lashBonus ?? 0; w.body?.setWhipGlow?.(w.lashBonus / SPELL.black_death.maxBonus); }
   w.team = s.team ?? null;
   w.riding = !!s.ride; w.ramGuard = !!s.ramGuard;
+  w.brewing = !!s.brew;
+  if (!s.brew && w.brewFx) { effects.stopAura(w.brewFx); w.brewFx = null; }
+  if (w !== me) w.sprinting = !!s.sprint;
   w.ultWinding = !!s.ultWind; w.blizz = s.blizz ?? null;
   if (w === me) {
     if (!s.ultWind && local.ultWind && now - local.ultWind.start > 0.5) local.ultWind = null;   // refused, fizzled or fired
@@ -417,7 +427,14 @@ function handleMessage(msg) {
       effects.spawnProjectile(withBolt(msg));
       const owner = players.get(msg.owner);
       if (owner) {
-        if (msg.kind === 'fast') { owner.oneShot('cast_fast', 0.45, 2.6, 0.25); msg.fin ? sfx.castFinisher(msg.p) : sfx.castFast(msg.p); }
+        // a body with the shared triple-strike combo (combo1/2/3) plays the strike for this shot of its magazine
+        const combo = msg.shot != null && owner.actions['combo' + (msg.shot + 1)];
+        if (combo) owner.oneShot('combo' + (msg.shot + 1), Math.min(0.7, combo.getClip().duration), Math.max(1, combo.getClip().duration / 0.7), 0);
+        if (msg.kind === 'potion') { if (!combo) owner.oneShot('cast_fast', 0.45, 2.4, 0.25); sfx.play('tk_throw', { pos: msg.p, vol: 0.6, rate: 1.5, jitter: 0.1 }); if (msg.fin) sfx.castFinisher(msg.p); }
+        else if (msg.kind === 'toxic') { owner.oneShot('cast_fast', 0.5, 2, 0.25); sfx.play('tk_throw', { pos: msg.p, vol: 0.7, rate: 1.1 }); }
+        else if (msg.kind === 'flaskstep') { sfx.play('tk_throw', { pos: msg.p, vol: 0.6, rate: 1.3 }); }
+        else if (combo && C.PRIMARY_KINDS.has(msg.kind)) { if (msg.kind === 'fast') msg.fin ? sfx.castFinisher(msg.p) : sfx.castFast(msg.p); else if (msg.fin) sfx.castFinisher(msg.p); }
+        else if (msg.kind === 'fast') { owner.oneShot('cast_fast', 0.45, 2.6, 0.25); msg.fin ? sfx.castFinisher(msg.p) : sfx.castFast(msg.p); }
         else if (msg.kind === 'fireball') { owner.oneShot('cast_fast', 0.5, 2.3, 0.25); msg.fin ? sfx.castFinisher(msg.p) : sfx.play('spark_cast', { pos: msg.p, vol: 0.7, rate: 0.85 }); }
         else if (msg.kind === 'shear') { owner.oneShot('cast_fast', 0.35, 3, 0.25); sfx.play('tk_throw', { pos: msg.p, vol: msg.fin ? 0.9 : 0.6, rate: msg.fin ? 1.3 : 1.7, jitter: 0.08 }); }
         else if (msg.kind === 'hex') { owner.oneShot('cast_fast', 0.45, 2.6, 0.25); sfx.play('mirror_step', { pos: msg.p, vol: 0.45, rate: 1.5 + (msg.curve?.shot ?? 0) * 0.15, jitter: 0.04 }); if (msg.fin) sfx.castFinisher(msg.p); }
@@ -440,6 +457,8 @@ function handleMessage(msg) {
         if (pr.kind === 'heavy') { sfx.bigImpact(msg.p); shake(0.5 / (1 + d * 0.15)); trampleCrops(msg.p[0], msg.p[2], 2.5); }
         else if (msg.surface !== 'player' && pr.kind === 'fast') sfx.impact(msg.p);
         else if (pr.kind === 'skim') sfx.shardHit(msg.p);
+        if (msg.surface === 'smokeflask') effects.burst(new THREE.Vector3(msg.p[0], msg.p[1], msg.p[2]), 0xa050e0, 10, 2, 0.35, -1);
+        if (pr.kind === 'potion') { effects.potionShatter(msg.p, C.SPELLS.potion.splash); sfx.play('ward_break', { pos: msg.p, vol: 0.5, rate: 1.9, jitter: 0.1 }); }
         if (msg.surface === 'firewall') { effects.burnUp(msg.p); sfx.play('meteor_cast', { pos: msg.p, vol: 0.5, rate: 1.6, jitter: 0.1 }); }
       }
       break;
@@ -873,6 +892,120 @@ function handleMessage(msg) {
       if (msg.id === myId) local.mrain = null;
       break;
     }
+    // ---- Jeb
+    case 'ramSpawn':
+      effects.ramPoof(msg.p); sfx.bleat([msg.p[0], 1, msg.p[2]], msg.mode === 'charge');
+      break;
+    case 'goatGone': {
+      const g = goats.get(msg.id);
+      if (g) { if (g.despawn) g.despawn(scene, effects); else { g.dispose(scene); if (msg.p) effects.ramPoof(msg.p); } goats.delete(msg.id); }
+      break;
+    }
+    case 'ramCalled': {
+      const by = players.get(msg.by), tg = players.get(msg.target), g = goats.get(msg.goat);
+      if (g) sfx.bleat(g.group.position.clone().setY(1));
+      if (msg.target === myId) feed(`<b>${esc(by?.name || '?')}</b> called a ram on you! <b>Ward facing it</b> or get out of the way`);
+      else if (msg.by === myId) feed(`Your sling calls a ram on <b>${esc(tg?.name || '?')}</b>`);
+      break;
+    }
+    case 'batteringRam': {
+      const w = players.get(msg.id);
+      if (w) { w.oneShot('cast_heavy', 0.55, 1.5, 1.9); sfx.play('impact_big', { pos: wpos(w), vol: 0.8, rate: 0.6 }); }
+      break;
+    }
+    case 'ramGuard': {
+      const w = players.get(msg.id);
+      if (w) { if (w.actions.block) w.oneShot('block', 0.5, 1, 0); sfx.play('footstep', { pos: wpos(w), vol: 1, rate: 0.6 }); }
+      break;
+    }
+    case 'ride': {
+      const w = players.get(msg.id);
+      if (!w) break;
+      w.riding = true;
+      if (w === me && !local.ride) local.ride = rideTimes(msg);   // a ride we didn't predict (rare)
+      sfx.bleat(wpos(w), false);
+      break;
+    }
+    case 'rideEnd': {
+      const w = players.get(msg.id);
+      if (w) w.riding = false;
+      if (msg.id === myId) { local.ride = null; local.cd.mobility = now + RIDE.cooldown; }   // the cooldown runs from the dismount
+      break;
+    }
+    case 'rideDismount':
+      if (msg.id === myId && local.ride && now < local.ride.dismountAt) { local.ride.dismountAt = now; local.ride.endAt = now + msg.left; }
+      break;
+    case 'rideThrown': {
+      const w = players.get(msg.id);
+      if (w) { w.oneShot('stun', 0.6, 2, 0.2); feed(`<b>${esc(w.name)}</b> was thrown off the ram!`); }
+      if (msg.id === myId) local.ride = null;
+      break;
+    }
+    case 'stampede': {
+      stampedeFx.set(msg.id, Object.assign(effects.stampedeLane(msg.p, msg.dir, msg.width, msg.length, msg.left), { owner: msg.owner }));
+      const w = players.get(msg.owner);
+      if (w) { w.oneShot(w.actions.ult ? 'ult' : 'cast_heavy', STAMP.castPose, w.actions.ult ? 1 : 1.5, w.actions.ult ? 0 : 1.9); sfx.play('impact_big', { pos: wpos(w), vol: 1, rate: 0.45 }); }
+      // the rumble: deep thuds rolling in
+      for (let i = 0; i < 6; i++) sfx.play('impact_big', { pos: [msg.p[0] + msg.dir[0] * 14, 0.5, msg.p[2] + msg.dir[2] * 14], vol: 0.7, rate: 0.35 + i * 0.03, delay: i * 0.17 });
+      const dx = local.pos.x - msg.p[0], dz = local.pos.z - msg.p[2];
+      const along = dx * msg.dir[0] + dz * msg.dir[2], side = -dx * msg.dir[2] + dz * msg.dir[0];
+      if (msg.owner !== myId && along > -1 && along < msg.length && Math.abs(side) < msg.width / 2 + 1) feed('<b>Stampede!</b> Get out of the lane');
+      shake(0.3);
+      break;
+    }
+    case 'stampedeEnd':
+      break;   // the last ram is out; its lane (and the warning) lasts until the rams have passed (effects endAt)
+    // ---- Embibe
+    case 'pool': {
+      pools.set(msg.id, { ...msg, fx: effects.toxicPool(msg.p, msg.left) });
+      sfx.play('ward_break', { pos: [msg.p[0], 0.5, msg.p[2]], vol: 0.7, rate: 1.6 });
+      sfx.play('prop_shatter_stone', { pos: [msg.p[0], 0.5, msg.p[2]], vol: 0.5, rate: 1.8, delay: 0.02 });
+      break;
+    }
+    case 'poolEnd': {
+      const pl = pools.get(msg.id);
+      if (pl) { effects.endPool(pl.fx); pools.delete(msg.id); }
+      break;
+    }
+    case 'toxicThrow': break;   // the throw pose plays from the projectile
+    case 'flaskWind': {
+      const w = players.get(msg.id);
+      if (w) { w.oneShot(w.actions.combo1 ? 'combo1' : 'cast_heavy', msg.left, 1, w.actions.combo1 ? 0 : 1.2); effects.burst(w.group.position.clone().setY(1.3), 0xa050e0, 8, 1.5, 0.3, -1); sfx.play('tk_lift', { pos: wpos(w), vol: 0.6, rate: 1.2 }); }
+      break;
+    }
+    case 'flaskCancel':
+      if (msg.id === myId) local.flaskWind = null;
+      break;
+    case 'flaskArrive': {
+      const w = players.get(msg.id);
+      effects.flaskSmoke(msg.from); effects.flaskSmoke(msg.to);
+      sfx.play('blink', { pos: msg.to, vol: 0.8, rate: 0.8 });
+      if (w) {
+        const arr = w.actions.arrival;
+        if (arr) w.oneShot('arrival', Math.min(1, arr.getClip().duration), 1, 0); else w.oneShot('dash', 0.4, 2.5, 2.2);
+        if (w === me) { local.flaskWind = null; local.pos.set(msg.to[0], 0, msg.to[2]); local.vel.set(0, 0, 0); }
+        else { w.targetPos.set(msg.to[0], 0, msg.to[2]); w.group.position.copy(w.targetPos); }
+      }
+      break;
+    }
+    case 'smokeFlask': {
+      effects.smokeFlask(msg.p, msg.left);
+      sfx.smoke([msg.p[0], 1, msg.p[2]]);
+      sfx.play('ward_break', { pos: [msg.p[0], 0.5, msg.p[2]], vol: 0.5, rate: 1.7 });
+      break;
+    }
+    case 'smokeFlaskEnd': break;   // it fades on its own clock
+    case 'brew': {
+      const w = players.get(msg.id);
+      if (!w) break;
+      const drink = w.actions.ult;   // Stand_and_Drink, if the body has it as 'ult'
+      if (drink) w.oneShot('ult', SPELL.berserker_brew.drink, drink.getClip().duration / SPELL.berserker_brew.drink, 0); else w.oneShot('cast_heavy', SPELL.berserker_brew.drink, 1.2, 1.5);
+      if (w.brewFx) effects.stopAura(w.brewFx);
+      w.brewFx = effects.brewAura(w, msg.left);
+      sfx.play('tk_lift', { pos: wpos(w), vol: 0.9, rate: 0.6 }); sfx.play('meteor_cast', { pos: wpos(w), vol: 0.5, rate: 0.5, delay: 0.4 });
+      feed(`<b>${esc(w.name)}</b> drinks a <b>Berserker Brew</b>!`);
+      break;
+    }
     case 'cage': {
       cages.set(msg.id, { ...msg, x: msg.p[0], z: msg.p[2], fx: effects.nightCage(msg.p, msg.left) });
       const w = players.get(msg.owner);
@@ -1181,9 +1314,16 @@ function updateLocal(dt) {
 
   // ---- actions
   // our own tornado or rune flare: nothing else can be cast meanwhile
-  if (local.ride && now >= local.ride.endAt + 0.3) local.ride = null;   // missed the rideEnd
+  if (local.ride && now >= local.ride.endAt + 0.3) { local.ride = null; local.cd.mobility = now + RIDE.cooldown; }   // missed the rideEnd (or refused)
+  // Ram Ride: E again, Space or a primary click gets off early (the normal dismount)
+  if (local.ride && now >= local.ride.rideAt && now < local.ride.dismountAt && (input.justPressed('KeyE') || input.justPressed('Space') || input.lmbPressed)) {
+    local.ride.dismountAt = now; local.ride.endAt = now + RIDE.dismount;
+    local.spaceHeld = true;   // the Space that got us off doesn't also ward or veil
+    net.send({ t: 'rideStop' });
+  }
   if (local.ultWind && now - local.ultWind.start > ULT_WIND + 0.6) local.ultWind = null;   // missed the result
-  const ultLock = now < local.eyeUntil || now < local.blizzUntil || !!local.ride || !!local.ultWind || !!local.mrain;   // (a Ram Ride, a wind-up, Meteor Rain too)
+  if (local.flaskWind && now - local.flaskWind.start > SPELL.flask_step.windup + 1.5) local.flaskWind = null;   // missed the result
+  const ultLock = now < local.eyeUntil || now < local.blizzUntil || !!local.ride || !!local.ultWind || !!local.mrain || !!local.flaskWind;   // (a Ram Ride, a wind-up, Meteor Rain too)
   if (canAct) {
     // ultimate (Q): Cataclysm aims a circle (hold, release); the others go off at once
     const U = K.ultimate, ultReady = local.ult >= C.ULT_CHARGE.max, holdingQ = !!(me.carrying || me.carryingGoat);
@@ -1213,6 +1353,10 @@ function updateLocal(dt) {
       local.cd.guard = now + BULWARK.cooldown;
       net.send({ t: 'bulwark', yaw: local.yaw });
     }
+    if (K.guard === 'smoke_flask' && input.justPressed('Space') && !airborne && !local.spaceHeld && now >= local.cd.guard) {
+      local.cd.guard = now + SPELL.smoke_flask.cooldown * cdMul();
+      net.send({ t: 'smokeFlask' });
+    }
     if (K.guard === 'ram_guard' && input.justPressed('Space') && !airborne && !local.spaceHeld && now >= local.cd.guard) {
       local.cd.guard = now + RGUARD.cooldown;
       net.send({ t: 'ramGuard' });
@@ -1236,9 +1380,9 @@ function updateLocal(dt) {
       local.ammo--; local.lastShot = now;
       if (!local.ammo) local.reloadUntil = now + MAG.reload;
       const kind = C.PRIMARY_KIND[K.primary];
-      local.cd.fast = now + SPELL[K.primary].cooldown;
+      local.cd.fast = now + SPELL[K.primary].cooldown * cdMul();
       if (kind === 'skim') net.send({ t: 'cast', kind, dir: [aimDir.x, 0, aimDir.z] });
-      else if (kind === 'hex') net.send({ t: 'cast', kind, origin: aimOrigin.toArray(), dir: aimDir.toArray(), target: aimPoint() });   // curves in on what the crosshair is on
+      else if (kind === 'hex' || kind === 'potion') net.send({ t: 'cast', kind, origin: aimOrigin.toArray(), dir: aimDir.toArray(), target: aimPoint() });   // curves (or arcs) onto what the crosshair is on
       else net.send({ t: 'cast', kind, origin: aimOrigin.toArray(), dir: aimDir.toArray() });
     }
     // power slot
@@ -1255,6 +1399,10 @@ function updateLocal(dt) {
         local.lash = { start: now, sent: false };
         me.startLash();
         net.send({ t: 'lashStart' });
+      } else if (K.power === 'toxic_flask') {
+        computeAim();
+        local.cd.power = now + SPELL.toxic_flask.cooldown * cdMul();
+        net.send({ t: 'toxic', origin: aimOrigin.toArray(), dir: aimDir.toArray(), target: aimPoint() });
       } else if (K.power === 'battering_ram') {
         computeAim();
         local.cd.power = now + SPELL.battering_ram.cooldown;
@@ -1306,10 +1454,16 @@ function updateLocal(dt) {
         local.dash = { start: now, dir: [-Math.sin(local.yaw), -Math.cos(local.yaw)] };
         lastDashDir = local.dash.dir;
         net.send({ t: 'smoke', yaw: local.yaw, from: [local.pos.x, 0, local.pos.z] });
+      } else if (K.mobility === 'flask_step') {
+        // a 0.6 s wind-up, then the potion flies along our aim and we arrive where it lands
+        computeAim();
+        local.cd.mobility = now + SPELL.flask_step.cooldown * cdMul();
+        local.flaskWind = { start: now };
+        net.send({ t: 'flaskStep', dir: aimDir.toArray(), target: groundTarget(C.SPELLS.flaskstep.range) });
       } else if (K.mobility === 'ram_ride') {
         // mount up and gallop where we face (steer with the mouse, or A/D)
         if (!me.carrying && !me.carryingGoat) {
-          local.cd.mobility = now + RIDE.cooldown;
+          local.cd.mobility = Infinity;   // runs from the dismount (rideEnd)
           local.ride = rideTimes();
           net.send({ t: 'ride', yaw: local.yaw });
         }
@@ -1407,10 +1561,18 @@ function updateLocal(dt) {
     mx = 0; mz = 1; fwd.set(Math.sin(R.heading), 0, Math.cos(R.heading));
   }
   const moving = (mx || mz) && !me.dead && !stunned && !rooted;
+  // Sprint: Shift while moving forward (or diagonally forward); stamina from the server's copy, with the same
+  // stop-at-0 / restart-above-15 rule, and nothing that forbids it
+  const sprintAllowed = moving && mz > 0 && !local.ride && !local.flight && !local.blocking && !local.charging && !local.cyclone && !local.lash
+    && !local.ultWind && !local.flaskWind && !(me.carrying || me.carryingGoat) && now >= local.blizzUntil && now >= local.eyeUntil;
+  const wantSprint = (input.down('ShiftLeft') || input.down('ShiftRight')) && sprintAllowed;
+  if (!wantSprint || me.st <= 0.5) local.sprinting = false;
+  else if (!local.sprinting && me.st >= C.SPRINT.restart) local.sprinting = true;
   let speed = C.speedOf(me.wizard);   // per wizard (wizards.js speed)
-  if (local.charging || local.cyclone || local.lash || local.ultWind) speed = C.chargeSpeedOf(me.wizard);   // (an ultimate's wind-up too)
+  if (local.charging || local.cyclone || local.lash || local.ultWind || local.flaskWind) speed = C.chargeSpeedOf(me.wizard);   // (an ultimate's wind-up too)
   else if (local.blocking) speed = C.blockSpeedOf(me.wizard);
   else if (local.flight) speed = SKY.airSpeed;
+  if (local.sprinting) speed = C.sprintOf(me.wizard);
   if (now < local.slowUntil) speed *= 1 - C.SPELLS.skim.slow;     // Glacial Skim
   if (now < local.eyeUntil) speed = C.speedOf(me.wizard) * EYE.speedMul;   // the tornado: fast, and nothing slows it
   if (galloping) speed = RIDE.speed;
@@ -1479,6 +1641,7 @@ function updateLocal(dt) {
   me.group.rotation.y = local.yaw;
   me.blocking = local.blocking;
   me.riding = !!local.ride;   // predicted: seated on the ram from the moment we mount
+  me.sprinting = local.sprinting;
   me.charging = local.charging;
   me.slowed = now < local.slowUntil; me.bound = bound && !me.dead; me.frozen = now < local.frozenUntil || (me.frozen && me.bound);
   me.updateAnimation(!!moving, dt);
@@ -1487,7 +1650,7 @@ function updateLocal(dt) {
   // ---- send state (20 Hz)
   if (now - local.lastSend > 1 / 20) {
     local.lastSend = now;
-    net.send({ t: 'state', p: [local.pos.x, local.pos.y, local.pos.z], yaw: local.yaw, anim: local.anim });
+    net.send({ t: 'state', p: [local.pos.x, local.pos.y, local.pos.z], yaw: local.yaw, anim: local.anim, sprint: local.sprinting });
   }
 
   updateCamera(dt);
@@ -1618,6 +1781,7 @@ function updateHud(dt) {
   });
   const caged = !me.dead && [...cages.values()].some(c => c.foes.includes(myId) && c.inside.includes(myId));
   for (const [id, e] of stampedeFx) if (performance.now() / 1000 > e.endAt) stampedeFx.delete(id);
+  const inPool = !me.dead && [...pools.values()].some(pl => pl.owner !== myId && Math.hypot(pl.p[0] - local.pos.x, pl.p[2] - local.pos.z) < SPELL.toxic_flask.radius);
   const inLaneNow = !me.dead && [...stampedeFx.values()].some(e => {
     const st = e; const dx = local.pos.x - st.p[0], dz = local.pos.z - st.p[2];
     const along = dx * st.dir[0] + dz * st.dir[2], side = -dx * st.dir[2] + dz * st.dir[0];
@@ -1630,6 +1794,9 @@ function updateHud(dt) {
   else if (inMeteor) hint = 'Meteor Rain is aimed at you! Move!';
   else if (caged) hint = 'Caged! You can\'t cross the black ring';
   else if (inLaneNow) hint = 'Stampede! Get out of the lane';
+  else if (inPool) hint = 'Poison! Get out of the pool';
+  else if (local.flaskWind) hint = 'Flask Step…';
+  else if (me.brewing) hint = 'Berserker Brew: harder potions, half cooldowns';
   else if (local.ride) hint = now < local.ride.rideAt ? 'Mounting…' : now < local.ride.dismountAt ? 'Riding! Steer with the mouse' : 'Dismounting…';
   else if (local.cataAim) hint = K.ultimate === 'night_cage' ? 'Release Q to raise the Night Cage' : 'Release Q to call down the meteors';
   else if (now < local.eyeUntil) hint = 'Eye of the Storm! Run them down';
@@ -1648,7 +1815,7 @@ function updateHud(dt) {
   else if (tkHover) hint = K.utility === 'trapped_relic' ? (tkHover.data.id === cursedProp ? 'Your relic · F lift (removes the curse)' : 'F lift · hold F to curse') : 'F lift';
   else if (slowed) hint = 'Slowed by frost';
   else if (local.reloadUntil && now - local.lastShot < 1) hint = 'Reloading…';
-  ui.hint.textContent = hint; ui.hint.classList.toggle('on', !!hint); ui.hint.classList.toggle('danger', hunted || ((inFrost || inMeteor || inBlizzard || caged || inLaneNow) && !bound));
+  ui.hint.textContent = hint; ui.hint.classList.toggle('on', !!hint); ui.hint.classList.toggle('danger', hunted || ((inFrost || inMeteor || inBlizzard || caged || inLaneNow || inPool) && !bound));
   ui.hint.classList.toggle('bound', !hunted && (bound || rooted)); ui.hint.classList.toggle('frost', !hunted && !bound && !rooted && slowed && hint === 'Slowed by frost');
 
   if (vignetteT > 0) { vignetteT -= dt; if (vignetteT <= 0) ui.vignette.classList.remove('hit'); }

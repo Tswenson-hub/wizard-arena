@@ -114,6 +114,37 @@ export const SPELLS = {
     staminaCost: 8,
     knockback: 1,
   },
+  potion: {              // Embibe's primary: an arcing purple potion that shatters with a splash
+    damage: 16,
+    finDamage: 14,       // the 2nd throw hits a little softer, but stuns (the magazine's last)
+    stun: 0.55,
+    speed: 20,
+    gravity: 9,
+    radius: 0.3,
+    life: 2.2,
+    cooldown: 0.5,
+    staminaCost: 14,
+    knockback: 1.5,
+    splash: 1.2,         // radius of the splash...
+    splashMul: 0.5,      // ...at this share of the throw's damage
+    range: 26,
+  },
+  toxic: {               // Toxic Flask: a lobbed green flask (a direct hit stings; the pool does the work)
+    damage: 12,
+    stun: 0.3,
+    speed: 16,
+    gravity: 12,
+    radius: 0.32,
+    life: 3,
+    staminaCost: 10,
+    knockback: 1,
+    range: 18,
+  },
+  flaskstep: {           // Flask Step's potion: harmless, she teleports to where it lands
+    damage: 0, stun: 0, knockback: 0, staminaCost: 0,
+    speed: 18, gravity: 10, radius: 0.25, life: 3,
+    range: 16,
+  },
   hex: {                 // Vesper's primary: a crimson glyph flying a curved path to the aim point
     damage: 11,
     stun: 0.55,
@@ -211,6 +242,32 @@ export const SPELLBOOK = {
     cooldown: SPELLS.shear.cooldown,
     magazine: 3, reload: 1.5, idleReload: 2,
   },
+  potion_toss: {
+    id: 'potion_toss', slot: 'primary', name: 'Potion Toss', short: 'Potion',
+    blurb: 'Arcing potions, 2 to a belt, then a reload. 16 damage with a small splash; the 2nd hits for 14 and stuns.',
+    cooldown: SPELLS.potion.cooldown,
+    magazine: 2, reload: 1.5, idleReload: 2,
+  },
+  toxic_flask: {
+    id: 'toxic_flask', slot: 'power', name: 'Toxic Flask', short: 'Toxic',
+    blurb: 'Lob a flask (18 m): it shatters into a 3.5 m pool of poison for 5 s. 12 damage a second to enemies standing in it.',
+    radius: 3.5, life: 5,
+    tick: 0.5, dps: 12,
+    cooldown: 8,
+  },
+  flask_step: {
+    id: 'flask_step', slot: 'mobility', name: 'Flask Step', short: 'Flask Step',
+    blurb: 'A 0.6 s wind-up, then a potion lobbed along your aim (16 m): wherever it lands, you are there. Being hit during the wind-up stops it.',
+    windup: 0.6,
+    cooldown: 8,
+  },
+  smoke_flask: {
+    id: 'smoke_flask', slot: 'guard', name: 'Smoke Flask', short: 'Smoke Flask',
+    blurb: 'Tap: a flask smashed at your feet. Its purple smoke swallows every enemy projectile that enters it, from any side, for 2 s.',
+    radius: 2.4, height: 3.2,
+    life: 2,
+    cooldown: 10,
+  },
   sling: {
     id: 'sling', slot: 'primary', name: "Shepherd's Sling", short: 'Sling',
     blurb: 'Sling stones, 2 to a pouch. A hit calls the nearest calm goat to charge the target. The 2nd breaks a wind-up.',
@@ -276,9 +333,9 @@ export const SPELLBOOK = {
   },
   ram_ride: {
     id: 'ram_ride', slot: 'mobility', name: 'Ram Ride', short: 'Ride',
-    blurb: 'Mount a ram and gallop 10 m (it turns slowly toward where you look). Riding into an enemy shoves them for 15.',
+    blurb: 'Mount a ram and gallop up to 20 m (it turns slowly toward where you look); E, Space or a click gets off early. Riding into an enemy shoves them for 15.',
     mount: 0.4, dismount: 0.4,   // he can't act while getting on and off
-    speed: 7, distance: 10,      // a 1.4 s burst (was 11 m/s for 14 m: far too fast at the walking pace)
+    speed: 7, distance: 20,      // up to about 2.9 s (round 8: twice as long, but E, Space or a primary click dismounts early)
     turnRate: 1.5,               // rad/s: the ram's heading follows where you look, this fast at most
     height: 0.55,        // he sits this high on the ram (visual)
     cooldown: 8,
@@ -429,6 +486,12 @@ export const SPELLBOOK = {
   firewall_burn: {       // walking through a Firewall (a hit kind)
     id: 'firewall_burn', name: 'Firewall', damage: 15, stun: 0, knockback: 0, staminaCost: 0, unblockable: true, noInterrupt: true,
   },
+  potion_splash: {       // Potion Toss's splash around where it shattered (a hit kind)
+    id: 'potion_splash', name: 'Potion Toss', damage: 8, stun: 0, knockback: 1, staminaCost: 6, noInterrupt: true,
+  },
+  toxic_pool: {          // standing in a Toxic Flask's pool (a hit kind): 12 a second, every 0.5 s
+    id: 'toxic_pool', name: 'Toxic Flask', damage: 6, stun: 0, knockback: 0, staminaCost: 0, unblockable: true, noInterrupt: true,
+  },
   ram_shove: {           // Ram Ride running into an enemy (a hit kind)
     id: 'ram_shove', name: 'Ram Ride', damage: 15, stun: 0.4, knockback: 8, staminaCost: 20,
   },
@@ -450,6 +513,14 @@ export const SPELLBOOK = {
     range: 28,           // the aim point only sets the lane's direction
     castPose: 0.7,
   },
+  berserker_brew: {
+    id: 'berserker_brew', slot: 'ultimate', name: 'Berserker Brew', short: 'Brew', ult: true,
+    blurb: 'Drink it down: for 7 s your potions and pools hit 50% harder, and every cooldown (your reload too) is halved.',
+    duration: 7,
+    damageMul: 1.5,
+    cooldownMul: 0.5,
+    drink: 1.2,          // the drinking pose
+  },
   night_cage: {
     id: 'night_cage', slot: 'ultimate', name: 'Night Cage', short: 'Cage', ult: true,
     blurb: 'Hold Q to aim, release: a 7 m ring of black spikes for 4 s. Enemies inside can\'t get out, enemies outside can\'t get in.',
@@ -462,7 +533,7 @@ export const SPELLBOOK = {
 };
 
 // Spark colour per wizard (a hot near-white core, this glow): brighter than the UI colours so it reads as fire.
-export const BOLT_COLORS = { cinder: 0xff5a1e, gale: 0xb070ff, vesper: 0xff1f3d, rime: 0x7ad8ff };
+export const BOLT_COLORS = { embibe: 0xa050e0, cinder: 0xff5a1e, gale: 0xb070ff, vesper: 0xff1f3d, rime: 0x7ad8ff };
 export const boltColor = (wizard) => BOLT_COLORS[wizard] ?? 0x7ad8ff;
 
 // Primary fire is a magazine: `magazine` shots (a Skim volley counts as one), then `reload` seconds.
@@ -470,7 +541,7 @@ export const boltColor = (wizard) => BOLT_COLORS[wizard] ?? 0x7ad8ff;
 // of a magazine (the "finisher") stuns and interrupts wind-ups; the others just do their damage.
 export const primaryMag = (id) => SPELLBOOK[id] || SPELLBOOK.spark;
 // The projectile kind each primary fires, and the kinds that follow the magazine rule (only the finisher interrupts).
-export const PRIMARY_KIND = { spark: 'fast', glacial_skim: 'skim', fireball: 'fireball', gale_shear: 'shear', hex_shards: 'hex', sling: 'sling' };
+export const PRIMARY_KIND = { spark: 'fast', glacial_skim: 'skim', fireball: 'fireball', gale_shear: 'shear', hex_shards: 'hex', sling: 'sling', potion_toss: 'potion' };
 export const PRIMARY_KINDS = new Set(Object.values(PRIMARY_KIND));
 // Ward-style guards (hold Space, drain stamina): the Ward and Black Death.
 export const isWard = (id) => !!SPELLBOOK[id]?.ward;
@@ -495,6 +566,9 @@ export function cageClamp(pos, cage, inside) {
 
 // Run speed of wizard `id` (wizards.js `speed`); wind-up and ward speeds scale with it.
 export const speedOf = (id) => WIZARDS[id]?.speed ?? MOVE_SPEED;
+// Sprint (Shift): a run at the wizard's `sprint` speed, paid from the same stamina as the ward.
+export const SPRINT = { speed: 5.5, drain: 25, restart: 15 };   // m/s default, stamina/s, stamina needed to start again after running dry
+export const sprintOf = (id) => WIZARDS[id]?.sprint ?? SPRINT.speed;
 export const chargeSpeedOf = (id) => speedOf(id) * CHARGE_MOVE_SPEED / MOVE_SPEED;
 export const blockSpeedOf = (id) => speedOf(id) * BLOCK_MOVE_SPEED / MOVE_SPEED;
 

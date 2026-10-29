@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import * as C from '../shared/constants.js';
 import { makePropMesh, makeFragments } from './world.js';
 
-const SPELL_COLORS = { fast: 0x7ad8ff, heavy: 0xff7a2a, prop: 0xb48cff, skim: 0xbfeaff, lash: 0xff2a3c, fireball: 0xff6a1e, shear: 0xd8c8ff, hex: 0xff1f3d, sling: 0xd8c8a8 };
+const SPELL_COLORS = { fast: 0x7ad8ff, heavy: 0xff7a2a, prop: 0xb48cff, skim: 0xbfeaff, lash: 0xff2a3c, fireball: 0xff6a1e, shear: 0xd8c8ff, hex: 0xff1f3d, sling: 0xd8c8a8, potion: 0xa050e0, toxic: 0x7fd34a, flaskstep: 0xc080ff };
 const HEX_SHAPES = [3, 4, 0];   // Hex Shards: a triangle, a diamond, then a crescent (0)
 const BULWARK = C.SPELLBOOK.glacial_bulwark, FROST = C.SPELLBOOK.frostfall, SMOKE = C.SPELLBOOK.smoke_screen;
 const CAGE = C.SPELLBOOK.night_cage;
@@ -137,6 +137,19 @@ export class Effects {
       if (msg.fin) { const ring = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.04, 6, 20), this.mat(hot.getHex(), { opacity: 0.85 })); g.add(ring); g.userData.shell = ring; }
       light = new THREE.PointLight(color, msg.fin ? 7 : 3, msg.fin ? 9 : 6);
       g.add(light);
+    } else if (msg.kind === 'potion' || msg.kind === 'toxic' || msg.kind === 'flaskstep') {
+      // Embibe's potions: a little bottle (purple swirl, green crystal, or a pale vial) with a glowing brew inside
+      const liquid = msg.kind === 'toxic' ? 0x7fd34a : msg.kind === 'potion' ? 0xa050e0 : 0xd0a0ff;
+      const s = msg.kind === 'flaskstep' ? 0.8 : msg.fin ? 1.3 : 1;
+      const glass = new THREE.Mesh(new THREE.SphereGeometry(0.17 * s, 10, 8), new THREE.MeshStandardMaterial({ color: liquid, emissive: liquid, emissiveIntensity: 0.6, roughness: 0.2, transparent: true, opacity: 0.9 }));
+      const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.05 * s, 0.07 * s, 0.16 * s, 8), new THREE.MeshStandardMaterial({ color: msg.kind === 'toxic' ? 0x2a4a20 : 0x3a2050, roughness: 0.4 }));
+      neck.position.y = 0.2 * s;
+      const glow = new THREE.Mesh(this.sphereGeo, this.mat(liquid, { opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false }));
+      glow.scale.setScalar(0.32 * s);
+      g.add(glass, neck, glow);
+      g.userData.spin = new THREE.Vector3(7, 2, 5);
+      light = new THREE.PointLight(liquid, msg.fin ? 4 : 2.5, 6);
+      g.add(light);
     } else if (msg.kind === 'sling') {
       // Shepherd's Sling: a tumbling river stone with a pale streak; the 2nd shot is bigger, with a ring
       const stone = new THREE.Mesh(new THREE.DodecahedronGeometry(msg.fin ? 0.17 : 0.12, 0), new THREE.MeshStandardMaterial({ color: 0x8a8070, roughness: 0.9, flatShading: true }));
@@ -240,6 +253,8 @@ export class Effects {
       else if (pr.kind === 'fireball') { this.burst(p, 0xff7a1e, pr.fin ? 30 : 20, pr.fin ? 6 : 5, pr.fin ? 0.7 : 0.55); this.burst(p, 0xffd080, 8, 3, 0.35, 0); }
       else if (pr.kind === 'shear') this.burst(p, 0xe8dcff, 12, 5, 0.3, 0);
       else if (pr.kind === 'hex') this.burst(p, 0xff1f3d, pr.fin ? 18 : 12, 4, 0.35);
+      else if (pr.kind === 'toxic') { this.burst(p, 0x7fd34a, 18, 4, 0.4, 6); this.burst(p, 0xdfffb0, 6, 2, 0.25, 0); }
+      else if (pr.kind === 'flaskstep') this.burst(p, 0xc080ff, 10, 2, 0.3, 0);
       else if (pr.kind === 'sling') { this.burst(p, 0xb8a888, pr.fin ? 12 : 7, 3, 0.25, 8); this.dust(p, 2); }
       // thrown props shatter via the propBreak message
     } else {
@@ -907,7 +922,7 @@ export class Effects {
     (this.auras ??= new Set()).add(e);
     return e;
   }
-  stopAura(e) { if (e) { this.auras?.delete(e); this.scene.remove(e.group); } }
+  stopAura(e) { if (e) { this.auras?.delete(e); this.scene.remove(e.group); if (e.eyes) this.scene.remove(e.eyes); } }
   blazeDive(from, to, left) {
     const a = new THREE.Vector3(...from), b = new THREE.Vector3(...to);
     const len = a.distanceTo(b);
@@ -937,6 +952,88 @@ export class Effects {
     mark.position.set(p[0], 0.12, p[2]); mark.renderOrder = 1;
     this.scene.add(mark);
     (this.scorches ??= new Set()).add({ mesh: mark, born: realNow() });
+  }
+
+  // ---------------------------------------------------------------- Embibe
+  // Potion Toss shattering: glass shards and a purple splash ring the size of the splash.
+  potionShatter(p, radius) {
+    const pos = new THREE.Vector3(p[0], Math.max(0.2, p[1]), p[2]);
+    this.burst(pos, 0xa050e0, 16, 4, 0.35, 8);
+    this.burst(pos, 0xe8d0ff, 8, 3, 0.2, 10);
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.7, 1, 32).rotateX(-Math.PI / 2), this.mat(0xb060ff, { opacity: 0.8, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
+    ring.position.set(p[0], 0.15, p[2]);
+    this.scene.add(ring);
+    this.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0, maxLife: 0.3, grav: 0, grow: radius / 0.3, still: true });
+  }
+  // Toxic Flask's pool: green liquid on the ground, a bright rim, bubbles and fumes. `left` = seconds it lasts.
+  toxicPool(p, left) {
+    const R = C.SPELLBOOK.toxic_flask.radius;
+    const g = new THREE.Group();
+    g.position.set(p[0], 0, p[2]);
+    const liquid = new THREE.Mesh(new THREE.CircleGeometry(R, 40).rotateX(-Math.PI / 2),
+      new THREE.MeshStandardMaterial({ color: 0x4a9a20, emissive: 0x3a8a10, emissiveIntensity: 0.5, roughness: 0.1, metalness: 0.2, transparent: true, opacity: 0.8, depthWrite: false }));
+    liquid.position.y = 0.11; liquid.renderOrder = 1;
+    const rim = new THREE.Mesh(new THREE.RingGeometry(R - 0.15, R, 48).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0xb8ff60, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false }));
+    rim.position.y = 0.13;
+    g.add(liquid, rim);
+    g.scale.setScalar(0.2);
+    this.scene.add(g);
+    const e = { group: g, liquid, rim, born: realNow(), endAt: realNow() + left, bubble: 0, R };
+    (this.pools ??= new Set()).add(e);
+    this.burst(new THREE.Vector3(p[0], 0.5, p[2]), 0x7fd34a, 20, 5, 0.4, 6);
+    return e;
+  }
+  endPool(e) { if (e) e.endAt = Math.min(e.endAt, realNow()); }
+  // Flask Step: a burst of purple smoke where she left and where she arrives.
+  flaskSmoke(p) {
+    const pos = new THREE.Vector3(p[0], 0.8, p[2]);
+    for (let i = 0; i < 14; i++) {
+      const m = new THREE.Mesh(this.sphereGeo, this.mat(i % 2 ? 0x6a3a9a : 0xb080e0, { opacity: 0.6, depthWrite: false }));
+      m.position.set(p[0] + (Math.random() - 0.5) * 0.8, 0.3 + Math.random() * 1.6, p[2] + (Math.random() - 0.5) * 0.8);
+      m.scale.setScalar(0.3 + Math.random() * 0.3);
+      this.scene.add(m);
+      const a = Math.random() * Math.PI * 2;
+      this.particles.push({ mesh: m, vel: new THREE.Vector3(Math.sin(a) * 1.5, 0.8 + Math.random(), Math.cos(a) * 1.5), life: 0, maxLife: 0.7 + Math.random() * 0.4, grav: 0, grow: 1.1 });
+    }
+    this.burst(pos, 0xd0a0ff, 10, 3, 0.3, 0);
+  }
+  // Smoke Flask: a dense purple cloud (the Smoke Screen puffs, tinted) for `left` seconds.
+  smokeFlask(p, left) {
+    const SF = C.SPELLBOOK.smoke_flask;
+    const g = new THREE.Group();
+    g.position.set(p[0], 0, p[2]);
+    const puffs = [];
+    for (let i = 0; i < 18; i++) {
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: puffTexture(), color: i % 3 ? 0x7a4aaa : 0xb890e0, transparent: true, opacity: 0, depthWrite: false }));
+      const a = Math.random() * Math.PI * 2, r = Math.random() * SF.radius * 0.8;
+      const base = new THREE.Vector3(Math.sin(a) * r, 0.5 + Math.random() * (SF.height - 1), Math.cos(a) * r);
+      sp.position.copy(base);
+      g.add(sp);
+      puffs.push({ sp, base, size: 1.6 + Math.random() * 1.4, phase: Math.random() * 6 });
+    }
+    this.scene.add(g);
+    (this.flaskClouds ??= new Set()).add({ group: g, puffs, born: realNow(), endAt: realNow() + left });
+    for (let i = 0; i < 6; i++) this.flaskSmoke([p[0] + (Math.random() - 0.5) * 2, 0, p[2] + (Math.random() - 0.5) * 2]);
+  }
+  // Berserker Brew: a green-purple aura with rising fumes, and two glowing eyes, following the wizard.
+  brewAura(w, left) {
+    const g = new THREE.Group();
+    const shell = new THREE.Mesh(this.sphereGeo, this.mat(0x7fd34a, { opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false }));
+    shell.scale.set(0.9, 1.3, 0.9); shell.position.y = 1;
+    const shell2 = new THREE.Mesh(this.sphereGeo, this.mat(0xa050e0, { opacity: 0.18, blending: THREE.AdditiveBlending, depthWrite: false }));
+    shell2.scale.set(1.1, 1.45, 1.1); shell2.position.y = 1;
+    const light = new THREE.PointLight(0x9a60e0, 5, 8); light.position.y = 1.2;
+    g.add(shell, shell2, light);
+    const eyes = new THREE.Group();
+    for (const sx of [-0.05, 0.05]) { const e = new THREE.Mesh(new THREE.SphereGeometry(0.025, 6, 6), new THREE.MeshBasicMaterial({ color: 0xc8ff60 })); e.position.set(sx, 0.05, 0.1); eyes.add(e); }
+    const eyeGlow = new THREE.Mesh(this.sphereGeo, this.mat(0xb8ff60, { opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false }));
+    eyeGlow.scale.set(0.13, 0.05, 0.05); eyeGlow.position.set(0, 0.05, 0.1);
+    eyes.add(eyeGlow);
+    this.scene.add(g, eyes);
+    const e = { group: g, eyes, shell, shell2, w, endAt: realNow() + left, fume: 0, brew: true };
+    (this.auras ??= new Set()).add(e);
+    return e;
   }
 
   // ---------------------------------------------------------------- update
@@ -1010,6 +1107,33 @@ export class Effects {
         this.particles.push({ mesh: m, vel: new THREE.Vector3((inx * 0.6 + inz) * r * 1.6, 1.5, (inz * 0.6 - inx) * r * 1.6), life: 0, maxLife: 0.45, grav: -2, shrink: true });
       }
     }
+    for (const e of this.pools || []) {
+      const grow = Math.min(1, (rn - e.born) / 0.3), fade = Math.max(0, Math.min(1, (e.endAt - rn) / 0.6));
+      if (fade <= 0) { this.pools.delete(e); this.scene.remove(e.group); continue; }
+      e.group.scale.setScalar(0.2 + 0.8 * (1 - Math.pow(1 - grow, 3)));
+      e.liquid.material.opacity = 0.8 * fade; e.rim.material.opacity = (0.5 + Math.sin(this.clock * 6) * 0.2) * fade;
+      e.bubble += dt * 14;
+      while (e.bubble > 1) {
+        e.bubble -= 1;
+        const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * e.R;
+        const m = new THREE.Mesh(this.sphereGeo, this.mat(Math.random() < 0.6 ? 0x9aff50 : 0x5aa030, { opacity: 0.8 }));
+        m.position.set(e.group.position.x + Math.sin(a) * r, 0.15, e.group.position.z + Math.cos(a) * r);
+        m.scale.setScalar(0.06 + Math.random() * 0.08);
+        this.scene.add(m);
+        this.particles.push({ mesh: m, vel: new THREE.Vector3(0, 0.6 + Math.random() * 0.8, 0), life: 0, maxLife: 0.5 + Math.random() * 0.5, grav: 0, grow: 0.3 });
+      }
+    }
+    for (const e of this.flaskClouds || []) {
+      const grow = Math.min(1, (rn - e.born) / 0.25), fade = Math.max(0, Math.min(1, (e.endAt + 0.6 - rn) / 0.6));
+      if (fade <= 0) { this.flaskClouds.delete(e); this.scene.remove(e.group); continue; }
+      for (const q of e.puffs) {
+        const w = rn * 0.9 + q.phase;
+        q.sp.position.set(q.base.x + Math.sin(w) * 0.3, q.base.y + Math.sin(w * 0.7) * 0.15, q.base.z + Math.cos(w * 0.8) * 0.3);
+        q.sp.scale.setScalar(q.size * (0.3 + 0.7 * grow));
+        q.sp.material.rotation += dt * 0.6;
+        q.sp.material.opacity = 0.75 * grow * fade;
+      }
+    }
     for (const e of this.tells || []) {
       const k = Math.min(1, (rn - e.born) / Math.max(0.05, e.endAt - e.born));
       if (rn > e.endAt + 0.15) { this.tells.delete(e); this.scene.remove(e.group); continue; }
@@ -1043,6 +1167,16 @@ export class Effects {
       }
     }
     for (const e of this.auras || []) {
+      if (e.brew) {
+        // Berserker Brew: follows its wizard; the eyes sit on the head bone
+        if (rn > e.endAt || !e.w.group.parent) { this.stopAura(e); continue; }
+        e.group.position.copy(e.w.group.position);
+        e.w.head.getWorldPosition(e.eyes.position); e.eyes.rotation.y = e.w.group.rotation.y;
+        e.shell.material.opacity = 0.2 + Math.sin(this.clock * 9) * 0.06; e.shell2.material.opacity = 0.16 + Math.sin(this.clock * 7 + 1) * 0.05;
+        e.fume += dt;
+        while (e.fume > 0.05) { e.fume -= 0.05; this.burst(e.group.position.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.8, 0.3 + Math.random() * 1.6, (Math.random() - 0.5) * 0.8)), Math.random() < 0.5 ? 0x7fd34a : 0xa050e0, 1, 1, 0.3, -2); }
+        continue;
+      }
       e.group.position.copy(e.follow.position);
       e.shell.material.opacity = 0.3 + Math.sin(this.clock * 17) * 0.08;
       e.ember += dt;

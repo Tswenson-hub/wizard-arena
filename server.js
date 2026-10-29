@@ -108,10 +108,12 @@ function playerPublic(p) {
     veil: p.veilUntil > now(), liftCd: p.cd.lift > now() ? +(p.cd.lift - now()).toFixed(2) : 0,
     ammo: p.ammo, reload: p.reloadUntil > now() ? +(p.reloadUntil - now()).toFixed(2) : 0,
     slow: p.slowUntil > now(), bound: p.silenceUntil > now(), rooted: p.rootUntil > now(), frozen: p.frozenUntil > now(),
+    brew: p.brewUntil > now(), flaskWind: !!p.flaskWind,
     ult: Math.floor(p.ult), eye: !!p.eye, lashBonus: Math.round(p.lashBonus || 0),
     ultWind: p.ultWind ? p.ultWind.U : null,
     blizz: p.blizz ? +p.blizz.yaw.toFixed(3) : null,
     mrain: p.mrain ? p.mrain.phase : null,
+    sprint: !!p.sprinting,
     ride: p.ride ? (now() < p.ride.rideAt ? 'mount' : now() < p.ride.dismountAt ? 'ride' : 'dismount') : null,
     ramGuard: p.ramGuardUntil > now(),
     bot: p.bot ? p.bot.difficulty : undefined,
@@ -172,6 +174,7 @@ function broadcast(msg) {
 }
 
 // ---------------------------------------------------------------- combat
+let pendingShot = null;   // a primary's shot number (0, 1, 2) for the next projectile: clients play the matching combo clip
 function spawnProjectile(owner, kind, origin, dir, propType = null, fin = false, curve = null) {
   const spec = C.SPELLS[kind];
   const d = norm3(dir);
@@ -192,8 +195,9 @@ function spawnProjectile(owner, kind, origin, dir, propType = null, fin = false,
   }
   if (curve) { proj.curve = curve; const s0 = C.hexAt(curve, 0); proj.v = s0.v; proj.shot = curve.shot; }
   projectiles.set(id, proj);
+  if (pendingShot != null) { proj.shot = pendingShot; pendingShot = null; }
   broadcast({ t: 'proj', id, kind, owner: owner.id, propType, p: proj.p, v: proj.v, g: proj.g, r: proj.radius, life: proj.life,
-    ...(fin ? { fin: true } : {}), ...(curve ? { curve } : {}) });
+    ...(fin ? { fin: true } : {}), ...(curve ? { curve } : {}), ...(proj.shot != null ? { shot: proj.shot } : {}) });
   return proj;
 }
 
@@ -207,6 +211,10 @@ function endProjectile(proj, hit, extra = {}) {
       broadcast({ t: 'lashMiss', id: caster.id, root: LASH.missRoot });
     }
   }
+  // Embibe's potions: a splash, a pool, or (Flask Step) her arrival where it came down
+  if (proj.kind === 'potion' && hit && extra.surface !== 'firewall' && extra.surface !== 'smokeflask') potionSplash(proj, extra.target);
+  if (proj.kind === 'toxic' && extra.surface !== 'firewall' && extra.surface !== 'smokeflask') makePool(proj);
+  if (proj.kind === 'flaskstep') flaskArrive(proj, extra.surface);
   if (proj.propId) {
     // A thrown prop shatters wherever it lands.
     const prop = props.get(proj.propId);
@@ -247,6 +255,7 @@ function applyHit(target, proj) {
   }
 
   let dmg = proj.dmg ?? spec.damage;
+  if (attacker?.brewUntil > t && BREW_KINDS.has(proj.kind)) dmg = Math.round(dmg * C.SPELLBOOK.berserker_brew.damageMul);   // Berserker Brew
   if (blocked) {
     const cost = spec.staminaCost * (C.SPELLBOOK[kit(target).guard]?.hitCostMul ?? 1);
     const full = dmg;
@@ -274,6 +283,7 @@ function applyHit(target, proj) {
     // (it fizzles), Meteor Rain's hover (she falls), and a lift
     if (target.ultWind) fizzleUlt(target);
     if (target.mrain && target.mrain.phase !== 'dive') mrainKnockedDown(target);
+    if (target.flaskWind) cancelFlaskStep(target);
     if (target.charging) { target.charging = false; broadcast({ t: 'chargeCancel', id: target.id }); }
     cancelCyclone(target);
     cancelLash(target);
@@ -325,6 +335,8 @@ function killPlayer(target, attacker, cause = null) {
   target.slowUntil = target.rootUntil = target.silenceUntil = target.frozenUntil = 0;
   endUltimates(target);
   endRide(target);
+  if (target.flaskWind) cancelFlaskStep(target);
+  target.brewUntil = 0;
   if (target.veilUntil) { target.veilUntil = 0; broadcast({ t: 'veilEnd', id: target.id }); }
   for (const d of [...decoys.values()]) if (d.owner === target.id) endDecoy(d, false);
   target.flightUntil = 0; target.p[1] = 0;
@@ -375,6 +387,20 @@ function guardAbsorbed(p, attacker, absorbed, t) {
     if (kit(p).power === 'sanguine_lash' && p.cd.power > t) p.cd.power = Math.max(t, p.cd.power - absorbed * B.lashCdPerDamage);
     p.lashBonus = Math.min(B.maxBonus, (p.lashBonus || 0) + absorbed * B.bonusPerDamage);
   }
+}
+
+// Sprint on or off. It needs stamina (and STAMINA SPRINT.restart of it to start again after running dry), and
+// none of: a wind-up, a ward, telekinesis, a root, the air, a ram ride, an ultimate in progress.
+function canSprint(p, t) {
+  return !p.dead && !p.blocking && !p.charging && !p.cyclone && !p.lash && !holding(p) && !isRooted(p) && !isStunned(p)
+    && !isAirborne(p) && !p.ride && !inUltimate(p) && !p.flaskWind && p.st > 0 && (p.sprinting || p.st >= C.SPRINT.restart);
+}
+function setSprint(p, want, t) {
+  const on = want && canSprint(p, t);
+  if (on) p.sprintAt = t;
+  if (on === !!p.sprinting) return;
+  p.sprinting = on;
+  if (!on) { p.blockReleasedAt = t; p.sprintEndedAt = t; }   // the regeneration delay runs from here, as after a ward
 }
 
 // ---------------------------------------------------------------- Arcane Cyclone
@@ -474,6 +500,99 @@ function raiseWall(p, yaw) {
   C.addWallColliders(w.id, x, z, yaw);
   broadcast({ t: 'wallUp', wall: wallPublic(w) });
 }
+// ---------------------------------------------------------------- Embibe
+const pools = new Map();        // Toxic Flask pools: id -> { id, owner, x, z, until, next }
+const smokeFlasks = new Map();  // Smoke Flask clouds: id -> { id, owner, x, z, until }
+const BREW_KINDS = new Set(['potion', 'potion_splash', 'toxic', 'toxic_pool']);
+// Berserker Brew halves every cooldown of hers (her reload too) while it lasts.
+const cdMul = (p) => p.brewUntil > now() ? C.SPELLBOOK.berserker_brew.cooldownMul : 1;
+// A lob onto `target` (clamped to the spell's range), or along the aim if there's no target.
+function lobDir(p, origin, target, dir, spec) {
+  if (!validVec(target)) return sanitizeDir(dir, p);
+  let to = target.slice();
+  const d = Math.hypot(to[0] - origin[0], to[2] - origin[2]);
+  if (d > spec.range) { to = [origin[0] + (to[0] - origin[0]) * spec.range / d, to[1], origin[2] + (to[2] - origin[2]) * spec.range / d]; }
+  to[1] = Math.max(0.2, Math.min(to[1], origin[1] + 4));
+  return C.ballisticDir(origin, to, spec.speed, spec.gravity);
+}
+function potionSplash(proj, directId) {
+  const P = C.SPELLS.potion;
+  const base = Math.round((proj.dmg ?? P.damage) * P.splashMul);
+  const owner = players.get(proj.owner);
+  for (const q of players.values()) {
+    if (q.dead || q.id === directId || q.id === proj.owner || !enemies(owner, q)) continue;
+    const c = [q.p[0], q.p[1] + C.HIT_CENTER_Y, q.p[2]];
+    if (Math.hypot(c[0] - proj.p[0], (c[1] - proj.p[1]) * 0.6, c[2] - proj.p[2]) > P.splash + C.HIT_RADIUS * 0.6) continue;
+    const dx = q.p[0] - proj.p[0], dz = q.p[2] - proj.p[2], l = Math.hypot(dx, dz) || 1;
+    applyHit(q, { kind: 'potion_splash', owner: proj.owner, dmg: base, v: [dx / l, 0, dz / l] });
+  }
+}
+const poolPublic = (pl) => ({ id: pl.id, owner: pl.owner, p: [pl.x, 0, pl.z], left: Math.max(0, pl.until - now()) });
+function makePool(proj) {
+  const TF = C.SPELLBOOK.toxic_flask, t = now();
+  const x = clamp(proj.p[0], -C.ARENA_RADIUS, C.ARENA_RADIUS), z = clamp(proj.p[2], -C.ARENA_RADIUS, C.ARENA_RADIUS);
+  const pl = { id: nextFxId++, owner: proj.owner, x, z, until: t + TF.life, next: t + TF.tick };
+  pools.set(pl.id, pl);
+  broadcast({ t: 'pool', ...poolPublic(pl) });
+}
+function updatePools(t) {
+  const TF = C.SPELLBOOK.toxic_flask;
+  for (const pl of [...pools.values()]) {
+    if (t >= pl.until) { pools.delete(pl.id); broadcast({ t: 'poolEnd', id: pl.id }); continue; }
+    if (t < pl.next) continue;
+    pl.next += TF.tick;
+    const owner = players.get(pl.owner);
+    for (const q of players.values()) {
+      if (q.dead || q.p[1] > 1 || !enemies(owner, q) || q.id === pl.owner || Math.hypot(q.p[0] - pl.x, q.p[2] - pl.z) > TF.radius) continue;
+      applyHit(q, { kind: 'toxic_pool', owner: pl.owner, v: [0, 0, 1] });
+    }
+  }
+}
+// An enemy (of `ownerId`) Smoke Flask cloud at `pos`?
+function smokeFlaskAt(ownerId, pos) {
+  const SF = C.SPELLBOOK.smoke_flask, shooter = players.get(ownerId);
+  for (const c of smokeFlasks.values()) {
+    if (!enemies(shooter, players.get(c.owner)) && c.owner !== ownerId) continue;
+    if (c.owner === ownerId) continue;
+    if (pos[1] < SF.height && Math.hypot(pos[0] - c.x, pos[2] - c.z) < SF.radius) return c;
+  }
+  return null;
+}
+// Flask Step: the wind-up ends, the potion flies; she arrives wherever it comes down (short of a wall it hit).
+function cancelFlaskStep(p) {
+  if (!p.flaskWind) return;
+  p.flaskWind = null;
+  broadcast({ t: 'flaskCancel', id: p.id });
+}
+function throwFlaskStep(p) {
+  const W = p.flaskWind;
+  p.flaskWind = null;
+  const origin = [p.p[0], p.p[1] + 1.3, p.p[2]];
+  const target = W.target || [origin[0] + W.dir[0] * C.SPELLS.flaskstep.range, 0, origin[2] + W.dir[2] * C.SPELLS.flaskstep.range];
+  const proj = spawnProjectile(p, 'flaskstep', origin, lobDir(p, origin, [target[0], 0, target[2]], W.dir, C.SPELLS.flaskstep));
+  proj.from = p.p.slice();
+}
+function flaskArrive(proj, surface) {
+  const p = players.get(proj.owner);
+  if (!p || p.dead) return;
+  // back off a little from whatever stopped it, then out of anything solid, inside the arena
+  const v = proj.v, l = Math.hypot(v[0], v[2]) || 1;
+  const back = surface && surface !== 'ground' ? 0.8 : 0;
+  const to = [proj.p[0] - v[0] / l * back, 0, proj.p[2] - v[2] / l * back];
+  for (let k = 0; k < 3; k++) for (const c of C.COLLIDERS) {
+    if (c.h < 0.5) continue;
+    const dx = to[0] - c.x, dz = to[2] - c.z, d = Math.hypot(dx, dz);
+    if (d < c.r + C.PLAYER_RADIUS && d > 1e-4) { const kk = (c.r + C.PLAYER_RADIUS - d) / d; to[0] += dx * kk; to[2] += dz * kk; }
+  }
+  const r = Math.hypot(to[0], to[2]);
+  if (r > C.ARENA_RADIUS - 0.5) { to[0] *= (C.ARENA_RADIUS - 0.5) / r; to[2] *= (C.ARENA_RADIUS - 0.5) / r; }
+  const from = p.p.slice();
+  p.p = to; p.justTeleported = true;
+  cageKeep(p);
+  if (p.blocking) { p.blocking = false; p.blockReleasedAt = now(); }
+  broadcast({ t: 'flaskArrive', id: p.id, from, to: p.p });
+}
+
 // ---------------------------------------------------------------- Firewall
 // Cinder's Firewall: a sheet of flame across her aim. It isn't solid: enemy projectiles (and thrown props) that cross it
 // burn up, and an enemy walking through takes a burn once per wall.
@@ -776,6 +895,8 @@ function updateRide(p, t) {
   const R = p.ride;
   const ram = R.ramObj;
   if (ram) { ram.x = p.p[0]; ram.z = p.p[2]; ram.yaw = p.yaw; }
+  // stunned, bound or frozen: thrown off at once (no dismount)
+  if (isStunned(p) || isBound(p)) { broadcast({ t: 'rideThrown', id: p.id }); endRide(p); return; }
   if (t >= R.dismountAt && !R.off) { R.off = true; p.rootUntil = Math.max(p.rootUntil, R.endAt); }   // getting off
   if (galloping(p, t)) {
     for (const q of players.values()) {
@@ -790,6 +911,7 @@ function updateRide(p, t) {
 }
 function endRide(p) {
   if (!p.ride) return;
+  p.cd.mobility = now() + RIDE.cooldown;   // the cooldown runs from the dismount
   const ram = p.ride.ramObj;
   p.ride = null;
   if (ram) despawnRam(ram);
@@ -970,7 +1092,10 @@ function updateUltWindup(p, t) {
     broadcast({ t: 'eyeStart', id: p.id, left: EYE.duration });
   } else if (U === 'stampede') castStampede(p, at);
   else if (U === 'night_cage') castNightCage(p, at);
-  else if (U === 'blizzard') {
+  else if (U === 'berserker_brew') {
+    p.brewUntil = t + C.SPELLBOOK.berserker_brew.duration;
+    broadcast({ t: 'brew', id: p.id, left: C.SPELLBOOK.berserker_brew.duration });
+  } else if (U === 'blizzard') {
     p.blizz = { until: t + BLIZ.duration, yaw: p.yaw, next: t, exposure: new Map(), frozen: new Set(), nextPush: t };
     p.rootUntil = Math.max(p.rootUntil, p.blizz.until);   // he plants his feet and points his staff
     broadcast({ t: 'blizzard', id: p.id, yaw: p.yaw, left: BLIZ.duration });
@@ -1112,6 +1237,8 @@ function simulate(dt) {
   updateCages(t);
   updateFirewalls(t);
   updateRams(dt, t);
+  updatePools(t);
+  for (const c of [...smokeFlasks.values()]) if (t >= c.until) { smokeFlasks.delete(c.id); broadcast({ t: 'smokeFlaskEnd', id: c.id }); }
   updateStampedes(t);
   for (const w of walls.values()) bulwarkTouch(w, t);
 
@@ -1125,6 +1252,7 @@ function simulate(dt) {
     if (p.eye) updateEye(p, t);
     if (p.ride) updateRide(p, t);
     if (p.ultWind) updateUltWindup(p, t);
+    if (p.flaskWind) { if (isStunned(p) || isBound(p)) cancelFlaskStep(p); else if (t >= p.flaskWind.until) throwFlaskStep(p); }
     if (p.blizz) updateBlizzard(p, t);
     if (p.mrain || p.mrainFall) updateMeteorRain(p, t, dt);
     // stamina
@@ -1135,6 +1263,9 @@ function simulate(dt) {
         p.stunUntil = Math.max(p.stunUntil, t + C.BLOCK_BREAK_STUN * 0.6);
         broadcast({ t: 'blockBreak', id: p.id });
       }
+    } else if (p.sprinting) {
+      p.st -= C.SPRINT.drain * dt;
+      if (p.st <= 0 || t - p.sprintAt > 0.3) setSprint(p, false, t);   // ran dry, or the client stopped saying so
     } else if (t - p.blockReleasedAt > C.STAMINA_REGEN_DELAY) {
       p.st = Math.min(C.MAX_STAMINA, p.st + C.STAMINA_REGEN * dt);
     }
@@ -1160,7 +1291,7 @@ function simulate(dt) {
     // primary magazine: a finished reload refills it; a partial one reloads after idling
     const mag = C.primaryMag(kit(p).primary);
     if (p.reloadUntil && t >= p.reloadUntil) { p.ammo = mag.magazine; p.reloadUntil = 0; }
-    else if (!p.reloadUntil && p.ammo > 0 && p.ammo < mag.magazine && t - p.lastShotAt > mag.idleReload) { p.ammo = 0; p.reloadUntil = t + mag.reload; }
+    else if (!p.reloadUntil && p.ammo > 0 && p.ammo < mag.magazine && t - p.lastShotAt > mag.idleReload) { p.ammo = 0; p.reloadUntil = t + mag.reload * cdMul(p); }
   }
 
   // projectiles
@@ -1191,6 +1322,7 @@ function simulate(dt) {
     // pillars, trees, fences (for anything flying low enough), ice walls (which take the damage)
     let done = false;
     for (const c of C.COLLIDERS) {
+      if (proj.kind === 'flaskstep' && c.h < C.LOS_HEIGHT) continue;   // Flask Step flies over fences and crops: only walls and the like stop it
       if (proj.p[1] < c.h && Math.hypot(proj.p[0] - c.x, proj.p[2] - c.z) < c.r + proj.radius) {
         endProjectile(proj, true, { surface: c.kind });
         if (c.kind === 'bulwark') damageWall(c.wall, C.SPELLS[proj.kind].damage);
@@ -1199,6 +1331,9 @@ function simulate(dt) {
     }
     if (done) continue;
 
+    if (proj.kind === 'flaskstep') continue;
+    // an enemy Smoke Flask's cloud swallows it
+    if (smokeFlasks.size && smokeFlaskAt(proj.owner, proj.p)) { endProjectile(proj, true, { surface: 'smokeflask' }); continue; }
     // a prop held by telekinesis shields its holder (it takes the hit and shatters)
     const shooter = players.get(proj.owner);
     for (const pl of players.values()) {
@@ -1292,10 +1427,10 @@ function simulate(dt) {
 
 // ---------------------------------------------------------------- messages
 // Gale's tornado and Rime's flare: nothing else can be cast meanwhile (Gale can still move).
-const ULT_LOCKED = new Set(['ult', 'ram', 'ramGuard', 'ride', 'block', 'cast', 'chargeStart', 'cyclone', 'lashStart', 'frostfall', 'smoke', 'mirror', 'veil', 'bulwark', 'firewall', 'curse', 'skyward', 'teleport', 'pickup', 'throw', 'reload']);
+const ULT_LOCKED = new Set(['toxic', 'flaskStep', 'smokeFlask', 'ult', 'ram', 'ramGuard', 'ride', 'block', 'cast', 'chargeStart', 'cyclone', 'lashStart', 'frostfall', 'smoke', 'mirror', 'veil', 'bulwark', 'firewall', 'curse', 'skyward', 'teleport', 'pickup', 'throw', 'reload']);
 function handle(p, msg) {
   const t = now();
-  if ((inUltimate(p) || p.ride) && ULT_LOCKED.has(msg.t)) return;   // a tornado, a rune flare or a ram ride: nothing else
+  if ((inUltimate(p) || p.ride || p.flaskWind) && ULT_LOCKED.has(msg.t)) return;   // a tornado, a rune flare or a ram ride: nothing else
   switch (msg.t) {
     case 'ult': {
       castUltimate(p, msg);
@@ -1336,21 +1471,33 @@ function handle(p, msg) {
       // which the speed check below already allows)
       if (isRooted(p)) { np[0] = p.p[0]; np[2] = p.p[2]; }
       const dashing = p.dashUntil > t;   // Smoke Screen's dash is much faster than running
+      // Sprint: granted while Shift is held (msg.sprint), there's stamina, and nothing forbids it
+      const fwdOk = (() => { const mx = msg.p[0] - p.p[0], mz = msg.p[2] - p.p[2], ml = Math.hypot(mx, mz); const y = Number.isFinite(msg.yaw) ? msg.yaw : p.yaw; return ml < 0.02 || (mx * Math.sin(y) + mz * Math.cos(y)) / ml > 0.2; })();
+      setSprint(p, !!msg.sprint && fwdOk, t);
       const d = dist2D(np, p.p);
       // the fastest this wizard can go this way: its run speed, the backpedal cap against its facing, or a dash
       const run = C.backpedalSpeed(C.speedOf(p.wizard) * (p.eye ? EYE.speedMul : 1), np[0] - p.p[0], np[2] - p.p[2], Number.isFinite(msg.yaw) ? msg.yaw : p.yaw)
         + (p.pulledUntil > t ? Math.max(EYE.pull, BLIZ.push) : 0);   // dragged by an Eye of the Storm, pushed by a Blizzard
       // (knockback only counts for a moment after one actually landed; it used to be allowed all the time, which with
       // 0.6 m of slack per update let a client run about 20 m/s faster than its walk)
-      const own = dashing ? SMOKE.distance / SMOKE.dashTime : galloping(p, t) ? RIDE.speed * 1.1 : isAirborne(p) ? Math.max(run, SKY.airSpeed) : run;
-      const maxStep = (own + (p.kbUntil > t ? p.kbSpeed + 1 : 0) + 1) * dt + 0.3;
-      if (p.lastStateAt && d > maxStep && !p.justTeleported) {
+      const own = dashing ? SMOKE.distance / SMOKE.dashTime : galloping(p, t) ? RIDE.speed * 1.1 : isAirborne(p) ? Math.max(run, SKY.airSpeed)
+        : p.sprinting || p.sprintEndedAt > t - 0.3 ? Math.max(run, C.sprintOf(p.wizard) * (p.slowUntil > t ? 1 - C.SPELLS.skim.slow : 1)) : run;
+      // A movement budget: it refills at the fastest this wizard may go right now, and holds at most a short burst
+      // (about 0.25 s of it, plus 0.25 m), so bunched-up updates from an honest client pass but a steady overspeed
+      // doesn't. (A fixed allowance per update used to be worth about 6 m/s on top of the walk.)
+      const allowed = own + (p.kbUntil > t ? p.kbSpeed + 1 : 0) + 0.4;
+      const cap = allowed * 0.25 + 0.25;
+      p.moveBudget = Math.min(cap, (p.moveBudget ?? cap) + allowed * dt);
+      // (the first report, or one after a teleport, starts a fresh budget instead of spending it)
+      if (p.lastStateAt && d > p.moveBudget && !p.justTeleported && d > 1e-6) {
         // Moving faster than any legitimate wizard can: let the server's copy catch up at the
         // maximum plausible speed instead of snapping (so a laggy-but-honest client converges).
-        const k = maxStep / d;
+        const k = Math.max(0, p.moveBudget) / d;
         p.p = [p.p[0] + (np[0] - p.p[0]) * k, np[1], p.p[2] + (np[2] - p.p[2]) * k];
+        p.moveBudget = 0;
       } else {
         p.p = np;
+        p.moveBudget = p.justTeleported || !p.lastStateAt ? cap : Math.max(0, p.moveBudget - d);
       }
       cageKeep(p);   // a Night Cage: the client keeps itself on its side too; this is the check
       p.justTeleported = false;
@@ -1375,8 +1522,9 @@ function handle(p, msg) {
       const shot = C.primaryMag(primary).magazine - p.ammo;   // 0, 1, 2
       const fin = p.ammo === 1;
       p.ammo--; p.lastShotAt = t;
-      if (p.ammo === 0) p.reloadUntil = t + C.primaryMag(primary).reload;
-      p.cd.fast = t + C.SPELLBOOK[primary].cooldown;
+      if (p.ammo === 0) p.reloadUntil = t + C.primaryMag(primary).reload * cdMul(p);
+      p.cd.fast = t + C.SPELLBOOK[primary].cooldown * cdMul(p);
+      pendingShot = shot;
       if (kind === 'skim') {
         // three shards in a tight fan, skimming the ground just ahead of the caster's feet
         const d = sanitizeDir([msg.dir?.[0] ?? 0, 0, msg.dir?.[2] ?? 0], p);
@@ -1398,9 +1546,14 @@ function handle(p, msg) {
         to[1] = Math.max(0.4, to[1]);
         const curve = { ...C.hexCurve(origin, to, shot), shot };
         spawnProjectile(p, 'hex', origin, dir, null, fin, curve);
+      } else if (kind === 'potion') {
+        // an arc onto the aim point (or along the aim, if the client didn't say)
+        const origin = sanitizeOrigin(p, msg.origin);
+        spawnProjectile(p, 'potion', origin, lobDir(p, origin, msg.target, msg.dir, C.SPELLS.potion), null, fin);
       } else {
         spawnProjectile(p, kind, sanitizeOrigin(p, msg.origin), sanitizeDir(msg.dir, p), null, fin);
       }
+      pendingShot = null;
       break;
     }
     case 'chargeStart': {
@@ -1523,6 +1676,42 @@ function handle(p, msg) {
       broadcast({ t: 'batteringRam', id: p.id, yaw });
       break;
     }
+    case 'sprint': {
+      // bots say so directly (players send it with their position)
+      if (p.bot) setSprint(p, !!msg.on, t);
+      break;
+    }
+    case 'toxic': {
+      if (kit(p).power !== 'toxic_flask' || !canAct(p) || p.blocking || p.charging || holding(p) || isAirborne(p) || t < p.cd.power) break;
+      p.cd.power = t + C.SPELLBOOK.toxic_flask.cooldown * cdMul(p);
+      const origin = sanitizeOrigin(p, msg.origin);
+      spawnProjectile(p, 'toxic', origin, lobDir(p, origin, msg.target, msg.dir, C.SPELLS.toxic));
+      broadcast({ t: 'toxicThrow', id: p.id });
+      break;
+    }
+    case 'flaskStep': {
+      if (kit(p).mobility !== 'flask_step' || !canAct(p) || isRooted(p) || p.blocking || p.charging || holding(p) || isAirborne(p) || t < p.cd.mobility) break;
+      p.cd.mobility = t + C.SPELLBOOK.flask_step.cooldown * cdMul(p);
+      p.flaskWind = { until: t + C.SPELLBOOK.flask_step.windup, target: validVec(msg.target) ? msg.target.slice() : null, dir: sanitizeDir(msg.dir, p) };
+      broadcast({ t: 'flaskWind', id: p.id, left: C.SPELLBOOK.flask_step.windup });
+      break;
+    }
+    case 'smokeFlask': {
+      if (kit(p).guard !== 'smoke_flask' || !canAct(p) || t < p.cd.guard) break;
+      p.cd.guard = t + C.SPELLBOOK.smoke_flask.cooldown * cdMul(p);
+      const c = { id: nextFxId++, owner: p.id, x: p.p[0], z: p.p[2], until: t + C.SPELLBOOK.smoke_flask.life };
+      smokeFlasks.set(c.id, c);
+      broadcast({ t: 'smokeFlask', id: c.id, owner: p.id, p: [c.x, 0, c.z], left: C.SPELLBOOK.smoke_flask.life });
+      break;
+    }
+    case 'rideStop': {
+      // E, Space or a primary click during the gallop: the normal dismount, now
+      const R = p.ride;
+      if (!R || !galloping(p, t)) break;
+      R.dismountAt = t; R.endAt = t + RIDE.dismount;
+      broadcast({ t: 'rideDismount', id: p.id, left: RIDE.dismount });
+      break;
+    }
     case 'ramGuard': {
       if (kit(p).guard !== 'ram_guard' || !canAct(p) || t < p.cd.guard) break;
       p.cd.guard = t + RGUARD.cooldown;
@@ -1538,7 +1727,7 @@ function handle(p, msg) {
     }
     case 'ride': {
       if (kit(p).mobility !== 'ram_ride' || !canAct(p) || isRooted(p) || p.charging || p.cyclone || p.lash || holding(p) || isAirborne(p) || t < p.cd.mobility) break;
-      p.cd.mobility = t + RIDE.cooldown;
+      p.cd.mobility = Infinity;   // the cooldown starts when he gets off (endRide)
       startRide(p, Number.isFinite(msg.yaw) ? msg.yaw : p.yaw);
       break;
     }
@@ -1571,7 +1760,7 @@ function handle(p, msg) {
     case 'reload': {
       // R: reload a partial magazine
       if (p.dead || p.ammo >= C.primaryMag(kit(p).primary).magazine || t < p.reloadUntil) break;
-      p.ammo = 0; p.reloadUntil = t + C.primaryMag(kit(p).primary).reload;
+      p.ammo = 0; p.reloadUntil = t + C.primaryMag(kit(p).primary).reload * cdMul(p);
       break;
     }
     case 'skyward': {
@@ -1712,7 +1901,7 @@ function removePlayer(id) {
 }
 
 // cycloneStopsGoats: the goat module can knock a charging goat dizzy (bots then answer a charge with a cyclone)
-const world = { players, props, projectiles, goats, decoys, walls, frostfalls, smokes, cages, firewalls, rams, stampedes, handle, now, cycloneStopsGoats: !!Goats.dizzyGoat };
+const world = { players, props, projectiles, goats, decoys, walls, frostfalls, smokes, cages, firewalls, rams, stampedes, pools, smokeFlasks, handle, now, cycloneStopsGoats: !!Goats.dizzyGoat };
 // Game modes (server/match.js, modes agent). addUltCharge is the spells agent's to implement.
 const match = createMatch({
   players, props, now, broadcast, send, propPublic,
@@ -1830,6 +2019,8 @@ wss.on('connection', (ws) => {
         smokes: [...smokes.values()].map(smokePublic),
         cages: [...cages.values()].map(cagePublic),
         firewalls: [...firewalls.values()].map(firewallPublic),
+        pools: [...pools.values()].map(poolPublic),
+        smokeFlasks: [...smokeFlasks.values()].map(c => ({ id: c.id, owner: c.owner, p: [c.x, 0, c.z], left: Math.max(0, c.until - now()) })),
         decoys: [...decoys.values()].map(decoyPublic),
         ...match.welcomeExtras(p),
       }));

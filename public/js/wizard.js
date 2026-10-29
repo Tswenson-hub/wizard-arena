@@ -417,6 +417,7 @@ export class Wizard {
   locomotion(m, slow) {
     if (m.speed < 0.4 || this.group.position.y > 0.3) return null;
     if (m.backward && this.actions.back) return 'back';
+    if (this.sprinting && !slow && this.actions.run) return 'run';   // Sprint (Shift): the Running clip comes back for it
     return this.actions.walk_fight ? 'walk_fight' : 'run';
   }
 

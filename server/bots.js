@@ -49,7 +49,16 @@ const SHEAR_RANGE = SHEAR.speed * SHEAR.life;
 const SLING_S = C.SPELLS.sling, BRAM = C.SPELLBOOK.battering_ram, RGUARD = C.SPELLBOOK.ram_guard, RIDE = C.SPELLBOOK.ram_ride, STAMP = C.SPELLBOOK.stampede;
 // Every goat-like thing: the map goats and any summoned rams the server simulates itself (world.rams).
 const goatsOf = (world) => world.rams?.length ? [...world.goats, ...world.rams] : world.goats;
-const guarded = (q, t) => q.ramGuardUntil > t;   // Jeb's Ram Guard: shots at him are absorbed and charged back
+const guarded = (q, t) => q.ramGuardUntil > t;
+const POTION = C.SPELLS.potion, TOXIC = C.SPELLS.toxic, TFLASK = C.SPELLBOOK.toxic_flask, SFLASK = C.SPELLBOOK.smoke_flask;
+// An enemy Smoke Flask cloud on the line from `from` to `to`: the shot would vanish into it.
+function smokeFlaskInWay(me, world, from, to) {
+  for (const c of world.smokeFlasks?.values() || []) {
+    if (!foeId(me, c.owner) || c.owner === me.id) continue;
+    if (segDist(from, to, { x: c.x, z: c.z }) < SFLASK.radius) return true;
+  }
+  return false;
+}   // Jeb's Ram Guard: shots at him are absorbed and charged back
 let clouds = [];   // Smoke Screen clouds this tick: nobody sees into, out of or through them
 let match = null;  // game modes (server/match.js): who is an enemy
 let players = null;
@@ -458,6 +467,11 @@ function think(me, world, t) {
     if (K.mobility === 'smoke_screen' && mobilityReady(me, t) && Math.random() < 0.35 * Math.max(cfg.dodge, 0.5)) return smokeAway(me, away, act);
     if (wallReady(me, t) && d > 3.5 && Math.random() < 0.4 * cfg.dodge) return raiseWall(me, target.p, act);
     if (K.mobility === 'ram_ride' && mobilityReady(me, t) && Math.random() < 0.35 * Math.max(cfg.dodge, 0.5)) return rideAway(me, away, act);
+    if (K.mobility === 'flask_step' && mobilityReady(me, t) && Math.random() < 0.35 * Math.max(cfg.dodge, 0.5)) {
+      const dd = inward(me, away), to = [me.p[0] + dd[0] * 14, 0, me.p[2] + dd[2] * 14];
+      me.yaw = Math.atan2(dd[0], dd[2]);
+      return act({ t: 'flaskStep', target: to, dir: dd });
+    }
   }
 
   if (Math.random() > cfg.aggression) return;
@@ -531,6 +545,11 @@ function think(me, world, t) {
       if (me.lash) b.lashFireAt = t + LASH.windup + 0.02;
       return;
     }
+  } else if (K.power === 'toxic_flask' && powerReady && !targetAir && !me.carrying && d < TOXIC.range - 1) {
+    // a pool where they stand: best on someone stuck, busy or in a group
+    const stuck = targetStunned || rooted(target, t) || busyCasting(target) || target.slowUntil > t;
+    const group = foesNear(me, world, target.p, TFLASK.radius, t, { ground: true }).length >= 2;
+    if (stuck || group || Math.random() < 0.3) { lob(me, target, act, cfg, world, 'toxic', TOXIC); if (me.cd.power > t) return; }
   } else if (K.power === 'battering_ram' && powerReady && !targetAir && !me.carrying && d > 3 && d < C.GOAT.chargeSpeed * BRAM.maxTime - 3) {
     // Battering Ram: a straight line the target can't easily leave (stuck, busy, slowed) or from close in; not into a ward
     const stuck = targetStunned || rooted(target, t) || busyCasting(target) || target.slowUntil > t;
@@ -560,8 +579,9 @@ function think(me, world, t) {
   }
 
   // Ram Ride: gallop straight at a close target for the shove, now and then
-  if (K.mobility === 'ram_ride' && mobilityReady(me, t) && d > 4 && d < 12 && me.hp > 50 && Math.random() < 0.08 * cfg.aggression) {
+  if (K.mobility === 'ram_ride' && mobilityReady(me, t) && d > 4 && d < 18 && me.hp > 50 && Math.random() < 0.08 * cfg.aggression) {
     me.yaw = yawTo(me.p, target.p);
+    b.rideGoal = [target.p[0], target.p[2]];   // ride through them, off on the far side
     act({ t: 'ride', yaw: me.yaw });
     return;
   }
@@ -606,7 +626,11 @@ function tryUltimate(me, world, t, act, target) {
     act({ t: 'ult', at: [best.p[0], best.p[2]] });
     return me.ult < C.ULT_CHARGE.max;
   }
-  if (U === 'meteor_rain') {
+  if (U === 'berserker_brew') {
+    // drink when there's a fight to win: an enemy in reach and sight, and the health to use it
+    if (!target || target.dead || dist2D(me.p, target.p) > 18 || !hasLOS(me.p, target.p) || me.hp < 40) return false;
+    act({ t: 'ult' });
+  } else if (U === 'meteor_rain') {
     // leap when someone is reachable: we'll pick the spot from up there
     if (airborne(me, t) || !foesNear(me, world, me.p, MRAIN.range - 2, t, { ground: true }).length) return false;
     b.mrainCommit = null;
@@ -782,6 +806,7 @@ function reactToStampedes(me, world, t, act) {
 function rideAway(me, dir, act) {
   const d = inward(me, dir);
   me.yaw = Math.atan2(d[0], d[2]);
+  me.bot.rideGoal = [me.p[0] + d[0] * 13, me.p[2] + d[2] * 13];   // far enough to be safe, then off
   act({ t: 'ride', yaw: me.yaw });
 }
 // An enemy Firewall between `from` and `to`: our shot would burn up in it.
@@ -804,6 +829,7 @@ function primary(me, target, act, cfg, world, t) {
   if (P === 'hex_shards') return d < HEX.range ? hex(me, target, act, cfg, world) : undefined;
   if (P === 'gale_shear') return d < SHEAR_RANGE - 0.5 ? bolt(me, target, act, cfg, world, 'shear') : undefined;
   if (P === 'fireball') return d < FIRE.speed * FIRE.life - 2 ? bolt(me, target, act, cfg, world, 'fireball') : undefined;
+  if (P === 'potion_toss') return d < POTION.range - 2 ? lob(me, target, act, cfg, world, 'cast', POTION, { kind: 'potion' }) : undefined;
   if (P === 'sling') return d < SLING_S.speed * SLING_S.life - 2 ? bolt(me, target, act, cfg, world, 'sling') : undefined;
   if (d < 28) return bolt(me, target, act, cfg, world, 'fast');
 }
@@ -814,9 +840,19 @@ function bolt(me, target, act, cfg, world, kind) {
   const from = [me.p[0], me.p[1] + 1.3, me.p[2]];
   const dir = aimAt(me, from, target, spec.speed, 0, cfg);
   if (lineBlocked(from, dir, dist2D(me.p, target.p), Math.min(spec.radius, 0.5), cfg.goatAware && world.goats)) return;
-  if (firewallInWay(me, world, from, target.p)) return;
+  if (firewallInWay(me, world, from, target.p) || smokeFlaskInWay(me, world, from, target.p)) return;
   me.yaw = yawTo(me.p, target.p);
   act({ t: 'cast', kind, dir });
+}
+
+// A lobbed potion (Potion Toss, Toxic Flask) onto where the target will be.
+function lob(me, target, act, cfg, world, msgType, spec, extra = {}) {
+  const from = [me.p[0], me.p[1] + 1.3, me.p[2]];
+  if (smokeFlaskInWay(me, world, from, target.p) || firewallInWay(me, world, from, target.p)) return;
+  if (C.pillarBlocks(from, target.p, 0.2)) return;
+  const dir = aimAt(me, from, target, spec.speed, spec.gravity, cfg);
+  me.yaw = yawTo(me.p, target.p);
+  act({ t: msgType, ...extra, dir, origin: from });
 }
 
 // Hex Shards curve in on the aim point, so the bot sends where the target will be (led by the curve's flight time).
@@ -1130,6 +1166,8 @@ function respond(me, world, t, proj, th, act) {
   const projDist = Math.hypot(proj.p[0] - me.p[0], proj.p[2] - me.p[2]);
   if (veiled(me, t)) return;   // nothing gets through
   if (big && veilReady(me, t)) return act({ t: 'veil' });
+  // Smoke Flask: a cloud at our feet swallows it (and anything else coming in for 2 s)
+  if (K.guard === 'smoke_flask' && t >= me.cd.guard && th.tc > 0.1 && (big || proj.kind === 'prop' || me.hp < 70 || Math.random() < 0.35)) return act({ t: 'smokeFlask' });
   // Ram Guard: rams circle us and catch the shot (and charge whoever fired it)
   if (K.guard === 'ram_guard' && t >= me.cd.guard && th.tc > 0.12 && (big || proj.kind === 'prop' || me.hp < 70 || Math.random() < 0.3)) return act({ t: 'ramGuard' });
   // Firewall: burn it up in the air (always for the big ones, sometimes for anything when hurt)
@@ -1196,6 +1234,11 @@ function moveBot(me, dt, world, t) {
     me.ride.heading ??= me.ride.yaw;
     me.ride.heading += clampAbs(Math.atan2(Math.sin(me.yaw - me.ride.heading), Math.cos(me.yaw - me.ride.heading)), RIDE.turnRate * dt);
     b.vel = [Math.sin(me.ride.heading) * RIDE.speed, Math.cos(me.ride.heading) * RIDE.speed];
+    // ridden far enough (the target reached, or far enough away): get off early
+    if (b.rideGoal) {
+      me.yaw = Math.atan2(b.rideGoal[0] - me.p[0], b.rideGoal[1] - me.p[2]);
+      if (Math.hypot(b.rideGoal[0] - me.p[0], b.rideGoal[1] - me.p[2]) < 2.5) { b.rideGoal = null; world.handle(me, { t: 'rideStop' }); }
+    }
     me.p[0] += b.vel[0] * dt; me.p[2] += b.vel[1] * dt;
     for (const c of C.COLLIDERS) { const dx = me.p[0] - c.x, dz = me.p[2] - c.z, dd = Math.hypot(dx, dz); if (dd < c.r + C.PLAYER_RADIUS && dd > 1e-4) { const kk = (c.r + C.PLAYER_RADIUS - dd) / dd; me.p[0] += dx * kk; me.p[2] += dz * kk; } }
     const rr = Math.hypot(me.p[0], me.p[2]);
@@ -1257,6 +1300,12 @@ function moveBot(me, dt, world, t) {
       const dx = me.p[0] - area[0], dz = me.p[2] - area[1], dd = Math.hypot(dx, dz) || 1;
       if (dd > area[2] * 0.85 && wx * dx + wz * dz > 0) { const k = (wx * dx + wz * dz) / dd; wx -= dx / dd * k * 1.5; wz -= dz / dd * k * 1.5; }
     }
+    // keep out of enemy poison pools
+    for (const pl of world.pools?.values() || []) {
+      if (!foeId(me, pl.owner) || pl.owner === me.id) continue;
+      const dx = me.p[0] - pl.x, dz = me.p[2] - pl.z, dd = Math.hypot(dx, dz);
+      if (dd < TFLASK.radius + 1) { const k = (TFLASK.radius + 1 - dd) * 1.2; wx += (dd > 0.05 ? dx / dd : 1) * k; wz += (dd > 0.05 ? dz / dd : 0) * k; }
+    }
     // keep out of enemy Firewalls: walking through one burns
     for (const w of world.firewalls?.values() || []) {
       if (!foeId(me, w.owner)) continue;
@@ -1277,7 +1326,20 @@ function moveBot(me, dt, world, t) {
   }
   const wl = Math.hypot(wx, wz);
   const run = C.speedOf(me.wizard);   // per wizard (wizards.js speed)
+  // Sprint: to reach a far objective spot or a far target, or to get away when hurt; a ward user under fire keeps its
+  // stamina for the ward. A sprinting bot faces where it runs (the server only grants a forward sprint).
+  {
+    const tg = target && !target.dead ? target : null, dT = tg ? dist2D(me.p, tg.p) : 0;
+    const far = goal ? Math.hypot(goal[0] - me.p[0], goal[1] - me.p[2]) > 6 : !!tg && dT > (kit(me).primary === 'gale_shear' ? 7 : cfg.range[1] + 5);
+    const fleeing = me.hp < 35 && !!tg && dT < 14;
+    const threatened = [...b.threats.values()].some(r => !r.handled && !r.ignore) || t < (b.goatDanger || 0);
+    const keep = C.isWard(kit(me).guard) && threatened && me.st < 70;
+    const want = (far || fleeing) && !keep && wl > 0.01 && !stunned && !flying && !me.blocking && !busyCasting(me) && !me.carrying && t >= b.dodgeUntil;
+    if (want !== !!me.sprinting || (want && t - (me.sprintAt || 0) > 0.2)) world.handle(me, { t: 'sprint', on: want });
+    if (me.sprinting && wl > 0.01) me.yaw = Math.atan2(wx, wz);
+  }
   let speed = run * cfg.speed;
+  if (me.sprinting) speed = C.sprintOf(me.wizard) * cfg.speed;
   if (me.eye) speed = run * EYE.speedMul;
   else if (me.charging || me.cyclone || me.lash) speed = C.chargeSpeedOf(me.wizard);
   else if (me.blocking) speed = C.blockSpeedOf(me.wizard);
