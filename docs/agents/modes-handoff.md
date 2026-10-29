@@ -78,7 +78,7 @@
   - scores, the per-player table, team sizes and friendly-fire hits
   - siege: hop intervals, held/contested/empty time, the per-zone hold split, overtime, and any bar gain while the zone wasn't held
     alone (tolerance: two snapshot intervals)
-- **`tools/test/modematch-unit.mjs`:** 43 rule checks against a fake ctx. The relic checks are gone. New siege checks cover:
+- **`tools/test/modematch-unit.mjs`:** 40 rule checks against a fake ctx. The relic checks are gone. New siege checks cover:
   - empty, 1%/s, 1.5%/s, ult charge, contested
   - dead or high fliers don't count
   - the warning, the hop and the next hop at 60 s
@@ -100,7 +100,7 @@
 
 - **Every run:** hops exactly every 60 s, 0 friendly fire, 3v3 throughout, 0 bar gain while the zone wasn't held alone, no overtime.
 - **Before the fixes:** 5 runs, Ember won all 5, and Frost held the Fallen Silo about 0 s (bots were stuck on the silo body).
-- **`modematch-unit.mjs`:** all 43 checks pass.
+- **`modematch-unit.mjs`:** all 40 checks pass.
 - **Playwright** (`/tmp/wa-modes/siege_e2e.py`; screenshots in `/tmp/wa-modes/siege/` and `/tmp/wa-modes/siege-1793239675/`):
   - **Telekinesis:** a lifted prop is thrown as a projectile, and there's no relic UI.
   - **Vote:** pressing 3 votes Altar Siege (tally 1), and the mode switches. The warm-up shows the circle at The Altar.
