@@ -217,7 +217,7 @@ export const OBELISK_FURROW = { from: fromAltar(200, 14.5), to: fromAltar(200, 2
 // Blast stones (models/rock_jagged.glb): tall shards tilted away from the altar. [x, z, height, tilt]
 // The model is about 0.65 x its height across, so the collider is r 0.33 h, shifted toward the lean.
 export const BLAST_STONES = [
-  [15, 11.5, 1.9, 0.3], [340, 12, 1.6, 0.35], [80, 12.5, 1.7, 0.3], [125, 13.5, 2.0, 0.3],
+  [15, 11.5, 1.9, 0.3], [340, 12, 1.6, 0.35], [112, 16, 1.7, 0.3], [125, 13.5, 2.0, 0.3],   // 112°: the south-east edge of the Barn Passage zone
   [160, 14, 2.2, 0.28], [205, 14, 1.8, 0.32], [290, 12.5, 2.0, 0.3],
 ].map(([deg, d, h, tilt]) => [...fromAltar(deg, d), h, tilt]);
 // Flat slabs (models/rock_table.glb) flung farther: low cover you shoot over. [x, z, yaw, height, tilt]
@@ -281,11 +281,12 @@ export const TEAM_SPAWNS = {
 };
 // Altar Siege (king of the hill): the zone starts at the altar and hops every 60 s, altar -> barn -> silo -> altar.
 // Each circle is open ground (nothing taller than 1.6 m inside; the altar, slabs and fallen pillars are low),
-// with cover at its edge. The barn spot is nearer Ember and the silo spot nearer Frost, which roughly cancels
-// over a rotation (mean spawn distance, Ember / Frost: altar 21 / 23, barn 14 / 34, silo 40 / 25 m).
+// with cover at its edge. Mean spawn distance, Ember / Frost: altar 21 / 23, barn 22 / 27, silo 40 / 25 m.
+// Barn Passage sits on the path from the farmyard to the pen gate, between the altar ring and the pen: the
+// barn arch itself is too close to Ember's spawns (Ember won every Barn hold there in the modes agent's runs).
 export const SIEGE_ZONES = [
   { id: 'altar', name: 'The Altar', x: ALTAR.x, z: ALTAR.z, r: 7 },           // ring pillars, archway and fallen pillars at the edge
-  { id: 'barn', name: 'Barn Passage', x: 10, z: 4, r: 7 },                  // before the barn arch: hay stacks, a blast stone, a pillar
+  { id: 'barn', name: 'Barn Passage', x: 11.3, z: -4.5, r: 7 },             // the yard-to-pen gate passage: the altar's NE pillar, a fallen pillar, a stone, the pen hay
   { id: 'silo', name: 'Fallen Silo', x: -22, z: -19, r: 7 },                // north-west of the silo: its body and an oak at the edge
 ];
 
