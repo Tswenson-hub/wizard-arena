@@ -244,7 +244,7 @@ export const TREE_KINDS = {
 };
 // [kind, x, z, height]; yaw is fixed per tree (server and clients must agree on the trunk offsets).
 export const TREES = [
-  ['oak', 23, -18, 7], ['birch', -22, -17, 8.5], ['birch', -11, -35, 7.5], ['oak', 12, -32, 7.5],
+  ['oak', 23, -18, 7], ['birch', -27.5, -12.5, 8.5], ['birch', -11, -35, 7.5], ['oak', 12, -32, 7.5],
   ['birch', 30, -21, 8], ['oak', -30, -19, 7.5], ['oak', -13, 31, 8], ['pine', 13, 32, 10],
   ['birch', 24, 22, 8.5], ['pine', -24, 23, 10.5], ['pine', -33, 8, 11], ['pine', 33.5, 14, 10],
 ].map(([kind, x, z, h], i) => {
@@ -279,6 +279,16 @@ export const TEAM_SPAWNS = {
   ember: [[4.5, 0, 10.5], [-8.5, 0, 8], [3, 0, 16.5], [-4, 0, 17], [8.5, 0, 14]],
   frost: [[5.5, 0, -26.5], [-3, 0, -30], [11, 0, -26], [-11, 0, -28], [0.5, 0, -31]],
 };
+// Altar Siege (king of the hill): the zone starts at the altar and hops every 60 s, altar -> barn -> silo -> altar.
+// Each circle is open ground (nothing taller than 1.6 m inside; the altar, slabs and fallen pillars are low),
+// with cover at its edge. The barn spot is nearer Ember and the silo spot nearer Frost, which roughly cancels
+// over a rotation (mean spawn distance, Ember / Frost: altar 21 / 23, barn 14 / 34, silo 40 / 25 m).
+export const SIEGE_ZONES = [
+  { id: 'altar', name: 'The Altar', x: ALTAR.x, z: ALTAR.z, r: 7 },           // ring pillars, archway and fallen pillars at the edge
+  { id: 'barn', name: 'Barn Passage', x: 10, z: 4, r: 7 },                  // before the barn arch: hay stacks, a blast stone, a pillar
+  { id: 'silo', name: 'Fallen Silo', x: -22, z: -19, r: 7 },                // north-west of the silo: its body and an oak at the edge
+];
+
 // Free for all: both sides plus the flanks between the blast site and the field or the pen.
 // Nobody spawns in the pen, the field or the house.
 export const SPAWN_POINTS = [...TEAM_SPAWNS.ember, ...TEAM_SPAWNS.frost, [-13.5, 0, 1.5], [12.5, 0, 1.5]];
