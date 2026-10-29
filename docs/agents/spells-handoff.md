@@ -1,5 +1,104 @@
 # Spells hand-off
 
+## Round 8: a longer, cancellable Ram Ride; Sprint; Embibe the Alchemist (`1cc4d26`, `2173a6a`)
+
+### A regression I found and fixed
+The round-7 ultimates edit cut the main.js message switch from `zeroStart` to `cage`. That also removed **Jeb's client
+handlers**: `ramSpawn`, `goatGone`, `ramCalled`, `batteringRam`, `ramGuard`, `ride`, `rideEnd`, `stampede` and
+`stampedeEnd`. From `4910c68` until now, clients missed those messages: no spawn poof, no Stampede lane, a ride not
+seated, and summoned rams left until the snapshot cleanup.
+- **Restored** from `8ecf4b7`. I compared the case labels against `40e59ab`; only the intended Cataclysm and Absolute Zero
+  ones are gone now.
+
+### Ram Ride
+- **Length:** 20 m at 7 m/s (2.86 s of gallop; a full ride is 3.68 s with mount and dismount).
+- **Getting off early:** E again, Space or a primary click during the gallop (`rideStop`, then the normal 0.4 s dismount).
+  The client's Space press doesn't also guard.
+- **Thrown off:** a stun, bind or freeze throws him off at once (`rideThrown`).
+- **Cooldown:** it now runs from the dismount (it's `Infinity` until then on the server and in the client's prediction).
+- **Bots** steer toward a goal spot (through the target, or 13 m away when escaping) and get off there.
+
+### Sprint (Shift)
+- **Speed:** 5.5 m/s (`wizards.js` `sprint`; Gale 6.2), forward or diagonally forward. It plays `run`, time-scaled to the
+  ground speed; `run` is back for sprint only.
+- **Stamina:** it drains the ward's stamina at 25/s, with no regeneration meanwhile, and the regeneration delay runs from
+  the stop. It stops at 0 and can only restart at 15 (`C.SPRINT`).
+- **Not while:** a wind-up, a ward, telekinesis, a root or stun, the air, a ride, an ultimate, Flask Step's wind-up, or
+  moving backward.
+- **Server:** it grants sprint (`setSprint`) from the `state` message's `sprint` flag and these rules. The speed check
+  allows the sprint speed only then. Snapshot `sprint`.
+- **Bots** sprint to a far objective spot or a far target, and away when below 35 HP. A ward user under fire keeps
+  stamina below 70.
+
+### The speed check (fixed while testing sprint)
+- **Old:** a fixed 0.3 m allowance per update let a client go about 6 m/s over its limit.
+- **New:** a **movement budget** that refills at the allowed speed (+0.4 m/s) and holds at most a 0.25 s burst + 0.25 m.
+- **A bug in my first version:** the very first report (from the spawn point to wherever the client is) drove the
+  budget hugely negative, and a later zero-length step then turned the position into NaN (budget / 0). Now the first
+  report and teleports start a fresh budget, and it never goes below 0.
+- **Measured:** a client claiming 5.5 m/s without sprinting got 3.9 m/s; sprinting, 5.0 m/s.
+
+### Embibe the Alchemist (`kit: potion_toss / toxic_flask / flask_step / smoke_flask / telekinesis / berserker_brew`)
+- **Potion Toss** (`potion`):
+  - An arc onto the crosshair's point (`cast.target`, a ballistic lob; at most 26 m).
+  - A 2-throw belt: 16, then 14 with the stun.
+  - The shatter splashes for 50 % within 1.2 m (`potion_splash`).
+- **Toxic Flask** (`toxic`): a lob (at most 18 m), 12 on a direct hit.
+  - It leaves a **3.5 m pool for 5 s** that hits enemies 6 every 0.5 s (`toxic_pool`).
+  - Messages: `pool`, `poolEnd`; `welcome.pools`. Cooldown 8 s.
+- **Flask Step:** a 0.6 s wind-up (`flaskWind`; interrupted like any wind-up → `flaskCancel`), then a potion along the
+  aim (at most 16 m). She arrives where it lands (`flaskArrive {from, to}`), with purple smoke at both ends and the
+  `arrival` clip if the body has it.
+  - It flies over fences and crops. Anything taller stops it, and she arrives 0.8 m short.
+  - Cooldown 8 s.
+- **Smoke Flask:** a 2 s purple cloud (radius 2.4 m, 3.2 m tall) at her feet. It swallows every enemy projectile that
+  enters it, from any side (`projEnd.surface: 'smokeflask'`). Cooldown 10 s.
+- **Berserker Brew** (ult, after the 1.3 s wind-up): drinks (the `ult` clip, else `cast_heavy`) and is **enraged 7 s**.
+  - Potions, splashes and pools hit ×1.5.
+  - **Every cooldown of hers is halved** (her reload too; the client predicts with the same `cdMul`).
+  - Visuals: a green-purple aura with fumes, and glowing eyes on the head bone. Messages: `brew`; snapshot `brew`.
+- **Bots playing Embibe:**
+  - lob potions at led targets;
+  - pool stuck, slowed or grouped targets;
+  - Flask Step away when hurt and pressed;
+  - Smoke Flask against incoming shots;
+  - drink the Brew with an enemy in reach and in sight.
+- **Every bot** steps out of enemy pools and won't shoot into an enemy Smoke Flask cloud.
+- **Combo clips:** primary shots carry `shot` (0, 1, 2). A body with `combo1/2/3` plays that strike for the shot, on
+  every hero. The characters agent hadn't posted the keys when I finished, so this runs only where the body has them.
+
+### Verification (port 4101)
+**Rules** (`/tmp/wa-spells/t_r8.mjs`, `t_sp.mjs`):
+- **Ride:** a 1 s gallop covered 7.00 m; `rideStop` → `rideDismount` → `rideEnd`; an immediate re-ride was refused (the
+  cooldown runs from the dismount); a finisher during the ride → `rideThrown`; a full ride took 3.68 s.
+- **Sprint:** 10.45 m in 2 s with stamina 100 → 52; at 4.6 s, stamina 0 and the sprint off; held at 10 stamina, still off.
+- **Embibe:**
+  - Potion: direct hits 16 and 14 (the 2nd interrupting), splash 8 and 7 on a neighbour; a 3rd throw refused.
+  - Toxic Flask: a pool hit 2 enemies 6 per tick, 108 in all over 5 s, then `poolEnd`.
+  - Flask Step: arrived 1.27 s after the cast at (−20.7, −5.8), aimed at (−21, −6); a finisher in the wind-up → `flaskCancel`,
+    no arrival.
+  - Smoke Flask: 3 fireballs ended on `smokeflask`, 0 hits on her.
+  - Brew: a 24 potion (16 × 1.5).
+
+**Browser** (`t_r8vis.py`): sprinting gave `local.sprinting` true, the clip `run` and 4.6 m/s while still accelerating at
+this frame rate, with stamina draining (`r8_sprint.png`). Also the pool (`r8_pool.png`), the Smoke Flask cloud
+(`r8_smoke_flask.png`), Flask Step's arrival (`r8_flask_step.png`) and the Brew aura (`r8_brew.png`). No console errors.
+
+**Balance** (6 Hard bots, one per hero, FFA, 3 × 120 s, server restarted between runs), K/D:
+| Hero | Cinder | Gale | Rime | Vesper | Jeb | Embibe |
+|---|---|---|---|---|---|---|
+| 3 runs | 8/12 (0.67) | 8/14 (0.57) | 10/10 (1.0) | 13/8 (1.63) | 13/11 (1.18) | **15/14 (1.07)** |
+
+- **Embibe** lands mid-pack on the starting numbers: 10 of her 15 kills were potions, 4 the flask or pool.
+- **Gale trails again,** and Vesper leads this set. Kill counts are small, so this is noisy.
+
+### Open
+- The characters agent's Embibe model line in `wizards.js` (`model: '/models/wizards/embibe.glb'`) and `looks.js` are theirs
+  and still uncommitted in the tree. I committed only my fields.
+- README (coordinator): Sprint, the ride's cancel, Embibe's kit and messages (`toxicThrow`, `pool`/`poolEnd`,
+  `flaskWind`/`flaskCancel`/`flaskArrive`, `smokeFlask`/`smokeFlaskEnd`, `brew`, `rideStop`/`rideDismount`/`rideThrown`,
+  `sprint`), the snapshot fields `sprint`, `brew`, `flaskWind`, and `proj.shot`.
+
 ## Ram Ride speed bug (Ty: "gamebreakingly fast"), fixed in `29dd7fb`
 
 **Root cause: riders were shoved forward every frame by their own mount.**
