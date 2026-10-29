@@ -8,7 +8,7 @@ import { WIZARDS, KIT_SLOTS, DEFAULT_WIZARD, isWizard } from '../shared/wizards.
 import { SPELLBOOK } from '../shared/constants.js';
 import { makeWizardBody, looksReady } from './looks.js';
 
-const SLOT_KEYS = { primary: 'LMB', power: 'RMB', mobility: 'E', guard: 'Space', utility: 'F' };
+const SLOT_KEYS = { primary: 'LMB', power: 'RMB', mobility: 'E', guard: 'Space', utility: 'F', ultimate: 'Q' };
 const FPS = 30;
 const hex = (c) => '#' + c.toString(16).padStart(6, '0');
 const prettyId = (id) => id.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
@@ -109,10 +109,11 @@ const startLoop = () => { if (!raf && stages.size) { last = performance.now(); r
 // ---------------------------------------------------------------- picker
 
 function cardHTML(w) {
-  const spells = KIT_SLOTS.map(slot => {
+  // the five kit slots, then the ultimate (Q) when the wizard has one
+  const spells = [...KIT_SLOTS, 'ultimate'].filter(slot => w.kit[slot]).map(slot => {
     const id = w.kit[slot];
     const s = SPELLBOOK[id];
-    return `<li${s?.blurb ? ` title="${esc(s.blurb)}"` : ''}><kbd>${SLOT_KEYS[slot]}</kbd><b>${esc(s?.name || prettyId(id))}</b>${s?.blurb ? `<span>${esc(s.blurb)}</span>` : ''}</li>`;
+    return `<li${slot === 'ultimate' ? ' class="ult"' : ''}${s?.blurb ? ` title="${esc(s.blurb)}"` : ''}><kbd>${SLOT_KEYS[slot]}</kbd><b>${esc(s?.name || prettyId(id))}</b>${s?.blurb ? `<span>${esc(s.blurb)}</span>` : ''}</li>`;
   }).join('');
   return `<div class="wp-head">
       <div class="wp-preview" aria-hidden="true"></div>

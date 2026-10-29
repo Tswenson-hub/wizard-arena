@@ -52,6 +52,26 @@
 .wp-kit b { font-weight: 700; }
 .wp-kit span { grid-column: 2; font-size: 11px; color: var(--dim, rgba(244,236,216,0.6)); }
 
+/* The ultimate (Q) row: set off from the five kit spells. */
+.wp-kit li.ult { margin-top: 3px; padding-top: 4px; border-top: 1px dashed color-mix(in srgb, var(--accent) 35%, transparent); }
+.wp-kit li.ult kbd { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+
+/* An odd card out (five wizards in two columns): the last card spans the row, portrait and name on the
+   left, its spells in two columns on the right. */
+@container (min-width: 560px) {
+  .wp-card:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+    display: grid; grid-template-columns: minmax(200px, 0.75fr) 2fr; column-gap: 16px; align-items: start;
+  }
+  .wp-card:last-child:nth-child(odd) .wp-kit { grid-template-columns: 1fr 1fr; column-gap: 16px; row-gap: 4px; }
+  .wp-card:last-child:nth-child(odd) .wp-head { flex-direction: column; align-items: flex-start; }
+  .wp-card:last-child:nth-child(odd) .wp-preview { width: 100%; height: 150px; }
+  .wp-card:last-child:nth-child(odd) .wp-kit li.ult { grid-column: 1 / -1; }
+}
+@container (max-width: 380px) {
+  .wp-card:last-child:nth-child(odd) { grid-column: auto; }
+}
+
 /* Narrow (the 520 px join panel): keep blurbs to one line each, full text on wide layouts. */
 @container (max-width: 600px) {
   .wp-kit span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

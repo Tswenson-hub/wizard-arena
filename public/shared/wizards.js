@@ -35,7 +35,7 @@ export const WIZARDS = {
   // characters agent wires his model.
   jeb: {
     id: 'jeb', name: 'Jeb', title: 'the Shepherd', role: 'Herder · rams do his fighting',
-    color: 0xe8dcc0, tint: 0xc9b07a, model: null,
+    color: 0xe8dcc0, tint: 0xc9b07a, model: '/models/wizards/jeb.glb',
     kit: { primary: 'fireball', power: 'meteor', mobility: 'blink', guard: 'tempest_veil', utility: 'telekinesis', ultimate: 'cataclysm' },
     speed: 5.3,
   },

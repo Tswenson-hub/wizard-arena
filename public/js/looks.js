@@ -85,6 +85,16 @@ const MODEL_CLIPS = {
     cast_heavy: 'Charged_Upward_Slash',        // gathers low, then slashes upward at 1.8-2.3 s: the meteor release window
     death: ['Fall_Dead_from_Abdominal_Injury', 0, 2.8, 2.4],  // hunches, kneels, flat by about 1.9 s; extra key
   },
+  jeb: {
+    walk: 'Walking',
+    cast_fast: ['mage_soell_cast_1', 0.3, 1.2],          // the sling: a gather, then the arms fling wide at about 0.54 s (the spark window)
+    cast_heavy: 'Angry_Ground_Stomp_2',                // summoning the Battering Ram: a lunging stomp that lands at about 0.6-0.75 s
+    block: 'Block1',                                    // Ram Guard: a held guarded stance
+    // extra keys
+    ult: ['Sword_Judgment', 0.2, 2.1, 1.1],             // the Stampede call: an arm-up leap at about 0.3 s, a ground slam at about 0.75 s
+    death: ['Lie_Back_Leg_Swing', 0, 1.3],              // stumbles and falls flat on his back (the later kip-up is cut)
+    ride: ['Cautious_Crouch_Walk_Left_inplace', 0.3, 0.42, 1.0],  // Ram Ride: a held wide-legged crouch (straddling the ram); clamp or ping-pong
+  },
   vesper: {
     walk: 'Walking',
     cast_fast: ['mage_soell_cast_5', 9.9, 11.36],     // the arm rises overhead, then flings forward and down (the spark window)
@@ -132,6 +142,8 @@ function warpClip(clip, key, points) {
 const PROPS = {
   rime: { url: '/models/wizards/rime-wand.glb', length: 1.5, grip: 0.6, lean: 0.12, out: 0.1 },
   vesper: { url: '/models/wizards/vesper-wand.glb', length: 1.5, grip: 0.6, lean: 0.12, out: 0.1 },
+  // fitted mid-run (`pose`/`at`, the pose seen most) so the hook stays up while he runs
+  jeb: { url: '/models/wizards/jeb-crook.glb', length: 1.75, grip: 0.85, lean: 0.1, out: 0.1, pose: 'run', at: 0.16 },
 };
 
 // Vesper's whips (Ty's models). The coil hangs flat on her left hip at all times; the straight whip is held by
@@ -299,11 +311,11 @@ function ownClips(id, scene, animations) {
 }
 
 // Fit a prop into the right hand of `scene` (unscaled, bind pose) posed with `idle`. Returns the prop
-// template and its transform relative to the RightHand bone, or null.
+// template and its transform relative to the RightHand bone, or null. `cfg.pose`/`cfg.at` fit it in another clip/time.
 function fitProp(cfg, propScene, scene, idle, modelScale) {
   const body = skeletonClone(scene);
   const mixer = new THREE.AnimationMixer(body);
-  mixer.clipAction(idle).play(); mixer.setTime(0);
+  mixer.clipAction(idle).play(); mixer.setTime(cfg.at || 0);
   body.updateMatrixWorld(true);
   const hand = body.getObjectByName('RightHand');
   if (!hand) return null;
@@ -437,7 +449,7 @@ export async function loadWizardModels(loader) {
       }
       models[id] = { scene, clips, scale, offsetY: -box.min.y * scale };
       const cfg = PROPS[id];
-      if (cfg) await loader.loadAsync(cfg.url).then(g => { models[id].prop = fitProp(cfg, g.scene, scene, clips.idle, scale); })
+      if (cfg) await loader.loadAsync(cfg.url).then(g => { models[id].prop = fitProp(cfg, g.scene, scene, clips[cfg.pose || 'idle'], scale); })
         .catch(err => console.warn(`[looks] ${id}: prop ${cfg.url} not used (${err?.message || err})`));
       const wh = WHIPS[id];
       if (wh) await Promise.all([loader.loadAsync(wh.coil.url), loader.loadAsync(wh.whip.url)]).then(([c, w]) => {
