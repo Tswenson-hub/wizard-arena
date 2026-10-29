@@ -23,7 +23,8 @@
 // Loop: warmup (10 s, nothing scores) → live (to the target or the 8 min cap) → end (results) → vote (15 s)
 // → reset (everyone respawns on their side, props and goats reset, ultimate charge 0) → warmup ...
 // Debug (only with MATCH_DEBUG=1 in the server's environment): { t: 'matchDebug', target, cap, warmup,
-// endTime, voteTime, hop, overtime, botDiff, mode, skip: true, spectate: true, dummy: { team, x, z } | false }.
+// endTime, voteTime, hop, overtime, botDiff, mode, skip: true, spectate: true, dummy: { team, x, z } | false,
+// pinBots: true | false }.
 
 import * as C from '../public/shared/constants.js';
 
@@ -204,13 +205,13 @@ export function createMatch(ctx) {
     S.filling = d.team;
     try { ctx.addBot('easy'); } finally { S.filling = null; }
     const p = [...players.values()].filter(q => q.bot && q.team === d.team).sort((a, b) => b.id - a.id)[0];
-    if (p) { p.dummy = { x: +d.x || 0, z: +d.z || 0 }; p.fill = false; p.name = 'Dummy'; }
+    if (p) { p.dummy = true; p.pin = { x: +d.x || 0, z: +d.z || 0 }; p.fill = false; p.name = 'Dummy'; }
   }
   function pinDummies() {
     const now = t();
     for (const p of players.values()) {
-      if (!p.dummy || p.dead) continue;
-      p.p = [p.dummy.x, 0, p.dummy.z];
+      if (!p.pin || p.dead) continue;
+      p.p = [p.pin.x, 0, p.pin.z];
       p.rootUntil = p.silenceUntil = now + 0.5;
     }
   }
@@ -442,6 +443,8 @@ export function createMatch(ctx) {
         if (msg.hop !== undefined) S.hop = num(msg.hop, 6, 600) ?? SIEGE.hop;
         if (msg.overtime !== undefined) S.overtimeMax = num(msg.overtime, 1, 120) ?? SIEGE.overtime;
         if (msg.dummy !== undefined) setDummy(p, msg.dummy);
+        // pinBots: every bot frozen where it stands (rooted and silenced), for UI tests; false lets them go
+        if (msg.pinBots !== undefined) for (const q of players.values()) if (q.bot && !q.dummy) q.pin = msg.pinBots ? { x: q.p[0], z: q.p[2] } : null;
         if (DIFFS.includes(msg.botDiff)) S.botDiff = msg.botDiff;
         if (msg.spectate) {
           p.spectator = true; p.team = null;

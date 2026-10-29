@@ -15,7 +15,7 @@ const MODE_BLURB = {
   siege: 'Hold the rune circle: it hops every 60 s. First team to 100%.',
 };
 const TEAM = { ember: { name: 'Ember', color: 0xff6a2a }, frost: { name: 'Frost', color: 0x3aa8ff } };
-const NEUTRAL = 0xffe2a0;
+const NEUTRAL = 0xffc857;
 const VOTE_KEYS = { Digit1: 'ffa', Digit2: 'tdm', Digit3: 'siege' };
 const WARN = 5;   // seconds of hop warning (server: SIEGE.warn)
 const hex = (c) => '#' + (c >>> 0).toString(16).padStart(6, '0');
@@ -97,7 +97,7 @@ export function mountMatchUI(env) {
   function makeCircle(r, ghost) {
     const g = new THREE.Group();
     const parts = {};
-    parts.edge = new THREE.Mesh(new THREE.RingGeometry(r - 0.22, r, 96).rotateX(-Math.PI / 2), additive(NEUTRAL, ghost ? 0.5 : 0.9));
+    parts.edge = new THREE.Mesh(new THREE.RingGeometry(r - 0.45, r, 96).rotateX(-Math.PI / 2), additive(NEUTRAL, ghost ? 0.5 : 1));
     parts.edge.position.y = 0.06;
     // the rune band: 16 arc segments turning slowly inside the edge
     parts.runes = new THREE.Group();
@@ -110,7 +110,7 @@ export function mountMatchUI(env) {
     if (!ghost) {
       parts.disc = new THREE.Mesh(new THREE.CircleGeometry(r, 64).rotateX(-Math.PI / 2), additive(NEUTRAL, 0.1));
       parts.disc.position.y = 0.04;
-      parts.wall = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 1.6, 96, 1, true).translate(0, 0.8, 0), additive(NEUTRAL, 0.32, { map: fadeTex, side: THREE.DoubleSide }));
+      parts.wall = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 2.2, 96, 1, true).translate(0, 1.1, 0), additive(NEUTRAL, 0.45, { map: fadeTex, side: THREE.DoubleSide }));
       g.add(parts.disc, parts.wall);
     }
     // a light column at the centre, seen across the map
@@ -368,7 +368,7 @@ export function mountMatchUI(env) {
       const capturing = live && z.owner && !z.contested;
       const pulse = 0.5 + 0.5 * Math.sin(tsec * (capturing ? 5 : 2));
       fx.parts.disc.material.opacity = (capturing ? 0.14 : 0.08) + pulse * 0.05 + (live && z.contested ? 0.06 : 0);
-      fx.parts.wall.material.opacity = 0.22 + pulse * (capturing ? 0.2 : 0.08);
+      fx.parts.wall.material.opacity = 0.38 + pulse * (capturing ? 0.25 : 0.1);
       // fade the centre column when you stand near it
       const near = Math.min(1, Math.max(0.15, (Math.hypot(camera.position.x - z.x, camera.position.z - z.z) - 3) / 16));
       fx.parts.beamOuter.material.opacity = 0.12 * near; fx.parts.beamCore.material.opacity = 0.35 * near;
