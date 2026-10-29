@@ -22,7 +22,9 @@ def read(f):
     b = open(f, 'rb').read(); n = struct.unpack('<I', b[12:16])[0]
     return len(b), json.loads(b[20:20 + n])
 size, j = read(sys.argv[1]); _, base = read(sys.argv[2])
-names = lambda g: [g['nodes'][i].get('name') for s in g.get('skins', []) for i in s['joints']]
+import re
+# Mixamo-style rigs name bones 'mixamorig:Hips'; looks.js strips the prefix, so compare without it
+names = lambda g: [re.sub(r'^mixamorig:?', '', g['nodes'][i].get('name') or '') for s in g.get('skins', []) for i in s['joints']]
 bones, want = names(j), names(base)
 print(f"source: {sys.argv[1]} ({size / 1e6:.1f} MB)")
 if not bones:
@@ -30,7 +32,10 @@ if not bones:
     sys.exit(2)
 print(f"bones: {len(bones)}")
 missing = [b for b in want if b not in bones]
-print("skeleton matches the base wizard: base clips will drive it" if not missing else f"skeleton differs; missing {missing}")
+mapped = ['Hips', 'Spine', 'Spine1', 'Spine2', 'Neck', 'Head'] + [sd + b for sd in ('Left', 'Right') for b in ('Shoulder', 'Arm', 'ForeArm', 'Hand', 'UpLeg', 'Leg', 'Foot', 'ToeBase')]
+if not missing: print("skeleton matches the base wizard: base clips will drive it")
+elif all(b in bones for b in mapped): print("Mixamo-style rig: looks.js uses its own clips and retargets the rest (MIXAMO_TO_BASE)")
+else: print(f"skeleton differs and can't be retargeted; missing {[b for b in mapped if b not in bones]}")
 print("RightHand bone:", "yes" if "RightHand" in bones else "NO (tell the spells agent the hand bone)")
 print("Head bone:", "yes" if "Head" in bones else "NO")
 print("clips:", [a.get('name') for a in j.get('animations', [])] or "none")

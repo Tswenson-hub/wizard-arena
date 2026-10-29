@@ -103,13 +103,36 @@ const MODEL_CLIPS = {
     // 1.5 s wind-up and the strike lands on the release, then the follow-through. Play it from the wind-up's start at 1x.
     lash: { clip: 'Right_Hand_Sword_Slash', warp: [[0, 0], [0.55, 1.3], [0.85, 1.55], [1.5, 2.1]] },
   },
+  // Embibe's own export (70 joints: the 66-bone rig plus four hood bones). Her clips have root motion and
+  // start in a crouch; times below were read off contact sheets and hand traces (hand-off).
+  embibe: {
+    walk: 'Walking',
+    // A relaxed stand (the drink clip's opening, before the arm lifts). The base idle's crossed fighting stance
+    // reads as crumpled on her heavy boots; it isn't tearing, Gale has the same pose (legs-close.png).
+    idle: ['Stand_and_Drink', 0.2, 1.9],
+    // Potion Toss: the standing overhand throw; the release (hand overhead, then flung forward) is at about
+    // 0.55 s, which is where main.js's cast_fast window (from 0.25 s at 2.6x) lands its key moment.
+    cast_fast: ['Female_Crouch_Pick_Throw_Forward', 1.85, 3.6],
+    // Toxic Flask: crouches, scoops the flask up from low behind her and lobs it overhead. Retimed to the
+    // meteor convention: the gather fills 0-1.9 s and the lob peaks at 2.1 s (release window 1.9-2.7 s).
+    cast_heavy: { clip: 'Crouch_Pull_and_Throw', from: 1.0, to: 4.6, warp: [[1.0, 0], [2.65, 1.8], [3.5, 2.1], [4.6, 2.9]] },
+    // extra keys
+    // Flask Step: the crouched charge, then the sidearm throw; the release lands at 0.6 s (the wind-up's end).
+    flask_step: { clip: 'Crouch_Charge_and_Throw', from: 4.3, to: 5.7, warp: [[4.3, 0], [5.35, 0.6], [5.7, 0.85]] },
+    // Flask Step's arrival: lands crouched and rises to standing.
+    arrival: ['Female_Crouch_Pick_Throw_Forward', 3.45, 4.6, 0.8],
+    // Berserker Brew: lifts the flask (left hand), at her lips by 0.55 s, head back at 1.15 s, lowered by 1.6 s.
+    ult: { clip: 'Stand_and_Drink', from: 1.9, to: 5.9, warp: [[1.9, 0], [3.0, 0.55], [4.5, 1.15], [5.9, 1.6]] },
+    death: 'dying_backwards',          // staggers back and lands flat by about 1.4 s (2.2 s)
+  },
 };
 
-// Clips Ty picked from Cinder's export for EVERY wizard: used directly on Cinder and retargeted bone by bone
-// onto the others (they are Mixamo-style rigs too). These override MODEL_CLIPS. 'run' stays each model's own
-// Running (full speed); the fight walks are for slow movement (wind-ups, ward, slowed, backward).
-// Natural speeds (planted foot, 1.8 m body) are in requests.md: time-scale each to ground speed / natural speed.
-const SHARED_CLIPS = {
+// Clips picked from one wizard's export for others (`to`, or every wizard): used directly on the source and
+// retargeted bone by bone onto the others (they are all Mixamo-style rigs). These override MODEL_CLIPS.
+// Cinder's set: 'run' stays each model's own Running (full speed); the fight walks are for slow movement (wind-ups,
+// ward, slowed, backward). Natural speeds (planted foot, 1.8 m body) are in requests.md: time-scale each to
+// ground speed / natural speed.
+const SHARED_CLIPS = [{
   from: 'cinder',
   keys: {
     walk_fight: 'Walk_Fight_Forward',          // extra key: a guarded walk forward, for slow movement (about 0.73 m/s at 1x)
@@ -119,7 +142,21 @@ const SHARED_CLIPS = {
     tk_throw: { clip: 'mage_soell_cast_4', warp: [[0, 0], [0.45, 0.08], [0.65, 0.18], [2.2, 1.0]] }, // the arms fling out at 0.1-0.2 s (the release)
     hit_waist: ['Hit_Reaction_to_Waist', 0.2, 1.45, 0.75],   // doubles over and recovers in 0.75 s (hit by a thrown object)
   },
-};
+}, {
+  // Embibe's Triple_Combo_Attack cut into its three strikes, as optional per-shot primary clips. Each starts in
+  // the pose the previous one ends in, strikes at 0.15 s and follows through; combo3 also recovers to the stance.
+  // Turned 45 degrees to the left: the combo is performed from a bladed stance about 55 degrees off forward.
+  // Play at 1x from 0 when the shot fires.
+  from: 'embibe', to: ['embibe', 'gale'],
+  keys: {
+    combo1: { yaw: 45, clip: 'Triple_Combo_Attack', from: 0.3, to: 1.0, warp: [[0.3, 0], [0.75, 0.15], [1.0, 0.45]] },     // overhead claw rake, down and across
+    combo2: { yaw: 45, clip: 'Triple_Combo_Attack', from: 1.0, to: 1.85, warp: [[1.0, 0], [1.5, 0.15], [1.85, 0.45]] },    // a turning backhand sweep
+    combo3: { yaw: 45, clip: 'Triple_Combo_Attack', from: 1.85, to: 3.3, warp: [[1.85, 0], [2.3, 0.15], [2.6, 0.4], [3.3, 0.8]] },  // the high finisher, then back to the stance
+  },
+}, {
+  from: 'embibe', to: ['gale'],
+  keys: { death: 'dying_backwards' },        // Gale was the last hero who sank: staggers back, flat by about 1.4 s
+}];
 
 // Retime a clip through piecewise-linear [[clipTime, newTime], ...] points.
 function warpClip(clip, key, points) {
@@ -157,6 +194,23 @@ const WHIPS = {
   },
 };
 const WHIP_GLOW = new THREE.Color(0xff1a3a);
+
+// Embibe's potions (Ty's models, static). Each kind is fitted into both fists (hidden until
+// body.holdPotion(kind, hand) shows it) and one hangs from her belt. `length` is the bottle's height (m) and
+// `grip` how far up the fist closes on it. holdPotion('purple' | 'green' | null, 'right' | 'left'): the purple
+// swirl is Potion Toss, the green crystal Toxic Flask; null empties both hands. Also on body.model.userData.
+const POTIONS = {
+  embibe: {
+    kinds: {
+      purple: { url: '/models/wizards/embibe-potion-purple.glb', length: 0.27, grip: 0.07, lean: 0, out: 0 },
+      green: { url: '/models/wizards/embibe-potion-green.glb', length: 0.32, grip: 0.08, lean: 0, out: 0 },
+    },
+    // the left hand is the drinking hand (Berserker Brew): fitted at the drink's peak (hand above her face), the
+    // neck tipped down to her mouth
+    left: { pose: 'ult', at: 1.1, aim: ['Head', 0.11, 0.04] },
+    belt: { kind: 'green', height: 0.17, side: -1, out: 0.07, drop: 0.06, front: 0.04 },   // side -1: her right hip
+  },
+};
 
 function subclipByTime(clip, key, from, to, duration) {
   const fps = 30;
@@ -220,7 +274,9 @@ function retargetClip(target, clip, names, source = baseModel, fps = 30) {
   const heightRatio = hipsT && hipsS ? tRest.get(hipsT).p.y / sRest.get(hipsS).p.y : 1;
 
   const mixer = new THREE.AnimationMixer(src);
-  mixer.clipAction(clip).play();
+  // play once and hold: a looping action wraps setTime(duration) back to the first frame, which made every
+  // retargeted clip end in its opening pose (a retargeted death stood back up when clamped)
+  const action = mixer.clipAction(clip); action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; action.play();
   const frames = Math.max(2, Math.round(clip.duration * fps) + 1);
   const times = new Float32Array(frames);
   const quats = new Map([...pairs.keys()].map(o => [o, new Float32Array(frames * 4)]));
@@ -280,12 +336,35 @@ export function registerModel(gltf) {
 const boneNames = (root) => { const s = new Set(); root.traverse(o => { if (o.isBone) s.add(o.name); }); return s; };
 
 // One clip from `animations` for `key`, as a pick (see MODEL_CLIPS) describes it, or null.
-function pickClip(id, animations, key, pick) {
+// `scene`: the model the clip belongs to (bind pose), for `yaw`.
+function pickClip(id, animations, key, pick, scene) {
   const [name, from, to, duration] = Array.isArray(pick) ? pick : typeof pick === 'object' ? [pick.clip] : [pick];
   const clip = animations.find(a => a.name === name);
   if (!clip) { console.warn(`[looks] ${id}: no clip '${name}' for ${key}`); return null; }
-  return pick.warp ? stripRootMotion(warpClip(clip, key, pick.warp))
+  let out;
+  if (pick.warp && pick.from != null) {    // { clip, from, to, warp }: the part between from and to, retimed (warp in clip times)
+    const part = subclipByTime(clip, key, pick.from, pick.to);
+    out = stripRootMotion(warpClip(part, key, pick.warp.map(([a, b]) => [a - pick.from, b])));
+  } else out = pick.warp ? stripRootMotion(warpClip(clip, key, pick.warp))
     : from != null ? stripRootMotion(subclipByTime(clip, key, from, to, duration)) : asKey(clip, key);
+  return pick.yaw ? yawClip(out, scene, pick.yaw) : out;
+}
+
+// Turn a whole clip `deg` degrees about the vertical (positive: to the body's left), through its Hips tracks.
+// For clips performed from a bladed stance, so the body faces where the game aims it.
+function yawClip(clip, scene, deg) {
+  const hips = scene?.getObjectByName('Hips');
+  if (!hips) return clip;
+  scene.updateMatrixWorld(true);
+  const P = hips.parent.getWorldQuaternion(new THREE.Quaternion()).premultiply(scene.getWorldQuaternion(new THREE.Quaternion()).invert());
+  const R = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), deg * Math.PI / 180);
+  const L = P.clone().invert().multiply(R).multiply(P);        // the turn, in the hips' parent space
+  const q = new THREE.Quaternion(), v = new THREE.Vector3();
+  for (const t of clip.tracks) {
+    if (t.name === 'Hips.quaternion') for (let i = 0; i < t.values.length; i += 4) q.fromArray(t.values, i).premultiply(L).toArray(t.values, i);
+    if (t.name === 'Hips.position') for (let i = 0; i < t.values.length; i += 3) v.fromArray(t.values, i).applyQuaternion(L).toArray(t.values, i);
+  }
+  return clip;
 }
 
 // Clip set for a model with its own skeleton: per-wizard picks, then Meshy-named clips, then the base
@@ -294,7 +373,7 @@ function ownClips(id, scene, animations) {
   const picks = MODEL_CLIPS[id] || {};
   const out = {};
   for (const [key, pick] of Object.entries(picks)) {
-    const clip = pickClip(id, animations, key, pick);
+    const clip = pickClip(id, animations, key, pick, scene);
     if (clip) out[key] = clip;
   }
   for (const [key, names] of Object.entries(CLIP_NAMES)) {
@@ -317,12 +396,13 @@ function fitProp(cfg, propScene, scene, idle, modelScale) {
   const mixer = new THREE.AnimationMixer(body);
   mixer.clipAction(idle).play(); mixer.setTime(cfg.at || 0);
   body.updateMatrixWorld(true);
-  const hand = body.getObjectByName('RightHand');
+  const side = cfg.hand === 'left' ? 'Left' : 'Right';
+  const hand = body.getObjectByName(side + 'Hand');
   if (!hand) return null;
   // the fist: between the wrist and the middle-finger knuckle, if the rig has fingers
   const grip = new THREE.Vector3(), knuckle = new THREE.Vector3();
   hand.getWorldPosition(grip);
-  const mid = body.getObjectByName('RightHandMiddle1');
+  const mid = body.getObjectByName(side + 'HandMiddle1');
   if (mid) grip.lerp(mid.getWorldPosition(knuckle), 0.5);
   // template: long axis on y, the grip point at the origin, `length` m long once the body is scaled
   prepareMeshes(propScene);
@@ -332,8 +412,14 @@ function fitProp(cfg, propScene, scene, idle, modelScale) {
   propScene.scale.set(k * (cfg.thick || 1), k, k * (cfg.thick || 1));   // `thick`: fatter than modelled, to read at range
   propScene.position.set(-(box.min.x + box.max.x) / 2 * k, -box.min.y * k - cfg.grip / modelScale, -(box.min.z + box.max.z) / 2 * k);
   const prop = new THREE.Group(); prop.name = 'heldProp'; prop.add(propScene);
-  // upright, leaning forward (+z) and out to the body's right (-x); world here is the model's root space
-  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(cfg.lean, 0, cfg.out));
+  // upright, leaning forward (+z) and out to the body's side (right: -x); world here is the model's root space.
+  // `aim`: [bone, forward m, up m] instead: the top points from the fist at that spot (a bottle at the lips).
+  let q;
+  if (cfg.aim) {
+    const [bone, fwd, up] = cfg.aim;
+    const at = body.getObjectByName(bone).getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, up / modelScale, fwd / modelScale));
+    q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), at.sub(grip).normalize());
+  } else q = new THREE.Quaternion().setFromEuler(new THREE.Euler(cfg.lean, 0, side === 'Left' ? -cfg.out : cfg.out));
   const want = new THREE.Matrix4().compose(grip, q, new THREE.Vector3(1, 1, 1));
   const local = new THREE.Matrix4().copy(hand.matrixWorld).invert().multiply(new THREE.Matrix4().copy(body.matrixWorld)).multiply(want);
   const t = { p: new THREE.Vector3(), q: new THREE.Quaternion(), s: new THREE.Vector3() };
@@ -344,23 +430,25 @@ function fitProp(cfg, propScene, scene, idle, modelScale) {
 // Fit the coiled whip flat against the left hip of `scene` (unscaled, rest pose): a disc of `diameter` m,
 // `out` m outside the left thigh and `drop` m below the top of it, parented to the Hips bone so it rides the
 // pelvis rather than swinging with the leg. Returns the template and its transform relative to Hips, or null.
+// `cfg.height` instead of `diameter`: an upright object (a bottle) that tall, kept upright. `cfg.side` -1: the right hip.
 function fitHip(cfg, coilScene, scene, modelScale) {
   const body = skeletonClone(scene);
   body.updateMatrixWorld(true);
-  const hips = body.getObjectByName('Hips'), thigh = body.getObjectByName('LeftUpLeg');
+  const hips = body.getObjectByName('Hips'), thigh = body.getObjectByName(cfg.side < 0 ? 'RightUpLeg' : 'LeftUpLeg');
   if (!hips || !thigh) return null;
   prepareMeshes(coilScene);
   const box = new THREE.Box3().setFromObject(coilScene);
-  const k = cfg.diameter / modelScale / Math.max(box.max.x - box.min.x, box.max.y - box.min.y);
+  const k = cfg.height ? cfg.height / modelScale / (box.max.y - box.min.y)
+    : cfg.diameter / modelScale / Math.max(box.max.x - box.min.x, box.max.y - box.min.y);
   coilScene.scale.setScalar(k);
   const c = box.getCenter(new THREE.Vector3());
   coilScene.position.set(-c.x * k, -c.y * k, -c.z * k);
   const prop = new THREE.Group(); prop.name = 'whipCoil'; prop.add(coilScene);
   const at = thigh.getWorldPosition(new THREE.Vector3());
   const side = Math.sign(at.x - hips.getWorldPosition(new THREE.Vector3()).x) || 1;
-  at.x += side * cfg.out / modelScale; at.y -= cfg.drop / modelScale;
+  at.x += side * cfg.out / modelScale; at.y -= cfg.drop / modelScale; at.z += (cfg.front || 0) / modelScale;
   // the disc's face (its z) turned to point out of the hip, `turn` rad back towards the front so it reads from both
-  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, side * (Math.PI / 2 - (cfg.turn || 0)), 0));
+  const q = cfg.height ? new THREE.Quaternion() : new THREE.Quaternion().setFromEuler(new THREE.Euler(0, side * (Math.PI / 2 - (cfg.turn || 0)), 0));
   const want = new THREE.Matrix4().compose(at, q, new THREE.Vector3(1, 1, 1));
   const local = new THREE.Matrix4().copy(hips.matrixWorld).invert().multiply(new THREE.Matrix4().copy(body.matrixWorld)).multiply(want);
   const t = { p: new THREE.Vector3(), q: new THREE.Quaternion(), s: new THREE.Vector3() };
@@ -397,16 +485,19 @@ function measureSpeed(scene, clip, scale) {
 const GAIT_KEYS = ['run', 'walk', 'walk_fight', 'back'];
 
 // SHARED_CLIPS for wizard `id`: picked from its own clips when it is the source, otherwise retargeted
-// from the source model (when both are Mixamo-style rigs).
-function sharedClips(id, scene, animations, source) {
+// from the source model (when both are Mixamo-style rigs). `loaded`: every loaded gltf by wizard id.
+function sharedClips(id, scene, animations, loaded) {
   const out = {};
-  const mine = id === SHARED_CLIPS.from;
-  if (!mine && !source) return out;
   const has = boneNames(scene);
-  if (!mine && !Object.keys(MIXAMO_SAME).every(n => has.has(n))) return out;
-  for (const [key, pick] of Object.entries(SHARED_CLIPS.keys)) {
-    const clip = pickClip(SHARED_CLIPS.from, mine ? animations : source.animations, key, pick);
-    if (clip) out[key] = mine ? clip : retargetClip(scene, clip, MIXAMO_SAME, source.scene);
+  const mappable = Object.keys(MIXAMO_SAME).every(n => has.has(n));
+  for (const set of SHARED_CLIPS) {
+    if (set.to && !set.to.includes(id)) continue;
+    const mine = id === set.from, source = loaded[set.from];
+    if (!mine && (!source || !mappable)) continue;
+    for (const [key, pick] of Object.entries(set.keys)) {
+      const clip = pickClip(set.from, mine ? animations : source.animations, key, pick, mine ? scene : source.scene);
+      if (clip) out[key] = mine ? clip : retargetClip(scene, clip, MIXAMO_SAME, source.scene);
+    }
   }
   return out;
 }
@@ -427,7 +518,6 @@ export async function loadWizardModels(loader) {
       loaded[w.id] = gltf;
     }).catch(err => console.warn(`[looks] ${w.id}: ${w.model} not loaded (${err?.message || err}); using the base model`))
   ));
-  const source = loaded[SHARED_CLIPS.from];
   await Promise.all(Object.entries(loaded).map(async ([id, gltf]) => {
     try {
       const scene = gltf.scene;
@@ -440,7 +530,7 @@ export async function loadWizardModels(loader) {
       // Same skeleton as the base wizard: the base clips drive it by bone name. Otherwise use its own.
       let clips = sameRig ? baseClips : ownClips(id, scene, gltf.animations);
       if (!clips) throw new Error(`skeleton differs from wizard.glb, Meshy's clips are missing and it can't be retargeted`);
-      if (!sameRig) clips = { ...clips, ...sharedClips(id, scene, gltf.animations, source) };
+      if (!sameRig) clips = { ...clips, ...sharedClips(id, scene, gltf.animations, loaded) };
       for (const k of GAIT_KEYS) {
         const c = clips[k];
         if (!c) continue;
@@ -455,6 +545,17 @@ export async function loadWizardModels(loader) {
       if (wh) await Promise.all([loader.loadAsync(wh.coil.url), loader.loadAsync(wh.whip.url)]).then(([c, w]) => {
         models[id].whips = { coil: fitHip(wh.coil, c.scene, scene, scale), whip: fitProp(wh.whip, w.scene, scene, clips.idle, scale) };
       }).catch(err => console.warn(`[looks] ${id}: whips not used (${err?.message || err})`));
+      const po = POTIONS[id];
+      if (po) await Promise.all(Object.entries(po.kinds).map(([kind, cfg]) => loader.loadAsync(cfg.url).then(g => {
+        const copies = [g.scene.clone(), g.scene.clone(), g.scene];   // fitting rescales its copy in place
+        const hands = {};
+        for (const hand of ['right', 'left']) {
+          const fit = { ...cfg, hand, ...(hand === 'left' ? po.left : {}) };
+          hands[hand] = fitProp(fit, copies.pop(), scene, clips[fit.pose || 'idle'], scale);
+        }
+        const belt = po.belt.kind === kind ? fitHip(po.belt, copies.pop(), scene, scale) : null;
+        (models[id].potions ??= {})[kind] = { hands, belt };
+      }))).catch(err => console.warn(`[looks] ${id}: potions not used (${err?.message || err})`));
     } catch (err) { console.warn(`[looks] ${id}: ${WIZARDS[id].model} not used (${err?.message || err}); using the base model`); }
   }));
   readyResolve();
@@ -538,10 +639,12 @@ function dotTexture() {
 
 // A handful of points animated analytically: place(i, t, pos) fills pos (model space) and returns alpha.
 // One draw call per effect; the geometry is updated in onBeforeRender (one frame of lag is invisible).
-function motes(count, { size, color, additive = true, place }) {
+// `tint(i)`: an optional colour per point (multiplied with `color`).
+function motes(count, { size, color, additive = true, place, tint }) {
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
   geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(count * 4).fill(1), 4));
+  if (tint) for (let i = 0, c = new THREE.Color(); i < count; i++) { c.setHex(tint(i)); geo.attributes.color.setXYZ(i, c.r, c.g, c.b); }
   const mat = new THREE.PointsMaterial({
     size, map: dotTexture(), color, vertexColors: true, transparent: true, depthWrite: false,
     blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
@@ -668,9 +771,22 @@ const FLAIR = {
     pool.onBeforeRender = () => { pool.material.opacity = 0.55 + 0.15 * Math.sin(performance.now() / 600); };
     model.add(pool);
   },
+  // Embibe: toxic fumes, a few green and violet bubbles rising around her and popping at shoulder height.
+  embibe(model) {
+    model.add(motes(9, { size: 0.1, color: 0xffffff, place: (i, t, p) => {
+      const k = fract(t * 0.32 + rand(i, 1));
+      const a = rand(i, 2) * 6.283 + t * 0.5, r = 0.32 + rand(i, 3) * 0.25;
+      p.set(Math.cos(a) * r + Math.sin(t * 2 + i) * 0.04, 0.5 + k * 1.1, Math.sin(a) * r);
+      return Math.sin(k * Math.PI) * 0.85;
+    }, tint: (i) => i % 3 ? 0x8cff4a : 0xb070ff }));
+  },
 };
 
 // ---------------------------------------------------------------- bodies
+
+// Base-colour gain for models whose texture is too dark to read in the arena light (Embibe's black leather and
+// olive cloak came out as a silhouette next to the others; texture mean luma 52 vs 111-132).
+const BRIGHTEN = { embibe: 1.45 };
 
 // A fresh skinned clone and the animation clips to drive it, for wizard `id`.
 // Clips use the canonical names: run, walk, block, cast_fast, cast_heavy, stun, dash, idle.
@@ -685,7 +801,7 @@ export function makeWizardBody(id) {
     inner = skeletonClone(own.scene);
     inner.scale.setScalar(own.scale);
     inner.position.y = own.offsetY;
-    inner.traverse(o => { if (o.isMesh) o.material = o.material.clone(); });
+    inner.traverse(o => { if (o.isMesh) { o.material = o.material.clone(); if (BRIGHTEN[id]) o.material.color.setScalar(BRIGHTEN[id]); } });
     clips = own.clips;
     const place = (fit, bone, ownMaterials) => {
       const node = inner.getObjectByName(bone);
@@ -711,6 +827,19 @@ export function makeWizardBody(id) {
       extra.setWhipGlow = (k) => {
         k = Math.max(0, Math.min(1, k || 0));
         for (const m of mats) { m.emissive.copy(WHIP_GLOW); m.emissiveIntensity = 1.6 * k; }
+      };
+    }
+    if (own.potions) {
+      const held = [];   // [kind, hand, object]
+      for (const [kind, { hands, belt }] of Object.entries(own.potions)) {
+        for (const hand of ['right', 'left']) {
+          const o = place(hands[hand], hand === 'right' ? 'RightHand' : 'LeftHand');
+          if (o) { o.visible = false; held.push([kind, hand, o]); }
+        }
+        place(belt, 'Hips');
+      }
+      extra.holdPotion = (kind, hand = 'right') => {
+        for (const [k, h, o] of held) if (h === hand || !kind) o.visible = k === kind && h === hand;
       };
     }
   } else {
