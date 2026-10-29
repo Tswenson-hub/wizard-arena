@@ -9,6 +9,11 @@
 // None of that angers it; only a spell does, held and flying goats included:
 //   graze|wander|return|recover|dizzy|stumble -> held -> flying -> stumble -> graze/wander (in the pen) or return
 //                                                   \-> stumble (dropped)      (spell) -> drops -> windup
+// Jeb the Shepherd summons rams (summonRam): golden goats in the same array that never pen. They charge
+// dead straight, circle him (orbit) until an enemy's shot sends one charging at the shooter, or carry him
+// (mount). Once spent they vanish (goatGone). callRam sends a calm map goat at someone, credited to him.
+//   charge -> dizzy|recover -> gone        orbit -> (shot) -> windup -> charge -> ...  | -> gone (time up)
+//   mount -> gone (despawnRam, or the owner is down)
 
 import * as C from '../public/shared/constants.js';
 
@@ -28,6 +33,7 @@ export function createGoats() {
 
 export const goatPublic = (g) => {
   const o = { id: g.id, p: [round(g.x), round(g.z)], yaw: round(g.yaw), s: g.state, tgt: g.target, y: round(g.y), holder: g.holder };
+  if (g.summoned) { o.summoned = true; o.owner = g.owner; o.team = g.team; if (g.speed !== G.chargeSpeed) o.speed = g.speed; }
   if (g.state === 'flying') o.v = [round(g.vx), round(g.vy), round(g.vz)];   // lets clients extrapolate the arc
   return o;
 };
@@ -35,18 +41,103 @@ const round = (v) => Math.round(v * 100) / 100;
 
 // A spell `ownerId` cast hit this goat. A held or flying goat drops to the ground first (a held one
 // takes the hit for its holder), then rears up at the caster like any other.
+// Returns true if the goat is now after the caster.
+// A summoned ram only answers an enemy of its owner, and only while it circles him: it breaks orbit and
+// charges the shooter (a short rear-up), with the kill credited to its owner. Anything else leaves it be.
 export function angerGoat(g, ownerId, ctx) {
-  if (g.state === 'windup' || g.state === 'charge') return;
+  if (g.summoned) {
+    if (g.state !== 'orbit' || !hostile(g, ctx.players.get(ownerId), ctx)) return false;
+    const t = ctx.now();
+    g.state = 'windup'; g.until = t + RAM_WINDUP; g.target = ownerId; g.speed = G.chargeSpeed; g.maxTime = G.chargeTime;
+    ctx.broadcast({ t: 'goatAngry', id: g.id, target: ownerId, owner: g.owner });
+    return true;
+  }
+  if (g.state === 'windup' || g.state === 'charge') return false;
   if (g.state === 'held' || g.state === 'flying') toGround(g, ctx);
   const t = ctx.now();
   g.state = 'windup'; g.until = t + G.windup;
-  g.target = ownerId; g.angeredBy = ownerId;
+  g.target = ownerId; g.angeredBy = ownerId; g.calledBy = null;
   ctx.broadcast({ t: 'goatAngry', id: g.id, target: ownerId });
+  return true;
+}
+
+// ---------------------------------------------------------------- Jeb's rams
+const RAM_WINDUP = 0.3;          // an orbiting ram that was shot rears up this briefly before it charges
+let nextRamId = 1000;            // summoned ids never clash with the map goats'
+const pending = [];              // rams summoned without ctx.goats join the array on the next update
+const CALM = new Set(['graze', 'wander', 'return', 'recover', 'dizzy', 'stumble']);
+
+// Would this goat run `p` down? A summoned ram (or a map goat Jeb called) passes its owner and his team.
+function hostile(g, p, ctx) {
+  if (!p) return false;
+  const oid = g.summoned ? g.owner : g.calledBy;
+  if (oid == null) return true;
+  if (p.id === oid) return false;
+  const o = ctx.players.get(oid);
+  if (!o) return true;
+  return ctx.isEnemy ? ctx.isEnemy(o, p) : !(o.team && o.team === p.team);
+}
+
+// opts: { x, z, yaw, ownerId, mode: 'charge' | 'orbit' | 'mount', targetId?, speed?, maxTime? }
+//   charge: dead straight along yaw (homing only if targetId is given) until a collider (dizzy), a wizard
+//           (ram) or maxTime (recover); then it vanishes.
+//   orbit:  circles the owner (GOAT.orbitRadius, one lap per GOAT.orbitLap) for maxTime (GOAT.orbitTime), then vanishes.
+//   mount:  no AI: server.js sets x / z / yaw under the rider each tick and calls despawnRam at the dismount.
+// The ram goes into ctx.goats when the ctx has it, otherwise into the array on the next updateGoats.
+export function summonRam(opts, ctx) {
+  const t = ctx.now(), owner = ctx.players.get(opts.ownerId);
+  const mode = opts.mode || 'charge';
+  const g = {
+    id: nextRamId++, x: opts.x, z: opts.z, yaw: opts.yaw || 0, y: 0, vx: 0, vy: 0, vz: 0,
+    summoned: true, owner: opts.ownerId, team: owner?.team ?? null, started: true,
+    state: mode, target: opts.targetId ?? null, angeredBy: opts.ownerId, calledBy: null,
+    speed: opts.speed ?? G.chargeSpeed, maxTime: opts.maxTime ?? (mode === 'orbit' ? G.orbitTime : G.chargeTime),
+    holder: null, thrower: null, hitIds: null, route: null, dest: null, ghost: false,
+    born: t, orbitA: 0,
+  };
+  g.until = t + g.maxTime;
+  g.dieAt = t + Math.max(G.ramLife, g.maxTime + G.dizzyTime + 1);
+  if (mode === 'orbit' && owner) {
+    // start where it stands (the spells side spaces the three of them out)
+    g.orbitA = Math.atan2(g.x - owner.p[0], g.z - owner.p[2]);
+    placeOrbit(g, owner);
+  }
+  if (Array.isArray(ctx.goats)) ctx.goats.push(g); else pending.push(g);
+  return g;
+}
+
+// Remove a summoned ram (the dismount, or the spells side clearing up). It goes on the next update.
+export function despawnRam(g) {
+  if (g?.summoned) g.state = 'gone';
+}
+
+// Send the nearest calm map goat within `range` of `from` ([x, z], [x, y, z] or {x, z}) at targetId,
+// rearing up as usual; the kill goes to creditId, and it passes creditId and his team. Null if none.
+export function callRam(targetId, creditId, from, range, ctx) {
+  const fx = Array.isArray(from) ? from[0] : from.x, fz = Array.isArray(from) ? from[from.length - 1] : from.z;
+  let best = null, bd = range;
+  for (const g of ctx.goats || lastGoats) {
+    if (g.summoned || !CALM.has(g.state) || g.holder) continue;
+    const d = Math.hypot(g.x - fx, g.z - fz);
+    if (d <= bd) { bd = d; best = g; }
+  }
+  if (!best) return null;
+  best.state = 'windup'; best.until = ctx.now() + G.windup; best.ghost = false;
+  best.target = targetId; best.angeredBy = creditId; best.calledBy = creditId;
+  ctx.broadcast({ t: 'goatAngry', id: best.id, target: targetId, caller: creditId });
+  return best;
+}
+let lastGoats = [];
+
+function placeOrbit(g, owner) {
+  g.x = owner.p[0] + Math.sin(g.orbitA) * G.orbitRadius;
+  g.z = owner.p[2] + Math.cos(g.orbitA) * G.orbitRadius;
+  g.yaw = wrap(g.orbitA + Math.PI / 2);     // running round him, counter-clockwise seen from above
 }
 
 // ---------------------------------------------------------------- telekinesis
 const LIFTABLE = new Set(['graze', 'wander', 'return', 'recover', 'dizzy', 'stumble']);
-export const canLift = (g) => LIFTABLE.has(g.state) && !g.holder;
+export const canLift = (g) => !g.summoned && LIFTABLE.has(g.state) && !g.holder;
 
 export function liftGoat(g, holderId, ctx) {
   if (!canLift(g)) return false;
@@ -128,8 +219,21 @@ function wardFacing(p, g) {
 
 export function updateGoats(goats, dt, ctx) {
   const t = ctx.now();
+  lastGoats = goats;
+  if (pending.length) goats.push(...pending.splice(0));
+  for (let i = goats.length - 1; i >= 0; i--) {
+    const g = goats[i];
+    if (!g.summoned) continue;
+    const owner = ctx.players.get(g.owner);
+    const down = !owner || owner.dead;
+    if (g.state === 'gone' || t >= g.dieAt || ((g.state === 'orbit' || g.state === 'mount') && down)) {
+      goats.splice(i, 1);
+      ctx.broadcast({ t: 'goatGone', id: g.id, p: [round(g.x), round(g.z)] });
+    }
+  }
   for (const g of goats) {
     if (!g.started) { g.started = true; g.until = t + g.until; }
+    if (g.summoned && updateRam(g, dt, t, ctx)) continue;
     switch (g.state) {
       case 'graze':
         if (t >= g.until) {
@@ -165,7 +269,7 @@ export function updateGoats(goats, dt, ctx) {
       case 'recover':
       case 'stumble':
         if (t >= g.until) {
-          g.target = null;
+          g.target = null; g.calledBy = null;
           if (C.inPen(g.x, g.z, 0.3)) { g.state = 'graze'; g.until = t + rand(2, 5); }
           else goHome(g, t);
         }
@@ -177,10 +281,35 @@ export function updateGoats(goats, dt, ctx) {
   }
 }
 
+// The parts of a summoned ram's life that differ from a goat's. True if handled.
+function updateRam(g, dt, t, ctx) {
+  switch (g.state) {
+    case 'orbit': {
+      const owner = ctx.players.get(g.owner);
+      g.orbitA = wrap(g.orbitA + dt * Math.PI * 2 / G.orbitLap);
+      placeOrbit(g, owner);
+      if (t >= g.until) g.state = 'gone';
+      return true;
+    }
+    case 'mount':
+      return true;                          // server.js moves it under the rider
+    case 'windup':
+      if (t >= g.until) { g.state = 'charge'; g.until = t + g.maxTime; return true; }
+      return false;                         // turns toward the shooter like a goat
+    case 'dizzy':
+    case 'recover':
+    case 'stumble':
+      if (t >= g.until) g.state = 'gone';   // spent: it vanishes on the next update
+      return true;
+  }
+  return false;
+}
+
 function charge(g, dt, t, ctx) {
   const tg = ctx.players.get(g.target);
   if (tg && !tg.dead) turnToward(g, Math.atan2(tg.p[0] - g.x, tg.p[2] - g.z), G.turnRate * dt);
-  g.vx = Math.sin(g.yaw) * G.chargeSpeed; g.vz = Math.cos(g.yaw) * G.chargeSpeed;
+  const speed = g.speed || G.chargeSpeed;
+  g.vx = Math.sin(g.yaw) * speed; g.vz = Math.cos(g.yaw) * speed;
   g.x += g.vx * dt; g.z += g.vz * dt;
 
   // smash through standing props
@@ -192,6 +321,7 @@ function charge(g, dt, t, ctx) {
   // ram the first wizard in reach (it runs under anyone up in the air)
   for (const p of ctx.players.values()) {
     if (p.dead || p.p[1] >= G.rammableBelow || Math.hypot(p.p[0] - g.x, p.p[2] - g.z) > G.radius + C.PLAYER_RADIUS + 0.25) continue;
+    if (!hostile(g, p, ctx)) continue;      // Jeb's rams run past him and his team
     return ram(g, p, t, ctx);
   }
   // pillars, trees, the house and the tractor stop it cold; it leaps fences and tramples crops
@@ -213,7 +343,7 @@ function charge(g, dt, t, ctx) {
 
 function ram(g, p, t, ctx) {
   if (g.state !== 'charge') return;             // held and flying goats never ram
-  const dir = [g.vx / G.chargeSpeed, 0, g.vz / G.chargeSpeed];
+  const sp = Math.hypot(g.vx, g.vz) || 1, dir = [g.vx / sp, 0, g.vz / sp];
   if (p.veilUntil > t) {
     // Gale's Tempest Veil: the goat bounces off from any side, at no cost to her
     g.yaw = wrap(g.yaw + Math.PI);
@@ -330,7 +460,7 @@ export function routeToGate(from) {
 }
 
 function goHome(g, t) {
-  g.state = 'return';
+  g.state = 'return'; g.calledBy = null;
   g.route = [...routeToGate([g.x, g.z]), C.PEN.gateIn, pickDest({ x: C.PEN.gateIn[0], z: C.PEN.gateIn[1] })];
   g.routeT = t; g.checkT = t; g.checkPos = [g.x, g.z]; g.detours = 0; g.ghost = false;
 }

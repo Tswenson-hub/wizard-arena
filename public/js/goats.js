@@ -3,6 +3,8 @@
 // moving the whole body. The server ignores fence posts while a goat charges; the leap is drawn here.
 // Telekinesis: a held goat floats at the snapshot's height, kicking (body wobble); a thrown one
 // tumbles end over end along an arc extrapolated from the snapshot's velocity.
+// Jeb's summoned rams (snapshot `summoned: true`) are 1.15x, tinted gold, appear and vanish in a poof
+// (call despawn() on goatGone), gallop under their rider ('mount') and run circles round him ('orbit').
 import * as THREE from 'three';
 import * as C from '../shared/constants.js';
 import { models, trampleCrops, updateCrops } from './world.js';
@@ -11,6 +13,23 @@ const LEAP_HALF = 1.5, LEAP_HEIGHT = 1.25;     // the hop starts 1.5 m before th
 const PEN_CX = (C.PEN.x0 + C.PEN.x1) / 2, PEN_CZ = (C.PEN.z0 + C.PEN.z1) / 2;
 const starGeo = new THREE.OctahedronGeometry(0.07, 0);
 const starMat = new THREE.MeshBasicMaterial({ color: 0xffe066 });
+const GOLD = new THREE.Color(0xffe7b0), GOLD_GLOW = new THREE.Color(0x5a3c00);
+const ORBIT_W = Math.PI * 2 / C.GOAT.orbitLap;   // rad/s round the owner
+
+// A summoned ram's look: every material cloned, tinted gold and glowing faintly.
+function gild(root) {
+  root.traverse(o => {
+    if (!o.isMesh) return;
+    o.material = (Array.isArray(o.material) ? o.material : [o.material]).map(m => {
+      const c = m.clone();
+      c.color?.multiply(GOLD);
+      if (c.emissive) { c.emissive.copy(GOLD_GLOW); c.emissiveIntensity = 0.35; }
+      return c;
+    });
+    if (o.material.length === 1) o.material = o.material[0];
+  });
+  return root;
+}
 
 function makeAlert() {
   const c = document.createElement('canvas'); c.width = c.height = 128;
@@ -33,7 +52,13 @@ export class GoatView {
     this.spin.position.y = C.GOAT.hitY;
     const mid = new THREE.Group(); mid.position.y = -C.GOAT.hitY;
     this.group.add(this.spin); this.spin.add(mid); mid.add(this.body);
-    this.body.add(models.goat ? models.goat.clone() : new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.9, 1.1), new THREE.MeshStandardMaterial({ color: 0xeeeeee })));
+    const look = models.goat ? models.goat.clone() : new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.9, 1.1), new THREE.MeshStandardMaterial({ color: 0xeeeeee }));
+    this.summoned = !!info.summoned; this.owner = info.owner ?? null; this.team = info.team ?? null;
+    this.body.add(this.summoned ? gild(look) : look);
+    if (this.summoned) this.group.scale.setScalar(C.GOAT.ramScale);
+    this.speed = info.speed || C.GOAT.chargeSpeed;
+    this.poofPending = this.summoned;        // the spawn poof plays on the first update (effects aren't here yet)
+    this.moved = 0;                          // ground speed seen between snapshots (the mount's gallop)
     this.alert = makeAlert(); this.alert.position.y = 2.0; this.alert.visible = false;
     this.group.add(this.alert);
     this.stars = new THREE.Group(); this.stars.position.set(0, 1.35, 0.45); this.stars.visible = false;
@@ -52,6 +77,8 @@ export class GoatView {
   }
 
   apply(s) {
+    if (this.summoned) this.moved = Math.hypot(s.p[0] - this.target.x, s.p[1] - this.target.z);
+    this.speed = s.speed || C.GOAT.chargeSpeed;
     this.target.set(s.p[0], s.y || 0, s.p[1]);
     if (s.s === 'flying' && s.v) this.vel.set(s.v[0], s.v[1], s.v[2]);
     this.targetYaw = s.yaw;
@@ -65,19 +92,28 @@ export class GoatView {
 
   update(dt, effects, sfx) {
     this.stateT += dt; this.phase += dt;
-    const charging = this.state === 'charge';
+    const charging = this.state === 'charge', orbit = this.state === 'orbit', mount = this.state === 'mount';
+    if (this.poofPending) { this.poofPending = false; this.poof(effects); }
     // dead-reckon a charge between snapshots so the goat doesn't lag behind the server
     if (charging) {
-      this.target.x += Math.sin(this.targetYaw) * C.GOAT.chargeSpeed * dt;
-      this.target.z += Math.cos(this.targetYaw) * C.GOAT.chargeSpeed * dt;
+      this.target.x += Math.sin(this.targetYaw) * this.speed * dt;
+      this.target.z += Math.cos(this.targetYaw) * this.speed * dt;
     }
+    // and an orbit: along the tangent, turning at the orbit's rate, so it runs a circle, not a polygon
+    if (orbit) {
+      const v = ORBIT_W * C.GOAT.orbitRadius;
+      this.target.x += Math.sin(this.targetYaw) * v * dt; this.target.z += Math.cos(this.targetYaw) * v * dt;
+      this.targetYaw += ORBIT_W * dt;
+    }
+    // a mount gallops while its rider moves (snapshot steps of more than a few cm)
+    const galloping = charging || (mount && this.moved > 0.08);
     const flying = this.state === 'flying', held = this.state === 'held';
     if (flying) {
       this.target.addScaledVector(this.vel, dt);
       this.vel.y -= C.GOAT.throwGravity * dt;
       if (this.target.y < 0) this.target.y = 0;
     }
-    this.group.position.lerp(this.target, Math.min(1, dt * (flying ? 30 : held ? 18 : charging ? 20 : 10)));
+    this.group.position.lerp(this.target, Math.min(1, dt * (flying ? 30 : held ? 18 : mount ? 30 : charging || orbit ? 20 : 10)));
     if (this.bleatQueued !== null) { sfx.bleat?.(this.group.position, this.bleatQueued); this.bleatQueued = null; }
     let dy = Math.atan2(Math.sin(this.targetYaw - this.group.rotation.y), Math.cos(this.targetYaw - this.group.rotation.y));
     this.group.rotation.y += dy * Math.min(1, dt * 12);
@@ -98,6 +134,8 @@ export class GoatView {
       case 'dizzy':   roll = Math.sin(t * 5) * 0.2; pitch = Math.sin(t * 3.3) * 0.08; break;
       case 'recover': pitch = 0.1 + Math.sin(t * 6) * 0.03; break;                // panting
       case 'return':  lift = Math.abs(Math.sin(t * 10)) * 0.08; roll = Math.sin(t * 10) * 0.05; break;   // trotting home
+      case 'orbit':   lift = Math.abs(Math.sin(t * 16)) * 0.12; roll = -0.12 + Math.sin(t * 16) * 0.04; pitch = 0.08; break;   // leaning into the circle
+      case 'mount':   if (galloping) { pitch = 0.1 + Math.sin(t * 18) * 0.12; lift = Math.abs(Math.sin(t * 18)) * 0.14; } else pitch = Math.sin(t * 2) * 0.03; break;
       case 'held':    // legs kicking: a fast, uneven wobble of the whole body
         roll = Math.sin(t * 17) * 0.3 + Math.sin(t * 29) * 0.08; pitch = Math.sin(t * 11) * 0.25;
         lift = Math.abs(Math.sin(t * 23)) * 0.06;
@@ -135,7 +173,8 @@ export class GoatView {
     b.position.y += (lift - b.position.y) * k;
     b.position.z += (zOff - b.position.z) * k;
 
-    this.alert.visible = this.state === 'windup' || charging;
+    // summoned rams charge in herds: only a ram turning on a shooter gets the '!'
+    this.alert.visible = this.state === 'windup' || (charging && !this.summoned);
     if (this.alert.visible) this.alert.scale.setScalar(0.75 + Math.abs(Math.sin(t * 10)) * 0.2);
     this.stars.visible = this.state === 'dizzy';
     if (this.stars.visible) this.stars.children.forEach((s, i) => {
@@ -145,12 +184,25 @@ export class GoatView {
     });
 
     // dust and hoofbeats while galloping
-    if (charging || this.state === 'windup') {
+    if (galloping || orbit || this.state === 'windup') {
       this.dustT += dt;
-      if (this.dustT > 0.05) { this.dustT = 0; effects.dust(this.group.position, charging ? 3 : 1); }
+      if (this.dustT > (orbit ? 0.12 : 0.05)) { this.dustT = 0; effects.dust(this.group.position, galloping ? 3 : 1); }
       this.stepT += dt;
-      if (charging && this.stepT > 0.11) { this.stepT = 0; sfx.hoof(this.group.position); }
+      if (galloping && this.stepT > (this.summoned ? 0.16 : 0.11)) { this.stepT = 0; sfx.hoof(this.group.position); }
     }
+  }
+
+  // A puff of golden dust where a summoned ram appears or vanishes.
+  poof(effects) {
+    const p = this.group.position.clone().setY(0.6);
+    effects.burst(p, 0xffe2a0, 24, 3.5, 0.7, 1.5);
+    effects.burst(p, 0xfff6e0, 14, 2.4, 0.55, 0.5);
+    effects.dust(this.group.position, 10);
+  }
+  // goatGone: poof, then remove. (Plain goats never go.)
+  despawn(scene, effects) {
+    if (effects) this.poof(effects);
+    this.dispose(scene);
   }
 
   dispose(scene) { scene.remove(this.group); }

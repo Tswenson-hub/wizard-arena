@@ -49,6 +49,12 @@ export const GOAT = {
   throwSpeed: 24,       // m/s along the aimed direction
   throwGravity: 6,      // m/s² (aim with ballisticDir(origin, target, throwSpeed, throwGravity))
   stumbleTime: 0.5,     // on its feet after a landing or a drop, before it carries on
+  // Jeb's summoned rams (goats.js summonRam): a 1.15x golden goat that never pens and vanishes once spent.
+  ramScale: 1.15,
+  orbitRadius: 2.2,     // Ram Guard: distance from Jeb
+  orbitLap: 1.5,        // seconds per full lap
+  orbitTime: 3.0,       // an orbiting ram that nobody shoots leaves after this
+  ramLife: 9,           // hard timeout for any summoned ram (a mount without a dismount, a stuck charge)
 };
 
 // ------------------------------------------------------------ farmhouse
