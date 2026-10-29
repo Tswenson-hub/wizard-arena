@@ -10,7 +10,7 @@ export const WIZARDS = {
     color: 0xff5c3c,          // UI accent, ring and nameplate
     tint: null,               // stand-in tint over the base model until a model of its own exists
     model: '/models/wizards/cinder.glb',   // null = base wizard.glb, tinted by `tint`
-    kit: { primary: 'fireball', power: 'meteor', mobility: 'smoke_screen', guard: 'firewall', utility: 'telekinesis', ultimate: 'cataclysm' },
+    kit: { primary: 'fireball', power: 'meteor', mobility: 'smoke_screen', guard: 'firewall', utility: 'telekinesis', ultimate: 'meteor_rain' },
     speed: 3.0,               // walk speed (m/s; Ty: normal movement is a walk); spells track, like kit
   },
   gale: {
@@ -22,7 +22,7 @@ export const WIZARDS = {
   rime: {
     id: 'rime', name: 'Rime', title: 'the Frost Warden', role: 'Fortress · slows, walls off, shells from cover',
     color: 0x7fd8ff, tint: 0x8fd4ff, model: '/models/wizards/rime.glb',
-    kit: { primary: 'glacial_skim', power: 'frostfall', mobility: 'skyward', guard: 'glacial_bulwark', utility: 'telekinesis', ultimate: 'absolute_zero' },
+    kit: { primary: 'glacial_skim', power: 'frostfall', mobility: 'skyward', guard: 'glacial_bulwark', utility: 'telekinesis', ultimate: 'blizzard' },
     speed: 3.0,
   },
   vesper: {
