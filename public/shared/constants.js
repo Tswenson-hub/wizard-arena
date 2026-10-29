@@ -621,6 +621,20 @@ export function cageClamp(pos, cage, inside) {
 
 // Run speed of wizard `id` (wizards.js `speed`); wind-up and ward speeds scale with it.
 export const speedOf = (id) => WIZARDS[id]?.speed ?? MOVE_SPEED;
+// Casting roots the caster in place (Ty: "players should be stopped while casting a spell, unless it is a
+// movement-based ability"). Turning and aiming still work. These are the short ones (seconds), each about as long as its
+// cast pose up to the release; wind-ups, channels and held shields root for as long as they last.
+export const CAST_ROOT = {
+  primary: { fast: 0.28, fireball: 0.3, skim: 0.28, shear: 0.22, hex: 0.3, sling: 0.28, potion: 0.32 },
+  heavyRelease: 0.3,   // Meteor leaving the hand (the charge before it is a wind-up)
+  lashRelease: 0.3,
+  frostfall: 0.5,      // Frostfall's cast pose
+  toxic: 0.35, ram: 0.35,
+  tapShield: 0.3,      // Firewall, Glacial Bulwark, Tempest Veil, Smoke Flask, Ram Guard
+  tk: 0.35,            // a telekinesis lift or throw gesture
+  curse: 0.3,
+};
+
 // Sprint (Shift): a run at the wizard's `sprint` speed, paid from the same stamina as the ward.
 export const SPRINT = { speed: 5.5, drain: 25, restart: 15 };   // m/s default, stamina/s, stamina needed to start again after running dry
 export const sprintOf = (id) => WIZARDS[id]?.sprint ?? SPRINT.speed;

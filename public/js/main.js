@@ -80,6 +80,7 @@ const local = {
   mrain: null,                 // Meteor Rain: { phase, start, from, hoverUntil, diveFrom, diveTo, diveStart, lastAim } (the server flies us)
   pull: null,                  // { v: [x, z], until } dragged by an enemy Eye of the Storm
   flaskWind: null,             // Embibe's Flask Step wind-up: { start }
+  castRootUntil: 0,            // a short cast pose roots us until then (C.CAST_ROOT); wind-ups and held wards root while they last
   sprinting: false,            // Shift: running (predicted from our stamina; the server grants it)
   ride: null,                  // Jeb's Ram Ride: { start, rideAt, dismountAt, endAt } (predicted; the server's 'ride' confirms)
   fHold: null,                 // { start } while F is held with nothing carried (Trapped Relic: hold to curse)
@@ -300,7 +301,7 @@ function applySnapshot(w, s) {
   w.riding = !!s.ride; w.ramGuard = !!s.ramGuard;
   w.brewing = !!s.brew;
   if (!s.brew && w.brewFx) { effects.stopAura(w.brewFx); w.brewFx = null; }
-  if (w !== me) w.sprinting = !!s.sprint;
+  if (w !== me) { w.sprinting = !!s.sprint; w.castRooted = !!s.castRoot; }
   w.ultWinding = !!s.ultWind; w.blizz = s.blizz ?? null;
   if (w === me) {
     if (!s.ultWind && local.ultWind && now - local.ultWind.start > 0.5) local.ultWind = null;   // refused, fizzled or fired
@@ -1264,6 +1265,7 @@ function groundTarget(range) {
 }
 
 function sendPickup() {
+  if (tkHover) local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.tk);   // the lift gesture
   camera.getWorldDirection(camDir);
   net.send({ t: 'pickup', aimOrigin: camera.position.toArray(), aimDir: camDir.toArray() });
 }
@@ -1355,23 +1357,23 @@ function updateLocal(dt) {
     if (wantBlock !== local.blocking) { local.blocking = wantBlock; net.send({ t: 'block', on: wantBlock }); }
     if (K.guard === 'tempest_veil' && input.justPressed('Space') && !airborne && !local.spaceHeld && now >= local.cd.guard && !me.veiled) {
       local.cd.guard = now + SPELL.tempest_veil.cooldown;   // tap: the bubble goes up for its duration, no holding
-      net.send({ t: 'veil' });
+      net.send({ t: 'veil' }); local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.tapShield);
     }
     if (K.guard === 'glacial_bulwark' && input.justPressed('Space') && !airborne && !local.spaceHeld && !busy && now >= local.cd.guard) {
       local.cd.guard = now + BULWARK.cooldown;
-      net.send({ t: 'bulwark', yaw: local.yaw });
+      net.send({ t: 'bulwark', yaw: local.yaw }); local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.tapShield);
     }
     if (K.guard === 'smoke_flask' && input.justPressed('Space') && !airborne && !local.spaceHeld && now >= local.cd.guard) {
       local.cd.guard = now + SPELL.smoke_flask.cooldown * cdMul();
-      net.send({ t: 'smokeFlask' });
+      net.send({ t: 'smokeFlask' }); local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.tapShield);
     }
     if (K.guard === 'ram_guard' && input.justPressed('Space') && !airborne && !local.spaceHeld && now >= local.cd.guard) {
       local.cd.guard = now + RGUARD.cooldown;
-      net.send({ t: 'ramGuard' });
+      net.send({ t: 'ramGuard' }); local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.tapShield);
     }
     if (K.guard === 'firewall' && input.justPressed('Space') && !airborne && !local.spaceHeld && !busy && now >= local.cd.guard) {
       local.cd.guard = now + SPELL.firewall.cooldown;   // tap: the flame stands for its life, no holding
-      net.send({ t: 'firewall', yaw: local.yaw });
+      net.send({ t: 'firewall', yaw: local.yaw }); local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.tapShield);
     }
 
     // primary
@@ -1389,6 +1391,7 @@ function updateLocal(dt) {
       if (!local.ammo) local.reloadUntil = now + MAG.reload;
       const kind = C.PRIMARY_KIND[K.primary];
       local.cd.fast = now + SPELL[K.primary].cooldown * cdMul();
+      local.castRootUntil = Math.max(local.castRootUntil, now + (C.CAST_ROOT.primary[C.PRIMARY_KIND[K.primary]] ?? 0.28));
       if (kind === 'skim') net.send({ t: 'cast', kind, dir: [aimDir.x, 0, aimDir.z] });
       else if (kind === 'hex' || kind === 'potion') net.send({ t: 'cast', kind, origin: aimOrigin.toArray(), dir: aimDir.toArray(), target: aimPoint() });   // curves (or arcs) onto what the crosshair is on
       else net.send({ t: 'cast', kind, origin: aimOrigin.toArray(), dir: aimDir.toArray() });
@@ -1410,11 +1413,11 @@ function updateLocal(dt) {
       } else if (K.power === 'toxic_flask') {
         computeAim();
         local.cd.power = now + SPELL.toxic_flask.cooldown * cdMul();
-        net.send({ t: 'toxic', origin: aimOrigin.toArray(), dir: aimDir.toArray(), target: aimPoint() });
+        net.send({ t: 'toxic', origin: aimOrigin.toArray(), dir: aimDir.toArray(), target: aimPoint() }); local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.toxic);
       } else if (K.power === 'battering_ram') {
         computeAim();
         local.cd.power = now + SPELL.battering_ram.cooldown;
-        net.send({ t: 'ram', dir: [aimDir.x, 0, aimDir.z] });
+        net.send({ t: 'ram', dir: [aimDir.x, 0, aimDir.z] }); local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.ram);
       } else if (K.power === 'frostfall') {
         local.frostAim = true;   // hold to aim, release to cast
       }
@@ -1426,20 +1429,21 @@ function updateLocal(dt) {
         local.cd.power = now + FROST.cooldown;
         const at = frostTarget();
         net.send({ t: 'frostfall', at: [at[0], at[2]] });
+        if (!airborne) local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.frostfall);
       }
     }
     if (local.charging && !local.chargeSent && now - local.chargeStart >= C.SPELLS.heavy.chargeTime) {
       computeAim();
       local.chargeSent = true;
       local.cd.power = now + C.SPELLS.heavy.cooldown;
-      net.send({ t: 'chargeRelease', origin: aimOrigin.toArray(), dir: aimDir.toArray() });
+      net.send({ t: 'chargeRelease', origin: aimOrigin.toArray(), dir: aimDir.toArray() }); local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.heavyRelease);
       setTimeout(() => { local.charging = false; }, 150);
     }
     if (local.lash && !local.lash.sent && now - local.lash.start >= LASH.windup) {
       computeAim();
       local.lash.sent = true;
       local.cd.power = now + LASH.cooldown;
-      net.send({ t: 'lashRelease', origin: aimOrigin.toArray(), dir: aimDir.toArray() });
+      net.send({ t: 'lashRelease', origin: aimOrigin.toArray(), dir: aimDir.toArray() }); local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.lashRelease);
     }
     // mobility slot
     if (input.justPressed('KeyE') && !busy && !airborne && now >= local.cd.mobility && !(rooted && K.mobility !== 'skyward')) {
@@ -1491,13 +1495,13 @@ function updateLocal(dt) {
         if (now >= local.cd.throw) {
           computeAim();
           local.cd.throw = now + C.THROW_COOLDOWN;
-          net.send({ t: 'throw', dir: aimDir.toArray(), target: aimPoint() });
+          net.send({ t: 'throw', dir: aimDir.toArray(), target: aimPoint() }); local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.tk);
         }
       } else if (me.carrying) {
         if (now >= local.cd.throw && props.get(me.carrying)?.data.state === 'carried') {
           computeAim();
           local.cd.throw = now + C.THROW_COOLDOWN;
-          net.send({ t: 'throw', dir: aimDir.toArray(), target: aimPoint() });
+          net.send({ t: 'throw', dir: aimDir.toArray(), target: aimPoint() }); local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.tk);
         }
       } else if (!busy && !local.blocking && tkHover && now >= local.liftCdUntil) {
         if (relic && !tkHover.goat) local.fHold = { start: now };   // goats can't be cursed: they just lift
@@ -1506,7 +1510,7 @@ function updateLocal(dt) {
     }
     if (local.fHold) {
       if (holding || busy || local.blocking || !tkHover || tkHover.goat) local.fHold = null;
-      else if (now - local.fHold.start >= RELIC.hold) { local.fHold = null; local.liftCdUntil = now + RELIC.liftCooldown; camera.getWorldDirection(camDir); net.send({ t: 'curse', aimOrigin: camera.position.toArray(), aimDir: camDir.toArray() }); }
+      else if (now - local.fHold.start >= RELIC.hold) { local.fHold = null; local.liftCdUntil = now + RELIC.liftCooldown; camera.getWorldDirection(camDir); net.send({ t: 'curse', aimOrigin: camera.position.toArray(), aimDir: camDir.toArray() }); local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.curse); }
       else if (!input.down('KeyF')) { local.fHold = null; sendPickup(); }
     }
     if (input.justPressed('KeyG') && holding) net.send({ t: 'drop' });
@@ -1579,10 +1583,17 @@ function updateLocal(dt) {
     R.heading += THREE.MathUtils.clamp(Math.atan2(Math.sin(want - R.heading), Math.cos(want - R.heading)), -RIDE.turnRate * rt, RIDE.turnRate * rt);
     mx = 0; mz = 1; fwd.set(Math.sin(R.heading), 0, Math.cos(R.heading));
   }
-  const moving = (mx || mz) && !me.dead && !stunned && !rooted;
+  // casting roots us (turning and aiming still work); movement abilities don't
+  const castRooted = !local.flight && !local.ride && !local.mrain && now >= local.eyeUntil && (now < local.castRootUntil || local.charging || !!local.lash
+    || (!!local.cyclone && !local.cyclone.pulsed) || !!local.flaskWind || !!local.ultWind || now < local.blizzUntil || !!local.fHold
+    || (local.blocking && C.isWard(K.guard)));
+  if (castRooted && !local.wasCastRooted) local.vel.set(0, 0, 0);   // stop dead as the cast starts (a later knockback still lands)
+  local.wasCastRooted = castRooted;
+  local.castRooted = castRooted;
+  const moving = (mx || mz) && !me.dead && !stunned && !rooted && !castRooted;
   // Sprint: Shift while moving forward (or diagonally forward); stamina from the server's copy, with the same
   // stop-at-0 / restart-above-15 rule, and nothing that forbids it
-  const sprintAllowed = moving && mz > 0 && !local.ride && !local.flight && !local.blocking && !local.charging && !local.cyclone && !local.lash
+  const sprintAllowed = moving && mz > 0 && !castRooted && !local.ride && !local.flight && !local.blocking && !local.charging && !local.cyclone && !local.lash
     && !local.ultWind && !local.flaskWind && !(me.carrying || me.carryingGoat) && now >= local.blizzUntil && now >= local.eyeUntil;
   const wantSprint = (input.down('ShiftLeft') || input.down('ShiftRight')) && sprintAllowed;
   if (!wantSprint || me.st <= 0.5) local.sprinting = false;
@@ -1661,6 +1672,7 @@ function updateLocal(dt) {
   me.blocking = local.blocking;
   me.riding = !!local.ride;   // predicted: seated on the ram from the moment we mount
   me.sprinting = local.sprinting;
+  me.castRooted = local.castRooted;
   me.charging = local.charging;
   me.slowed = now < local.slowUntil; me.bound = bound && !me.dead; me.frozen = now < local.frozenUntil || (me.frozen && me.bound);
   me.updateAnimation(!!moving, dt);

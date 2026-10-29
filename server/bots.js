@@ -174,6 +174,11 @@ function raiseFirewall(me, toward, act) {
   act({ t: 'firewall', yaw: me.yaw });
 }
 // winding something up that a well-timed interrupt stops (an ultimate's wind-up, and Meteor Rain's hover, included)
+// Casting roots a wizard (server.js castRooted; the same rule): short cast poses, wind-ups, channels, a held ward.
+// Movement abilities don't.
+const castRootedBot = (q, t) => !(q.eye || q.ride || q.mrain || q.mrainFall || q.flightUntil > t)
+  && (t < (q.castRootUntil || 0) || q.charging || !!q.lash || (!!q.cyclone && !q.cyclone.pulsed) || !!q.flaskWind || !!q.ultWind || !!q.blizz
+    || (q.blocking && C.isWard(kit(q).guard)));
 const busyCasting = (q) => q.charging || !!q.lash || cycloneWindingUp(q) || !!q.ultWind || (!!q.mrain && q.mrain.phase !== 'dive');
 // the primary can fire now (cooldown, and the magazine isn't reloading)
 const primaryReady = (me, t) => t >= me.cd.fast && !(me.reloadUntil > t) && me.ammo > 0;
@@ -402,6 +407,8 @@ function think(me, world, t) {
   }
 
   if (!free || !target || me.blocking || me.charging || me.cyclone || me.lash || t < (b.goatDanger || 0)) return;
+  // a cast roots us: finish a dodge first, cast from where we mean to stand (a wind-up to punish is worth stopping for)
+  if (t < b.dodgeUntil && !busyCasting(target)) return;
   const meAir = airborne(me, t);
 
   const carried = me.carrying ? world.props.get(me.carrying) : null;
@@ -1373,6 +1380,10 @@ function moveBot(me, dt, world, t) {
   if (t < b.dodgeUntil && !me.cyclone && !flying && !me.charging && !me.lash) speed = Math.max(speed, run * 0.95);
   if (me.slowUntil > t) speed *= 1 - SKIM.slow;
   if (rooted(me, t)) { speed = 0; b.vel = [0, 0]; }
+  // casting: no translation (knockback still carries us); stop dead as the cast starts
+  const castStop = castRootedBot(me, t);
+  if (castStop) { speed = 0; if (!b.wasCastRooted) b.vel = [0, 0]; }
+  b.wasCastRooted = castStop;
   if (wl > 0.01) speed = C.backpedalSpeed(speed, wx, wz, me.yaw);   // backpedalling is slower, like for players
   const tx = wl > 0.01 ? wx / wl * speed : 0, tz = wl > 0.01 ? wz / wl * speed : 0;
   const k = Math.min(1, dt * 12);

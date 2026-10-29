@@ -415,7 +415,7 @@ export class Wizard {
   // The locomotion clip for this direction: the fight walk forward and sideways, the backward fight walk when
   // moving backward. Null when standing or in the air.
   locomotion(m, slow) {
-    if (m.speed < 0.4 || this.group.position.y > 0.3) return null;
+    if (m.speed < 0.4 || this.group.position.y > 0.3 || this.castRooted) return null;   // casting: the cast or idle pose, never a walk
     if (m.backward && this.actions.back) return 'back';
     if (this.sprinting && !slow && this.actions.run) return 'run';   // Sprint (Shift): the Running clip comes back for it
     return this.actions.walk_fight ? 'walk_fight' : 'run';

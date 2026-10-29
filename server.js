@@ -113,7 +113,7 @@ function playerPublic(p) {
     ultWind: p.ultWind ? p.ultWind.U : null,
     blizz: p.blizz ? +p.blizz.yaw.toFixed(3) : null,
     mrain: p.mrain ? p.mrain.phase : null,
-    sprint: !!p.sprinting,
+    sprint: !!p.sprinting, castRoot: castRooted(p),
     ride: p.ride ? (now() < p.ride.rideAt ? 'mount' : now() < p.ride.dismountAt ? 'ride' : 'dismount') : null,
     ramGuard: p.ramGuardUntil > now(),
     bot: p.bot ? p.bot.difficulty : undefined,
@@ -389,11 +389,25 @@ function guardAbsorbed(p, attacker, absorbed, t) {
   }
 }
 
+// ---------------------------------------------------------------- casting roots
+// Casting stops the caster (turning and aiming still allowed): a short cast pose, any wind-up or channel, a held
+// ward. Movement abilities don't: Blink, Skyward, Smoke Screen, Mirror Step, Flask Step's teleport, Ram Ride, Meteor
+// Rain, and Eye of the Storm (Gale is the tornado).
+function castRoot(p, secs) {
+  p.castRootUntil = Math.max(p.castRootUntil || 0, now() + secs);
+  if (p.sprinting) setSprint(p, false, now());   // a cast ends a sprint
+}
+function castRooted(p, t = now()) {
+  if (p.eye || p.ride || p.mrain || p.mrainFall || isAirborne(p)) return false;
+  return t < (p.castRootUntil || 0) || p.charging || !!p.lash || (!!p.cyclone && !p.cyclone.pulsed) || !!p.flaskWind
+    || !!p.ultWind || !!p.blizz || (p.blocking && C.isWard(kit(p).guard));
+}
+
 // Sprint on or off. It needs stamina (and STAMINA SPRINT.restart of it to start again after running dry), and
 // none of: a wind-up, a ward, telekinesis, a root, the air, a ram ride, an ultimate in progress.
 function canSprint(p, t) {
   return !p.dead && !p.blocking && !p.charging && !p.cyclone && !p.lash && !holding(p) && !isRooted(p) && !isStunned(p)
-    && !isAirborne(p) && !p.ride && !inUltimate(p) && !p.flaskWind && p.st > 0 && (p.sprinting || p.st >= C.SPRINT.restart);
+    && !isAirborne(p) && !p.ride && !inUltimate(p) && !p.flaskWind && !castRooted(p, t) && p.st > 0 && (p.sprinting || p.st >= C.SPRINT.restart);
 }
 function setSprint(p, want, t) {
   const on = want && canSprint(p, t);
@@ -1480,6 +1494,7 @@ function handle(p, msg) {
       // (knockback only counts for a moment after one actually landed; it used to be allowed all the time, which with
       // 0.6 m of slack per update let a client run about 20 m/s faster than its walk)
       const own = dashing ? SMOKE.distance / SMOKE.dashTime : galloping(p, t) ? RIDE.speed * 1.1 : isAirborne(p) ? Math.max(run, SKY.airSpeed)
+        : castRooted(p, t) ? 0   // casting: no translation (the budget's small burst covers latency)
         : p.sprinting || p.sprintEndedAt > t - 0.3 ? Math.max(run, C.sprintOf(p.wizard) * (p.slowUntil > t ? 1 - C.SPELLS.skim.slow : 1)) : run;
       // A movement budget: it refills at the fastest this wizard may go right now, and holds at most a short burst
       // (about 0.25 s of it, plus 0.25 m), so bunched-up updates from an honest client pass but a steady overspeed
@@ -1524,6 +1539,7 @@ function handle(p, msg) {
       if (p.ammo === 0) p.reloadUntil = t + C.primaryMag(primary).reload * cdMul(p);
       p.cd.fast = t + C.SPELLBOOK[primary].cooldown * cdMul(p);
       pendingShot = shot;
+      castRoot(p, C.CAST_ROOT.primary[kind] ?? 0.28);
       if (kind === 'skim') {
         // three shards in a tight fan, skimming the ground just ahead of the caster's feet
         const d = sanitizeDir([msg.dir?.[0] ?? 0, 0, msg.dir?.[2] ?? 0], p);
@@ -1572,6 +1588,7 @@ function handle(p, msg) {
         break;
       }
       p.cd.power = t + C.SPELLS.heavy.cooldown;
+      castRoot(p, C.CAST_ROOT.heavyRelease);
       const origin = sanitizeOrigin(p, msg.origin);
       spawnProjectile(p, 'heavy', origin, sanitizeDir(msg.dir, p));
       break;
@@ -1599,6 +1616,7 @@ function handle(p, msg) {
       if (early || !canAct(p)) { cancelLash(p); break; }
       p.lash = null;
       p.cd.power = t + LASH.cooldown;
+      castRoot(p, C.CAST_ROOT.lashRelease);
       const whip = spawnProjectile(p, 'lash', sanitizeOrigin(p, msg.origin), sanitizeDir(msg.dir, p));
       // what Black Death absorbed rides on this whip
       if (p.lashBonus) { whip.dmg = C.SPELLS.lash.damage + Math.round(p.lashBonus); p.lashBonus = 0; }
@@ -1615,6 +1633,7 @@ function handle(p, msg) {
       const r = Math.hypot(x, z);
       if (r > C.ARENA_RADIUS) { x *= C.ARENA_RADIUS / r; z *= C.ARENA_RADIUS / r; }
       p.cd.power = t + FROST.cooldown;
+      if (!isAirborne(p)) castRoot(p, C.CAST_ROOT.frostfall);   // (from the air she keeps drifting)
       const f = { id: nextFxId++, owner: p.id, x, z, at: t + FROST.delay };
       frostfalls.set(f.id, f);
       broadcast({ t: 'frostfall', ...frostPublic(f) });
@@ -1660,6 +1679,7 @@ function handle(p, msg) {
     case 'veil': {
       if (kit(p).guard !== 'tempest_veil' || !canAct(p) || isVeiled(p) || t < p.cd.guard) break;
       p.cd.guard = t + VEIL.cooldown;
+      castRoot(p, C.CAST_ROOT.tapShield);
       p.veilUntil = t + VEIL.duration;
       broadcast({ t: 'veil', id: p.id, left: VEIL.duration });
       break;
@@ -1670,6 +1690,7 @@ function handle(p, msg) {
       const d = sanitizeDir([msg.dir?.[0] ?? 0, 0, msg.dir?.[2] ?? 0], p);
       const yaw = Math.atan2(d[0], d[2]);
       p.cd.power = t + BRAM.cooldown;
+      castRoot(p, C.CAST_ROOT.ram);
       p.yaw = yaw;
       summonRam({ x: p.p[0] + d[0] * BRAM.spawnDist, z: p.p[2] + d[2] * BRAM.spawnDist, yaw, ownerId: p.id, mode: 'charge', maxTime: BRAM.maxTime });
       broadcast({ t: 'batteringRam', id: p.id, yaw });
@@ -1683,6 +1704,7 @@ function handle(p, msg) {
     case 'toxic': {
       if (kit(p).power !== 'toxic_flask' || !canAct(p) || p.blocking || p.charging || holding(p) || isAirborne(p) || t < p.cd.power) break;
       p.cd.power = t + C.SPELLBOOK.toxic_flask.cooldown * cdMul(p);
+      castRoot(p, C.CAST_ROOT.toxic);
       const origin = sanitizeOrigin(p, msg.origin);
       spawnProjectile(p, 'toxic', origin, lobDir(p, origin, msg.target, msg.dir, C.SPELLS.toxic));
       broadcast({ t: 'toxicThrow', id: p.id });
@@ -1703,6 +1725,7 @@ function handle(p, msg) {
     case 'smokeFlask': {
       if (kit(p).guard !== 'smoke_flask' || !canAct(p) || t < p.cd.guard) break;
       p.cd.guard = t + C.SPELLBOOK.smoke_flask.cooldown * cdMul(p);
+      castRoot(p, C.CAST_ROOT.tapShield);
       const c = { id: nextFxId++, owner: p.id, x: p.p[0], z: p.p[2], until: t + C.SPELLBOOK.smoke_flask.life };
       smokeFlasks.set(c.id, c);
       broadcast({ t: 'smokeFlask', id: c.id, owner: p.id, p: [c.x, 0, c.z], left: C.SPELLBOOK.smoke_flask.life });
@@ -1719,6 +1742,7 @@ function handle(p, msg) {
     case 'ramGuard': {
       if (kit(p).guard !== 'ram_guard' || !canAct(p) || t < p.cd.guard) break;
       p.cd.guard = t + RGUARD.cooldown;
+      castRoot(p, C.CAST_ROOT.tapShield);
       p.ramGuardUntil = t + RGUARD.life;
       for (let i = 0; i < RGUARD.count; i++) {
         const a = i / RGUARD.count * Math.PI * 2;
@@ -1738,12 +1762,14 @@ function handle(p, msg) {
     case 'firewall': {
       if (kit(p).guard !== 'firewall' || !canAct(p) || p.charging || p.cyclone || p.lash || isAirborne(p) || t < p.cd.guard) break;
       p.cd.guard = t + FIREWALL.cooldown;
+      castRoot(p, C.CAST_ROOT.tapShield);
       raiseFirewall(p, Number.isFinite(msg.yaw) ? msg.yaw : p.yaw);
       break;
     }
     case 'bulwark': {
       if (kit(p).guard !== 'glacial_bulwark' || !canAct(p) || p.charging || p.cyclone || p.lash || isAirborne(p) || t < p.cd.guard) break;
       p.cd.guard = t + BULWARK.cooldown;
+      castRoot(p, C.CAST_ROOT.tapShield);
       raiseWall(p, Number.isFinite(msg.yaw) ? msg.yaw : p.yaw);
       break;
     }
@@ -1754,6 +1780,7 @@ function handle(p, msg) {
       clearCurse(p);
       prop.cursedBy = p.id;
       p.cd.lift = t + C.SPELLBOOK.trapped_relic.liftCooldown;
+      castRoot(p, C.CAST_ROOT.curse);
       send(p.id, { t: 'curse', id: prop.id });   // nobody else hears of it
       break;
     }
@@ -1799,6 +1826,7 @@ function handle(p, msg) {
       if (!canAct(p) || holding(p) || p.charging || p.cyclone || p.lash || p.blocking || t < p.cd.lift) break;
       const best = tkTarget(p, msg.aimOrigin, msg.aimDir, goatTK);
       if (!best) break;
+      castRoot(p, C.CAST_ROOT.tk);
       if (best.goat) {
         // a goat: it floats at our hold point (goats.js places it each tick); lifting doesn't anger it
         if (Goats.liftGoat(best.goat, p.id, goatCtx) === false) break;
@@ -1823,6 +1851,7 @@ function handle(p, msg) {
         p.carryingGoat = null;
         if (!g || g.state !== 'held' || g.holder !== p.id) break;
         p.cd.throw = t + C.THROW_COOLDOWN;
+        castRoot(p, C.CAST_ROOT.tk);
         const origin = C.holdPoint(p.p, p.yaw);
         const target = validVec(msg.target) && dist2D(msg.target, p.p) < 80 ? msg.target : null;
         const dir = target ? C.ballisticDir(origin, target, C.GOAT.throwSpeed, C.GOAT.throwGravity) : sanitizeDir(msg.dir, p);
@@ -1837,6 +1866,7 @@ function handle(p, msg) {
       if (prop) match.onDrop(p, prop, 'thrown');
       p.cd.throw = t + C.THROW_COOLDOWN;
       if (!prop) break;
+      castRoot(p, C.CAST_ROOT.tk);
       // The prop leaves the world as a standing object and becomes a projectile.
       prop.state = 'thrown'; prop.carrier = null;
       broadcast({ t: 'prop', prop: propPublic(prop) });
