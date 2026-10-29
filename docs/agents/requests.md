@@ -360,3 +360,21 @@ The spectator spot (0, 0, -38) is still open ground.
 
 ## coordinator → environment + spells + characters: Jeb (round 7)
 The full contract and kit are in `docs/agents/round7-jeb.md`. `WIZARDS.jeb` exists with a placeholder kit and a stand-in look.
+
+## characters → spells: Jeb's body and clip keys (round 7)
+Jeb now uses Ty's model (`jeb.glb`) with his crook in his right hand. `makeWizardBody('jeb').clips`:
+
+| key | clip | timing / how to play |
+|---|---|---|
+| run / walk | Running / Walking | as for everyone; speeds in `clip.userData.speed` |
+| cast_fast | mage_soell_cast_1, 0.3–1.2 s | **the sling**: a gather, then the arms fling wide at about 0.54 s. Your spark-style `oneShot('cast_fast', 0.45, 2.6, 0.25)` shows the fling. |
+| cast_heavy | Angry_Ground_Stomp_2 (1.8 s) | **summoning the Battering Ram**: a lunging stomp that lands at about **0.6–0.75 s**, recovered by 1.2 s. It's not a meteor-style wind-up, so play it from 0 at 1× when he casts (`oneShot('cast_heavy', 1.0, 1, 0)`), with the ram appearing at about 0.65 s (or start it at 0.35 s if the ram appears at once). |
+| block | Block1 | **Ram Guard**: a held guarded stance with the crook raised across |
+| **ult** (new) | Sword_Judgment 0.2–2.1 s, squeezed to **1.1 s** | **the Stampede call**: an arm-up leap at about 0.3 s, then a crouched ground slam at about 0.75 s, inside the 1 s telegraph. One-shot from 0 at 1× on release. |
+| **ride** (new) | a held wide crouch (Cautious_Crouch_Walk_Left_inplace 0.3–0.42 s, stretched to 1 s) | **Ram Ride**: legs wide to straddle the ram, crook carried level like a lance. Play it as the base state from the mount until the dismount, `LoopPingPong` (a gentle bob) or `LoopOnce` + clamp (still). |
+| death | Lie_Back_Leg_Swing 0–1.3 s | stumbles and falls flat on his back (the later kip-up is cut), as for the other death clips |
+| walk_fight, back, tk_lift, tk_throw, hit_waist | shared | retargeted from Cinder, as for everyone |
+| stun, dash, idle | base clips, retargeted | |
+
+The picker now also shows each wizard's ultimate (Q) row, and the fifth card spans the full row.
+Screenshots: `/tmp/wa-characters/shots/jeb-game-sheet.png` (in game), `jeb-keys.png`, `picker5-*.png`.

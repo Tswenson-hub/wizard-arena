@@ -195,7 +195,34 @@
     - `setWhipGlow(0..1)` makes both whips glow crimson, using per-body materials.
   - **Shots:** `vesper-whips.png` (close-up: idle, run, Lash, Lash glowing, idle glowing) and `whip-game-sheet.png`
     (in game). In game the coil is subtle at idle (dark on her dark coat) and clear once it glows.
-- **All four wizards now have Ty's models.** The recoloured stand-in (`STAND_IN`, `bodyMaterial`) is only used if a model fails to load.
+- **Jeb the Shepherd (round 7).** `Meshy_AI_shepherd_wizard_3d_All_Animations.glb` became `jeb.glb` (10.2 MB went down to
+  **1.58 MB**). Same 66-bone rig.
+
+  | key | clip | notes |
+  |---|---|---|
+  | cast_fast | mage_soell_cast_1 0.3–1.2 s | the sling; the fling at about 0.54 s |
+  | cast_heavy | Angry_Ground_Stomp_2 | the ram summon; the stomp lands at about 0.6–0.75 s (not a meteor wind-up; requested to play from 0) |
+  | block | Block1 | Ram Guard |
+  | **ult** (new) | Sword_Judgment 0.2–2.1 s, squeezed to 1.1 s | the Stampede call: leap at 0.3 s, slam at 0.75 s |
+  | **ride** (new) | Cautious_Crouch_Walk_Left_inplace 0.3–0.42 s, stretched to 1 s | Ram Ride: a held wide crouch |
+  | death | Lie_Back_Leg_Swing 0–1.3 s | falls flat on his back; the kip-up is cut |
+  | run, walk, the shared clips; stun, dash, idle retargeted | | |
+
+  - **Crook:** `jeb-crook.glb` (5 MB went down to 114 KB), 1.75 m, gripped 0.85 m up.
+  - The crook is **fitted in a mid-run frame** (the new `pose`/`at` options on `PROPS`). Fitted at idle, his run swung
+    the hook to the ground; now the hook stays up while he runs, rests over his shoulder at idle, is held across in the
+    block, and is carried level like a lance on the ram.
+  - Look fields: model `/models/wizards/jeb.glb`. I kept the colour (`0xe8dcc0`, wool), the tint (stand-in only) and
+    the role line ("Herder · rams do his fighting").
+  - **Picker:**
+    - Every card now lists the ultimate (Q) under a dashed line.
+    - With five wizards, the odd last card spans the row (CSS `:last-child:nth-child(odd)`): portrait and name on the
+      left, spells in two columns on the right.
+    - Keyboard: down from Rime reaches Jeb.
+  - **Shots:** `jeb-clips.png` (his raw clips), `jeb-keys.png` (every key with the crook), `jeb-game-sheet.png` (in game:
+    run, sling or summon, block, ride, Stampede call, death), and `picker5-*.png` / `picker5-jeb-*.png` (the picker at
+    1280×720 and 1920×1080).
+- **All five wizards now have Ty's models.** The recoloured stand-in (`STAND_IN`, `bodyMaterial`) is only used if a model fails to load.
 
 ## Verification
 All runs used headless Chromium (SwiftShader) against port 4103. Screenshots are in `/tmp/wa-characters/shots/`.
@@ -241,7 +268,7 @@ All runs used headless Chromium (SwiftShader) against port 4103. Screenshots are
   - No `[looks]` warnings and no console errors.
 - **Fixed along the way:** flair points were sized by the whole canvas height, so in the picker's small viewports they were
   about 5× too big. They now scale by viewport height, with no change in game.
-- `public/models/wizards/` (`ls`): `gale.glb` 1.71 MB, `rime.glb` 1.43 MB, `rime-wand.glb` 261 KB, `vesper.glb` 1.23 MB, `vesper-wand.glb` 157 KB, `cinder.glb` 1.78 MB, `vesper-whip.glb` 163 KB, `vesper-whip-coil.glb` 219 KB (about 7 MB in total). The base `wizard.glb` is unchanged at 1.4 MB.
+- `public/models/wizards/` (`ls`): `gale.glb` 1.71 MB, `rime.glb` 1.43 MB, `rime-wand.glb` 261 KB, `vesper.glb` 1.23 MB, `vesper-wand.glb` 157 KB, `cinder.glb` 1.78 MB, `vesper-whip.glb` 163 KB, `vesper-whip-coil.glb` 219 KB, `jeb.glb` 1.58 MB, `jeb-crook.glb` 114 KB (about 8.7 MB in total). The base `wizard.glb` is unchanged at 1.4 MB.
 
 ## Known issues and notes
 - **Vesper vs Cinder:** both are red, but Vesper is darker, has smoke and a pool, and has a different nameplate tone.
