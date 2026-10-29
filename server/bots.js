@@ -119,7 +119,7 @@ function trackVelocities(players, t) {
     if (dt < 0.03) continue;
     let vx = (q.p[0] - tr.p[0]) / dt, vz = (q.p[2] - tr.p[2]) / dt;
     const sp = Math.hypot(vx, vz);
-    if (sp > C.MOVE_SPEED * 1.6) { vx = 0; vz = 0; }   // a blink or respawn, not real movement
+    if (sp > 13) { vx = 0; vz = 0; }   // a blink or respawn, not real movement (a Ram Ride gallop, 11 m/s, is)
     tr.v[0] += (vx - tr.v[0]) * 0.45; tr.v[1] += (vz - tr.v[1]) * 0.45;
     // airborne wizards fall at a known rate; a launch or a landing isn't a fall
     let vy = (q.p[1] - tr.p[1]) / dt;
@@ -283,7 +283,7 @@ function think(me, world, t) {
     const tc = -(rx * vx + rz * vz) / (C.GOAT.chargeSpeed ** 2);
     const miss = Math.hypot(rx + vx * tc, rz + vz * tc);
     const homing = g.target === me.id;
-    if (tc <= 0 || tc > 1.2 || (!homing && miss > C.GOAT.radius + C.PLAYER_RADIUS + 0.6)) continue;
+    if (tc <= 0 || tc > 1.7 || (!homing && miss > C.GOAT.radius + C.PLAYER_RADIUS + 0.6)) continue;
     let rec = b.threats.get(key);
     if (!rec) { rec = newThreat(cfg, t); b.threats.set(key, rec); }
     b.goatDanger = t + 0.3;
@@ -300,7 +300,8 @@ function think(me, world, t) {
   for (const proj of [...world.projectiles.values(), ...flyingGoats]) {
     if (proj.owner === me.id || !foeId(me, proj.owner)) continue;   // a teammate's flies through us
     const th = threatOf(me, proj);
-    if (!th || th.tc > 1.6 || th.miss > C.HIT_RADIUS + proj.radius + 0.5) continue;
+    // at a walk a sidestep takes a while: start judging a shot earlier than at the old run speed
+    if (!th || th.tc > 2.4 || th.miss > C.HIT_RADIUS + proj.radius + 0.5) continue;
     let rec = b.threats.get(proj.id);
     if (!rec) { rec = newThreat(cfg, t); b.threats.set(proj.id, rec); }
     if (rec.handled || rec.ignore || reacted || t < rec.seenAt + rec.react) continue;

@@ -13,9 +13,9 @@ export const PLAYER_RADIUS = 0.45;
 export const HIT_CENTER_Y = 0.95;     // centre of the hit-sphere above feet
 export const HIT_RADIUS = 0.75;
 
-export const MOVE_SPEED = 6.2;        // m/s run speed
-export const CHARGE_MOVE_SPEED = 2.0; // m/s while winding up the heavy spell
-export const BLOCK_MOVE_SPEED = 2.6;  // m/s while blocking
+export const MOVE_SPEED = 3.6;        // m/s: the fastest walk (Gale); each wizard's own is wizards.js `speed` (Ty: normal movement is a walk)
+export const CHARGE_MOVE_SPEED = MOVE_SPEED * 0.32;   // while winding up: the same fraction of a wizard's walk as before
+export const BLOCK_MOVE_SPEED = MOVE_SPEED * 0.42;    // while blocking
 
 export const MAX_HP = 100;
 export const MAX_STAMINA = 100;
@@ -215,7 +215,7 @@ export const SPELLBOOK = {
     cooldown: SPELLS.sling.cooldown,
     magazine: 2, reload: 1.5, idleReload: 2,
     callRange: 22,       // a calm map goat this close to the target answers the call
-    callLockout: 3,      // seconds before the same target can have another ram called on it
+    callLockout: 6,      // seconds before the same target can have another ram called on it (balance match: 3 was too many)
   },
   hex_shards: {
     id: 'hex_shards', slot: 'primary', name: 'Hex Shards', short: 'Hex',
@@ -270,7 +270,7 @@ export const SPELLBOOK = {
     blurb: 'A ram bursts out in front of you and charges dead straight along your aim. It flattens the first enemy it meets, unless a ward, wall or Veil stops it.',
     spawnDist: 1.4,
     maxTime: 3,          // the charge runs at GOAT.chargeSpeed for at most this long
-    cooldown: 9,
+    cooldown: 12,        // balance match: 9 left Jeb on top (most of his kills were ram one-shots)
   },
   ram_ride: {
     id: 'ram_ride', slot: 'mobility', name: 'Ram Ride', short: 'Ride',
@@ -336,7 +336,7 @@ export const SPELLBOOK = {
     blurb: 'Hold: a black shroud blocks spells from every side, for about 3 s of stamina. Damage it absorbs charges your next Lash.',
     cooldown: 0,
     drainMul: 2.5,          // stamina drains this much faster than the base ward rate (about 3 s from full)...
-    hitCostMul: 2.5,        // ...and each blocked hit costs this much more
+    hitCostMul: 2,          // ...and each blocked hit costs this much more (2.5 left Vesper last in the balance match)
     lashCdPerDamage: 0.1,   // each absorbed point cuts Sanguine Lash's cooldown by this (s)...
     bonusPerDamage: 0.5,    // ...and stores this much bonus damage for the next Lash...
     maxBonus: 14,           // ...up to this
@@ -403,7 +403,7 @@ export const SPELLBOOK = {
     duration: 3,
     speedMul: 1.3,
     radius: 7,
-    pull: 3.4,           // m/s inward on enemies inside the radius
+    pull: 1.9,           // m/s inward on enemies inside the radius (below the 3 m/s walk, so they can still crawl out)
     tick: 0.5, damage: 8, stun: 0, knockback: 0, staminaCost: 10,   // a ward facing her soaks a tick for 10
     height: 3,           // vertical reach
   },
@@ -490,7 +490,7 @@ export const blockSpeedOf = (id) => speedOf(id) * BLOCK_MOVE_SPEED / MOVE_SPEED;
 
 // Backpedalling is slower: moving against the facing direction is capped at BACKPEDAL_SPEED, easing back to
 // full speed as the direction turns sideways (strafing is full speed). (dx, dz) is the movement direction.
-export const BACKPEDAL_SPEED = 3;
+export const BACKPEDAL_SPEED = 2;    // walking backward (strafing goes at the forward speed)
 export function backpedalSpeed(speed, dx, dz, yaw) {
   const l = Math.hypot(dx, dz);
   if (l < 1e-6) return speed;

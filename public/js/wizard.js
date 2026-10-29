@@ -14,7 +14,8 @@ const CYC = C.SPELLBOOK.cyclone, LASH = C.SPELLBOOK.sanguine_lash;
 // Natural ground speed (m/s) of each locomotion clip at 1x, so playback = actual speed / natural speed and the
 // feet don't slide. looks.js measures each body's clips (clip.userData.speed); these are the fallbacks.
 const NATURAL_SPEED = { run: 4.6, walk_fight: 0.73, back: 0.56 };
-const SLOW_WALK = 3;   // m/s: below this the fight walk plays instead of Running
+// Normal movement is a walk (Ty): the fight walk forward and sideways, the backward walk backward, each time-scaled
+// to the ground speed by its measured gait speed. 'run' only plays for a body without the fight walk.
 
 // Sanguine Lash: the whip coiling around the caster during the wind-up (a helix of blood-red light).
 const coilGeo = (() => {
@@ -411,13 +412,12 @@ export class Wizard {
     return { speed, backward: fwd < -0.3 };
   }
 
-  // The locomotion clip for this speed and direction: Running at full speed, the fight walk when slow
-  // (wind-ups, ward, slowed), the backward fight walk when moving backward. Null when standing.
+  // The locomotion clip for this direction: the fight walk forward and sideways, the backward fight walk when
+  // moving backward. Null when standing or in the air.
   locomotion(m, slow) {
     if (m.speed < 0.4 || this.group.position.y > 0.3) return null;
     if (m.backward && this.actions.back) return 'back';
-    if ((slow || m.speed < SLOW_WALK) && this.actions.walk_fight) return 'walk_fight';
-    return 'run';
+    return this.actions.walk_fight ? 'walk_fight' : 'run';
   }
 
   updateAnimation(moving, dt) {
