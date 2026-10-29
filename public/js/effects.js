@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import * as C from '../shared/constants.js';
 import { makePropMesh, makeFragments } from './world.js';
+import { SpriteFX } from './sprites.js';
 
 const SPELL_COLORS = { fast: 0x7ad8ff, heavy: 0xff7a2a, prop: 0xb48cff, skim: 0xbfeaff, lash: 0xff2a3c, fireball: 0xff6a1e, shear: 0xd8c8ff, hex: 0xff1f3d, sling: 0xd8c8a8, potion: 0xa050e0, toxic: 0x7fd34a, flaskstep: 0xc080ff };
 const HEX_SHAPES = [3, 4, 0];   // Hex Shards: a triangle, a diamond, then a crescent (0)
@@ -50,9 +51,15 @@ function windTexture() {
   return windTex;
 }
 
-// Smoke Screen puff: a soft lumpy blob, drawn once.
-let puffTex = null;
+// Smoke Screen and Smoke Flask puffs: Kenney's smoke sprites (public/textures/particles), one of three at random.
+let smokeTexs = null;
 function puffTexture() {
+  smokeTexs ??= ['smoke_01', 'smoke_07', 'smoke_08'].map(n => { const t = new THREE.TextureLoader().load(`/textures/particles/${n}.png`); t.colorSpace = THREE.SRGBColorSpace; return t; });
+  return smokeTexs[Math.floor(Math.random() * smokeTexs.length)];
+}
+// (the old canvas puff, kept as a fallback name)
+let puffTex = null;
+function canvasPuffTexture() {
   if (puffTex) return puffTex;
   const S = 128, c = document.createElement('canvas'); c.width = c.height = S;
   const g = c.getContext('2d');
@@ -103,8 +110,11 @@ const CRACKS = (() => {
 })();
 
 export class Effects {
-  constructor(scene) {
+  constructor(scene, { low = false } = {}) {
     this.scene = scene;
+    this.low = low;
+    this.sprites = new SpriteFX(scene, { low });   // textured, pooled, instanced particles (sprites.js)
+    this.camera = null;                            // main.js sets it (smoke sorts back to front)
     this.projectiles = new Map();
     this.particles = [];     // { mesh, vel, life, maxLife, grav, shrink }
     this.debris = [];
@@ -113,6 +123,90 @@ export class Effects {
     this.particleGeo = new THREE.TetrahedronGeometry(0.12, 0);
     this.sphereGeo = new THREE.IcosahedronGeometry(1, 1);
     this.mats = {};
+  }
+
+  // ---------------------------------------------------------------- sprite helpers
+  S(name, o) { return this.sprites.spawn(name, o); }
+  n(k) { return this.low ? Math.max(1, Math.round(k * 0.45)) : k; }   // ?low: fewer particles
+  // Sparks flying out: streaks along their flight, a few twinkles.
+  sparks(p, color, count, speed, size = 0.4, grav = 6) {
+    const N = this.n(count);
+    for (let i = 0; i < N; i++) {
+      const d = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.3, Math.random() - 0.5).normalize().multiplyScalar(speed * (0.4 + Math.random() * 0.8));
+      if (i % 3 === 2) this.S('star_06', { p, v: d.multiplyScalar(0.6), grav: grav * 0.5, drag: 2, life: 0.3 + Math.random() * 0.35, size: [size * 1.4, size * 0.3], color, alpha: 1, spin: (Math.random() - 0.5) * 6 });
+      else this.S('trace_01', { p, v: d, grav, drag: 1.5, life: 0.25 + Math.random() * 0.35, size: [size * 2.6, size * 1.2], aspect: 0.7, mode: 'streak', stretch: 0.09, color, alpha: 1 });
+    }
+  }
+  // A bright flash: a soft glow and a star glint.
+  flash(p, color, size = 1) {
+    this.S('circle_05', { p, size: [size * 1.6, size * 3], life: 0.28, color, alpha: 0.7, fadeIn: 0.04 });
+    this.S('star_09', { p, size: [size * 2.2, size * 0.8], life: 0.18, color: 0xffffff, alpha: 0.85, fadeIn: 0.02, rot: Math.random() * 6 });
+  }
+  // Flame tongues bursting from `p` (Fireball, Meteor, Firewall, Meteor Rain).
+  fireBurst(p, s = 1, count = 7) {
+    const cols = [0xffe6a0, 0xffa83a, 0xff6a1e];
+    for (let i = 0, N = this.n(count); i < N; i++) {
+      const a = Math.random() * Math.PI * 2, sp = (1 + Math.random() * 2.5) * s;
+      this.S(['fire_01', 'fire_02', 'flame_01', 'flame_03'][i % 4], { p: [p.x + Math.sin(a) * 0.3 * s, p.y + Math.random() * 0.3 * s, p.z + Math.cos(a) * 0.3 * s],
+        v: [Math.sin(a) * sp, 1.2 + Math.random() * 1.5 * s, Math.cos(a) * sp], drag: 2.5, grav: -1, life: 0.4 + Math.random() * 0.35,
+        size: [0.7 * s, 1.8 * s], spin: (Math.random() - 0.5) * 3, color: cols[i % 3], alpha: 0.95, fadeIn: 0.05, add: false });   // alpha-blended: true orange over bright grass
+    }
+    this.S('circle_05', { p, size: [1.2 * s, 2.6 * s], life: 0.35, color: 0xff7a1e, alpha: 0.45 });   // the glow under it
+  }
+  // Rolling smoke (alpha-blended, sorted): heavy impacts, landings, prop breaks.
+  smokeBurst(p, s = 1, count = 5, color = 0x4a4038, alpha = 0.5) {
+    for (let i = 0, N = this.n(count); i < N; i++) {
+      const a = Math.random() * Math.PI * 2, sp = (0.6 + Math.random() * 1.4) * s;
+      this.S(['smoke_01', 'smoke_07', 'smoke_08'][i % 3], { p: [p.x + Math.sin(a) * 0.4 * s, p.y + Math.random() * 0.4, p.z + Math.cos(a) * 0.4 * s],
+        v: [Math.sin(a) * sp, 0.6 + Math.random() * 0.8, Math.cos(a) * sp], drag: 1.4, life: 1.1 + Math.random() * 0.8,
+        size: [0.8 * s, 2.4 * s], spin: (Math.random() - 0.5) * 0.8, color, alpha, add: false, fadeIn: 0.12 });
+    }
+  }
+  // A burn mark on the ground that fades out at the end of its `life`.
+  scorchDecal(p, r, life = 8, color = 0x140c08, alpha = 0.8) {
+    return this.S(Math.random() < 0.5 ? 'scorch_01' : 'scorch_02', { p: [p.x ?? p[0], 0.035 + Math.random() * 0.01, p.z ?? p[2]], mode: 'flat', size: [r * 2, r * 2.1], life,
+      color, alpha, add: false, fadeIn: 0.01, fadePow: 0.25 });
+  }
+  // A ring of smoke or dust spreading on the ground (landings, Meteor Rain).
+  groundRing(p, r, color = 0x8a7a64, alpha = 0.55, life = 0.9) {
+    this.S('smoke_10', { p: [p.x ?? p[0], 0.3, p.z ?? p[2]], mode: 'flat', size: [r * 0.4, r * 2.4], life, spin: 0.6, color, alpha, add: false, fadeIn: 0.05 });
+  }
+  // A cast's muzzle flash: a flame-shaped burst along the shot, in the shot's colour.
+  muzzle(msg) {
+    const v = new THREE.Vector3(msg.v[0], msg.v[1], msg.v[2]);
+    if (v.lengthSq() < 1e-6) return;
+    v.normalize();
+    const color = msg.kind === 'fast' && msg.color !== undefined ? msg.color : SPELL_COLORS[msg.kind] ?? 0xffffff;
+    const k = (msg.kind === 'heavy' ? 1.8 : msg.kind === 'fireball' ? 1.3 : msg.kind === 'skim' || msg.kind === 'sling' ? 0.7 : 1) * (msg.fin ? 1.35 : 1);
+    const h = 0.75 * k;
+    const p = new THREE.Vector3(msg.p[0], msg.p[1], msg.p[2]);
+    this.S(Math.random() < 0.5 ? 'muzzle_01' : 'muzzle_02', { p: p.clone().addScaledVector(v, h * 0.5), mode: 'streak', axis: [v.x, v.y, v.z], size: [h * 0.55, h * 0.4], aspect: 1.8, life: 0.12, color, alpha: 1, fadeIn: 0.01 });
+    this.S('light_03', { p, size: [0.8 * k, 0.3 * k], life: 0.13, color, alpha: 0.8, fadeIn: 0.01 });
+  }
+  // A melee-style arc: Gale Shear, the combo strikes, the Lash.
+  slash(p, color = 0xffffff, size = 1, rot = Math.random() * Math.PI * 2) {
+    const pos = p.isVector3 ? p : new THREE.Vector3(p[0], p[1], p[2]);
+    this.S('slash_01', { p: pos, size: [1.2 * size, 1.9 * size], life: 0.2, rot, spin: 3, color, alpha: 0.95, fadeIn: 0.02 });
+    this.S('light_01', { p: pos, size: [0.8 * size, 1.2 * size], life: 0.15, color, alpha: 0.5, fadeIn: 0.02, optional: true });
+  }
+  // A hit on a body: a red flash and sparks.
+  hitFlash(c, color = 0xff3b4e) {
+    this.flash(c, color, 0.9);
+    this.sparks(c, color, 10, 3.5, 0.35, 4);
+  }
+  // A full ultimate charge: motes rising round the wizard's feet in their colour, a soft ring now and then.
+  ultGlow(pos, color) {
+    const a = Math.random() * Math.PI * 2;
+    this.S('star_06', { p: [pos.x + Math.sin(a) * 0.55, pos.y + 0.1 + Math.random() * 0.4, pos.z + Math.cos(a) * 0.55], v: [0, 1 + Math.random() * 0.8, 0],
+      life: 0.8, size: [0.28, 0.06], color, alpha: 0.95, optional: true });
+    if (Math.random() < 0.12) this.S('circle_02', { p: [pos.x, 0.1, pos.z], mode: 'flat', size: [0.6, 2.2], life: 0.9, color, alpha: 0.6 });
+  }
+  // Tempest Veil: wind twirling round Gale while it lasts. Returns the sprites (kill them when it ends).
+  veilSwirl(follow, life) {
+    return [
+      this.S('twirl_01', { follow, offset: [0, 1, 0], size: 2.8, life, spin: 7, color: 0xe8dcff, alpha: 0.55, fadeIn: 0.1 }),
+      this.S('twirl_02', { follow, offset: [0, 1.1, 0], size: 2.2, life, spin: -9, color: 0xb98cff, alpha: 0.5, fadeIn: 0.1 }),
+    ];
   }
 
   mat(color, extra = {}) {
@@ -231,11 +325,18 @@ export class Effects {
     }
     g.position.set(msg.p[0], msg.p[1], msg.p[2]);
     this.scene.add(g);
+    // a soft textured glow riding on the projectile (and a ring on the big ones)
+    const fk = msg.fin ? 1.3 : 1, coreSize = { fast: 0.8, fireball: 1.4, heavy: 2, hex: 0.9, lash: 0.8, potion: 0.7, toxic: 0.7, flaskstep: 0.6, skim: 0.5, shear: 0.9 }[msg.kind];
+    const cores = [];
+    if (coreSize) {
+      cores.push(this.S('circle_05', { follow: g, size: coreSize * fk * 0.8, life: 60, color, alpha: 0.4, fadeIn: 0 }));
+      if (msg.kind === 'heavy' || msg.kind === 'fireball' || msg.fin) cores.push(this.S('circle_02', { follow: g, size: coreSize * fk * 0.6, life: 60, spin: 3, color, alpha: 0.35, fadeIn: 0 }));
+    }
     this.projectiles.set(msg.id, {
       id: msg.id, kind: msg.kind, group: g,
       pos: new THREE.Vector3(msg.p[0], msg.p[1], msg.p[2]),
       vel: new THREE.Vector3(msg.v[0], msg.v[1], msg.v[2]),
-      g: msg.g || 0, life: msg.life, age: 0, trail: 0, fin: !!msg.fin, color, curve: msg.curve || null,
+      g: msg.g || 0, life: msg.life, age: 0, trail: 0, fin: !!msg.fin, color, curve: msg.curve || null, cores,
     });
   }
 
@@ -244,18 +345,28 @@ export class Effects {
     if (!pr) return;
     this.projectiles.delete(msg.id);
     this.scene.remove(pr.group);
+    for (const c of pr.cores || []) if (c) c.dead = true;
     const p = msg.p ? new THREE.Vector3(msg.p[0], msg.p[1], msg.p[2]) : pr.pos;
+    const low = p.y < 1.8;   // near the ground: leave a mark
     if (msg.hit) {
-      if (pr.kind === 'heavy') this.burst(p, 0xff7a2a, 34, 7, 0.8);
-      else if (pr.kind === 'fast') { this.burst(p, pr.color, pr.fin ? 22 : 14, pr.fin ? 5 : 4, pr.fin ? 0.5 : 0.4); if (pr.fin) this.burst(p, 0xffffff, 8, 3, 0.3, 0); }
-      else if (pr.kind === 'skim') this.burst(p, 0xdff6ff, 9, 3, 0.25, 4);
-      else if (pr.kind === 'lash') this.burst(p, 0xff2a3c, 14, 4, 0.35);
-      else if (pr.kind === 'fireball') { this.burst(p, 0xff7a1e, pr.fin ? 30 : 20, pr.fin ? 6 : 5, pr.fin ? 0.7 : 0.55); this.burst(p, 0xffd080, 8, 3, 0.35, 0); }
-      else if (pr.kind === 'shear') this.burst(p, 0xe8dcff, 12, 5, 0.3, 0);
-      else if (pr.kind === 'hex') this.burst(p, 0xff1f3d, pr.fin ? 18 : 12, 4, 0.35);
-      else if (pr.kind === 'toxic') { this.burst(p, 0x7fd34a, 18, 4, 0.4, 6); this.burst(p, 0xdfffb0, 6, 2, 0.25, 0); }
+      if (pr.kind === 'heavy') {
+        this.burst(p, 0xff7a2a, 34, 7, 0.8); this.fireBurst(p, 1.6, 10); this.smokeBurst(p, 1.5, 7, 0x3a3028, 0.55);
+        if (low) { this.scorchDecal(p, 2.4); this.groundRing(p, 3, 0x6a5a4a); }
+      }
+      else if (pr.kind === 'fast') { this.burst(p, pr.color, pr.fin ? 22 : 14, pr.fin ? 5 : 4, pr.fin ? 0.5 : 0.4); this.S('magic_05', { p, size: [pr.fin ? 1.6 : 1.1, 0.2], life: 0.2, color: pr.color, alpha: 0.9 });
+        this.S(Math.random() < 0.5 ? 'spark_01' : 'spark_02', { p, size: [pr.fin ? 1.5 : 1, 1.3], life: 0.16, color: pr.color, alpha: 1, fadeIn: 0.02 }); }   // a crackle
+      else if (pr.kind === 'skim') { this.burst(p, 0xdff6ff, 9, 3, 0.25, 4); this.S('star_06', { p, size: [0.9, 0.2], life: 0.2, color: 0xe8fbff }); }
+      else if (pr.kind === 'lash') { this.burst(p, 0xff2a3c, 14, 4, 0.35); this.slash(p, 0xff2a3c, 1.1); this.S('scratch_01', { p, size: [1.2, 1.6], life: 0.22, color: 0xff6070, alpha: 0.9 }); }
+      else if (pr.kind === 'fireball') {
+        this.burst(p, 0xff7a1e, pr.fin ? 30 : 20, pr.fin ? 6 : 5, pr.fin ? 0.7 : 0.55); this.fireBurst(p, pr.fin ? 1.2 : 0.85, pr.fin ? 8 : 5);
+        this.smokeBurst(p, pr.fin ? 1 : 0.7, pr.fin ? 3 : 2, 0x4a3a30, 0.4);
+        if (low) this.scorchDecal(p, pr.fin ? 1.2 : 0.8, 6);
+      }
+      else if (pr.kind === 'shear') { this.burst(p, 0xe8dcff, 12, 5, 0.3, 0); this.slash(p, 0xd8c8ff, pr.fin ? 1.4 : 1, Math.atan2(pr.vel.x, pr.vel.z)); }
+      else if (pr.kind === 'hex') { this.burst(p, 0xff1f3d, pr.fin ? 18 : 12, 4, 0.35); this.S('magic_03', { p, size: [pr.fin ? 1.8 : 1.2, 0.3], life: 0.3, spin: 6, color: 0xff2a48, alpha: 0.9 }); }
+      else if (pr.kind === 'toxic') { this.burst(p, 0x7fd34a, 18, 4, 0.4, 6); this.burst(p, 0xdfffb0, 6, 2, 0.25, 0); this.smokeBurst(p, 0.7, 3, 0x6a9a40, 0.35); }
       else if (pr.kind === 'flaskstep') this.burst(p, 0xc080ff, 10, 2, 0.3, 0);
-      else if (pr.kind === 'sling') { this.burst(p, 0xb8a888, pr.fin ? 12 : 7, 3, 0.25, 8); this.dust(p, 2); }
+      else if (pr.kind === 'sling') { this.burst(p, 0xb8a888, pr.fin ? 12 : 7, 3, 0.25, 8); this.dust(p, pr.fin ? 4 : 2); }
       // thrown props shatter via the propBreak message
     } else {
       this.burst(p, pr.color ?? SPELL_COLORS[pr.kind] ?? 0xffffff, 6, 1.5, 0.3);
@@ -266,39 +377,34 @@ export class Effects {
   // Healing (Night Cage, Black Death's blocks): small crimson motes drifting up around the body, no flash.
   healShimmer(center) {
     for (let i = 0; i < 2; i++) {
-      const m = new THREE.Mesh(this.particleGeo, this.mat(i ? 0xff3355 : 0xff8fa0, { opacity: 0.9 }));
       const a = Math.random() * Math.PI * 2, r = 0.35 + Math.random() * 0.25;
-      m.position.set(center.x + Math.cos(a) * r, center.y - 0.7 + Math.random() * 1.2, center.z + Math.sin(a) * r);
-      m.scale.setScalar(0.09 + Math.random() * 0.07);
-      this.scene.add(m);
-      this.particles.push({ mesh: m, vel: new THREE.Vector3(0, 0.9 + Math.random() * 0.6, 0), life: 0, maxLife: 0.55 + Math.random() * 0.3, grav: -0.5, shrink: true });
+      this.S(i ? 'star_06' : 'circle_05', { p: [center.x + Math.cos(a) * r, center.y - 0.7 + Math.random() * 1.2, center.z + Math.sin(a) * r], v: [0, 0.9 + Math.random() * 0.6, 0],
+        life: 0.55 + Math.random() * 0.3, size: [i ? 0.3 : 0.22, 0.05], color: i ? 0xff3355 : 0xff8fa0, alpha: 0.95, spin: 2, optional: i === 1 });
     }
   }
 
+  // The general-purpose burst (every caller in the game): sparks and twinkles in `color` with a flash; one or two
+  // (`count` <= 2) are soft motes instead (auras, fumes, trails of embers).
   burst(pos, color, count, speed, size = 0.5, grav = 6) {
-    for (let i = 0; i < count; i++) {
-      const m = new THREE.Mesh(this.particleGeo, this.mat(color, { opacity: 1 }));
-      m.position.copy(pos);
-      m.scale.setScalar(size * (0.6 + Math.random() * 0.8));
-      const dir = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.3, Math.random() - 0.5).normalize();
-      this.scene.add(m);
-      this.particles.push({ mesh: m, vel: dir.multiplyScalar(speed * (0.4 + Math.random() * 0.8)), life: 0, maxLife: 0.35 + Math.random() * 0.4, grav, shrink: true });
+    if (count <= 2) {
+      for (let i = 0; i < count; i++) {
+        const d = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.3, Math.random() - 0.5).normalize().multiplyScalar(speed * 0.6);
+        this.S('circle_05', { p: pos, v: d, grav, life: 0.4 + Math.random() * 0.4, size: [size * 1.1, size * 0.25], color, alpha: 0.9, optional: true });
+      }
+      return;
     }
-    // flash sphere
-    const flash = new THREE.Mesh(this.sphereGeo, this.mat(color, { opacity: 0.6 }));
-    flash.position.copy(pos); flash.scale.setScalar(size * 0.8);
-    this.scene.add(flash);
-    this.particles.push({ mesh: flash, vel: new THREE.Vector3(), life: 0, maxLife: 0.22, grav: 0, grow: size * 6 });
+    this.sparks(pos, color, count, speed, size, grav);
+    this.flash(pos, color, Math.min(2.2, size * 1.6));
   }
 
-  // Kicked-up dirt at `pos` (a goat's hooves).
+  // Kicked-up dirt at `pos` (hooves, landings, stampedes): clods and a puff of dust.
   dust(pos, count = 2) {
-    for (let i = 0; i < count; i++) {
-      const m = new THREE.Mesh(this.particleGeo, this.mat(0xb59a72, { opacity: 0.8 }));
-      m.position.set(pos.x + (Math.random() - 0.5) * 0.6, 0.1, pos.z + (Math.random() - 0.5) * 0.6);
-      m.scale.setScalar(0.6 + Math.random() * 0.9);
-      this.scene.add(m);
-      this.particles.push({ mesh: m, vel: new THREE.Vector3((Math.random() - 0.5) * 1.5, 1 + Math.random() * 1.5, (Math.random() - 0.5) * 1.5), life: 0, maxLife: 0.5 + Math.random() * 0.3, grav: 3, shrink: true });
+    for (let i = 0, N = this.n(count); i < N; i++) {
+      const x = pos.x + (Math.random() - 0.5) * 0.6, z = pos.z + (Math.random() - 0.5) * 0.6;
+      this.S(i % 2 ? 'dirt_01' : 'dirt_02', { p: [x, 0.15, z], v: [(Math.random() - 0.5) * 1.5, 1 + Math.random() * 1.5, (Math.random() - 0.5) * 1.5], grav: 4, floor: 0.06,
+        life: 0.55 + Math.random() * 0.3, size: [0.45 + Math.random() * 0.35, 0.75], spin: (Math.random() - 0.5) * 4, color: 0x8a6c48, alpha: 0.95, add: false });
+      if (i % 2 === 0) this.S('smoke_07', { p: [x, 0.3, z], v: [(Math.random() - 0.5) * 0.6, 0.5, (Math.random() - 0.5) * 0.6], drag: 1, life: 0.8 + Math.random() * 0.4,
+        size: [0.6, 1.8], spin: (Math.random() - 0.5), color: 0xb89c78, alpha: 0.45, add: false, optional: true });
     }
   }
 
@@ -345,15 +451,14 @@ export class Effects {
     wall.position.copy(pos).setY(p[1] + 0.4); wall.scale.setScalar(0.6);
     this.scene.add(wall);
     this.particles.push({ mesh: wall, vel: new THREE.Vector3(), life: 0, maxLife: life, grav: 0, growXZ: (radius - 0.6) / life, still: true, spinY: 9 });
-    // motes: outward and around, like debris caught in the spin
-    for (let i = 0; i < 36; i++) {
+    // the spin itself: twirls round her and on the ground, and motes flung outward and around
+    this.S('twirl_01', { p: [pos.x, p[1] + 1, pos.z], size: [1.5, radius * 1.6], life: 0.38, spin: 16, color: 0xc890ff, alpha: 0.9, fadeIn: 0.05 });
+    this.S('twirl_02', { p: [pos.x, p[1] + 0.2, pos.z], mode: 'flat', size: [1.2, radius * 2.2], life: 0.4, spin: -12, color: 0xe0c8ff, alpha: 0.8, fadeIn: 0.05 });
+    for (let i = 0, N = this.n(30); i < N; i++) {
       const a = Math.random() * Math.PI * 2, sp = 7 + Math.random() * 9;
-      const m = new THREE.Mesh(this.particleGeo, this.mat(i % 3 ? 0xc890ff : 0xffffff, { opacity: 1 }));
-      m.position.set(pos.x + Math.sin(a) * 0.8, p[1] + 0.3 + Math.random() * 1.6, pos.z + Math.cos(a) * 0.8);
-      m.scale.setScalar(0.35 + Math.random() * 0.5);
-      this.scene.add(m);
-      const vel = new THREE.Vector3(Math.sin(a) * sp + Math.cos(a) * sp * 0.6, 1 + Math.random() * 2.5, Math.cos(a) * sp - Math.sin(a) * sp * 0.6);
-      this.particles.push({ mesh: m, vel, life: 0, maxLife: 0.35 + Math.random() * 0.25, grav: 3, shrink: true });
+      this.S(i % 3 ? 'trace_01' : 'star_06', { p: [pos.x + Math.sin(a) * 0.8, p[1] + 0.3 + Math.random() * 1.6, pos.z + Math.cos(a) * 0.8],
+        v: [Math.sin(a) * sp + Math.cos(a) * sp * 0.6, 1 + Math.random() * 2.5, Math.cos(a) * sp - Math.sin(a) * sp * 0.6], grav: 3, drag: 1,
+        life: 0.35 + Math.random() * 0.25, size: [i % 3 ? 1 : 0.5, 0.3], aspect: i % 3 ? 0.6 : 1, mode: i % 3 ? 'streak' : 'face', stretch: 0.06, color: i % 3 ? 0xc890ff : 0xffffff });
     }
     this.burst(pos.clone().setY(p[1] + 1), 0xb46cff, 10, 3, 0.5, 0);
   }
@@ -384,6 +489,7 @@ export class Effects {
   land(p) {
     const pos = new THREE.Vector3(p[0], 0, p[2]);
     for (let i = 0; i < 6; i++) this.dust(pos, 2);
+    this.groundRing(pos, 1.6, 0x9a8a70, 0.5, 0.7);
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.8, 1, 32).rotateX(-Math.PI / 2), this.mat(0xb59a72, { opacity: 0.6, depthWrite: false }));
     ring.position.copy(pos).setY(0.12); ring.scale.setScalar(0.4);
     this.scene.add(ring);
@@ -408,6 +514,8 @@ export class Effects {
       });
     }
     this.burst(pos, C.PROP_TYPES[type].color, 8, 2.5, 0.3);
+    this.smokeBurst(pos, 0.8, 4, type === 'hay' ? 0xc8b078 : 0x8a7a6a, 0.45);
+    this.dust(pos, 3);
     if (type === 'hay') { this.burst(pos, 0xe8d27a, 22, 4.5, 0.35, 3); this.burst(pos, 0xc9a94a, 12, 2.5, 0.3, 1); }   // straw puff
     if (type === 'potion') { this.burst(pos, 0x5cf0b0, 22, 5, 0.45); this.burst(pos, 0xd98cff, 14, 3.5, 0.4, -1); }   // potion splash
   }
@@ -496,11 +604,13 @@ export class Effects {
       },
     };
     entry.setHp(w.hp);
+    entry.glint = 0;
     (this.walls ??= new Set()).add(entry);
     return entry;
   }
   wallHit(entry, p) {
     this.burst(new THREE.Vector3(p[0], p[1], p[2]), 0xdff6ff, 8, 3, 0.25, 4);
+    this.S('window_04', { p, size: [1, 0.2], life: 0.25, color: 0xe8fbff, alpha: 0.9 });
   }
   wallShatter(entry, w) {
     this.walls?.delete(entry);
@@ -563,13 +673,10 @@ export class Effects {
     ring.position.copy(pos); ring.scale.setScalar(0.4);
     this.scene.add(ring);
     this.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0, maxLife: 0.35, grav: 0, grow: 9, still: true });
-    for (let i = 0; i < 18; i++) {
-      const a = i / 18 * Math.PI * 2;
-      const m = new THREE.Mesh(this.particleGeo, this.mat(i % 2 ? 0xffffff : 0xb98cff, { opacity: 1 }));
-      m.position.set(p[0] + Math.sin(a) * 0.6, 0.3 + Math.random() * 1.6, p[2] + Math.cos(a) * 0.6);
-      m.scale.setScalar(0.4);
-      this.scene.add(m);
-      this.particles.push({ mesh: m, vel: new THREE.Vector3(Math.sin(a) * 7 + Math.cos(a) * 3, 0.5, Math.cos(a) * 7 - Math.sin(a) * 3), life: 0, maxLife: 0.4, grav: 0, shrink: true });
+    for (let i = 0, N = this.n(16); i < N; i++) {
+      const a = i / N * Math.PI * 2;
+      this.S(i % 2 ? 'twirl_02' : 'trace_01', { p: [p[0] + Math.sin(a) * 0.6, 0.3 + Math.random() * 1.6, p[2] + Math.cos(a) * 0.6], v: [Math.sin(a) * 7 + Math.cos(a) * 3, 0.5, Math.cos(a) * 7 - Math.sin(a) * 3],
+        drag: 2, life: 0.4, size: [i % 2 ? 0.7 : 1.1, 0.3], aspect: i % 2 ? 1 : 0.7, mode: i % 2 ? 'face' : 'streak', stretch: 0.06, spin: 8, color: i % 2 ? 0xffffff : 0xb98cff, alpha: 0.9 });
     }
     for (let i = 0; i < 4; i++) this.dust(pos, 2);
   }
@@ -644,11 +751,12 @@ export class Effects {
     this.scene.add(g);
     // timed on the real clock, not the frame-clamped dt, so a slow machine still sees the ice land on time
     const e = { group: g, shadow, ring, ice, total: Math.max(left, 0.01), left, endAt: performance.now() / 1000 + left };
+    e.rune = this.S('magic_01', { p: [p[0], 0.17, p[2]], mode: 'flat', size: [FROST.radius * 1.2, FROST.radius * 2], life: left + 0.1, spin: 1.2, color: 0xbfeaff, alpha: 0.75, fadeIn: 0.25, fadePow: 0.2 });
     (this.frosts ??= new Set()).add(e);
     return e;
   }
   frostfallImpact(e, p) {
-    if (e) { this.frosts?.delete(e); this.scene.remove(e.group); }
+    if (e) { this.frosts?.delete(e); this.scene.remove(e.group); if (e.rune) e.rune.dead = true; }
     const pos = new THREE.Vector3(p[0], 0.6, p[2]);
     const shardMat = this.mat(0xd8f2ff, { opacity: 0.95 });
     for (let i = 0; i < 40; i++) {
@@ -661,14 +769,12 @@ export class Effects {
         spin: new THREE.Vector3(Math.random() * 10 - 5, Math.random() * 10 - 5, Math.random() * 10 - 5) });
     }
     // mist: slow, rising, spreading
-    for (let i = 0; i < 26; i++) {
-      const m = new THREE.Mesh(this.sphereGeo, this.mat(0xeef8ff, { opacity: 0.5, depthWrite: false }));
+    for (let i = 0, N = this.n(18); i < N; i++) {
       const a = Math.random() * Math.PI * 2, r = Math.random() * FROST.radius;
-      m.position.set(p[0] + Math.sin(a) * r, 0.3 + Math.random() * 0.6, p[2] + Math.cos(a) * r);
-      m.scale.setScalar(0.4 + Math.random() * 0.5);
-      this.scene.add(m);
-      this.particles.push({ mesh: m, vel: new THREE.Vector3(Math.sin(a) * 1.5, 0.6 + Math.random(), Math.cos(a) * 1.5), life: 0, maxLife: 1 + Math.random() * 0.6, grav: 0, grow: 1.2 });
+      this.S(['smoke_01', 'smoke_07', 'smoke_08'][i % 3], { p: [p[0] + Math.sin(a) * r, 0.3 + Math.random() * 0.6, p[2] + Math.cos(a) * r], v: [Math.sin(a) * 1.5, 0.6 + Math.random(), Math.cos(a) * 1.5],
+        drag: 0.8, life: 1 + Math.random() * 0.6, size: [1, 2.6], spin: (Math.random() - 0.5), color: 0xeef8ff, alpha: 0.55, add: false, fadeIn: 0.1 });
     }
+    this.S('window_04', { p: pos, size: [2.5, 0.5], life: 0.3, color: 0xffffff, alpha: 0.9 });
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.85, 1, 64).rotateX(-Math.PI / 2),
       this.mat(0xdff6ff, { opacity: 0.9, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
     ring.position.set(p[0], 0.15, p[2]); ring.scale.setScalar(1);
@@ -767,11 +873,15 @@ export class Effects {
     spikes.scale.y = 0.05; wall.scale.y = 0.05;
     this.scene.add(g);
     const e = { group: g, spikes, wall, glow, born: realNow(), endAt: realNow() + left };
+    e.runes = [
+      this.S('magic_02', { p: [p[0], 0.18, p[2]], mode: 'flat', size: [CAGE.radius * 1.2, CAGE.radius * 2], life: left + 0.5, spin: 0.35, color: 0xff1f3d, alpha: 0.55, fadeIn: 0.08, fadePow: 0.25 }),
+      this.S('magic_01', { p: [p[0], 0.19, p[2]], mode: 'flat', size: [CAGE.radius * 0.6, CAGE.radius * 1.1], life: left + 0.5, spin: -0.6, color: 0xff5a70, alpha: 0.5, fadeIn: 0.1, fadePow: 0.25 }),
+    ];
     (this.cages ??= new Set()).add(e);
     for (let i = 0; i < 24; i++) { const a = i / 24 * Math.PI * 2; this.dust(new THREE.Vector3(p[0] + Math.sin(a) * CAGE.radius, 0.2, p[2] + Math.cos(a) * CAGE.radius), 1); }
     return e;
   }
-  endCage(e) { if (e) e.endAt = Math.min(e.endAt, realNow()); }
+  endCage(e) { if (e) { e.endAt = Math.min(e.endAt, realNow()); for (const q of e.runes || []) if (q) q.life = Math.min(q.life, q.age + 0.5); } }
 
   // Cinder's Firewall: a roaring curtain of flame across her aim (layered scrolling sheets, a glowing base, embers).
   firewall(w) {
@@ -802,7 +912,9 @@ export class Effects {
     for (let i = -2; i <= 2; i++) {
       const p = new THREE.Vector3(w.x + Math.cos(w.yaw) * i, 0.6, w.z - Math.sin(w.yaw) * i);
       this.burst(p, i % 2 ? 0xffb040 : 0xff5a1e, 8, 4, 0.5, -2);
+      this.fireBurst(p, 0.9, 3);
     }
+    this.scorchDecal({ x: w.x, z: w.z }, F.width * 0.45, w.left + 4, 0x1a0c06, 0.6);
     return e;
   }
   endFirewall(e) { if (e) e.endAt = Math.min(e.endAt, realNow()); }
@@ -811,6 +923,7 @@ export class Effects {
     const pos = new THREE.Vector3(p[0], p[1], p[2]);
     this.burst(pos, 0xff7a1e, 18, 5, 0.5, -3);
     this.burst(pos, 0xffd080, 8, 2, 0.3, -1);
+    this.fireBurst(pos, 0.6, 3);
   }
 
   // ---------------------------------------------------------------- Jeb
@@ -876,11 +989,13 @@ export class Effects {
     ring.position.y = 0.15;
     g.add(col, ring);
     this.scene.add(g);
-    (this.tells ??= new Set()).add({ group: g, col, ring, follow, born: realNow(), endAt: realNow() + left, color });
+    const rune = this.S('magic_01', { follow, offset: [0, 0.17, 0], mode: 'flat', size: [3.6, 1.8], life: left + 0.15, spin: 2.6, color, alpha: 0.9, fadeIn: 0.15 });
+    const rune2 = this.S('magic_02', { follow, offset: [0, 0.18, 0], mode: 'flat', size: [1.4, 2.6], life: left + 0.15, spin: -1.8, color: 0xffffff, alpha: 0.5, fadeIn: 0.3 });
+    (this.tells ??= new Set()).add({ group: g, col, ring, follow, born: realNow(), endAt: realNow() + left, color, runes: [rune, rune2] });
   }
   // An interrupted ultimate: the light bursts and scatters.
   ultFizzle(pos) {
-    for (const e of this.tells || []) if (e.follow.position.distanceTo(pos) < 0.5) { this.tells.delete(e); this.scene.remove(e.group); }
+    for (const e of this.tells || []) if (e.follow.position.distanceTo(pos) < 0.5) { this.tells.delete(e); this.scene.remove(e.group); for (const q of e.runes) if (q) q.dead = true; }
     this.burst(new THREE.Vector3(pos.x, pos.y + 1.2, pos.z), 0xffffff, 16, 4, 0.4, 2);
     this.burst(new THREE.Vector3(pos.x, pos.y + 1.2, pos.z), 0x888888, 10, 2, 0.5, -1);
   }
@@ -920,6 +1035,8 @@ export class Effects {
     this.scene.add(ring);
     this.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0, maxLife: 0.4, grav: 0, grow: 12, still: true });
     this.burst(new THREE.Vector3(p[0], 0.8, p[2]), 0xff5a1e, 30, 7, 0.6, -4);
+    this.fireBurst(new THREE.Vector3(p[0], 0.5, p[2]), 1.5, 9);
+    this.smokeBurst(new THREE.Vector3(p[0], 0.3, p[2]), 1.2, 5, 0x4a3a30, 0.45);
     for (let i = 0; i < 6; i++) this.dust(new THREE.Vector3(p[0], 0.2, p[2]), 3);
   }
   flameAura(follow) {
@@ -943,9 +1060,10 @@ export class Effects {
     trail.position.copy(b); trail.lookAt(a);
     this.scene.add(trail);
     this.particles.push({ mesh: trail, vel: new THREE.Vector3(), life: 0, maxLife: left + 0.35, grav: 0, still: true });
-    for (let i = 0; i < 24; i++) {
+    for (let i = 0, N = this.n(24); i < N; i++) {
       const p = a.clone().lerp(b, Math.random());
-      this.burst(p, i % 2 ? 0xffb040 : 0xff3a0a, 1, 2, 0.6, -2);
+      this.S(['fire_01', 'flame_01', 'fire_02'][i % 3], { p, v: [(Math.random() - 0.5) * 2, 1 + Math.random(), (Math.random() - 0.5) * 2], drag: 2, life: 0.5 + Math.random() * 0.4,
+        size: [1.2, 2.4], spin: (Math.random() - 0.5) * 3, color: i % 2 ? 0xffc050 : 0xff7a2a, alpha: 0.9, add: false });
     }
   }
   scorch(p, wall) {
@@ -957,13 +1075,12 @@ export class Effects {
     ring.position.set(p[0], 0.17, p[2]);
     this.scene.add(ring);
     this.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0, maxLife: 0.45, grav: 0, grow: (MRAIN.radius + 2) / 0.45, still: true });
+    this.fireBurst(pos, 2, 12);
+    this.smokeBurst(pos.clone().setY(0.4), 2, 9, 0x3a3028, 0.55);
+    this.groundRing(pos, MRAIN.radius + 1, 0x5a4a40, 0.6, 1.2);
     if (wall) return;
-    // the scorch mark stays a while
-    const mark = new THREE.Mesh(new THREE.CircleGeometry(MRAIN.radius, 40).rotateX(-Math.PI / 2),
-      new THREE.MeshBasicMaterial({ color: 0x140804, transparent: true, opacity: 0.75, depthWrite: false }));
-    mark.position.set(p[0], 0.12, p[2]); mark.renderOrder = 1;
-    this.scene.add(mark);
-    (this.scorches ??= new Set()).add({ mesh: mark, born: realNow() });
+    // the scorch mark stays a while (8 s, fading)
+    this.scorchDecal(pos, MRAIN.radius * 1.1, 8, 0x140804, 0.8);
   }
 
   // ---------------------------------------------------------------- Embibe
@@ -1017,6 +1134,7 @@ export class Effects {
     g.scale.setScalar(0.2);
     this.scene.add(g);
     const e = { group: g, liquid, rim, born: realNow(), endAt: realNow() + left, bubble: 0, R };
+    e.burn = this.scorchDecal({ x: p[0], z: p[2] }, R * 1.15, left + 5, 0x1a2a08, 0.7);   // the burn it leaves, fading after
     (this.pools ??= new Set()).add(e);
     this.burst(new THREE.Vector3(p[0], 0.5, p[2]), 0x7fd34a, 20, 5, 0.4, 6);
     return e;
@@ -1025,13 +1143,11 @@ export class Effects {
   // Flask Step: a burst of purple smoke where she left and where she arrives.
   flaskSmoke(p) {
     const pos = new THREE.Vector3(p[0], 0.8, p[2]);
-    for (let i = 0; i < 14; i++) {
-      const m = new THREE.Mesh(this.sphereGeo, this.mat(i % 2 ? 0x6a3a9a : 0xb080e0, { opacity: 0.6, depthWrite: false }));
-      m.position.set(p[0] + (Math.random() - 0.5) * 0.8, 0.3 + Math.random() * 1.6, p[2] + (Math.random() - 0.5) * 0.8);
-      m.scale.setScalar(0.3 + Math.random() * 0.3);
-      this.scene.add(m);
+    for (let i = 0, N = this.n(10); i < N; i++) {
       const a = Math.random() * Math.PI * 2;
-      this.particles.push({ mesh: m, vel: new THREE.Vector3(Math.sin(a) * 1.5, 0.8 + Math.random(), Math.cos(a) * 1.5), life: 0, maxLife: 0.7 + Math.random() * 0.4, grav: 0, grow: 1.1 });
+      this.S(['smoke_01', 'smoke_07', 'smoke_08'][i % 3], { p: [p[0] + (Math.random() - 0.5) * 0.8, 0.3 + Math.random() * 1.6, p[2] + (Math.random() - 0.5) * 0.8],
+        v: [Math.sin(a) * 1.5, 0.8 + Math.random(), Math.cos(a) * 1.5], drag: 1.2, life: 0.8 + Math.random() * 0.4, size: [0.6, 1.8], spin: (Math.random() - 0.5),
+        color: i % 2 ? 0x6a3a9a : 0xb080e0, alpha: 0.6, add: false, fadeIn: 0.1 });
     }
     this.burst(pos, 0xd0a0ff, 10, 3, 0.3, 0);
   }
@@ -1074,8 +1190,52 @@ export class Effects {
   }
 
   // ---------------------------------------------------------------- update
+  // A projectile's trail, one step: textured streaks, flames, smoke or motes by kind.
+  trail(pr) {
+    const p = pr.pos, v = pr.vel, fin = pr.fin ? 1.5 : 1, color = pr.kind === 'fast' ? pr.color : SPELL_COLORS[pr.kind];
+    const jit = (r) => [p.x + (Math.random() - 0.5) * r, p.y + (Math.random() - 0.5) * r, p.z + (Math.random() - 0.5) * r];
+    const ax = [v.x, v.y, v.z];
+    switch (pr.kind) {
+      case 'fast':
+        this.S('trace_01', { p, mode: 'streak', axis: ax, size: [1.1 * fin, 0.5], aspect: 1.3, life: 0.22, color, alpha: 0.9 });
+        this.S('circle_05', { p, size: [0.5 * fin, 0.1], life: 0.25, color, alpha: 0.55, optional: true });
+        break;
+      case 'fireball': case 'heavy': {
+        const k = (pr.kind === 'heavy' ? 1.7 : 1) * fin;
+        this.S(Math.random() < 0.5 ? 'fire_01' : 'flame_03', { p: jit(0.2 * k), v: [-v.x * 0.05, 0.6, -v.z * 0.05], life: 0.32, size: [0.75 * k, 0.25 * k], spin: (Math.random() - 0.5) * 4,
+          color: Math.random() < 0.5 ? 0xffa040 : 0xffd080, alpha: 0.9, add: false });
+        if (Math.random() < (pr.kind === 'heavy' ? 0.7 : 0.3)) this.S('smoke_08', { p: jit(0.3 * k), v: [0, 0.7, 0], drag: 1, life: 0.9, size: [0.4 * k, 1.3 * k], spin: (Math.random() - 0.5),
+          color: 0x3a2a22, alpha: 0.4, add: false, fadeIn: 0.1, optional: true });
+        if (pr.kind === 'heavy' && Math.random() < 0.4) this.S('trace_01', { p, v: [(Math.random() - 0.5) * 3, 1 + Math.random() * 2, (Math.random() - 0.5) * 3], grav: 6, life: 0.4, size: [0.9, 0.3], aspect: 0.8, mode: 'streak', stretch: 0.08, color: 0xffc060 });
+        break;
+      }
+      case 'shear':
+        this.S('trace_01', { p, mode: 'streak', axis: ax, size: [1.2 * fin, 0.5], aspect: 1.2, life: 0.2, color: 0xe8dcff, alpha: 0.8 });
+        this.S('twirl_02', { p, size: [0.6 * fin, 1.2 * fin], life: 0.3, spin: 10, color: 0xa070ff, alpha: 0.45, optional: true });
+        break;
+      case 'hex':
+        this.S('magic_05', { p, size: [0.5 * fin, 0.1], life: 0.3, spin: 4, color: 0xff1f3d, alpha: 0.8 });
+        break;
+      case 'skim':
+        this.S('star_01', { p, size: [0.45 * fin, 0.08], life: 0.25, color: 0xcff2ff, alpha: 0.9, rot: 0 });
+        break;
+      case 'lash':
+        this.S('trace_01', { p, mode: 'streak', axis: ax, size: [1.3, 0.6], aspect: 1.5, life: 0.25, color: 0xff2a3c, alpha: 0.9 });
+        break;
+      case 'potion': case 'toxic': case 'flaskstep':
+        this.S(Math.random() < 0.7 ? 'circle_05' : 'magic_05', { p: jit(0.15), v: [(Math.random() - 0.5) * 0.4, 0.3, (Math.random() - 0.5) * 0.4], size: [0.35 * fin, 0.05], life: 0.45, spin: 3, color, alpha: 0.8 });
+        break;
+      case 'sling':
+        this.S('dirt_02', { p, size: [0.22 * fin, 0.08], life: 0.3, color: 0x9a8a70, alpha: 0.6, add: false, optional: true });
+        break;
+      default:   // a thrown prop
+        this.S('smoke_01', { p: jit(0.6), size: [0.5, 1], life: 0.45, spin: 1, color: 0xb48cff, alpha: 0.3, add: false, optional: true });
+    }
+  }
+
   update(dt) {
     this.clock += dt;
+    this.sprites.update(dt, this.camera);
     for (const pr of this.projectiles.values()) {
       pr.age += dt;
       if (pr.curve) {
@@ -1094,17 +1254,8 @@ export class Effects {
       // trail
       pr.trail += dt;
       if (pr.group.userData.ring) pr.group.userData.ring.rotation.y += dt * 8;
-      const interval = pr.kind === 'heavy' || pr.kind === 'lash' || pr.kind === 'fireball' ? 0.025 : 0.035;
-      if (pr.trail > interval) {
-        pr.trail = 0;
-        const m = new THREE.Mesh(this.sphereGeo, this.mat(pr.kind === 'fast' ? pr.color : SPELL_COLORS[pr.kind], { opacity: pr.fin ? 0.7 : 0.5 }));
-        m.position.copy(pr.pos);
-        if (pr.kind === 'prop') m.position.add(new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(0.6));
-        if (pr.kind === 'sling') m.scale.setScalar(0.07 * (pr.fin ? 1.5 : 1)); else
-        m.scale.setScalar((pr.kind === 'heavy' ? 0.5 : pr.kind === 'fireball' ? 0.3 : pr.kind === 'prop' ? 0.14 : pr.kind === 'skim' ? 0.11 : pr.kind === 'lash' ? 0.13 : pr.kind === 'shear' ? 0.16 : 0.2) * (pr.fin ? 1.6 : 1));
-        this.scene.add(m);
-        this.particles.push({ mesh: m, vel: new THREE.Vector3(), life: 0, maxLife: pr.kind === 'heavy' ? 0.4 : 0.25, grav: 0, shrink: true });
-      }
+      const interval = (pr.kind === 'heavy' || pr.kind === 'lash' || pr.kind === 'fireball' ? 0.025 : 0.035) * (this.low ? 2 : 1);
+      if (pr.trail > interval) { pr.trail = 0; this.trail(pr); }
     }
 
     // Frostfall warnings: the shadow grows over the delay, the ice drops in the last FROST.fall seconds
@@ -1136,12 +1287,11 @@ export class Effects {
       while (e.mote > 0.02) {
         e.mote -= 0.02;
         const a = Math.random() * Math.PI * 2, r = 2 + Math.random() * (EYE.radius - 2);
-        const m = new THREE.Mesh(this.particleGeo, this.mat(Math.random() < 0.3 ? 0xb59a72 : 0xd8c0ff, { opacity: 0.9 }));
-        m.position.set(e.group.position.x + Math.sin(a) * r, 0.2 + Math.random() * 2.5, e.group.position.z + Math.cos(a) * r);
-        m.scale.setScalar(0.4 + Math.random() * 0.6);
-        this.scene.add(m);
-        const inx = -Math.sin(a), inz = -Math.cos(a);
-        this.particles.push({ mesh: m, vel: new THREE.Vector3((inx * 0.6 + inz) * r * 1.6, 1.5, (inz * 0.6 - inx) * r * 1.6), life: 0, maxLife: 0.45, grav: -2, shrink: true });
+        if (this.low && Math.random() < 0.55) continue;
+        const inx = -Math.sin(a), inz = -Math.cos(a), dirt = Math.random() < 0.3;
+        this.S(dirt ? 'dirt_02' : 'twirl_02', { p: [e.group.position.x + Math.sin(a) * r, 0.2 + Math.random() * 2.5, e.group.position.z + Math.cos(a) * r],
+          v: [(inx * 0.6 + inz) * r * 1.6, 1.5, (inz * 0.6 - inx) * r * 1.6], grav: -2, life: 0.45, size: [dirt ? 0.35 : 0.8, 0.2], spin: 9,
+          color: dirt ? 0x8a7050 : 0xd8c0ff, alpha: 0.85, add: !dirt });
       }
     }
     for (const e of this.pools || []) {
@@ -1153,11 +1303,9 @@ export class Effects {
       while (e.bubble > 1) {
         e.bubble -= 1;
         const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * e.R;
-        const m = new THREE.Mesh(this.sphereGeo, this.mat(Math.random() < 0.6 ? 0x9aff50 : 0x5aa030, { opacity: 0.8 }));
-        m.position.set(e.group.position.x + Math.sin(a) * r, 0.15, e.group.position.z + Math.cos(a) * r);
-        m.scale.setScalar(0.06 + Math.random() * 0.08);
-        this.scene.add(m);
-        this.particles.push({ mesh: m, vel: new THREE.Vector3(0, 0.6 + Math.random() * 0.8, 0), life: 0, maxLife: 0.5 + Math.random() * 0.5, grav: 0, grow: 0.3 });
+        if (this.low && Math.random() < 0.55) continue;
+        this.S(Math.random() < 0.8 ? 'circle_02' : 'smoke_07', { p: [e.group.position.x + Math.sin(a) * r, 0.15, e.group.position.z + Math.cos(a) * r], v: [0, 0.6 + Math.random() * 0.8, 0],
+          life: 0.5 + Math.random() * 0.5, size: [0.12, 0.35], color: Math.random() < 0.6 ? 0x9aff50 : 0x5aa030, alpha: 0.8 });
       }
     }
     for (const e of this.flaskClouds || []) {
@@ -1196,11 +1344,11 @@ export class Effects {
       while (e.flake > 1) {
         e.flake -= 1;
         const a = yaw + (Math.random() - 0.5) * 2 * half * 0.9, sp = 10 + Math.random() * 8;
-        const m = new THREE.Mesh(this.particleGeo, this.mat(Math.random() < 0.7 ? 0xffffff : 0xbfeaff, { opacity: 1 }));
-        m.position.set(e.group.position.x + Math.sin(yaw) * 0.8, e.group.position.y + 1.2 + (Math.random() - 0.5) * 0.4, e.group.position.z + Math.cos(yaw) * 0.8);
-        m.scale.setScalar(0.5 + Math.random() * 0.9);
-        this.scene.add(m);
-        this.particles.push({ mesh: m, vel: new THREE.Vector3(Math.sin(a) * sp, (Math.random() - 0.4) * 2.5, Math.cos(a) * sp), life: 0, maxLife: BLIZ.range / sp, grav: 1, shrink: false });
+        if (this.low && Math.random() < 0.55) continue;
+        const flake = Math.random() < 0.6;
+        this.S(flake ? 'star_06' : 'circle_05', { p: [e.group.position.x + Math.sin(yaw) * 0.8, e.group.position.y + 1.2 + (Math.random() - 0.4) * 0.4, e.group.position.z + Math.cos(yaw) * 0.8],
+          v: [Math.sin(a) * sp, (Math.random() - 0.4) * 2.5, Math.cos(a) * sp], grav: 1, life: BLIZ.range / sp, size: [flake ? 0.22 : 0.16, flake ? 0.3 : 0.12], spin: (Math.random() - 0.5) * 8,
+          color: Math.random() < 0.7 ? 0xffffff : 0xbfeaff, alpha: 0.95, fadeIn: 0.05, fadePow: 0.5 });
       }
     }
     for (const e of this.auras || []) {
@@ -1217,7 +1365,11 @@ export class Effects {
       e.group.position.copy(e.follow.position);
       e.shell.material.opacity = 0.3 + Math.sin(this.clock * 17) * 0.08;
       e.ember += dt;
-      while (e.ember > 0.02) { e.ember -= 0.02; this.burst(e.group.position.clone().add(new THREE.Vector3((Math.random() - 0.5) * 1.2, 0.3 + Math.random() * 1.6, (Math.random() - 0.5) * 1.2)), Math.random() < 0.5 ? 0xff7a1e : 0xffc060, 1, 1.5, 0.35, -3); }
+      while (e.ember > 0.03) {
+        e.ember -= 0.03;
+        this.S(Math.random() < 0.5 ? 'flame_01' : 'fire_02', { p: e.group.position.clone().add(new THREE.Vector3((Math.random() - 0.5) * 1.2, 0.3 + Math.random() * 1.6, (Math.random() - 0.5) * 1.2)),
+          v: [0, 2 + Math.random() * 1.5, 0], life: 0.45, size: [0.7, 0.2], spin: (Math.random() - 0.5) * 3, color: Math.random() < 0.5 ? 0xffa040 : 0xffd080, alpha: 0.9, add: false, optional: true });
+      }
     }
     for (const e of this.scorches || []) {
       const age = rn - e.born;
@@ -1253,13 +1405,11 @@ export class Effects {
       e.ember += dt;
       while (e.ember > 0.015) {
         e.ember -= 0.015;
-        const F = C.SPELLBOOK.firewall, a = (Math.random() - 0.5) * F.width;
-        const m = new THREE.Mesh(this.particleGeo, this.mat(Math.random() < 0.5 ? 0xffb040 : 0xff5a1e, { opacity: 1 }));
-        const yaw = e.group.rotation.y;
-        m.position.set(e.group.position.x + Math.cos(yaw) * a, 0.3 + Math.random() * 2.5, e.group.position.z - Math.sin(yaw) * a);
-        m.scale.setScalar(0.3 + Math.random() * 0.4);
-        this.scene.add(m);
-        this.particles.push({ mesh: m, vel: new THREE.Vector3((Math.random() - 0.5) * 1.2, 2 + Math.random() * 2.5, (Math.random() - 0.5) * 1.2), life: 0, maxLife: 0.5 + Math.random() * 0.4, grav: -1, shrink: true });
+        if (this.low && Math.random() < 0.55) continue;
+        const F = C.SPELLBOOK.firewall, a = (Math.random() - 0.5) * F.width, yaw = e.group.rotation.y, flame = Math.random() < 0.45;
+        this.S(flame ? (Math.random() < 0.5 ? 'flame_01' : 'fire_01') : 'circle_05', { p: [e.group.position.x + Math.cos(yaw) * a, flame ? 0.4 + Math.random() * 1.2 : 0.3 + Math.random() * 2.5, e.group.position.z - Math.sin(yaw) * a],
+          v: [(Math.random() - 0.5) * 1.2, 2 + Math.random() * 2.5, (Math.random() - 0.5) * 1.2], grav: -1, life: flame ? 0.45 : 0.5 + Math.random() * 0.4,
+          size: flame ? [1, 0.4] : [0.16, 0.05], spin: flame ? (Math.random() - 0.5) * 2 : 0, color: flame ? (Math.random() < 0.5 ? 0xffc050 : 0xff8a2a) : (Math.random() < 0.5 ? 0xffb040 : 0xff5a1e), alpha: flame ? 0.75 : 1, add: !flame });
       }
     }
     for (const e of this.cages || []) {
@@ -1289,7 +1439,16 @@ export class Effects {
     }
 
     // walls rise out of the ground
-    for (const w of this.walls || []) if (w.rise < 1) { w.rise = Math.min(1, w.rise + dt / 0.15); w.group.scale.y = 0.05 + 0.95 * (1 - Math.pow(1 - w.rise, 3)); }
+    for (const w of this.walls || []) {
+      if (w.rise < 1) { w.rise = Math.min(1, w.rise + dt / 0.15); w.group.scale.y = 0.05 + 0.95 * (1 - Math.pow(1 - w.rise, 3)); }
+      // ice glints catching the light on its faces
+      w.glint = (w.glint || 0) + dt;
+      if (w.glint > (this.low ? 0.5 : 0.22)) {
+        w.glint = 0;
+        const q = w.group.localToWorld(new THREE.Vector3((Math.random() - 0.5) * BULWARK.width * 0.9, 0.3 + Math.random() * (BULWARK.height - 0.5), (Math.random() < 0.5 ? -1 : 1) * 0.28));
+        this.S(Math.random() < 0.5 ? 'star_06' : 'window_04', { p: q, size: [0.55, 0.1], life: 0.45, rot: Math.random() < 0.5 ? 0 : Math.PI / 4, color: 0xe8fbff, alpha: 0.9 });
+      }
+    }
 
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const p = this.particles[i];

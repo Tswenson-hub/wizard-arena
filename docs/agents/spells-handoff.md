@@ -1,5 +1,64 @@
 # Spells hand-off
 
+## Kenney particles: textured, pooled sprites (Ty: "make use of these particles wherever possible")
+
+- **Textures:** `public/textures/particles/` holds 33 of the pack's 80 transparent PNGs, as grey + alpha PNGs (407 KB).
+  - 8 are 256 px: four smokes, `magic_01`/`magic_02` (thickened so the runes survive mipmapping on the ground), `scorch_01` and `twirl_01`.
+  - 25 are 128 px.
+  - Credits are in `public/textures/particles/CREDITS.md` (Kenney, CC0). The in-game credits line now reads "CC0 sounds and particles by Kenney…".
+  - The pack's `symbol` sprites are a heart and a star, so the rune circles use `magic_01`/`magic_02`.
+- **`public/js/sprites.js` (new) `SpriteFX`:**
+  - **Atlas:** the PNGs are packed at runtime into one 1024² canvas atlas: big sprites in two rows of 256, small ones in rows of 128.
+  - **Two instanced layers:** additive (sparks, glows, runes) and alpha-blended (smoke, dirt, scorch, flames; sorted back to front each frame).
+  - **Pool:** 3,200 + 1,600 sprites (`?low`: 900 + 450). Each frame rewrites only the live range.
+  - **`spawn(name, opts)`:** position, velocity, gravity, drag, life, size start → end (eased), aspect, rotation and spin, colour,
+    peak alpha, `fadeIn`, `fadePow`, and `follow` (with an offset).
+  - **Modes:** `face` (camera-facing), `streak` (stretched along the velocity or an `axis`), `flat` (a ground decal).
+    In flat mode the quad maps `-y` to world z, otherwise the winding faces down and it is culled.
+  - Colours are written raw (the hex as it looks), with no tone mapping on sprites.
+  - `optional: true` sprites are dropped 55% of the time in `?low`. `Effects.n(k)` scales counts to 45% in `?low`, and trails emit at half the rate.
+- **effects.js:**
+  - **New primitives:** `sparks`, `flash`, `fireBurst`, `smokeBurst`, `scorchDecal`, `groundRing`, `muzzle`, `slash`, `hitFlash`,
+    `ultGlow`, `veilSwirl` and `trail`.
+  - **Generic bursts:** `burst()` and `dust()` (used everywhere, including goats.js) are now sprites. `burst()` with 1–2
+    particles makes soft motes, with no flash.
+  - **Trails and cores:** a trail per projectile kind (trace streaks, flames and smoke, twirls, motes, dirt), and a textured
+    glow riding on each projectile (`pr.cores`, killed on `projEnd`).
+  - **Impacts:** sparks, a crackle, magic stars, flames, smoke, slashes, and scorch decals for Meteor and Fireball near the ground.
+  - **Smoke:** Smoke Screen and Smoke Flask now use Kenney smoke textures. The Flask Step, Frostfall-impact, prop-break and
+    Meteor Rain smoke are sprites.
+  - **Fire:** Fireball, Meteor, Firewall flames and embers, Meteor Rain launch, aura, dive and landing, and a Firewall burn decal.
+    Flames are alpha-blended, because additive orange over bright grass went yellow-green.
+  - **Dirt:** goats and rams, landings, Stampede, and Eye of the Storm debris.
+  - **Twirls:** the Cyclone pulse, Eye of the Storm motes, the Veil gust, and the Veil swirl while it's up.
+  - **Runes:** ult wind-ups (`magic_01` and `magic_02` following the caster), the Night Cage (two counter-spinning runes) and the
+    Frostfall marker.
+  - **Other:** Bulwark ice glints (`window_04`, `star_06`), the Toxic Flask burn decal, Blizzard snowflakes, pool bubbles and
+    the heal shimmer.
+  - **Mesh particles:** the per-particle meshes, each with a cloned material, are gone from all the high-volume sites. Only the shaped
+    one-off meshes (rings, pillars, shells) remain.
+- **main.js:**
+  - `new Effects(scene, { low: LOW_FX })` and `effects.camera`.
+  - A muzzle flash on every cast, and slash arcs on combo strikes, Gale Shear and the Lash release.
+  - `hitFlash` on body hits, `veilSwirl` for the Veil's duration, and `ultGlow` for every wizard holding a full ultimate charge.
+  - `renderer` is now in `window.__wa`, for tests.
+- **Measured** (`/tmp/wa-spells/t_fxbench.py`, the same spot and facing, a scripted moment with 10 projectiles in flight,
+  8 impacts, smoke, a Firewall and a wind-up; renders and updates timed directly):
+
+  | | before | after |
+  |---|---|---|
+  | Draw calls | 232–246 | 78–81 |
+  | Frame (timed render + update) | 1.3 ms | 0.9–1.0 ms |
+  | `effects.update` | 0.07 ms | 0.04 ms |
+  | Triangles | ~507k | ~502k |
+  | Particle meshes | 153–165 | 0 (194–199 sprites in 2 draw calls) |
+
+  - **3 Hard bots, 15 s fight** (`t_fxperf.py`): average draw calls 1,053 → 362 (peak 1,476 → 461), `effects.update` 3.0 → 0.4 ms.
+    Frame time can't be read here: the headless page manages about 1–2 fps under the machine's load.
+  - `?low`: about 35% fewer sprites; no errors.
+- **Screenshots** (`t_fxshots.py`; it freezes `effects.update`, steps the scene and the clock, then shoots):
+  `/tmp/wa-spells/fx_{flight,impact,smoke,fire,runes,dirt,glints,runetest}.png`, and `fx_sheet*.png`.
+
 ## Ty's four changes: Gale unrooted, Vesper heals, one hero per team, Siege first
 
 - **(1) Gale:**

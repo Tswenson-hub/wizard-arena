@@ -32,7 +32,8 @@ addEventListener('resize', () => {
 });
 
 buildWorld(scene);
-const effects = new Effects(scene);
+const effects = new Effects(scene, { low: LOW_FX });
+effects.camera = camera;
 const input = new Input(canvas);
 const sfx = new Sfx();
 const net = new Net();
@@ -435,6 +436,9 @@ function handleMessage(msg) {
         // a body with the shared triple-strike combo (combo1/2/3) plays the strike for this shot of its magazine
         const combo = msg.shot != null && owner.actions['combo' + (msg.shot + 1)];
         if (combo) owner.oneShot('combo' + (msg.shot + 1), Math.min(0.7, combo.getClip().duration), Math.max(1, combo.getClip().duration / 0.7), 0);
+        // the cast's muzzle flash; a combo strike (and Gale Shear) also sweeps an arc in the hero's colour
+        if (msg.kind !== 'prop' && msg.kind !== 'flaskstep' && !(msg.kind === 'skim' && owner.inOneShot() && !combo)) effects.muzzle(msg);
+        if ((combo || msg.kind === 'shear') && C.PRIMARY_KINDS.has(msg.kind)) effects.slash([msg.p[0] + msg.v[0] * 0.04, msg.p[1], msg.p[2] + msg.v[2] * 0.04], C.WIZARDS[owner.wizard]?.color ?? 0xffffff, msg.fin ? 1.2 : 0.9);
         if (msg.fin && C.PRIMARY_KINDS.has(msg.kind) && !(performance.now() - (owner.finSndAt || 0) < 150)) { owner.finSndAt = performance.now(); sfx.finisher(msg.p, owner.wizard); }   // the 3rd-shot accent, by element (once for Skim's three shards)
         if (msg.kind === 'potion') { if (!combo) owner.oneShot('cast_fast', 0.45, 2.4, 0.25); sfx.play('potion_toss', { pos: msg.p, vol: 0.8, jitter: 0.08 }); }
         else if (msg.kind === 'toxic') { owner.oneShot('cast_fast', 0.5, 2, 0.25); sfx.play('potion_toss', { pos: msg.p, vol: 0.85, rate: 0.85 }); }
@@ -448,7 +452,7 @@ function handleMessage(msg) {
         else if (msg.kind === 'lash') {
           // a body with its own lash clip is already mid-strike: let the follow-through play
           if (!owner.actions.lash) owner.oneShot('cast_heavy', 0.5, 1.8, 1.9);
-          owner.lashT = -1; owner.lashing = false; sfx.lashCrack(msg.p);
+          owner.lashT = -1; owner.lashing = false; sfx.lashCrack(msg.p); effects.slash(msg.p, 0xff2a3c, 1.3);
         }
         else if (msg.kind === 'heavy') { owner.charging = false; owner.oneShot('cast_heavy', 0.55, 1.5, 1.9); sfx.castHeavy(msg.p); }
         else { tkGesture(owner, 'tk_throw'); sfx.throw_(msg.p); if (owner.carrying) startCarry(owner, null); }
@@ -482,7 +486,7 @@ function handleMessage(msg) {
       if (msg.veil) { target.veilFlash(); effects.burst(c, 0xe8dcff, 8, 3, 0.25, 0); sfx.play('veil_block', { pos: c, vol: 0.7, jitter: 0.06 }); }
       else if (msg.blocked) { const G = C.kitOf(target.wizard).guard; effects.blockFlash(c, G === 'black_death' ? 0xa0102a : 0x9ae4ff); if (G === 'black_death') sfx.play('black_death_block', { pos: c, vol: 0.75, jitter: 0.06 }); else sfx.block(c); }
       else {
-        effects.burst(c, msg.kind === 'skim' ? 0xbfeaff : 0xff3b4e, 10, 3, 0.35);
+        effects.hitFlash(c, msg.kind === 'skim' ? 0xbfeaff : 0xff3b4e);
         // a hurled prop or goat doubles them over (hit_waist); other interrupting hits flinch
         if ((msg.kind === 'prop' || msg.kind === 'goat') && target.actions.hit_waist) target.oneShot('hit_waist', target.actions.hit_waist.getClip().duration, 1, 0);
         else if (C.hitSpec(msg.kind)?.stun !== 0 && msg.int !== false) target.oneShot('stun', msg.kind === 'heavy' ? 0.5 : 0.55, 3.0, 0.3);
@@ -643,6 +647,8 @@ function handleMessage(msg) {
       w.veiled = true;
       const g = w.group.position;
       effects.veilGust([g.x, g.y, g.z]);
+      for (const q of w.veilFx || []) if (q) q.dead = true;
+      w.veilFx = effects.veilSwirl(w.group, C.SPELLBOOK.tempest_veil.duration + 0.2);
       sfx.veilUp([g.x, g.y + 1, g.z]);
       break;
     }
@@ -650,6 +656,8 @@ function handleMessage(msg) {
       const w = players.get(msg.id);
       if (!w) break;
       w.veiled = false;
+      for (const q of w.veilFx || []) if (q) q.dead = true;
+      w.veilFx = null;
       const g = w.group.position;
       if (!w.dead) { effects.veilPop([g.x, g.y, g.z]); sfx.veilDown([g.x, g.y + 1, g.z]); }
       break;
@@ -2016,6 +2024,8 @@ function frame(t) {
     updateMusic();
     updateGoatAudio(dt);
     for (const w of players.values()) updateWizardAudio(w, dt);
+    // a full ultimate charge glows in the hero's colour
+    for (const w of players.values()) if (!w.dead && w.ult >= C.ULT_CHARGE.max && (w.ultFxT = (w.ultFxT || 0) + dt) > (LOW_FX ? 0.2 : 0.08)) { w.ultFxT = 0; effects.ultGlow(w.group.position, C.WIZARDS[w.wizard]?.color ?? 0xffffff); }
     for (const w of players.values()) if (w.healing && !w.dead && (w.healFxT = (w.healFxT || 0) + dt) > 0.05) { w.healFxT = 0; effects.healShimmer(w.group.position.clone().setY(w.group.position.y + 1)); }
   } else {
     // idle camera drift on the join screen
@@ -2045,4 +2055,4 @@ function frame(t) {
 requestAnimationFrame(frame);
 
 // Debug handle (used by the automated smoke test; harmless in production).
-window.__wa = { input, net, local, players, props, goats, effects, scene, camera, sfx, decoys, walls, frosts, frostMark, mrainMark, flaskMark, cageMark, laneMark, cages, firewalls, stampedeFx, C, get cursedProp() { return cursedProp; } };
+window.__wa = { renderer, input, net, local, players, props, goats, effects, scene, camera, sfx, decoys, walls, frosts, frostMark, mrainMark, flaskMark, cageMark, laneMark, cages, firewalls, stampedeFx, C, get cursedProp() { return cursedProp; } };
