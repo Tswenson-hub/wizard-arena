@@ -196,9 +196,9 @@ export const PILLARS = [45, 135, 225, 315].map(deg => {
   const [x, z] = fromAltar(deg, 7.5);
   return { x, z, r: 0.9, h: 5, yaw: awayYaw(x, z), tilt: 0.11 };
 });
-// Two pillars of the circle lie where they fell: a broken stump and the shaft beside it, pointing away from
-// the altar. Low enough to shoot over. [bearing, distance of the stump, length of the shaft]
-export const FALLEN_PILLARS = [[100, 8.5, 5.4], [255, 8.5, 5.4]].map(([deg, d, len]) => {
+// A pillar of the circle lies where it fell: a broken stump and the shaft beside it, pointing away from the
+// altar (another fell across the west ruin ledges; see the high ground). Low enough to shoot over. [bearing, distance of the stump, length of the shaft]
+export const FALLEN_PILLARS = [[100, 8.5, 5.4]].map(([deg, d, len]) => {
   const [x, z] = fromAltar(deg, d);
   return { x, z, yaw: awayYaw(x, z), len };
 });
@@ -218,7 +218,7 @@ export const OBELISK_FURROW = { from: fromAltar(200, 14.5), to: fromAltar(200, 2
 // The model is about 0.65 x its height across, so the collider is r 0.33 h, shifted toward the lean.
 export const BLAST_STONES = [
   [15, 11.5, 1.9, 0.3], [340, 12, 1.6, 0.35], [112, 16, 1.7, 0.3], [125, 13.5, 2.0, 0.3],   // 112°: the south-east edge of the Barn Passage zone
-  [160, 14, 2.2, 0.28], [205, 14, 1.8, 0.32], [290, 12.5, 2.0, 0.3],
+  [160, 14, 2.2, 0.28], [205, 14, 1.8, 0.32],   // (290° went in round 9: the west ruin ledge stands there)
 ].map(([deg, d, h, tilt]) => [...fromAltar(deg, d), h, tilt]);
 // Flat slabs (models/rock_table.glb) flung farther: low cover you shoot over. [x, z, yaw, height, tilt]
 // Model space at 1.2 m tall: a round slab about 2.5 m across, centred on x -0.25.
@@ -244,7 +244,7 @@ export const TREE_KINDS = {
 };
 // [kind, x, z, height]; yaw is fixed per tree (server and clients must agree on the trunk offsets).
 export const TREES = [
-  ['oak', 23, -18, 7], ['birch', -27.5, -12.5, 8.5], ['birch', -11, -35, 7.5], ['oak', 12, -32, 7.5],
+  ['oak', 23, -18, 7], ['birch', -17.5, -34.5, 8.5], ['birch', -11, -35, 7.5], ['oak', 12, -32, 7.5],
   ['birch', 30, -21, 8], ['oak', -30, -19, 7.5], ['oak', -13, 31, 8], ['pine', 13, 32, 10],
   ['birch', 24, 22, 8.5], ['pine', -24, 23, 10.5], ['pine', -33, 8, 11], ['pine', 33.5, 14, 10],
 ].map(([kind, x, z, h], i) => {
@@ -276,8 +276,8 @@ export const PROP_SPAWNS = [
 
 // Team modes: Ember spawns in the farmyard (north), Frost in the south meadow, about equally far from the altar.
 export const TEAM_SPAWNS = {
-  ember: [[4.5, 0, 10.5], [-8.5, 0, 8], [3, 0, 16.5], [-4, 0, 17], [8.5, 0, 14]],
-  frost: [[5.5, 0, -26.5], [-3, 0, -30], [11, 0, -26], [-11, 0, -28], [0.5, 0, -31]],
+  ember: [[4.5, 0, 10.5], [-7.5, 0, 12.8], [1.5, 0, 15.5], [-4, 0, 17], [6.5, 0, 9]],
+  frost: [[5.5, 0, -26.5], [-3, 0, -30], [10, 0, -28.5], [-11, 0, -28], [0.5, 0, -31]],
 };
 // Altar Siege (king of the hill): the zone starts at the altar and hops every 60 s, altar -> barn -> silo -> altar.
 // Each circle is open ground (nothing taller than 1.6 m inside; the altar, slabs and fallen pillars are low),
@@ -301,9 +301,9 @@ export const SIEGE_SPAWNS = {
   frost: [[5.3, 0, -37.4, -0.14], [3.3, 0, -37.9, -0.09], [1.3, 0, -37.8, -0.03], [3.2, 0, -36.5, -0.09]],
 };
 
-// Free for all: both sides plus the flanks between the blast site and the field or the pen.
+// Free for all: both sides (the two flank points went in round 9: the high ground looked down on them).
 // Nobody spawns in the pen, the field or the house.
-export const SPAWN_POINTS = [...TEAM_SPAWNS.ember, ...TEAM_SPAWNS.frost, [-13.5, 0, 1.5], [12.5, 0, 1.5]];
+export const SPAWN_POINTS = [...TEAM_SPAWNS.ember, ...TEAM_SPAWNS.frost];
 
 
 // ------------------------------------------------------------ walkable surfaces (platforms and ramps)
@@ -405,6 +405,54 @@ export const surfaceBlocks = (a, b) => !!surfaceSegmentHit(a, b);
 // Footprint corners in world space (for drawing, overlays and the goats' detour boxes).
 export const surfaceCorners = (s) => [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([i, k]) => sWorld(s, i * s.w / 2, k * s.d / 2));
 
+// ------------------------------------------------------------ the high ground (round 9): stand-in pieces
+// Each perch has a way up, a counter (a second route, or cover against it) and overlooks no spawn point from
+// closer than 15 m. `style` tells the client how to draw the stand-in: wood, hay, stone, rock or earth.
+// A piece with a ramp up to it: the ramp's high end meets the box edge at `side` (+z | -z | +x | -x in the box's frame).
+function perch(box, ramp, side = '-z') {
+  SURFACES.push(box);
+  if (!ramp) return;
+  const along = ramp.len, half = { '+z': box.d / 2, '-z': box.d / 2, '+x': box.w / 2, '-x': box.w / 2 }[side] + along / 2;
+  const dir = { '+z': [0, 1], '-z': [0, -1], '+x': [1, 0], '-x': [-1, 0] }[side];
+  const c = Math.cos(box.yaw || 0), n = Math.sin(box.yaw || 0);
+  const lx = dir[0] * half + (ramp.offset || 0) * (dir[1] ? 1 : 0), lz = dir[1] * half + (ramp.offset || 0) * (dir[0] ? 1 : 0);
+  // the ramp rises toward the box: its local +z points from the ramp's foot to the box
+  const rampYaw = (box.yaw || 0) + Math.atan2(-dir[0], -dir[1]);
+  SURFACES.push({ kind: 'ramp', x: box.x + lx * c + lz * n, z: box.z - lx * n + lz * c, w: ramp.w, d: along, yaw: rampYaw,
+    y0: ramp.from ?? 0, y1: box.top, style: ramp.style || box.style, name: box.name + '-ramp' });
+}
+{
+  // Barn hay loft: fills the dead-end nook north of the side door (model x 3..6.6), 2.3 m up, with a steep
+  // ladder-ramp from the corridor. It looks straight down the corridor and out through the arch toward the Barn
+  // Passage zone; the barn walls hide every spawn. Counter: it can only see along that one line.
+  const [lx, lz] = [14.17, 25.35];
+  perch({ kind: 'box', x: lx, z: lz, w: 1.6, d: 2.5, yaw: 0, top: 2.3, style: 'hay', name: 'loft', allow: ['barn'] }, { len: 2.1, w: 1.0, style: 'wood' }, '-z');
+  // Ruin ledges on the altar's west rim, outside the Altar circle: a low ledge (1.4 m) reached by a ramp from the
+  // silo side, and a higher one (2.3 m) joined to it by a toppled pillar lying from ledge to ledge. They look over
+  // the Altar circle. Counter: the ring's west pillars and the blast stones are cover against them, and the high
+  // ledge's only way up is along the pillar, in full view of the altar.
+  const [ax, az] = fromAltar(245, 10), aYaw = awayYaw(ax, az);
+  perch({ kind: 'box', x: ax, z: az, w: 2.8, d: 2.2, yaw: aYaw, top: 1.4, style: 'stone', name: 'ledge-low' }, { len: 3.0, w: 1.3 }, '+z');
+  const [bx, bz] = fromAltar(287, 11), bYaw = awayYaw(bx, bz);
+  SURFACES.push({ kind: 'box', x: bx, z: bz, w: 2.6, d: 2.4, yaw: bYaw, top: 2.3, style: 'stone', name: 'ledge-high' });
+  const span = Math.hypot(bx - ax, bz - az) - 2.4, bridgeYaw = Math.atan2(bx - ax, bz - az);
+  SURFACES.push({ kind: 'ramp', x: (ax + bx) / 2, z: (az + bz) / 2, w: 1.0, d: span, yaw: bridgeYaw, y0: 1.4, y1: 2.3, style: 'pillar', name: 'ledge-bridge' });
+  // Watchtower by the crop field's south-west corner: 3.4 m, stairs along the field's south edge. Overlooks the
+  // Fallen Silo zone from the north-west. Counter: no cover up there, and the stairs are the only way up.
+  perch({ kind: 'box', x: -33.3, z: -14.6, w: 2.6, d: 2.6, yaw: 0, top: 3.4, style: 'wood', name: 'tower' }, { len: 4.0, w: 1.1, style: 'wood' }, '+x');
+  // Rock plateaus: a 1.5 m table rock in the south-east meadow and a 2.5 m one in the meadow behind the barn,
+  // each with a natural slope. The hay stacks and the oak screen the Frost spawns from the low one; the barn
+  // hides the farmyard from the high one.
+  perch({ kind: 'box', x: 26.5, z: -22.5, w: 3.6, d: 3.0, yaw: 0.4, top: 1.5, style: 'rock', name: 'plateau-low' }, { len: 3.2, w: 2.2, style: 'rock' }, '-x');
+  perch({ kind: 'box', x: 25, z: 16, w: 3.6, d: 3.6, yaw: -0.3, top: 2.5, style: 'rock', name: 'plateau-high' }, { len: 4.4, w: 2.2, style: 'rock' }, '+x');
+  // The raised cart road: a 0.9 m earth embankment along the farmyard's west side, ramps at both ends. The high
+  // route between the farmyard and the field side; the low route runs beside it.
+  const road = { kind: 'box', x: -10.5, z: 4.5, w: 2.6, d: 4.0, yaw: 0, top: 0.9, style: 'earth', name: 'road' };
+  SURFACES.push(road);
+  SURFACES.push({ kind: 'ramp', x: -10.5, z: 7.75, w: 2.6, d: 2.5, yaw: Math.PI, y0: 0, y1: 0.9, style: 'earth', name: 'road-north' });
+  SURFACES.push({ kind: 'ramp', x: -10.5, z: 1.25, w: 2.6, d: 2.5, yaw: 0, y0: 0, y1: 0.9, style: 'earth', name: 'road-south' });
+}
+
 // Everything solid, as circles. Movement (players, bots, goats) collides with all of them;
 // projectiles pass over anything lower than their height (`h`); line-of-sight checks
 // (telekinesis, bot aiming, cover) only count colliders at least LOS_HEIGHT tall.
@@ -455,6 +503,7 @@ export const BLAST_SHARDS = [];
     if (Math.hypot(x - ALTAR.x, z - ALTAR.z) < 5.2) continue;                           // the dais and its flagstones
     if (COLLIDERS.some(c => Math.hypot(c.x - x, c.z - z) < c.r + 1.4)) continue;       // no snags between pieces
     if (BLAST_SHARDS.some(([sx, sz]) => Math.hypot(sx - x, sz - z) < 1.8)) continue;
+    if (SURFACES.some(sf => { const c = Math.cos(sf.yaw || 0), n = Math.sin(sf.yaw || 0), dx = x - sf.x, dz = z - sf.z; return Math.abs(dx * c - dz * n) < sf.w / 2 + 1.2 && Math.abs(dx * n + dz * c) < sf.d / 2 + 1.2; })) continue;
     if (PROP_SPAWNS.some(([, px, pz]) => Math.hypot(px - x, pz - z) < 1.5)) continue;
     if ([...TEAM_SPAWNS.ember, ...TEAM_SPAWNS.frost, ...SPAWN_POINTS].some(([sx, , sz]) => Math.hypot(sx - x, sz - z) < 2)) continue;
     BLAST_SHARDS.push([x, z, yaw, h, tilt]);
@@ -476,4 +525,5 @@ const PEN_HAY = (() => {
   return { x0: Math.min(...cs.map(c => c.x - c.r)), x1: PEN.x0, z0: Math.min(...cs.map(c => c.z - c.r)), z1: Math.max(...cs.map(c => c.z + c.r)) };
 })();
 // Each fallen pillar is a low wall a goat can't step round, so it gets a box too.
+// (Platforms and ramps are routed round by their exact footprints in goats.js, not by boxes.)
 export const GOAT_DETOURS = [boxOf('barn'), boxOf('silo'), PEN_HAY, ...FALLEN_PILLARS.map(f => boxOf('ruin', f))];

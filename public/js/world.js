@@ -3,6 +3,7 @@
 // Farm pieces are procedural stand-ins until a Meshy model for them is loaded (see loadModels).
 import * as THREE from 'three';
 import * as C from '../shared/constants.js';
+import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const flat = (color, extra = {}) => new THREE.MeshStandardMaterial({ color, flatShading: true, roughness: 0.9, metalness: 0.0, ...extra });
 // Ground decals stacked on the floor: polygon offset instead of y gaps so they never z-fight.
@@ -138,6 +139,7 @@ export function buildWorld(scene) {
   }
 
   buildBlastSite(scene);
+  buildHighGround(scene);
   buildRunePillars(scene);
   buildTrees(scene);
   buildPen(scene);
@@ -354,6 +356,105 @@ function makeFallenPillar(len) {
   const shard = new THREE.Mesh(new THREE.OctahedronGeometry(0.3, 0), runeMat);
   shard.position.set(0.5, 0.25, z + 0.4); shard.rotation.set(0.9, 0.3, 0.5); g.add(shard);
   return g;
+}
+
+// ------------------------------------------------------------ the high ground (stand-ins for C.SURFACES)
+// Drawn from the shared surface list, so what you see is what you stand on: boxes as solid blocks to their top,
+// ramps as solid wedges. Each piece is a stand-in group ('surface:<name>') a Meshy model can replace later.
+// A wedge from the ground up to a top sloping from y0 (local -z end) to y1 (+z end), w by d.
+function wedgeGeometry(w, d, y0, y1) {
+  const g = new THREE.BoxGeometry(w, 1, d).translate(0, 0.5, 0), pos = g.attributes.position;
+  for (let i = 0; i < pos.count; i++) if (pos.getY(i) > 0.5) pos.setY(i, Math.max(0.02, y0 + (y1 - y0) * (pos.getZ(i) / d + 0.5)));
+  g.computeVertexNormals();
+  return g;
+}
+const HG = {
+  plank: flat(0x9a6b3f), plankDark: flat(0x6e4a2a), post: flat(0x5e3f24), hay: flat(0xd2ad55),
+  ruin: flat(0x5d625b), ruinDark: flat(0x484c47), rock: flat(0x7d7f78), rockDark: flat(0x666a63),
+  earth: flat(0x7a5a38), roadTop: decal(0xa88d5e, 3),
+};
+function buildHighGround(scene) {
+  for (const sf of C.SURFACES) {
+    const g = new THREE.Group(), ramp = sf.kind === 'ramp';
+    const top = ramp ? Math.max(sf.y0, sf.y1) : sf.top;
+    const solid = (mat, jitter = 0) => {
+      const geo = ramp ? wedgeGeometry(sf.w, sf.d, sf.y0, sf.y1) : new THREE.BoxGeometry(sf.w, sf.top, sf.d).translate(0, sf.top / 2, 0);
+      if (!jitter) return new THREE.Mesh(geo, mat);
+      // weld the faces first so the roughening keeps the block closed; keep the footprint's outline exact at the base
+      geo.deleteAttribute('normal'); geo.deleteAttribute('uv');
+      const welded = mergeVertices(geo), pos = welded.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        if (pos.getY(i) < 0.05) continue;
+        pos.setXYZ(i, pos.getX(i) + (Math.random() - 0.5) * jitter, Math.max(0.05, pos.getY(i) - Math.random() * jitter * 0.6), pos.getZ(i) + (Math.random() - 0.5) * jitter);
+      }
+      welded.computeVertexNormals();
+      return new THREE.Mesh(welded, mat);
+    };
+    switch (sf.style) {
+      case 'hay': {     // hay stacked up to a plank floor
+        g.add(solid(HG.hay));
+        g.add(box(sf.w + 0.1, 0.12, sf.d + 0.1, HG.plank, 0, top - 0.06, 0));
+        for (const k of [-1, 1]) g.add(box(0.14, top, 0.14, HG.post, k * (sf.w / 2 - 0.08), top / 2, sf.d / 2 - 0.08));
+        break;
+      }
+      case 'wood': {
+        if (ramp) {      // stairs (or the loft's ladder): treads on two stringers
+          const n = Math.max(4, Math.round(top / 0.28)), len = Math.hypot(sf.d, top);
+          for (const k of [-1, 1]) {
+            const str = box(0.1, 0.22, len, HG.post, k * (sf.w / 2 - 0.05), top / 2, 0);
+            str.rotation.x = -Math.atan2(top, sf.d); g.add(str);
+          }
+          for (let i = 0; i < n; i++) {
+            const u = (i + 0.5) / n;
+            g.add(box(sf.w, 0.07, sf.d / n + 0.05, HG.plank, 0, sf.y0 + (sf.y1 - sf.y0) * u - 0.035, (u - 0.5) * sf.d));
+          }
+          // solid enough to read as blocking below, without hiding the treads
+          const under = solid(HG.plankDark); under.scale.set(0.6, 0.98, 1); g.add(under);
+        } else {         // the watchtower: four posts, a deck, a rail on three sides
+          for (const [i, k] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) g.add(box(0.22, top + 1.1, 0.22, HG.post, i * (sf.w / 2 - 0.11), (top + 1.1) / 2, k * (sf.d / 2 - 0.11)));
+          for (const [i, k] of [[-1, -1], [1, 1]]) { const br = box(0.1, top * 1.15, 0.1, HG.post, 0, top / 2, k * (sf.d / 2 - 0.11)); br.rotation.z = i * 0.62; g.add(br); }
+          g.add(box(sf.w, 0.16, sf.d, HG.plank, 0, top - 0.08, 0));
+          g.add(box(sf.w * 0.9, 0.06, sf.d * 0.9, HG.plankDark, 0, top * 0.45, 0));
+          for (const [w, d, x, z] of [[sf.w, 0.08, 0, -sf.d / 2], [sf.w, 0.08, 0, sf.d / 2], [0.08, sf.d, -sf.w / 2, 0]]) g.add(box(w, 0.08, d, HG.plank, x, top + 0.95, z));
+          // a pale shell so the box reads as solid ground for shots and movement below the deck
+          const shell = solid(new THREE.MeshStandardMaterial({ color: 0x6e4a2a, transparent: true, opacity: 0.0, depthWrite: false }));
+          g.add(shell);
+        }
+        break;
+      }
+      case 'stone':
+        g.add(solid(HG.ruin, 0.08));
+        // broken edge stones on top
+        for (let i = 0; i < 5; i++) {
+          const r = new THREE.Mesh(jitterGeometry(new THREE.DodecahedronGeometry(0.22 + (i % 3) * 0.08, 0), 0.06), HG.ruinDark);
+          r.position.set((i / 4 - 0.5) * sf.w * 0.8, top + 0.08, (i % 2 ? 1 : -1) * sf.d * 0.38); g.add(r);
+        }
+        break;
+      case 'pillar': {   // a toppled rune pillar lying from ledge to ledge, rubble wedged under it
+        const rub = solid(HG.ruinDark, 0.1); rub.scale.set(0.85, 0.94, 1); g.add(rub);
+        const len = Math.hypot(sf.d, sf.y1 - sf.y0), col = cyl(0.5, 0.5, len, 7, ruinStone, 0, (sf.y0 + sf.y1) / 2 - 0.1, 0);
+        col.rotation.x = Math.PI / 2 - Math.atan2(sf.y1 - sf.y0, sf.d); g.add(col);
+        for (const u of [-0.3, 0.15]) {
+          const band = cyl(0.52, 0.52, 0.14, 7, runeMat, 0, (sf.y0 + sf.y1) / 2 - 0.1 + u * (sf.y1 - sf.y0), u * sf.d);
+          band.rotation.x = col.rotation.x; g.add(band);
+        }
+        break;
+      }
+      case 'rock':
+        g.add(solid(ramp ? HG.rockDark : HG.rock, ramp ? 0.12 : 0.18));
+        break;
+      case 'earth':
+        g.add(solid(HG.earth, 0.05));
+        { // the cart track on top
+          const geo = ramp ? wedgeGeometry(sf.w * 0.6, sf.d, sf.y0 + 0.03, sf.y1 + 0.03) : new THREE.BoxGeometry(sf.w * 0.6, 0.03, sf.d).translate(0, sf.top + 0.015, 0);
+          g.add(new THREE.Mesh(geo, HG.roadTop));
+        }
+        break;
+      default:
+        g.add(solid(HG.rock));
+    }
+    standin(`surface:${sf.name}`, g, sf, scene);
+  }
 }
 
 // Procedural trees, shown only until the Meshy trees load (they become instanced meshes, see SCATTER).
@@ -709,6 +810,7 @@ export const GRASS_ITEMS = { tall: [], clover: [] };   // [x, z, yaw, height, ti
     if (C.PROP_SPAWNS.some(([, px, pz]) => Math.hypot(px - x, pz - z) < 1.0)) return true;
     if (Math.hypot(x - C.SILO_FOOTING.x, z - C.SILO_FOOTING.z) < C.SILO_FOOTING.r + 0.6) return true;
     if (Math.hypot(x - C.WELL.x, z - C.WELL.z) < C.WELL.r + 1.6) return true;
+    if (C.SURFACES.some(sf => { const c = Math.cos(sf.yaw || 0), n = Math.sin(sf.yaw || 0), dx = x - sf.x, dz = z - sf.z; return Math.abs(dx * c - dz * n) < sf.w / 2 + 0.3 && Math.abs(dx * n + dz * c) < sf.d / 2 + 0.3; })) return true;   // the high ground
     return C.COLLIDERS.some(c => Math.hypot(c.x - x, c.z - z) < c.r + 0.2);
   };
   // How much grass wants to grow here (0 open meadow .. ~3 along a fence by a tree), and how much of it is tall.

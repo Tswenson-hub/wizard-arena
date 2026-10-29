@@ -212,6 +212,7 @@ function fly(g, dt, ctx) {
   // ground, anything solid it's low enough to hit (Bulwark walls included), the rim, or a very long flight
   let stop = g.y <= 0 || g.flyT > 5 || Math.hypot(g.x, g.z) > C.ARENA_RADIUS - 0.5;
   for (const o of C.COLLIDERS) if (!stop && g.y < o.h && Math.hypot(o.x - g.x, o.z - g.z) < o.r + G.radius) stop = true;
+  if (!stop && C.SURFACES?.length && g.y < C.surfaceTopAt(g.x, g.z)) stop = true;   // a platform's side or top (it then steps off to the ground)
   if (stop) { ctx.broadcast({ t: 'goatBonk', id: g.id, p: [g.x, 0.8, g.z] }); land(g, ctx); }
 }
 
@@ -340,6 +341,15 @@ function charge(g, dt, t, ctx) {
     return ram(g, p, t, ctx);
   }
   // pillars, trees, the house and the tractor stop it cold; it leaps fences and tramples crops
+  if (C.SURFACES?.length) {
+    const [x, z] = C.surfacePushOut(g.x, g.z, -1, G.radius);
+    if (x !== g.x || z !== g.z) {   // ran into a platform's side
+      g.x = x; g.z = z;
+      g.state = 'dizzy'; g.until = t + G.dizzyTime;
+      ctx.broadcast({ t: 'goatBonk', id: g.id, p: [g.x, 0.8, g.z] });
+      return;
+    }
+  }
   for (const o of C.COLLIDERS) {
     if (o.kind === 'fence' || o.kind === 'crop') continue;
     if (Math.hypot(o.x - g.x, o.z - g.z) < o.r + G.radius) {
@@ -406,6 +416,11 @@ function pushOut(g, ctx) {
   };
   for (const o of C.COLLIDERS) out(o.x, o.z, o.r);
   for (const prop of ctx.props.values()) if (prop.state === 'idle') out(prop.x, prop.z, C.PROP_TYPES[prop.type].r * 0.8);
+  // platforms and ramps: goats stay on the ground, so every footprint is in the way
+  if (C.SURFACES?.length) {
+    const [x, z] = C.surfacePushOut(g.x, g.z, -1, G.radius);
+    if (x !== g.x || z !== g.z) { g.x = x; g.z = z; hit = true; }
+  }
   const r = Math.hypot(g.x, g.z), max = C.ARENA_RADIUS - 1.5;
   if (r > max) { g.x *= max / r; g.z *= max / r; hit = true; }
   return hit;
@@ -429,10 +444,23 @@ function pickDest(g) {
 const PAD = 1.9;
 const PEN_BOX = { x0: C.PEN.x0, x1: C.PEN.x1, z0: C.PEN.z0, z1: C.PEN.z1 };
 const BOXES = [[PEN_BOX, 0.5], ...C.GOAT_DETOURS.map(b => [b, 0.6])];   // [box, how much a route must clear it by]
-const CORNERS = BOXES.flatMap(([b], i) => {
-  const pad = i ? PAD - 0.6 : PAD;
-  return [[b.x0 - pad, b.z0 - pad], [b.x1 + pad, b.z0 - pad], [b.x1 + pad, b.z1 + pad], [b.x0 - pad, b.z1 + pad]];
-}).filter(([x, z]) => Math.hypot(x, z) < C.ARENA_RADIUS - 1);
+// Platforms and ramps (C.SURFACES) are rotated rectangles: a route leg must clear each by SURF_GROW, and their
+// corners pushed out by SURF_PAD are extra waypoints (the box waypoints would wall off the ground round them).
+const SURFS = C.SURFACES || [];
+const SURF_GROW = G.radius + 0.05, SURF_PAD = G.radius + 0.9;
+const surfLocal = (s, x, z) => { const dx = x - s.x, dz = z - s.z, c = Math.cos(s.yaw || 0), n = Math.sin(s.yaw || 0); return [dx * c - dz * n, dx * n + dz * c]; };
+function crossesSurf(a, c, s, grow) {
+  const [ax, az] = surfLocal(s, a[0], a[1]), [cx, cz] = surfLocal(s, c[0], c[1]);
+  return crossesBox([ax, az], [cx, cz], { x0: -s.w / 2, x1: s.w / 2, z0: -s.d / 2, z1: s.d / 2 }, grow);
+}
+const inSurf = (p, grow) => SURFS.some(s => { const [lx, lz] = surfLocal(s, p[0], p[1]); return Math.abs(lx) < s.w / 2 + grow && Math.abs(lz) < s.d / 2 + grow; });
+const CORNERS = [
+  ...BOXES.flatMap(([b], i) => {
+    const pad = i ? PAD - 0.6 : PAD;
+    return [[b.x0 - pad, b.z0 - pad], [b.x1 + pad, b.z0 - pad], [b.x1 + pad, b.z1 + pad], [b.x0 - pad, b.z1 + pad]];
+  }),
+  ...SURFS.flatMap(s => C.surfaceCorners({ ...s, w: s.w + 2 * SURF_PAD, d: s.d + 2 * SURF_PAD })),
+].filter(([x, z]) => Math.hypot(x, z) < C.ARENA_RADIUS - 1 && !inSurf([x, z], SURF_GROW));
 
 // Does segment a-b cross box b (grown by `grow`)? Liang-Barsky clip.
 function crossesBox(a, c, b, grow) {
@@ -449,10 +477,13 @@ function crossesBox(a, c, b, grow) {
 }
 // A goat already inside a box's grown margin (it was knocked there) only has to clear the box itself.
 const inBox = (p, b, grow) => p[0] > b.x0 - grow && p[0] < b.x1 + grow && p[1] > b.z0 - grow && p[1] < b.z1 + grow;
-const blocked = (a, c) => BOXES.some(([b, grow], i) => crossesBox(a, c, b, i && inBox(a, b, grow) ? 0 : grow));
+const blocked = (a, c) => BOXES.some(([b, grow], i) => crossesBox(a, c, b, i && inBox(a, b, grow) ? 0 : grow))
+  || SURFS.some(s => crossesSurf(a, c, s, SURF_GROW));
 
 // Shortest path from `from` to the gate over the corner waypoints (plain Dijkstra, a dozen nodes).
 export function routeToGate(from) {
+  // knocked onto (or against) a platform's footprint: plan from just outside it
+  if (SURFS.length && inSurf(from, SURF_GROW)) from = C.surfacePushOut(from[0], from[1], -1, SURF_GROW + 0.05);
   const nodes = [from, ...CORNERS, C.PEN.gateOut];
   const goal = nodes.length - 1;
   const dist = nodes.map(() => Infinity), prev = nodes.map(() => -1), done = nodes.map(() => false);
@@ -495,8 +526,14 @@ function trotHome(g, dt, t, ctx) {
   // hop everything on the way home.
   if (t - g.checkT > 1.5) {
     if (Math.hypot(g.x - g.checkPos[0], g.z - g.checkPos[1]) < 0.6) {
-      const side = g.detours++ % 2 ? 1 : -1, a = g.yaw + side * Math.PI / 2;
-      g.route.unshift([g.x + Math.sin(a) * 2.5, g.z + Math.cos(a) * 2.5]);
+      if (++g.detours % 3 === 0) {
+        // still stuck after two side-steps: plan again from here (the ghost timer keeps running)
+        const routeT = g.routeT, detours = g.detours;
+        goHome(g, t); g.routeT = routeT; g.detours = detours;
+      } else {
+        const side = g.detours % 2 ? 1 : -1, a = g.yaw + side * Math.PI / 2;
+        g.route.unshift([g.x + Math.sin(a) * 2.5, g.z + Math.cos(a) * 2.5]);
+      }
     }
     g.checkT = t; g.checkPos = [g.x, g.z];
   }
