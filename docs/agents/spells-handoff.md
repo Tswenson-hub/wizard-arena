@@ -113,7 +113,7 @@ The machine is heavily loaded, so pages stall for seconds; the timed checks are 
 | + Gale Shear 16 (3 runs) | 9/9 | 7/14 | 6/6 | 6/4 | 12/8 |
 
 - **Rime doesn't dominate at walking speed.** Long-range kits gained less than feared, because bots now judge shots earlier.
-- **Gale is consistently last** (0.44–0.67): at 3.6 m/s her 8 m Shear rarely closes. Ty may want her faster or her Shear longer.
+- **Gale has trailed since the walk** (0.44–0.81, was 0.91 before it): at 3.6 m/s her 8 m Shear rarely closes. Ty may want her faster or her Shear longer.
 - **Jeb is on top or near it:** most of his kills are ram one-shots.
 - **Ultimates:** about a third of the wind-ups fizzled in the first set. Meteor Rain killed in all 3 of its casts in the last set;
   Blizzard mostly chips and freezes.
