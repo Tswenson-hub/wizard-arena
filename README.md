@@ -113,7 +113,7 @@ public/js/world.js         The farmstead: ground, house, pen, field, tractor and
                            Meshy model loading (FARM_MODELS), prop mesh factories, crop trampling.
 public/js/effects.js       Projectile visuals, particles, debris, teleport/impact effects.
 public/js/net.js           WebSocket wrapper.      public/js/input.js   Keyboard + pointer lock.
-public/js/audio.js         3D positional sound (HRTF panners, reverb, compressor) over the CC0
+public/js/audio.js         3D positional sound (HRTF panners, reverb, compressor) over the
                            samples in public/sounds (see CREDITS.md there); synth fallback.
 public/models/wizard.glb   The Meshy wizard with all animation clips merged into one 1.4 MB file.
 public/models/*.glb        Meshy goat, potion barrel and farmhouse, shrunk for the web with
@@ -164,3 +164,13 @@ docker build -t wizard-arena . && docker run -p 3000:3000 wizard-arena
 ```
 
 The server reads `PORT` from the environment.
+
+## Credits
+
+- **Characters, props and scenery:** made by Ty with Meshy AI.
+- **Magic sound effects:** *Magic Spell SFX Soundpack* by **Leonardo Calvo** ([thesoundrack](https://thesoundrack.itch.io/freemagicspellsfx)),
+  licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Clips were trimmed, loudness-matched and re-encoded.
+- **Other sound effects:** *Basic Spell Impacts* (lentikula, CC0), *80 CC0 RPG SFX* (OpenGameArt, CC0), Kenney audio packs (CC0),
+  and effects and music supplied by Ty from Pixabay (Pixabay Content License).
+- **Menu music:** "Nordic Fantasia" by turning_pages (Pixabay).
+- Per-file sources and licences: [`public/sounds/CREDITS.md`](public/sounds/CREDITS.md).
