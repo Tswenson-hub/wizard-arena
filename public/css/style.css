@@ -39,6 +39,8 @@ kbd {
   background: var(--gold); color: #2a1d05;
 }
 #joinBtn:disabled { opacity: 0.5; cursor: wait; }
+.credits { margin: 14px 0 0; font-size: 11px; line-height: 1.5; color: var(--dim); opacity: 0.8; }
+.credits a { color: inherit; }
 .controls { margin-top: 22px; text-align: left; font-size: 13px; color: var(--dim); display: grid; gap: 6px; }
 .status { margin: 18px 0 0; font-size: 13px; color: var(--dim); }
 

@@ -1,4 +1,4 @@
-// Sound: CC0 samples (public/sounds, see CREDITS.md) played through 3D panners that follow the
+// Sound: samples in public/sounds (sources and licences in CREDITS.md) played through 3D panners that follow the
 // camera, with a small reverb and a compressor on the master bus. If a sample fails to load, the
 // event falls back to a synthesized blip so the game is never silent.
 
@@ -42,6 +42,7 @@ export class Sfx {
     comp.connect(this.master).connect(ctx.destination);
     this.sfxBus = ctx.createGain(); this.sfxBus.connect(comp);
     this.ambBus = ctx.createGain(); this.ambBus.gain.value = 0.32; this.ambBus.connect(comp);
+    this.musicBus = ctx.createGain(); this.musicBus.gain.value = 0.42; this.musicBus.connect(comp);   // menu music, under the master volume and mute
     // short outdoor-ish reverb on everything in the sfx bus
     const verb = ctx.createConvolver(); verb.buffer = this.impulse(1.3, 3.2);
     const send = ctx.createGain(); send.gain.value = 0.16;
@@ -51,6 +52,7 @@ export class Sfx {
       const decoded = await Promise.all(list.filter(Boolean).map(ab => ctx.decodeAudioData(ab.slice(0)).catch(e => { console.warn('[audio] decode failed', key, e); return null; })));
       this.buffers[key] = decoded.filter(Boolean);
       if (key === 'ambient_loop') this.startAmbient();
+      if (key === 'menu_music' && this.wantMusic) { this.wantMusic = false; this.setMusic(true); }
     })));
   }
 
@@ -143,12 +145,33 @@ export class Sfx {
     this.ambient = this.loop('ambient_loop', { vol: 1, fadeIn: 2.5, bus: this.ambBus });
   }
 
+  // Menu and lobby music (the join screen, the end screen and the vote): a long loop with short fades.
+  setMusic(on) {
+    if (!this.ctx) { this.wantMusic = on; return; }
+    if (on && !this.music) {
+      if (!this.buffers.menu_music?.length) { this.wantMusic = true; return; }
+      this.music = this.loop('menu_music', { vol: 1, fadeIn: 1.5, bus: this.musicBus });
+      return;
+    }
+    if (!on) { this.wantMusic = false; if (this.music) { this.music.stop(1.2); this.music = null; } }
+  }
+
   // ---------------------------------------------------------------- game events
+  // a primary's 3rd-shot accent, by the caster's element
+  finisher(pos, wizard) {
+    const key = { cinder: 'finisher_fire', gale: 'finisher_wind', rime: 'finisher_ice', vesper: 'finisher_dark', jeb: 'finisher_earth', embibe: 'finisher_acid' }[wizard];
+    if (key && this.buffers[key]?.length) this.play(key, { pos, vol: 0.85, jitter: 0.04 }); else this.castFinisher(pos);
+  }
+  hitMarker() { this.play('hit_marker', { vol: 0.35, jitter: 0.05 }); }
+  reload() { this.play('reload', { vol: 0.3, jitter: 0.05 }); }
+  ultReady() { this.play('ult_ready', { vol: 0.6, jitter: 0 }); }
+  ultWindup(pos) { this.play('ult_windup', { pos, vol: 1, jitter: 0 }); }
+  ui(key, vol = 0.6) { this.play(key, { vol, jitter: 0.02 }); }
   castFast(pos) { this.play('spark_cast', { pos, vol: 0.55 }); }
   castHeavy(pos) { this.play('meteor_cast', { pos, vol: 1, jitter: 0.04 }); }
   impact(pos) { this.play('impact_small', { pos, vol: 0.6 }); }
   bigImpact(pos) { this.play('impact_big', { pos, vol: 1.1, jitter: 0.05 }); }
-  hitBody(pos) { this.play('hit_body', { pos, vol: 0.75 }); }
+  hitBody(pos) { this.play('hit_light', { pos, vol: 0.75 }); }
   block(pos) { this.play('ward_block', { pos, vol: 0.7 }); }
   blockBreak(pos) { this.play('ward_break', { pos, vol: 1 }); }
   teleport(pos) { this.play('blink', { pos, vol: 0.7 }); }
@@ -161,10 +184,7 @@ export class Sfx {
   hurt() { this.play('hurt', { vol: 0.5 }); }
   click() { this.play('ui_click', { vol: 0.5, jitter: 0.02 }); }
   hoof(pos) { this.play('footstep', { pos, vol: 0.7, rate: 0.75, jitter: 0.15 }); }
-  goatRam(pos, blocked) {
-    this.play(blocked ? 'ward_block' : 'impact_big', { pos, vol: 1.1, rate: blocked ? 0.7 : 1 });
-    if (!blocked) this.play('hit_body', { pos, vol: 1, rate: 0.8 });
-  }
+  goatRam(pos, blocked) { this.play(blocked ? 'ward_block' : 'hit_heavy', { pos, vol: 1.1, rate: blocked ? 0.7 : 1 }); if (!blocked) this.play('hit_light', { pos, vol: 0.9, rate: 0.8 }); }
   // Arcane Cyclone: a low rising hum on the wind-up, then a swoosh and a deep thump on the spin.
   cycloneWindup(pos) { this.play('tk_lift', { pos, vol: 0.8, rate: 0.55, jitter: 0.03 }); }
   cyclonePulse(pos) {
@@ -172,8 +192,8 @@ export class Sfx {
     this.play('impact_big', { pos, vol: 1.0, rate: 0.6, jitter: 0.04, delay: 0.03 });
   }
   // Skyward Flash: the blink, pitched up; a soft thud on landing.
-  skyward(pos) { this.play('blink', { pos, vol: 0.8, rate: 1.45, jitter: 0.04 }); }
-  land(pos) { this.play('footstep', { pos, vol: 0.9, rate: 0.7, jitter: 0.1 }); }
+  skyward(pos) { this.play('skyward_launch', { pos, vol: 0.85, jitter: 0.04 }); }
+  land(pos) { this.play('skyward_land', { pos, vol: 0.6, jitter: 0.1 }); }
   goatBonk(pos) { this.play('impact_small', { pos, vol: 1, rate: 0.55 }); }
   // The last shot of a magazine: a heavier, lower crack with a bright ring on top.
   castFinisher(pos) {
@@ -182,31 +202,22 @@ export class Sfx {
   }
   // Glacial Skim: a bright, glassy flick; shards tinkle on impact.
   castSkim(pos) { this.play('skim_cast', { pos, vol: 0.7, jitter: 0.06 }); }
-  shardHit(pos) { this.play('impact_small', { pos, vol: 0.45, rate: 1.7, jitter: 0.1 }); }
+  shardHit(pos) { this.play('skim_impact', { pos, vol: 0.5, jitter: 0.08 }); }
   // Sanguine Lash: a low rising hum (the charge loop, see main.js), then a crack; a bind lands with a snap.
-  lashCrack(pos) {
-    this.play('tk_throw', { pos, vol: 1.0, rate: 1.5, jitter: 0.04 });
-    this.play('impact_small', { pos, vol: 0.7, rate: 0.8, jitter: 0.05, delay: 0.04 });
-  }
-  bind(pos) {
-    this.play('ward_break', { pos, vol: 0.7, rate: 0.6, jitter: 0.04 });
-    this.play('hit_body', { pos, vol: 0.8, rate: 0.7 });
-  }
+  lashCrack(pos) { this.play('lash', { pos, vol: 1, jitter: 0.04 }); }
+  bind(pos) { this.play('lash_bind', { pos, vol: 0.8, jitter: 0.05 }); this.play('hit_light', { pos, vol: 0.6 }); }
   // Mirror Step: the blink, doubled and detuned. Decoys pop like soap bubbles.
   mirror(pos) { this.play('mirror_step', { pos, vol: 0.8, jitter: 0.03 }); }
   decoyPop(pos) { this.play('impact_small', { pos, vol: 0.55, rate: 1.4, jitter: 0.1 }); }
   // Glacial Bulwark: a deep crunch rising out of the ground; cracking on hits; a shatter at the end.
   wallUp(pos) { this.play('wall_up', { pos, vol: 0.9, jitter: 0.03 }); }
-  wallHit(pos) { this.play('ward_block', { pos, vol: 0.55, rate: 0.75, jitter: 0.08 }); }
-  wallShatter(pos) {
-    this.play('ward_break', { pos, vol: 1, rate: 1.2 });
-    this.play('prop_shatter_stone', { pos, vol: 0.9, rate: 1.25, delay: 0.03 });
-  }
+  wallHit(pos) { this.play('bulwark_block', { pos, vol: 0.6, jitter: 0.08 }); }
+  wallShatter(pos) { this.play('bulwark_break', { pos, vol: 1, jitter: 0.04 }); }
   // Smoke Screen: a low whoosh and a puff.
   smoke(pos) { this.play('smoke_screen', { pos, vol: 0.85, jitter: 0.04 }); }
   // Tempest Veil: a rushing gust up, a soft puff down (the ward hum plays while it's up).
-  veilUp(pos) { this.play('tk_throw', { pos, vol: 0.9, rate: 0.8, jitter: 0.04 }); this.play('blink', { pos, vol: 0.35, rate: 0.7, delay: 0.03 }); }
-  veilDown(pos) { this.play('tk_throw', { pos, vol: 0.5, rate: 1.4, jitter: 0.05 }); }
+  veilUp(pos) { this.play('veil_cast', { pos, vol: 0.9, jitter: 0.04 }); }
+  veilDown(pos) { this.play('veil_break', { pos, vol: 0.6, jitter: 0.05 }); }
   // A kill of ours: a flat reward sting for the killer only. A new kill restarts it rather than stacking.
   killSting() {
     try { this.sting?.stop(); } catch {}
@@ -217,11 +228,7 @@ export class Sfx {
     this.play('tk_lift', { pos, vol: 0.7, rate: 1.4, jitter: 0.04 });
     this.play('ward_block', { pos, vol: 0.4, rate: 1.6, jitter: 0.05, delay: 0.05 });
   }
-  frostImpact(pos) {
-    this.play('impact_big', { pos, vol: 1.3, rate: 0.7, jitter: 0.04 });
-    this.play('prop_shatter_stone', { pos, vol: 1.0, rate: 1.1, delay: 0.03 });
-    this.play('ward_break', { pos, vol: 0.8, rate: 1.3, delay: 0.06 });
-  }
+  frostImpact(pos) { this.play('frostfall_impact', { pos, vol: 1.2, jitter: 0.04 }); }
   // Trapped Relic: a quiet hiss when you lay the curse; a deep blast when it goes off.
   curse() { this.play('tk_lift', { vol: 0.35, rate: 0.45, jitter: 0.03 }); }
   relicBlast(pos) {

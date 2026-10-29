@@ -288,6 +288,7 @@ function applySnapshot(w, s) {
     w.netAnim = s.anim;
   }
   w.hp = s.hp; w.st = s.st; w.kills = s.kills; w.deaths = s.deaths;
+  if (s.blocking && !w.blocking && !w.dead && C.kitOf(w.wizard).guard === 'black_death') sfx.play('black_death_cast', { pos: wpos(w), vol: 0.6, jitter: 0.05 });   // Vesper raising the Black Death
   w.blocking = s.blocking; w.charging = s.charging; w.stunned = s.stun;
   w.slowed = !!s.slow; w.bound = !!s.bound; w.lashing = !!s.lashing; w.frozen = !!s.frozen;
   w.ult = s.ult ?? 0;
@@ -385,6 +386,7 @@ function handleMessage(msg) {
       // a summoned ram no longer in the snapshot is gone, even if we missed its goatGone
       if (msg.goats) { const ids = new Set(msg.goats.map(g => g.id)); for (const [id, v] of goats) if (v.summoned && !ids.has(id)) { v.dispose(scene); goats.delete(id); } }
       matchUI.onSnapshot(msg);
+      matchSnapSounds(msg.match);
       // team modes keep bots at 3v3 themselves: the practice-bot buttons don't apply
       if (!!msg.match?.teams !== teamBots) {
         teamBots = !!msg.match?.teams;
@@ -431,15 +433,16 @@ function handleMessage(msg) {
         // a body with the shared triple-strike combo (combo1/2/3) plays the strike for this shot of its magazine
         const combo = msg.shot != null && owner.actions['combo' + (msg.shot + 1)];
         if (combo) owner.oneShot('combo' + (msg.shot + 1), Math.min(0.7, combo.getClip().duration), Math.max(1, combo.getClip().duration / 0.7), 0);
-        if (msg.kind === 'potion') { if (!combo) owner.oneShot('cast_fast', 0.45, 2.4, 0.25); sfx.play('tk_throw', { pos: msg.p, vol: 0.6, rate: 1.5, jitter: 0.1 }); if (msg.fin) sfx.castFinisher(msg.p); }
-        else if (msg.kind === 'toxic') { owner.oneShot('cast_fast', 0.5, 2, 0.25); sfx.play('tk_throw', { pos: msg.p, vol: 0.7, rate: 1.1 }); }
+        if (msg.fin && C.PRIMARY_KINDS.has(msg.kind) && !(performance.now() - (owner.finSndAt || 0) < 150)) { owner.finSndAt = performance.now(); sfx.finisher(msg.p, owner.wizard); }   // the 3rd-shot accent, by element (once for Skim's three shards)
+        if (msg.kind === 'potion') { if (!combo) owner.oneShot('cast_fast', 0.45, 2.4, 0.25); sfx.play('potion_toss', { pos: msg.p, vol: 0.8, jitter: 0.08 }); }
+        else if (msg.kind === 'toxic') { owner.oneShot('cast_fast', 0.5, 2, 0.25); sfx.play('potion_toss', { pos: msg.p, vol: 0.85, rate: 0.85 }); }
         else if (msg.kind === 'flaskstep') { sfx.play('tk_throw', { pos: msg.p, vol: 0.6, rate: 1.3 }); }
-        else if (combo && C.PRIMARY_KINDS.has(msg.kind)) { if (msg.kind === 'fast') msg.fin ? sfx.castFinisher(msg.p) : sfx.castFast(msg.p); else if (msg.fin) sfx.castFinisher(msg.p); }
-        else if (msg.kind === 'fast') { owner.oneShot('cast_fast', 0.45, 2.6, 0.25); msg.fin ? sfx.castFinisher(msg.p) : sfx.castFast(msg.p); }
-        else if (msg.kind === 'fireball') { owner.oneShot('cast_fast', 0.5, 2.3, 0.25); msg.fin ? sfx.castFinisher(msg.p) : sfx.play('spark_cast', { pos: msg.p, vol: 0.7, rate: 0.85 }); }
-        else if (msg.kind === 'shear') { owner.oneShot('cast_fast', 0.35, 3, 0.25); sfx.play('tk_throw', { pos: msg.p, vol: msg.fin ? 0.9 : 0.6, rate: msg.fin ? 1.3 : 1.7, jitter: 0.08 }); }
-        else if (msg.kind === 'hex') { owner.oneShot('cast_fast', 0.45, 2.6, 0.25); sfx.play('mirror_step', { pos: msg.p, vol: 0.45, rate: 1.5 + (msg.curve?.shot ?? 0) * 0.15, jitter: 0.04 }); if (msg.fin) sfx.castFinisher(msg.p); }
-        else if (msg.kind === 'skim') { if (!owner.inOneShot()) { owner.oneShot('cast_fast', 0.4, 2.8, 0.25); msg.fin ? sfx.castFinisher(msg.p) : sfx.castSkim(msg.p); } }   // three per cast
+        else if (msg.kind === 'fast') { if (!combo) owner.oneShot('cast_fast', 0.45, 2.6, 0.25); if (!msg.fin) sfx.castFast(msg.p); }
+        else if (msg.kind === 'fireball') { if (!combo) owner.oneShot('cast_fast', 0.5, 2.3, 0.25); sfx.play('spark_cast', { pos: msg.p, vol: 0.7, rate: msg.fin ? 0.75 : 0.85 }); }
+        else if (msg.kind === 'shear') { if (!combo) owner.oneShot('cast_fast', 0.35, 3, 0.25); sfx.play('shear_cast', { pos: msg.p, vol: msg.fin ? 0.95 : 0.75, rate: msg.fin ? 0.9 : 1, jitter: 0.06 }); }
+        else if (msg.kind === 'hex') { if (!combo) owner.oneShot('cast_fast', 0.45, 2.6, 0.25); sfx.play('hex_cast', { pos: msg.p, vol: 0.75, rate: 1 + (msg.curve?.shot ?? 0) * 0.08, jitter: 0.04 }); }
+        else if (msg.kind === 'sling') { if (!combo) owner.oneShot('cast_fast', 0.4, 2.6, 0.25); sfx.play('sling_cast', { pos: msg.p, vol: 0.75, jitter: 0.06 }); }   // (it used to fall through to the thrown-prop branch)
+        else if (msg.kind === 'skim') { if (!owner.inOneShot()) { if (!combo) owner.oneShot('cast_fast', 0.4, 2.8, 0.25); sfx.castSkim(msg.p); } }   // three per cast
         else if (msg.kind === 'lash') {
           // a body with its own lash clip is already mid-strike: let the follow-through play
           if (!owner.actions.lash) owner.oneShot('cast_heavy', 0.5, 1.8, 1.9);
@@ -455,13 +458,18 @@ function handleMessage(msg) {
       effects.endProjectile(msg);
       if (msg.hit && pr) {
         const d = Math.hypot(msg.p[0] - local.pos.x, msg.p[2] - local.pos.z);
-        if (pr.kind === 'heavy') { sfx.bigImpact(msg.p); shake(0.5 / (1 + d * 0.15)); trampleCrops(msg.p[0], msg.p[2], 2.5); }
+        if (pr.kind === 'heavy') { sfx.play('meteor_impact', { pos: msg.p, vol: 1.1, jitter: 0.05 }); shake(0.5 / (1 + d * 0.15)); trampleCrops(msg.p[0], msg.p[2], 2.5); }
         else if (msg.surface !== 'player' && pr.kind === 'fast') sfx.impact(msg.p);
         else if (pr.kind === 'skim') sfx.shardHit(msg.p);
+        else if (pr.kind === 'fireball') sfx.play('fireball_impact', { pos: msg.p, vol: pr.fin ? 0.9 : 0.7, jitter: 0.06 });
+        else if (pr.kind === 'shear') sfx.play('shear_impact', { pos: msg.p, vol: 0.6, jitter: 0.06 });
+        else if (pr.kind === 'hex') sfx.play('hex_impact', { pos: msg.p, vol: 0.7, jitter: 0.06 });
+        else if (pr.kind === 'sling') sfx.play('sling_impact', { pos: msg.p, vol: 0.7, jitter: 0.08 });
+        if (msg.surface === 'goat' && goats.get(msg.goat)?.state === 'orbit') sfx.play('ram_guard_block', { pos: msg.p, vol: 0.8, jitter: 0.05 });   // a guard ram took it
         if (msg.surface === 'smokeflask') effects.burst(new THREE.Vector3(msg.p[0], msg.p[1], msg.p[2]), 0xa050e0, 10, 2, 0.35, -1);
         // Potion Toss: Ty's glass hit, pitched a little differently each throw (the stun throw lower)
         if (pr.kind === 'potion') { effects.potionShatter(msg.p, C.SPELLS.potion.splash); sfx.play('potion_shatter', { pos: msg.p, vol: 0.9, rate: (pr.fin ? 0.86 : 1) * (0.92 + Math.random() * 0.16), jitter: 0 }); }
-        if (msg.surface === 'firewall') { effects.burnUp(msg.p); sfx.play('meteor_cast', { pos: msg.p, vol: 0.5, rate: 1.6, jitter: 0.1 }); }
+        if (msg.surface === 'firewall') { effects.burnUp(msg.p); sfx.play('firewall_block', { pos: msg.p, vol: 0.7, jitter: 0.08 }); }
       }
       break;
     }
@@ -469,8 +477,8 @@ function handleMessage(msg) {
       const target = players.get(msg.target);
       if (!target) break;
       const c = target.group.position.clone(); c.y += 1;
-      if (msg.veil) { target.veilFlash(); effects.burst(c, 0xe8dcff, 8, 3, 0.25, 0); sfx.block(c); }
-      else if (msg.blocked) { const G = C.kitOf(target.wizard).guard; effects.blockFlash(c, G === 'black_death' ? 0xa0102a : 0x9ae4ff); sfx.block(c); }
+      if (msg.veil) { target.veilFlash(); effects.burst(c, 0xe8dcff, 8, 3, 0.25, 0); sfx.play('veil_block', { pos: c, vol: 0.7, jitter: 0.06 }); }
+      else if (msg.blocked) { const G = C.kitOf(target.wizard).guard; effects.blockFlash(c, G === 'black_death' ? 0xa0102a : 0x9ae4ff); if (G === 'black_death') sfx.play('black_death_block', { pos: c, vol: 0.75, jitter: 0.06 }); else sfx.block(c); }
       else {
         effects.burst(c, msg.kind === 'skim' ? 0xbfeaff : 0xff3b4e, 10, 3, 0.35);
         // a hurled prop or goat doubles them over (hit_waist); other interrupting hits flinch
@@ -509,7 +517,7 @@ function handleMessage(msg) {
     case 'blockBreak': {
       const w = players.get(msg.id);
       if (!w) break;
-      sfx.blockBreak(wpos(w));
+      if (C.kitOf(w.wizard).guard === 'black_death') sfx.play('black_death_break', { pos: wpos(w), vol: 1 }); else sfx.blockBreak(wpos(w));
       effects.burst(w.group.position.clone().add(new THREE.Vector3(0, 1, 0)), 0x9ae4ff, 24, 5, 0.4);
       if (w === me) { local.blocking = false; local.stunUntil = now + C.BLOCK_BREAK_STUN; flashVignette(); feed('Your ward shattered!'); }
       w.blocking = false;
@@ -530,6 +538,7 @@ function handleMessage(msg) {
       if (!w) break;
       if (w !== me || w.cycloneT < 0) w.startCyclone();   // our own was started locally
       sfx.cycloneWindup(wpos(w));
+      { const l = sfx.loop('cyclone_loop', { pos: wpos(w), vol: 0.7, fadeIn: 0.1 }); setTimeout(() => l?.stop(0.25), 1000); }
       break;
     }
     case 'cycloneCancel': {
@@ -656,6 +665,7 @@ function handleMessage(msg) {
       frosts.set(msg.id, effects.frostfall(msg.p, msg.left));
       const w = players.get(msg.owner);
       if (w) { w.oneShot('cast_heavy', FROST.castPose, 1.5, 1.9); sfx.frostCast(wpos(w)); }
+      sfx.play('frostfall_fall', { pos: [msg.p[0], 3, msg.p[2]], vol: 0.9, jitter: 0, delay: Math.max(0, msg.left - 1.5) });   // the rising whoosh lands with the ice
       if (Math.hypot(msg.p[0] - local.pos.x, msg.p[2] - local.pos.z) < FROST.radius + 0.5 && msg.owner !== myId) feed('<b>Ice from above!</b> Get out of the shadow');
       break;
     }
@@ -764,7 +774,6 @@ function handleMessage(msg) {
       if (!w) break;
       if (w === me) { local.ult = 0; local.cataAim = false; }
       feed(`<b>${esc(w.name)}</b> unleashes <b>${esc(SPELL[msg.ult]?.name || 'an ultimate')}</b>!`);
-      sfx.play('meteor_cast', { pos: wpos(w), vol: 0.7, rate: 0.6 });
       break;
     }
     case 'ultRefused':
@@ -776,6 +785,7 @@ function handleMessage(msg) {
       if (w.eyeFx) effects.stopEye(w.eyeFx);
       w.eyeFx = effects.eyeStorm(w.group); w.eyeOn = true;
       w.eyeSpin();
+      w.eyeSnd?.stop(0.1); w.eyeSnd = sfx.loop('eye_storm_loop', { pos: wpos(w), vol: 0.9, fadeIn: 0.3 });
       if (w === me) local.eyeUntil = now + msg.left;
       sfx.cyclonePulse(wpos(w));
       if (w !== me && Math.hypot(w.group.position.x - local.pos.x, w.group.position.z - local.pos.z) < EYE.radius + 3) feed('<b>A tornado!</b> Get away from it');
@@ -810,8 +820,7 @@ function handleMessage(msg) {
       w.ultWinding = true;
       w.oneShot(w.actions.ult ? 'ult' : 'cast_heavy', msg.left, w.actions.ult ? w.actions.ult.getClip().duration / msg.left : 0.9, w.actions.ult ? 0 : 0.3);
       effects.ultTell(w.group, msg.left, C.boltColor(w.wizard));
-      sfx.play('tk_lift', { pos: wpos(w), vol: 1, rate: 0.45 });
-      sfx.play('meteor_cast', { pos: wpos(w), vol: 0.5, rate: 0.4, delay: 0.3 });
+      sfx.ultWindup(wpos(w));   // the shared sting; it peaks on the release
       if (w === me && !local.ultWind) local.ultWind = { start: now };
       if (w !== me && Math.hypot(w.group.position.x - local.pos.x, w.group.position.z - local.pos.z) < 30) feed(`<b>${esc(w.name)}</b> is calling <b>${esc(SPELL[msg.ult]?.name || 'an ultimate')}</b>! Interrupt it`);
       break;
@@ -851,8 +860,7 @@ function handleMessage(msg) {
       const w = players.get(msg.id);
       if (!w) break;
       effects.fireLaunch(msg.p, msg.top);
-      sfx.play('meteor_cast', { pos: [msg.p[0], 1, msg.p[2]], vol: 1.1, rate: 0.7 });
-      sfx.skyward([msg.p[0], 1, msg.p[2]]);
+      sfx.play('meteor_rain_launch', { pos: [msg.p[0], 1, msg.p[2]], vol: 1.1, jitter: 0 });
       w.mrainAura = effects.flameAura(w.group);
       if (w === me) { local.ultWind = null; local.mrain = { phase: 'rise', start: now, from: [msg.p[0], msg.p[2]], top: msg.top, rise: msg.rise, hoverUntil: now + msg.rise + msg.hover, lastAim: 0 }; }
       break;
@@ -868,7 +876,7 @@ function handleMessage(msg) {
     case 'mrainDive': {
       const w = players.get(msg.id);
       effects.blazeDive(msg.from, msg.to, msg.left);
-      sfx.play('meteor_cast', { pos: msg.to, vol: 1.2, rate: 0.55 });
+      sfx.play('meteor_rain_dive', { pos: msg.to, vol: 1.2, jitter: 0 });
       if (w?.mrainMark) { w.mrainMark.visible = true; w.mrainMark.position.set(msg.to[0], 0, msg.to[2]); }
       if (msg.id === myId && local.mrain) Object.assign(local.mrain, { phase: 'dive', diveFrom: msg.from, diveTo: msg.to, diveStart: now, dive: msg.left });
       break;
@@ -876,8 +884,8 @@ function handleMessage(msg) {
     case 'mrainLand': {
       const w = players.get(msg.id);
       effects.scorch(msg.p, !!msg.wall);
-      sfx.play('impact_big', { pos: [msg.p[0], 0.5, msg.p[2]], vol: 1.4, rate: 0.6 });
-      sfx.play('meteor_cast', { pos: [msg.p[0], 0.5, msg.p[2]], vol: 0.8, rate: 0.5, delay: 0.03 });
+      sfx.play('meteor_impact', { pos: [msg.p[0], 0.5, msg.p[2]], vol: 1.4, rate: 0.85 });
+      sfx.play('hit_heavy', { pos: [msg.p[0], 0.5, msg.p[2]], vol: 1, delay: 0.03 });
       trampleCrops(msg.p[0], msg.p[2], MRAIN.radius);
       const d = Math.hypot(msg.p[0] - local.pos.x, msg.p[2] - local.pos.z);
       shake(d < MRAIN.radius + 2 ? 1 : 0.6 / (1 + d * 0.15));
@@ -899,11 +907,11 @@ function handleMessage(msg) {
     }
     // ---- Jeb
     case 'ramSpawn':
-      effects.ramPoof(msg.p); sfx.bleat([msg.p[0], 1, msg.p[2]], msg.mode === 'charge');
+      effects.ramPoof(msg.p); sfx.play('ram_summon', { pos: [msg.p[0], 1, msg.p[2]], vol: msg.mode === 'mount' ? 0.5 : 0.75, jitter: 0.08 });   // (no sheep or goat sounds yet: a creature snort stands in)
       break;
     case 'goatGone': {
       const g = goats.get(msg.id);
-      if (g) { if (g.despawn) g.despawn(scene, effects); else { g.dispose(scene); if (msg.p) effects.ramPoof(msg.p); } goats.delete(msg.id); }
+      if (g) { if (g.state === 'orbit' && performance.now() - (lastGuardBreak || 0) > 400) { lastGuardBreak = performance.now(); sfx.play('ram_guard_break', { pos: g.group.position.clone().setY(1), vol: 0.7, jitter: 0.06 }); } if (g.despawn) g.despawn(scene, effects); else { g.dispose(scene); if (msg.p) effects.ramPoof(msg.p); } goats.delete(msg.id); }
       break;
     }
     case 'ramCalled': {
@@ -915,12 +923,12 @@ function handleMessage(msg) {
     }
     case 'batteringRam': {
       const w = players.get(msg.id);
-      if (w) { w.oneShot('cast_heavy', 0.55, 1.5, 1.9); sfx.play('impact_big', { pos: wpos(w), vol: 0.8, rate: 0.6 }); }
+      if (w) { w.oneShot('cast_heavy', 0.55, 1.5, 1.9); sfx.play('battering_ram', { pos: wpos(w), vol: 1, jitter: 0.04 }); }
       break;
     }
     case 'ramGuard': {
       const w = players.get(msg.id);
-      if (w) { if (w.actions.block) w.oneShot('block', 0.5, 1, 0); sfx.play('footstep', { pos: wpos(w), vol: 1, rate: 0.6 }); }
+      if (w) { if (w.actions.block) w.oneShot('block', 0.5, 1, 0); sfx.play('ram_guard_cast', { pos: wpos(w), vol: 0.9, jitter: 0.04 }); }
       break;
     }
     case 'ride': {
@@ -928,7 +936,7 @@ function handleMessage(msg) {
       if (!w) break;
       w.riding = true;
       if (w === me && !local.ride) local.ride = rideTimes(msg);   // a ride we didn't predict (rare)
-      sfx.bleat(wpos(w), false);
+      w.rideSnd?.stop(0.1); w.rideSnd = sfx.loop('ram_ride_loop', { pos: wpos(w), vol: 0.75, fadeIn: 0.3 });
       break;
     }
     case 'rideEnd': {
@@ -949,9 +957,9 @@ function handleMessage(msg) {
     case 'stampede': {
       stampedeFx.set(msg.id, Object.assign(effects.stampedeLane(msg.p, msg.dir, msg.width, msg.length, msg.left), { owner: msg.owner }));
       const w = players.get(msg.owner);
-      if (w) { w.oneShot(w.actions.ult ? 'ult' : 'cast_heavy', STAMP.castPose, w.actions.ult ? 1 : 1.5, w.actions.ult ? 0 : 1.9); sfx.play('impact_big', { pos: wpos(w), vol: 1, rate: 0.45 }); }
-      // the rumble: deep thuds rolling in
-      for (let i = 0; i < 6; i++) sfx.play('impact_big', { pos: [msg.p[0] + msg.dir[0] * 14, 0.5, msg.p[2] + msg.dir[2] * 14], vol: 0.7, rate: 0.35 + i * 0.03, delay: i * 0.17 });
+      if (w) w.oneShot(w.actions.ult ? 'ult' : 'cast_heavy', STAMP.castPose, w.actions.ult ? 1 : 1.5, w.actions.ult ? 0 : 1.9);
+      // the rumble rolling down the lane
+      sfx.play('stampede', { pos: [msg.p[0] + msg.dir[0] * 14, 0.5, msg.p[2] + msg.dir[2] * 14], vol: 1.1, jitter: 0 });
       const dx = local.pos.x - msg.p[0], dz = local.pos.z - msg.p[2];
       const along = dx * msg.dir[0] + dz * msg.dir[2], side = -dx * msg.dir[2] + dz * msg.dir[0];
       if (msg.owner !== myId && along > -1 && along < msg.length && Math.abs(side) < msg.width / 2 + 1) feed('<b>Stampede!</b> Get out of the lane');
@@ -1008,13 +1016,14 @@ function handleMessage(msg) {
       if (w.brewFx) effects.stopAura(w.brewFx);
       w.brewFx = effects.brewAura(w, msg.left);
       sfx.play('brew_drink', { pos: wpos(w), vol: 1, jitter: 0.03 });
+      sfx.play('brew_roar', { pos: wpos(w), vol: 0.9, delay: SPELL.berserker_brew.drink, jitter: 0.03 });
       feed(`<b>${esc(w.name)}</b> drinks a <b>Berserker Brew</b>!`);
       break;
     }
     case 'cage': {
       cages.set(msg.id, { ...msg, x: msg.p[0], z: msg.p[2], fx: effects.nightCage(msg.p, msg.left) });
       const w = players.get(msg.owner);
-      if (w) { w.oneShot('cast_heavy', CAGE.castPose, 1.5, 1.9); sfx.play('wall_up', { pos: [msg.p[0], 1, msg.p[2]], vol: 1, rate: 0.6 }); sfx.bind([msg.p[0], 1, msg.p[2]]); }
+      if (w) { w.oneShot('cast_heavy', CAGE.castPose, 1.5, 1.9); sfx.play('night_cage', { pos: [msg.p[0], 1, msg.p[2]], vol: 1, jitter: 0 }); sfx.play('night_cage_chains', { pos: [msg.p[0], 1, msg.p[2]], vol: 0.8, delay: 0.25 }); }
       if (msg.foes.includes(myId)) feed(msg.inside.includes(myId) ? `<b>Caged!</b> You can't leave <b>${esc(w?.name || '?')}</b>'s Night Cage` : `<b>${esc(w?.name || '?')}</b>'s Night Cage: you can't get in`);
       break;
     }
@@ -1032,19 +1041,60 @@ function handleMessage(msg) {
       firewalls.set(msg.id, { data: msg, fx: effects.firewall(msg) });
       const w = players.get(msg.owner);
       if (w) w.oneShot('cast_fast', 0.45, 2.2, 0.25);
-      sfx.play('spark_cast', { pos: [msg.x, 1, msg.z], vol: 1, rate: 0.55 });   // Ty's fireball sound, deeper: the ignite
-      sfx.play('meteor_cast', { pos: [msg.x, 1, msg.z], vol: 0.6, rate: 0.8, delay: 0.04 });
+      sfx.play('spark_cast', { pos: [msg.x, 1, msg.z], vol: 0.7, rate: 0.55 });   // Ty's fireball sound, deeper: the ignite
+      sfx.play('firewall_cast', { pos: [msg.x, 1, msg.z], vol: 1, jitter: 0.03 });
       break;
     }
     case 'firewallEnd': {
       const f = firewalls.get(msg.id);
-      if (f) { effects.endFirewall(f.fx); firewalls.delete(msg.id); }
+      if (f) { effects.endFirewall(f.fx); firewalls.delete(msg.id); sfx.play('firewall_break', { pos: [f.data.x, 1, f.data.z], vol: 0.45, jitter: 0.05 }); }
       break;
     }
     default:
-      if (msg.t.startsWith('match')) matchUI.onMessage(msg);
+      if (msg.t.startsWith('match')) { matchSounds(msg); matchUI.onMessage(msg); }
   }
 }
+
+// ---------------------------------------------------------------- game-mode sounds and menu music
+// (match-ui.js draws the mode; its tones live here with the rest of the sound)
+let lastMatch = null;
+let lastGuardBreak = 0;   // the guard's rams go together: one break sound
+function myTeamOf() { return me?.team ?? null; }
+function matchSounds(msg) {
+  if (msg.t === 'matchPhase' && msg.match.phase === 'live' && lastMatch?.phase === 'warmup') sfx.ui('fight_start', 0.8);
+  if (msg.t === 'matchEnd') {
+    const w = msg.results?.winner;
+    if (w != null) sfx.ui(w === myId || (myTeamOf() && w === myTeamOf()) ? 'victory' : 'defeat', 0.75);
+  }
+  if (msg.t === 'matchZone' && msg.type === 'warn') sfx.ui('siege_moving', 0.6);
+  if (msg.t === 'matchVotes' && msg.voter === myId) sfx.ui('vote', 0.6);
+}
+function matchSnapSounds(m) {
+  if (!m) return;
+  const prev = lastMatch; lastMatch = m;
+  if (!prev) return;
+  // the warm-up's last three seconds tick down
+  if (m.phase === 'warmup' && m.left != null && m.left <= 3.05 && Math.ceil(m.left) !== Math.ceil(prev.left ?? 99) && Math.ceil(m.left) > 0) sfx.ui('countdown_tick', 0.6);
+  // our team scoring: a tick per kill in Team Deathmatch, every 10 points in Siege
+  const team = myTeamOf();
+  if (team && m.phase === 'live' && prev.phase === 'live' && m.scores && prev.scores) {
+    const step = m.mode === 'siege' ? 10 : 1;
+    if (Math.floor(m.scores[team] / step) > Math.floor(prev.scores[team] / step)) sfx.ui('score_tick', 0.45);
+  }
+  // Siege: our side taking the altar, and a contest starting
+  const z = m.zone, pz = prev.zone;
+  if (z && pz && z.i === pz.i) {
+    if (z.contested && !pz.contested) sfx.ui('siege_contested', 0.55);
+    if (z.owner && z.owner !== pz.owner && z.owner === team) sfx.ui('siege_capture', 0.6);
+  }
+}
+// The menu music plays on the join screen, the end screen and the vote; not in the fight.
+function updateMusic() {
+  const phase = lastMatch?.phase;
+  sfx.setMusic(!me || phase === 'end' || phase === 'vote');
+}
+// Browsers only allow sound after a gesture: the first click or key on the join screen starts the music.
+for (const ev of ['pointerdown', 'keydown']) document.addEventListener(ev, function first() { sfx.init(); sfx.resume(); updateMusic(); document.removeEventListener(ev, first); });
 
 // ---------------------------------------------------------------- decoys, walls, curses
 // Mirror Step decoys: full Wizards that look exactly like their caster (see-through on the caster's screen).
@@ -1089,7 +1139,7 @@ function endMrain(w) {
   if (w.mrainMark) w.mrainMark.visible = false;
   if (w.mrainAura) { effects.stopAura(w.mrainAura); w.mrainAura = null; }
 }
-function endEye(w) { effects.stopEye(w.eyeFx); w.eyeFx = null; w.eyeOn = false; }
+function endEye(w) { effects.stopEye(w.eyeFx); w.eyeFx = null; w.eyeOn = false; if (w.eyeSnd) { w.eyeSnd.stop(0.5); w.eyeSnd = null; } }
 // Cinder's Firewalls: id -> { data, fx }.
 const firewalls = new Map();
 // Night Cages (id -> { x, z, inside: [ids], foes: [ids], fx }), and Vesper's aim circle for one.
@@ -1112,6 +1162,8 @@ function updateUltimates() {
   for (const w of players.values()) {
     if (w.eyeOn && !w.dead && (w.spinT < 0 || !w.inOneShot())) w.eyeSpin();
     if (w.blizzSnd) { if (w.dead) { w.blizzSnd.stop(0.3); w.blizzSnd = null; } else w.blizzSnd.setPos(wpos(w)); }   // the Blizzard's roar follows Rime
+    if (w.eyeSnd) w.eyeSnd.setPos(wpos(w));
+    if (w.rideSnd) { if (!w.riding || w.dead) { w.rideSnd.stop(0.3); w.rideSnd = null; } else w.rideSnd.setPos(wpos(w)); }
   }
 }
 let lastDashDir = [0, 0];
@@ -1153,6 +1205,7 @@ function flashVignette() { ui.vignette.classList.add('hit'); vignetteT = 0.25; }
 let shakeAmt = 0;
 function shake(a) { shakeAmt = Math.max(shakeAmt, a); }
 function hitmarker() {
+  sfx.hitMarker();
   const ch = $('#crosshair .ring'); ch.style.borderColor = '#ffd25c'; ch.style.transform = 'scale(1.4)';
   setTimeout(() => { ch.style.borderColor = ''; ch.style.transform = ''; }, 120);
 }
@@ -1379,7 +1432,7 @@ function updateLocal(dt) {
     // primary
     const MAG = C.primaryMag(K.primary);
     if (local.reloadUntil && now >= local.reloadUntil) { local.ammo = MAG.magazine; local.reloadUntil = 0; }
-    const startReload = () => { local.ammo = 0; local.reloadUntil = now + MAG.reload; };
+    const startReload = () => { local.ammo = 0; local.reloadUntil = now + MAG.reload; sfx.reload(); };
     if (!local.reloadUntil && local.ammo > 0 && local.ammo < MAG.magazine && now - local.lastShot > MAG.idleReload) startReload();
     if (input.justPressed('KeyR') && !local.reloadUntil && local.ammo < MAG.magazine) { startReload(); net.send({ t: 'reload' }); }
     const holding = !!(me.carrying || me.carryingGoat);
@@ -1388,7 +1441,7 @@ function updateLocal(dt) {
     if (input.lmbPressed && !local.blocking && !busy && !holding && now >= local.cd.fast && !local.reloadUntil && local.ammo > 0) {
       computeAim();
       local.ammo--; local.lastShot = now;
-      if (!local.ammo) local.reloadUntil = now + MAG.reload;
+      if (!local.ammo) { local.reloadUntil = now + MAG.reload; sfx.reload(); }
       const kind = C.PRIMARY_KIND[K.primary];
       local.cd.fast = now + SPELL[K.primary].cooldown * cdMul();
       local.castRootUntil = Math.max(local.castRootUntil, now + (C.CAST_ROOT.primary[C.PRIMARY_KIND[K.primary]] ?? 0.28));
@@ -1771,6 +1824,8 @@ function updateHud(dt) {
   const pctText = pct >= C.ULT_CHARGE.max ? 'READY' : `${pct}%`;
   if (ui.ultPct.textContent !== pctText) ui.ultPct.textContent = pctText;
   ultEl.classList.toggle('ready', pct >= C.ULT_CHARGE.max);
+  if (pct >= C.ULT_CHARGE.max && !local.ultWasReady && !me.dead) sfx.ultReady();   // the charge just filled
+  local.ultWasReady = pct >= C.ULT_CHARGE.max;
   ultEl.style.setProperty('--ult', `#${C.boltColor(me.wizard).toString(16).padStart(6, '0')}`);
   ultEl.classList.toggle('active', local.cataAim || !!local.ultWind || !!local.mrain || now < local.eyeUntil || now < local.blizzUntil || [...cages.values()].some(c => c.owner === myId));
   ultEl.classList.toggle('disabled', bound || holdingNow);
@@ -1921,6 +1976,7 @@ function frame(t) {
     matchUI.update(dt);
     if (input.justPressed('KeyM')) { sfx.muted = !sfx.muted; ui.mute.checked = sfx.muted; feed(sfx.muted ? 'Sound muted (M)' : 'Sound on'); }
     sfx.setListener(camera);
+    updateMusic();
     for (const w of players.values()) updateWizardAudio(w, dt);
   } else {
     // idle camera drift on the join screen

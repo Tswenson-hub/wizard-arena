@@ -1,5 +1,26 @@
 # Spells hand-off
 
+## Sound pass, stage 2 (integration, menu music, credits)
+
+- **Report:** docs/agents/sound-report.md has every slot and its hook, what was pruned, the verification and the gaps.
+- **Files:** 86 staged picks went into public/sounds. The manifest now has 95 keys and 127 files.
+  - `hit_body`, the old `hurt` and the old `death` were pruned, and `meteor_cast` was replaced.
+  - The three `_alt` files and `bulwark_cast` were left out, because Ty's files cover those slots.
+  - public/sounds went from 0.76 MB to 3.24 MB (the music is 1.38 MB of that).
+- **audio.js:**
+  - `musicBus` and `setMusic(on)` (it waits for the buffer if called early).
+  - New `finisher(pos, wizard)` (per element), `hitMarker`, `reload`, `ultReady`, `ultWindup` and `ui(key)`.
+  - Existing helpers were repointed to the new keys (hitBody, skyward, land, veilUp/Down, wallHit/Shatter,
+    frostImpact, lashCrack, bind, shardHit, goatRam).
+- **main.js:**
+  - Per-hero cast and impact keys. A `sling` cast now has its own branch: it used to fall through to the prop throw.
+  - Ultimate and Jeb sounds. The loops (`w.eyeSnd`, `w.rideSnd`) follow the caster and stop on end or death.
+  - `matchSounds` and `matchSnapSounds` play the mode tones, and `updateMusic()` (called every frame) runs the menu music.
+    A first-gesture listener starts audio on the join screen.
+- **index.html/style.css:** a `.credits` line on the join screen and in the pause menu, crediting Leonardo Calvo
+  (CC BY 4.0) and the Pixabay music. CREDITS.md covers every file.
+- **README:** the coordinator still needs to add the Leonardo Calvo credit there.
+
 ## Cast roots (Ty: "players should be stopped while casting a spell, unless it is a movement-based ability"), `9aabd9e`
 
 - **The rule** (`castRooted` in server.js; the same rule in main.js and `castRootedBot` in bots.js): no translation;

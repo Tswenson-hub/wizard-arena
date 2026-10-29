@@ -18,11 +18,6 @@
     "impact_big_2.m4a",
     "impact_big_3.m4a"
   ],
-  "hit_body": [
-    "hit_body_1.m4a",
-    "hit_body_2.m4a",
-    "hit_body_3.m4a"
-  ],
   "ward_block": [
     "ward_block_1.m4a",
     "ward_block_2.m4a",
@@ -59,10 +54,11 @@
     "footstep_4.m4a"
   ],
   "death": [
-    "death.m4a"
+    "death_1.m4a"
   ],
   "hurt": [
-    "hurt.m4a"
+    "hurt_1.m4a",
+    "hurt_2.m4a"
   ],
   "respawn": [
     "respawn.m4a"
@@ -111,5 +107,213 @@
   ],
   "blizzard_loop": [
     "blizzard_loop.m4a"
+  ],
+  "fireball_impact": [
+    "fireball_impact_1.m4a",
+    "fireball_impact_2.m4a",
+    "fireball_impact_3.m4a"
+  ],
+  "shear_cast": [
+    "shear_cast_1.m4a",
+    "shear_cast_2.m4a",
+    "shear_cast_3.m4a"
+  ],
+  "shear_impact": [
+    "shear_impact_1.m4a",
+    "shear_impact_2.m4a"
+  ],
+  "skim_impact": [
+    "skim_impact_1.m4a",
+    "skim_impact_2.m4a",
+    "skim_impact_3.m4a"
+  ],
+  "hex_cast": [
+    "hex_cast_1.m4a",
+    "hex_cast_2.m4a"
+  ],
+  "hex_impact": [
+    "hex_impact_1.m4a",
+    "hex_impact_2.m4a"
+  ],
+  "sling_cast": [
+    "sling_cast_1.m4a",
+    "sling_cast_2.m4a"
+  ],
+  "sling_impact": [
+    "sling_impact_1.m4a",
+    "sling_impact_2.m4a",
+    "sling_impact_3.m4a"
+  ],
+  "potion_toss": [
+    "potion_toss_1.m4a",
+    "potion_toss_2.m4a"
+  ],
+  "finisher_fire": [
+    "finisher_fire.m4a"
+  ],
+  "finisher_wind": [
+    "finisher_wind.m4a"
+  ],
+  "finisher_ice": [
+    "finisher_ice.m4a"
+  ],
+  "finisher_dark": [
+    "finisher_dark.m4a"
+  ],
+  "finisher_earth": [
+    "finisher_earth.m4a"
+  ],
+  "finisher_acid": [
+    "finisher_acid.m4a"
+  ],
+  "reload": [
+    "reload_1.m4a",
+    "reload_2.m4a"
+  ],
+  "hit_light": [
+    "hit_light_1.m4a",
+    "hit_light_2.m4a",
+    "hit_light_3.m4a"
+  ],
+  "hit_heavy": [
+    "hit_heavy_1.m4a",
+    "hit_heavy_2.m4a"
+  ],
+  "hit_marker": [
+    "hit_marker.m4a"
+  ],
+  "meteor_impact": [
+    "meteor_impact_1.m4a",
+    "meteor_impact_2.m4a"
+  ],
+  "cyclone_loop": [
+    "cyclone_loop.m4a"
+  ],
+  "frostfall_fall": [
+    "frostfall_fall.m4a"
+  ],
+  "frostfall_impact": [
+    "frostfall_impact.m4a"
+  ],
+  "lash": [
+    "lash_1.m4a"
+  ],
+  "lash_bind": [
+    "lash_bind.m4a"
+  ],
+  "battering_ram": [
+    "battering_ram.m4a"
+  ],
+  "firewall_cast": [
+    "firewall_cast.m4a"
+  ],
+  "firewall_block": [
+    "firewall_block.m4a"
+  ],
+  "firewall_break": [
+    "firewall_break.m4a"
+  ],
+  "bulwark_block": [
+    "bulwark_block.m4a"
+  ],
+  "bulwark_break": [
+    "bulwark_break.m4a"
+  ],
+  "veil_cast": [
+    "veil_cast.m4a"
+  ],
+  "veil_block": [
+    "veil_block.m4a"
+  ],
+  "veil_break": [
+    "veil_break.m4a"
+  ],
+  "black_death_cast": [
+    "black_death_cast.m4a"
+  ],
+  "black_death_block": [
+    "black_death_block.m4a"
+  ],
+  "black_death_break": [
+    "black_death_break.m4a"
+  ],
+  "ram_guard_cast": [
+    "ram_guard_cast.m4a"
+  ],
+  "ram_guard_block": [
+    "ram_guard_block.m4a"
+  ],
+  "ram_guard_break": [
+    "ram_guard_break.m4a"
+  ],
+  "skyward_launch": [
+    "skyward_launch.m4a"
+  ],
+  "skyward_land": [
+    "skyward_land.m4a"
+  ],
+  "ram_ride_loop": [
+    "ram_ride_loop.m4a"
+  ],
+  "ult_ready": [
+    "ult_ready.m4a"
+  ],
+  "ult_windup": [
+    "ult_windup.m4a"
+  ],
+  "meteor_rain_launch": [
+    "meteor_rain_launch.m4a"
+  ],
+  "meteor_rain_dive": [
+    "meteor_rain_dive.m4a"
+  ],
+  "eye_storm_loop": [
+    "eye_storm_loop.m4a"
+  ],
+  "night_cage": [
+    "night_cage.m4a"
+  ],
+  "night_cage_chains": [
+    "night_cage_chains.m4a"
+  ],
+  "stampede": [
+    "stampede.m4a"
+  ],
+  "brew_roar": [
+    "brew_roar.m4a"
+  ],
+  "ram_summon": [
+    "ram_summon_1.m4a",
+    "ram_summon_2.m4a"
+  ],
+  "fight_start": [
+    "fight_start.m4a"
+  ],
+  "siege_capture": [
+    "siege_capture.m4a"
+  ],
+  "siege_contested": [
+    "siege_contested.m4a"
+  ],
+  "siege_moving": [
+    "siege_moving.m4a"
+  ],
+  "victory": [
+    "victory.m4a"
+  ],
+  "defeat": [
+    "defeat.m4a"
+  ],
+  "score_tick": [
+    "score_tick.m4a"
+  ],
+  "countdown_tick": [
+    "countdown_tick.m4a"
+  ],
+  "vote": [
+    "vote.m4a"
+  ],
+  "menu_music": [
+    "menu_music.m4a"
   ]
 }
