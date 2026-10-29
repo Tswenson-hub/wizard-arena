@@ -89,7 +89,7 @@ this frame rate, with stamina draining (`r8_sprint.png`). Also the pool (`r8_poo
 |---|---|---|---|---|---|---|
 | 3 runs | 8/12 (0.67) | 8/14 (0.57) | 10/10 (1.0) | 13/8 (1.63) | 13/11 (1.18) | **15/14 (1.07)** |
 
-- **Embibe** lands mid-pack on the starting numbers: 10 of her 15 kills were potions, 4 the flask or pool.
+- **Embibe** lands mid-pack on the starting numbers: 9 of her 15 kills were potions, 4 the flask or its pool, 2 thrown props.
 - **Gale trails again,** and Vesper leads this set. Kill counts are small, so this is noisy.
 
 ### Open
