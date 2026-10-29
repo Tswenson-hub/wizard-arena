@@ -1,124 +1,127 @@
-# Modes agent hand-off (round 5: game modes)
+# Modes agent hand-off (rounds 5 and 8: game modes; Altar Siege replaced Sacred Relic)
 
 ## What I built
 **`server/match.js`** (the hooks server.js calls):
 - **The match loop runs one arena:**
   - warm-up (10 s; you can move and fight, but nothing counts)
-  - live (to the target, or the 8 min cap, when the higher score wins and a tie is a draw)
+  - live (to the target or the 8 min cap; the higher score wins, a tie is a draw)
   - end screen (8 s)
   - vote (15 s)
   - reset
-- **The reset** respawns everyone on their side, puts props back at `PROP_SPAWNS`, calls `ctx.resetGoats()`, calls
-  `ctx.resetUlt(p)` and zeroes K/D/damage/points. Ultimate charge is also zeroed when the match goes live, so nothing
-  carries over from the warm-up.
-- **The loop pauses when no human is connected** and restarts with a warm-up when one arrives. The mode is kept between sessions.
-- **Modes:**
+- **The reset** respawns everyone on their side, puts props back at `PROP_SPAWNS`, calls `ctx.resetGoats()` and `ctx.resetUlt(p)`,
+  and zeroes K/D/damage/capture. Ultimate charge is zeroed again at go-live.
+- **The loop pauses when no human is connected** and starts with a warm-up when one arrives. The server keeps the last mode.
+- **Modes** (numbers in `MODES` at the top of match.js):
   - FFA: 15 kills.
   - TDM 3v3: 30 team kills.
-  - Sacred Relic 3v3: 300 points.
-  - The numbers are in `MODES` at the top of match.js.
-- **Votes:** humans only, `{ t: 'vote', mode }`, keys 1/2/3 or a click. The majority wins; a tie (or no votes) keeps the current mode.
+  - **Altar Siege 3v3: first team to 100%.**
+- **Votes:** humans only, `{ t: 'vote', mode }` with `ffa | tdm | siege`, keys 1/2/3 or a click. The majority wins; a tie keeps the current mode.
 - **Teams (Ember north, Frost south):**
-  - On a mode change, humans are split evenly at random.
-  - A joiner goes to the team with fewer humans.
-  - `isEnemy`: in FFA everyone else is an enemy. In team modes the other team is. During the end screen and the vote,
-    nobody is an enemy (an intermission).
-- **Bot fill:**
-  - Team modes are topped up to 3v3 (or ⌈humans/2⌉ a side if there are more than 6 humans), once a second, with a 1.5 s grace period after a human joins.
-  - Fill bots use `S.botDiff`: the most recent human's join-screen difficulty (`p.botPref`), or the difficulty of the last bot a human added.
-  - Surplus bots leave, old-difficulty bots first, so a human always gets a slot.
-  - In FFA the fill bots leave, and bots people added themselves stay.
-- **Spawns:** each team spawns at the point on its side farthest from living enemies. It uses `C.TEAM_SPAWNS` if map.js exports it
-  (requested from the environment agent), else the north/south subsets of `SPAWN_POINTS`.
-- **Sacred Relic:**
-  - Eligible props: crate, barrel, pot, hay, potion, idle and not cursed.
-  - The holder (the prop `carried` by them) gives their team +5/s and gets +2%/s ultimate charge (`ctx.addUltCharge`).
-  - `canThrow` is false, so F sets it down.
-  - `protectProp` is true, so a hit knocks it loose (server.js drops it idle where it was hit) instead of shattering it.
-  - It moves to a new random prop every 30 s, even while held. The old one becomes an ordinary prop again.
-  - When the holder dies (`onDrop(…, 'destroyed')`), a new relic appears and the 30 s timer restarts.
-  - There's a fallback for a shatter that didn't ask `protectProp`: the relic is restored idle on the next tick.
-- **Stats:** per player kills, deaths, `dmg` and `pts`. MVP = kills×100 + damage + points×4 − deaths×30.
+  - Humans are split evenly on a mode change, and a joiner goes to the side with fewer humans.
+  - `isEnemy`: in FFA everyone else is an enemy, in team modes the other team. During the end screen and the vote nobody is.
+- **Bot fill:** team modes are topped up to 3v3 (or ⌈humans/2⌉ a side) at the most recent human's difficulty. Surplus bots make way
+  for humans. FFA keeps only the bots people added.
+- **Altar Siege:**
+  - **Zones:** a 7 m circle at `C.SIEGE_ZONES` (the environment agent's: The Altar (0, −7), Barn Passage (10, 4), Fallen Silo (−22, −19)).
+    There's a fallback if map.js lacks them.
+  - **Hops:** altar → barn → silo → altar every 60 s. A `matchZone: warn` 5 s before, then `hop`.
+  - **Occupancy each tick:** living, team, not a spectator, feet no higher than 2.5 m, within r.
+  - **Scoring:**
+    - One team alone fills its bar at 1%/s, or 1.5%/s with 2+ inside.
+    - Each holder gets an equal share as `pts` (capture %) and +1% ultimate charge a second (`ctx.addUltCharge`).
+    - Both teams inside is **contested**: nothing fills.
+  - **Overtime:** if the cap hits while contested, play goes on until the zone isn't contested, at most 30 s more (`matchOvertime`).
+    The zone doesn't hop during overtime.
+  - **Fair respawns:** in a live siege, a wizard respawns at the team spawn whose distance to the current zone best matches the other
+    team's closest spawn. It's still on its own side and never within 8 m of a living enemy. Without this, the zone next to a team's
+    spawn was theirs for the taking.
+  - **Results** carry `siege: { hold: [{ name, ember, frost }] (seconds), contested, empty, hops, overtime }`.
+- **The relic is gone:** its mode, logic, events and `protectProp`. `canThrow` stays as a hook but always returns true, so
+  telekinesis throws normally everywhere.
+- **MVP** = kills×100 + damage + capture%×10 − deaths×30.
 - **What clients get:**
-  - `playerPublic` gains `team`, `teamColor`, `dmg` and `pts`.
-  - Every snapshot carries `match: { mode, phase, left, target, teams, scores, relic: { propId, holder, team, left, x, z }, votes }`.
-  - Messages: `matchPhase`, `matchEnd` (results), `matchVotes`, `matchMode` and `matchRelic` (spawn, rotate, reset, lift, drop, holderDied).
+  - `playerPublic`: `team`, `teamColor`, `dmg`, `pts`.
+  - `snap.match`: `{ mode, phase, left, target, teams, scores (siege: bars to 0.1), zone: { i, x, z, r, name, owner, contested,
+    inside: { ember, frost }, next: { x, z, r, name }, nextAt }, overtime, votes }`.
+  - Messages: `matchPhase`, `matchEnd`, `matchVotes`, `matchMode`, `matchZone` (warn, hop, held, contested, empty) and `matchOvertime`.
 
 **`server/objectives.js`:** `objectiveFor(bot, world)`:
 - **FFA, or outside a live match:** null.
-- **TDM:** `focus` the weakest visible enemy (HP + distance/2, pillars block sight).
-- **Relic, free:** the nearest bot of each team gets `lift` + `moveTo`. Its teammates head there, `guard` that bot and `focus` the
-  nearest rival near the relic.
-- **Relic, held by a teammate:** `guard`, a `moveTo` if they're more than 8 m away, and `focus` whoever last hit the holder
-  (else the nearest enemy).
-- **Relic, held by an enemy:** everyone `focus`es the holder.
-- **The holder bot:** `moveTo` back toward its own side.
+- **TDM:** `focus` the weakest visible enemy.
+- **Siege:**
+  - Every bot gets `area: [x, z, r]` (the circle) and a `moveTo` toward its own spot inside it (spread by bot id).
+  - `focus` the enemy deepest in the circle.
+  - In the last 10 s before a hop, one bot per team (the closest) scouts the next spot.
+  - **Routing:** bots walk straight at `moveTo` and the felled silo pinned Frost bots, so `route()` swaps in one waypoint whose two legs
+    are clear of colliders (h ≥ 0.5), re-planned every 0.4 s.
+  - **New hint field `area`:** I asked the spells agent to keep fighting bots inside it (requests.md).
 
-**`public/js/match-ui.js` + `public/css/match.css`** (the CSS is linked from the JS, since index.html isn't mine):
-- **Top bar:**
-  - The mode and the clock (red under 30 s).
-  - Team modes add Ember and Frost score boxes, each with a progress bar and an outline on your own team.
-  - FFA shows your kills and the leader instead.
-- **Banners:** the warm-up banner (mode and rules), a 3-2-1 countdown, and "Fight!".
-- **Relic HUD:** the relic line (who holds it, +5/s, a "moves in Ns" countdown) and a small event ticker.
-- **Relic in the world:**
-  - A golden shell and wireframe cage with a point light.
-  - A 70 m light beam that takes the holder's team colour and fades when you stand next to it.
-  - A pulsing ground ring and rising "+5" sprites over the holder.
-  - An off-screen arrow at the screen edge pointing at the relic.
-- **End screen:** the winner, the final team score, the MVP, and a table of K, D, damage and points (points in Relic).
-- **Vote panel:** three cards with live tallies, your pick highlighted, and "current · wins ties".
-- **Rings:** each wizard's ring takes its team colour (the spells agent now does the ring and nameplate too, via `teamColor`).
-- **`matchUI.state()`** returns the latest match state.
+**`public/js/match-ui.js` + `public/css/match.css`:**
+- **Top bar:** clock (`OT n` in overtime). In siege, the team boxes show bars as %, both flash Ember/Frost while contested, the holder
+  glows, and "+1%"/"+1.5%" ticks float off the holding team's box.
+- **Zone line:** the zone name, then the state:
+  - holding team and rate, `CONTESTED · 2 v 1` (flashing) or "stand in the circle"
+  - "you're in"
+  - "moves in Ns", which turns into "moves to Barn Passage in 3s" for the warning
+- **In the world:**
+  - **The circle:** a thick edge, a turning band of rune arcs, a faint disc, a 2.2 m wall of light and a centre beam that fades
+    when you're near. It's gold when neutral, the team colour when held, and flickers in both colours when contested.
+  - **The next spot:** a blinking ghost ring and a beam during the warning.
+  - **Arrows:** off-screen ZONE and NEXT arrows at the screen edge.
+- **Vote card:** Altar Siege.
+- **End screen:** bars as %, a "Cap" column, and the per-zone hold split plus contested time.
+- `matchUI.state()` returns the latest match state.
 
 **Tests**
-- **`tools/test/modematch.mjs <port> <ffa|tdm|relic> <secs> [difficulty] [--target N] [--cap S] [--rotate S] [--bots N]`:** needs
-  `MATCH_DEBUG=1` on the server. It joins as a **spectator** (no team, can't be hurt, nobody targets it), switches mode with a 2 s warm-up,
-  and reports:
-  - scores and the per-player table
-  - team sizes sampled every snapshot
-  - friendly-fire hits (a `hit` with dmg > 0 between teammates)
-  - relic events, rotation intervals, and points gained while held vs free
+- **`tools/test/modematch.mjs <port> <ffa|tdm|siege> <secs> [difficulty] [--target N] [--cap S] [--hop S] [--bots N]`:** needs `MATCH_DEBUG=1`.
+  It joins as a spectator and reports:
+  - scores, the per-player table, team sizes and friendly-fire hits
+  - siege: hop intervals, held/contested/empty time, the per-zone hold split, overtime, and any bar gain while the zone wasn't held
+    alone (tolerance: two snapshot intervals)
+- **`tools/test/modematch-unit.mjs`:** 43 rule checks against a fake ctx. The relic checks are gone. New siege checks cover:
+  - empty, 1%/s, 1.5%/s, ult charge, contested
+  - dead or high fliers don't count
+  - the warning, the hop and the next hop at 60 s
+  - overtime start and end, the 30 s overtime limit, the 100% win, the hold split in results
+  - canThrow is true
+- **Debug** (`MATCH_DEBUG=1` only): `{ t: 'matchDebug', target, cap, warmup, endTime, voteTime, hop, overtime, botDiff, mode, skip,
+  spectate, dummy: { team, x, z } | false, pinBots: true | false }`.
+  - `dummy` is a pinned, bound bot of a team, used to test contesting.
+  - `pinBots` freezes every bot where it stands.
 
-  It exits 1 if a check fails.
-- **`tools/test/modematch-unit.mjs`** (new; it sits in the coordinator's `tools/test/`, so move it if you prefer): 28 rule checks
-  against a fake ctx with a simulated clock. It covers fill and trim, the mid-match joiner, isEnemy, TDM scoring, the vote tie rule,
-  relic scoring and ultimate charge, canThrow, knock-loose, holder-death reset and rotation while held.
-- **Debug message** (only with `MATCH_DEBUG=1`): `{ t: 'matchDebug', target, cap, warmup, endTime, voteTime, rotate, botDiff, mode, skip, spectate }`.
-  It's ignored without the env var.
+## How I verified it (port 4104, MATCH_DEBUG=1, a snapshot of the working tree in /tmp/wa-modes/wip)
+**Hard-bot siege runs**, after the routing and fair-respawn fixes:
 
-## How I verified it (port 4104)
-I tested against a snapshot of the working tree (the spells agent's WIP, with protectProp, resetUlt, resetGoats, `isEnemy` in bots
-and objective following) copied to `/tmp/wa-modes/wip`.
+| result | time | contested | per-zone holds, Ember/Frost (s) |
+|---|---|---|---|
+| Ember 100–73.8 | 322 s | 56% | Altar 20.7/21.5 · Barn 34.7/15.5 · Silo 19.7/19.7 |
+| Ember 100–39.1 | 276 s | 60% | Altar 18.6/10.4 · Barn 33.5/11.8 · Silo 20.5/8.7 |
+| Ember 100–43.6 | 294 s | 62% | Altar 16.5/15.2 · Barn 41.9/8.2 · Silo 14.2/10.6 |
 
-| run | result | time | FF hits | teams | relic |
-|---|---|---|---|---|---|
-| TDM, normal | 30–25 | 277 s | 0 | 3v3 in all 5388 samples | |
-| TDM, hard | 30–18 | 463 s | 0 | 3v3 in all 5502 samples | |
-| Relic, normal | 300–200 | 151 s | 0 | 3v3 in all 2940 samples | 22 lifts, 17 holder deaths → 17 resets, points while free: 0 |
-| Relic, hard | 300–174 | 151 s | 0 | 3v3 in all 3996 samples | 30 lifts, 14 knocked loose, 14 holder deaths → 14 resets, points while free: 0 |
-| FFA, 4 normal | Vexlith 15 | 404 s | 0 | – | |
-| Relic, `--rotate 5` (HEAD bots) | | | | | rotation intervals [5, 5, 5] |
-
-- In real Relic matches every relic died with its holder before 30 s, so rotation is checked by the `--rotate` run and the unit test.
-- `modematch-unit.mjs`: all 28 checks pass.
-- **Playwright** (`/tmp/wa-modes/modes_e2e.py`; screenshots in `/tmp/wa-modes/shots/`). These steps all passed:
-  1. Join FFA (target 1 by debug) and play the match to the end. The end screen shows the winner, the MVP and the table.
-  2. Press 2 to vote TDM. The tally shows 1, the mode switches, and teams fill to 3v3 with Ember and Frost rings (`ff6a2a` / `3aa8ff`).
-  3. Switch to Relic and lift the relic. Ember's score went 7 → 31 and my ultimate went 15% → 28% in about 5 s.
-  4. Press F on the relic. It reports `drop`, not a throw.
-  5. Hold it until enemy bots kill me. `holderDied` → `reset` to a new prop, and the arrow points at it.
-  6. No page errors.
-
-  Screenshots: `1_lobby`, `2_ffa_warmup`, `3_ffa_live`, `4_end`, `5_vote`, `6_tdm_hud`, `7_relic_beam`, `8_relic_arrow`,
-  `9_relic_held` (shell, beam, Cataclysm ring at 21%), `10_relic_moved`.
+- **Every run:** hops exactly every 60 s, 0 friendly fire, 3v3 throughout, 0 bar gain while the zone wasn't held alone, no overtime.
+- **Before the fixes:** 5 runs, Ember won all 5, and Frost held the Fallen Silo about 0 s (bots were stuck on the silo body).
+- **`modematch-unit.mjs`:** all 43 checks pass.
+- **Playwright** (`/tmp/wa-modes/siege_e2e.py`; screenshots in `/tmp/wa-modes/siege/` and `/tmp/wa-modes/siege-1793239675/`):
+  - **Telekinesis:** a lifted prop is thrown as a projectile, and there's no relic UI.
+  - **Vote:** pressing 3 votes Altar Siege (tally 1), and the mode switches. The warm-up shows the circle at The Altar.
+  - **Holding:** standing in the zone (bots pinned), my team's bar went 2.8 → 6.6 at +1.5%/s, and the line read "Ember holding · you're in".
+  - **Contest:** a frost dummy in the zone shows CONTESTED · 2 v 1 and the bars flash.
+  - **Hop:** the warning reads "moves to Barn Passage in 3s", then the zone moves to Barn Passage with a banner and a ZONE arrow.
+  - No page errors.
+  - Screenshots: `s1_vote`, `s2_warmup_circle` (the bolder circle is in the second folder), `s3_holding`, `s4_contested`,
+    `s5_hop_warning`, `s6_arrows`, `s7_after_hop`.
 
 ## Known issues / for Ty and the coordinator
-- **Relic matches are short:** 300 points takes about 2.5 min with bots (60 s of holding). That is the approved number, but if the
-  mode should last longer, raise `MODES.relic.target` (600 gives about 5 min) or lower `RELIC.points`.
-- **Hard-bot TDM** took 463 s of the 480 s cap. Some hard matches will end on time, when the higher score wins.
-- **TEAM_SPAWNS** is still requested from the environment agent (see requests.md). The fallback points work.
-- **In team modes, bots people add are trimmed back to 3v3**, and "Remove all" is refilled. The spells agent disables those buttons in team modes.
-- **The relic hint text in main.js** now says F / G set down (the spells agent did it in 11a69d7).
-- **Goats can still kill anyone in team modes.** Goat kills don't score in TDM. A thrown goat is credited to its thrower through `applyHit`, so it follows `isEnemy`.
-- **The server keeps the last mode** after everyone leaves, so the next visitor starts in that mode.
+- **Ember is favoured in siege by the Barn Passage spot:** Ember's spawns average 14 m from it, Frost's 34 m. With Hard fill Ember
+  won 8 of 8 overall: 5 before my fixes, 3 after (the Altar and the Silo now come out about even).
+  - **Tried:** moving the barn zone to (12, −3) in a scratch copy gave Frost 1 win in 3.
+  - **Filed:** the request to the environment agent, with numbers.
+  - **Options:** move the barn spot, add a Frost-side fourth zone, or shuffle the rotation.
+- **Contested time is high (52–62% of live time)** with bots, because every bot goes to the zone. Humans will spread out more.
+  Matches still finish in 3–5.5 min, well within the cap.
+- **Spells-side relic cleanup** is listed line by line in requests.md (`hitProp`/`protectProp` callers, the `canThrow` drop, `relicId`
+  and the Drop label/hint in main.js, bots' `lift`/`canThrow` code). It's all dead code now: nothing in match.js triggers it.
+  The `area` hint is also requested there.
+- **Not done yet: port 3000.** I haven't updated or verified Ty's port 3000 from the play copy. That port isn't mine, so it's
+  left for the coordinator.
+- **Earlier notes still hold:** team-mode addBot is trimmed to 3v3 (the buttons are disabled there), and goat kills don't score.
