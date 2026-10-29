@@ -77,6 +77,7 @@ const local = {
   cataAim: false,              // Q held with Cataclysm or Night Cage: aiming the circle
   eyeUntil: 0, zeroUntil: 0,   // our own Eye of the Storm / Absolute Zero flare: nothing else can be cast
   pull: null,                  // { v: [x, z], until } dragged by an enemy Eye of the Storm
+  ride: null,                  // Jeb's Ram Ride: { start, rideAt, dismountAt, endAt } (predicted; the server's 'ride' confirms)
   fHold: null,                 // { start } while F is held with nothing carried (Trapped Relic: hold to curse)
   flight: null,                // { start, drop } during our own Skyward Flash
   spaceHeld: false,            // Space was used to drop out of a flight: don't ward until it's released
@@ -99,7 +100,8 @@ const SPELL = C.SPELLBOOK;
 const FROST = SPELL.frostfall, SMOKE = SPELL.smoke_screen;
 const CATA = SPELL.cataclysm, EYE = SPELL.eye_of_storm, ZERO = SPELL.absolute_zero, CAGE = SPELL.night_cage;
 const ULT_KINDS = new Set(['cataclysm', 'eye_of_storm', 'eye_burst', 'absolute_zero']);
-const AIMED_ULTS = { cataclysm: CATA, night_cage: CAGE };   // hold Q to aim a circle, release
+const STAMP = SPELL.stampede, RIDE = SPELL.ram_ride, RGUARD = SPELL.ram_guard;
+const AIMED_ULTS = { cataclysm: CATA, night_cage: CAGE, stampede: STAMP };   // hold Q to aim (a circle, or Stampede's lane), release
 const LASH = SPELL.sanguine_lash, MIRROR = SPELL.mirror_step, BULWARK = SPELL.glacial_bulwark, RELIC = SPELL.trapped_relic, SKIM = SPELL.glacial_skim;
 
 function chooseWizard(id) {
@@ -217,7 +219,8 @@ function onWelcome(msg) {
   for (const p of msg.players) addPlayer(p);
   for (const pr of msg.props) setProp(pr, true);
   for (const pj of msg.projectiles) effects.spawnProjectile(withBolt(pj));
-  for (const g of msg.goats || []) goats.set(g.id, new GoatView(g, scene));
+  for (const g of msg.goats || []) addGoat(g);
+  for (const st of msg.stampedes || []) stampedeFx.set(st.id, Object.assign(effects.stampedeLane(st.p, st.dir, st.width, st.length, st.left), { owner: st.owner }));
   for (const w of msg.walls || []) wallUp(w);
   for (const f of msg.frostfalls || []) frosts.set(f.id, effects.frostfall(f.p, f.left));
   for (const c of msg.smokes || []) effects.smoke(c.p, c.left);
@@ -234,6 +237,16 @@ function onWelcome(msg) {
   input.requestLock();
   feed(`Welcome, <b>${esc(me.name)}</b>. ${players.size - 1} other wizard${players.size === 2 ? '' : 's'} here.`);
 }
+
+// A goat (or one of Jeb's summoned rams) seen for the first time.
+function addGoat(g) {
+  const v = new GoatView(g, scene);   // goats.js gives summoned rams their size, gold tint and orbit/mount motion
+  v.summoned = !!g.summoned; v.owner = g.owner ?? null;
+  goats.set(g.id, v);
+  return v;
+}
+const stampedeFx = new Map();   // Stampede lanes on the ground: id -> effects entry
+const laneMark = effects.laneAim(STAMP.width, STAMP.length);
 
 function addPlayer(info) {
   if (players.has(info.id)) return players.get(info.id);
@@ -277,6 +290,7 @@ function applySnapshot(w, s) {
   // Black Death's absorbed damage rides on the next Lash: the coiled whip glows with it (looks.js)
   if ((s.lashBonus ?? 0) !== (w.lashBonus ?? 0)) { w.lashBonus = s.lashBonus ?? 0; w.body?.setWhipGlow?.(w.lashBonus / SPELL.black_death.maxBonus); }
   w.team = s.team ?? null;
+  w.riding = !!s.ride; w.ramGuard = !!s.ramGuard;
   if (s.veil !== undefined && !!s.veil !== w.veiled) w.veiled = !!s.veil;
   if (!s.lashing && w.lashT >= 0 && w !== me) w.endLash();
   if (s.dead !== w.dead) w.dead = s.dead;
@@ -352,7 +366,7 @@ function handleMessage(msg) {
         applySnapshot(w, s);
       }
       updateDecoys(msg.decoys || []);
-      for (const g of msg.goats || []) (goats.get(g.id) || goats.set(g.id, new GoatView(g, scene)).get(g.id)).apply(g);
+      for (const g of msg.goats || []) { const v = goats.get(g.id) || addGoat(g); v.apply(g); }
       matchUI.onSnapshot(msg);
       relicId = msg.match?.relic?.propId ?? null;
       // team modes keep bots at 3v3 themselves: the practice-bot buttons don't apply
@@ -693,15 +707,16 @@ function handleMessage(msg) {
       effects.death([w.group.position.x, 0, w.group.position.z]);
       sfx.death(wpos(w));
       if (w === me) {
-        ui.death.querySelector('.big').textContent = msg.cause === 'goat' ? 'Rammed by a goat' : 'You were vanquished';
+        ui.death.querySelector('.big').textContent = msg.cause === 'goat' ? 'Rammed by a goat' : msg.cause === 'ram' ? 'Flattened by a ram' : 'You were vanquished';
         ui.death.classList.remove('hidden'); local.charging = false; local.blocking = false;
         local.cyclone = null; local.flight = null; local.pos.y = 0; local.lash = null; local.fHold = null;
         local.slowUntil = local.rootUntil = local.silenceUntil = local.frozenUntil = 0; local.frostAim = false;
-        local.cataAim = false; local.eyeUntil = local.zeroUntil = 0; local.pull = null;
+        local.cataAim = false; local.eyeUntil = local.zeroUntil = 0; local.pull = null; local.ride = null;
       }
       if (msg.killer === myId && msg.id !== myId) sfx.killSting();   // our kill (goat kills credited to us too)
       if (msg.cause === 'goated' && k) feed(`<b>${esc(k.name)}</b> goated <b>${esc(w.name)}</b>`);
       else if (msg.cause === 'goat') feed(`<b>${esc(w.name)}</b> was rammed by a goat${k && k !== w ? ` (thanks, <b>${esc(k.name)}</b>)` : ''}`);
+      else if (msg.cause === 'ram' && k) feed(`<b>${esc(k.name)}</b>'s ram flattened <b>${esc(w.name)}</b>`);
       else if (k && k !== w) feed(`<b>${esc(k.name)}</b> vanquished <b>${esc(w.name)}</b>`);
       else feed(`<b>${esc(w.name)}</b> perished`);
       break;
@@ -812,6 +827,60 @@ function handleMessage(msg) {
       if (msg.id === myId) local.zeroUntil = 0;
       break;
     }
+    // ---- Jeb
+    case 'ramSpawn':
+      effects.ramPoof(msg.p); sfx.bleat([msg.p[0], 1, msg.p[2]], msg.mode === 'charge');
+      break;
+    case 'goatGone': {
+      const g = goats.get(msg.id);
+      if (g) { if (g.despawn) g.despawn(scene, effects); else { g.dispose(scene); if (msg.p) effects.ramPoof(msg.p); } goats.delete(msg.id); }
+      break;
+    }
+    case 'ramCalled': {
+      const by = players.get(msg.by), tg = players.get(msg.target), g = goats.get(msg.goat);
+      if (g) sfx.bleat(g.group.position.clone().setY(1));
+      if (msg.target === myId) feed(`<b>${esc(by?.name || '?')}</b> called a ram on you! <b>Ward facing it</b> or get out of the way`);
+      else if (msg.by === myId) feed(`Your sling calls a ram on <b>${esc(tg?.name || '?')}</b>`);
+      break;
+    }
+    case 'batteringRam': {
+      const w = players.get(msg.id);
+      if (w) { w.oneShot('cast_heavy', 0.55, 1.5, 1.9); sfx.play('impact_big', { pos: wpos(w), vol: 0.8, rate: 0.6 }); }
+      break;
+    }
+    case 'ramGuard': {
+      const w = players.get(msg.id);
+      if (w) { if (w.actions.block) w.oneShot('block', 0.5, 1, 0); sfx.play('footstep', { pos: wpos(w), vol: 1, rate: 0.6 }); }
+      break;
+    }
+    case 'ride': {
+      const w = players.get(msg.id);
+      if (!w) break;
+      w.riding = true;
+      if (w === me && !local.ride) local.ride = rideTimes(msg);   // a ride we didn't predict (rare)
+      sfx.bleat(wpos(w), false);
+      break;
+    }
+    case 'rideEnd': {
+      const w = players.get(msg.id);
+      if (w) w.riding = false;
+      if (msg.id === myId) local.ride = null;
+      break;
+    }
+    case 'stampede': {
+      stampedeFx.set(msg.id, Object.assign(effects.stampedeLane(msg.p, msg.dir, msg.width, msg.length, msg.left), { owner: msg.owner }));
+      const w = players.get(msg.owner);
+      if (w) { w.oneShot(w.actions.ult ? 'ult' : 'cast_heavy', STAMP.castPose, w.actions.ult ? 1 : 1.5, w.actions.ult ? 0 : 1.9); sfx.play('impact_big', { pos: wpos(w), vol: 1, rate: 0.45 }); }
+      // the rumble: deep thuds rolling in
+      for (let i = 0; i < 6; i++) sfx.play('impact_big', { pos: [msg.p[0] + msg.dir[0] * 14, 0.5, msg.p[2] + msg.dir[2] * 14], vol: 0.7, rate: 0.35 + i * 0.03, delay: i * 0.17 });
+      const dx = local.pos.x - msg.p[0], dz = local.pos.z - msg.p[2];
+      const along = dx * msg.dir[0] + dz * msg.dir[2], side = -dx * msg.dir[2] + dz * msg.dir[0];
+      if (msg.owner !== myId && along > -1 && along < msg.length && Math.abs(side) < msg.width / 2 + 1) feed('<b>Stampede!</b> Get out of the lane');
+      shake(0.3);
+      break;
+    }
+    case 'stampedeEnd':
+      break;   // the last ram is out; its lane (and the warning) lasts until the rams have passed (effects endAt)
     case 'cage': {
       cages.set(msg.id, { ...msg, x: msg.p[0], z: msg.p[2], fx: effects.nightCage(msg.p, msg.left) });
       const w = players.get(msg.owner);
@@ -895,6 +964,12 @@ function cageKeep(pos) {
   let moved = false;
   for (const c of cages.values()) if (c.foes.includes(myId) && C.cageClamp(pos, c, c.inside.includes(myId))) moved = true;
   return moved;
+}
+// Ram Ride timing (as the server times it): mount, gallop, dismount.
+function rideTimes(msg) {
+  const start = now;
+  return { start, rideAt: start + (msg?.mount ?? RIDE.mount), dismountAt: start + (msg?.mount ?? RIDE.mount) + (msg?.ride ?? RIDE.distance / RIDE.speed),
+    endAt: start + (msg?.mount ?? RIDE.mount) + (msg?.ride ?? RIDE.distance / RIDE.speed) + (msg?.dismount ?? RIDE.dismount) };
 }
 // Gale's tornado spin, every frame.
 function updateUltimates() {
@@ -987,7 +1062,7 @@ function tkTarget() {
   }
   // liftable goats compete with props (server: tkTarget). A goat comes back as { goat }.
   for (const g of goats.values()) {
-    if (!LIFTABLE_GOAT.has(g.state)) continue;
+    if (g.summoned || !LIFTABLE_GOAT_STATES.has(g.state)) continue;
     const gp = g.group.position;
     const d2 = Math.hypot(gp.x - p[0], gp.z - p[2]);
     if (d2 < nd) { nd = d2; near = { goat: g }; }
@@ -1002,7 +1077,7 @@ function tkTarget() {
   }
   return best || near;
 }
-const LIFTABLE_GOAT = new Set(['graze', 'wander', 'return', 'recover', 'dizzy', 'stumble']);
+const LIFTABLE_GOAT_STATES = new Set(['graze', 'wander', 'return', 'recover', 'dizzy', 'stumble']);
 
 // What the crosshair is pointing at (wizard, pillar, tree or ground), for aiming hurled props.
 function aimPoint() {
@@ -1109,7 +1184,8 @@ function updateLocal(dt) {
 
   // ---- actions
   // our own tornado or rune flare: nothing else can be cast meanwhile
-  const ultLock = now < local.eyeUntil || now < local.zeroUntil;
+  if (local.ride && now >= local.ride.endAt + 0.3) local.ride = null;   // missed the rideEnd
+  const ultLock = now < local.eyeUntil || now < local.zeroUntil || !!local.ride;   // (a Ram Ride too)
   if (canAct) {
     // ultimate (Q): Cataclysm aims a circle (hold, release); the others go off at once
     const U = K.ultimate, ultReady = local.ult >= C.ULT_CHARGE.max, holdingQ = !!(me.carrying || me.carryingGoat);
@@ -1137,6 +1213,10 @@ function updateLocal(dt) {
     if (K.guard === 'glacial_bulwark' && input.justPressed('Space') && !airborne && !local.spaceHeld && !busy && now >= local.cd.guard) {
       local.cd.guard = now + BULWARK.cooldown;
       net.send({ t: 'bulwark', yaw: local.yaw });
+    }
+    if (K.guard === 'ram_guard' && input.justPressed('Space') && !airborne && !local.spaceHeld && now >= local.cd.guard) {
+      local.cd.guard = now + RGUARD.cooldown;
+      net.send({ t: 'ramGuard' });
     }
     if (K.guard === 'firewall' && input.justPressed('Space') && !airborne && !local.spaceHeld && !busy && now >= local.cd.guard) {
       local.cd.guard = now + SPELL.firewall.cooldown;   // tap: the flame stands for its life, no holding
@@ -1176,6 +1256,10 @@ function updateLocal(dt) {
         local.lash = { start: now, sent: false };
         me.startLash();
         net.send({ t: 'lashStart' });
+      } else if (K.power === 'battering_ram') {
+        computeAim();
+        local.cd.power = now + SPELL.battering_ram.cooldown;
+        net.send({ t: 'ram', dir: [aimDir.x, 0, aimDir.z] });
       } else if (K.power === 'frostfall') {
         local.frostAim = true;   // hold to aim, release to cast
       }
@@ -1223,6 +1307,13 @@ function updateLocal(dt) {
         local.dash = { start: now, dir: [-Math.sin(local.yaw), -Math.cos(local.yaw)] };
         lastDashDir = local.dash.dir;
         net.send({ t: 'smoke', yaw: local.yaw, from: [local.pos.x, 0, local.pos.z] });
+      } else if (K.mobility === 'ram_ride') {
+        // mount up and gallop where we face (steer with the mouse, or A/D)
+        if (!me.carrying && !me.carryingGoat) {
+          local.cd.mobility = now + RIDE.cooldown;
+          local.ride = rideTimes();
+          net.send({ t: 'ride', yaw: local.yaw });
+        }
       } else if (K.mobility === 'mirror_step') {
         // along the movement keys, forward if none; the server picks which of the three paths is us
         const d = (mx || mz) ? tmp.v3.set(0, 0, 0).addScaledVector(fwd, mz).addScaledVector(right, mx).normalize() : fwd;
@@ -1264,15 +1355,24 @@ function updateLocal(dt) {
     if (!canAct) local.cataAim = false;
   }
   const aimedUlt = local.cataAim && AIMED_ULTS[K.ultimate];
-  const mark = K.ultimate === 'night_cage' ? cageMark : cataMark;
-  cataMark.visible = cageMark.visible = false;
+  const mark = K.ultimate === 'night_cage' ? cageMark : K.ultimate === 'stampede' ? laneMark : cataMark;
+  cataMark.visible = cageMark.visible = laneMark.visible = false;
   mark.visible = !!aimedUlt;
-  if (aimedUlt) { const at = groundTarget(aimedUlt.range); mark.position.set(at[0], 0, at[2]); }
+  if (aimedUlt && mark === laneMark) {
+    // the lane runs from us toward the crosshair's spot on the ground
+    const at = groundTarget(aimedUlt.range);
+    laneMark.position.set(local.pos.x, 0, local.pos.z);
+    laneMark.rotation.y = Math.atan2(at[0] - local.pos.x, at[2] - local.pos.z);
+  } else if (aimedUlt) { const at = groundTarget(aimedUlt.range); mark.position.set(at[0], 0, at[2]); }
   // the targeting circle follows the crosshair while aiming
   frostMark.visible = local.frostAim;
   if (local.frostAim) { const at = frostTarget(); frostMark.position.set(at[0], 0, at[2]); }
 
   // ---- movement (camera-relative); a bound wizard can't move, a silenced one still can
+  // Ram Ride: still while getting on and off; at the gallop, straight ahead at full tilt (A/D steer too)
+  const galloping = local.ride && now >= local.ride.rideAt && now < local.ride.dismountAt;
+  if (local.ride && !galloping) { mx = 0; mz = 0; }
+  if (galloping) { local.yaw -= (mx || 0) * 2.4 * dt; mx = 0; mz = 1; fwd.set(Math.sin(local.yaw), 0, Math.cos(local.yaw)); }
   const moving = (mx || mz) && !me.dead && !stunned && !rooted;
   let speed = C.speedOf(me.wizard);   // per wizard (wizards.js speed)
   if (local.charging || local.cyclone || local.lash) speed = C.chargeSpeedOf(me.wizard);
@@ -1280,6 +1380,7 @@ function updateLocal(dt) {
   else if (local.flight) speed = SKY.airSpeed;
   if (now < local.slowUntil) speed *= 1 - C.SPELLS.skim.slow;     // Glacial Skim
   if (now < local.eyeUntil) speed = C.speedOf(me.wizard) * EYE.speedMul;   // the tornado: fast, and nothing slows it
+  if (galloping) speed = RIDE.speed;
   const wish = tmp.v3.set(0, 0, 0);
   if (moving) {
     wish.addScaledVector(fwd, mz).addScaledVector(right, mx).normalize();
@@ -1298,6 +1399,14 @@ function updateLocal(dt) {
     if (!stunned && !rooted && !me.dead) dashMove = Math.max(0, t1 - t0) * SMOKE.distance / SMOKE.dashTime;
     local.dash.last = t1;
     if (now >= end || stunned || rooted || me.dead) local.dash = null;
+    local.vel.set(0, 0, 0);
+  }
+  // Ram Ride's gallop, likewise on real time (now is the real clock; dt is clamped), straight along our facing
+  if (galloping) {
+    const t0 = Math.max(local.ride.rideAt, local.ride.last ?? local.ride.rideAt), t1 = Math.min(now, local.ride.dismountAt);
+    if (!stunned && !me.dead) dashMove = Math.max(0, t1 - t0) * RIDE.speed;
+    local.ride.last = t1;
+    lastDashDir = [Math.sin(local.yaw), Math.cos(local.yaw)];
     local.vel.set(0, 0, 0);
   }
   if (rooted) local.vel.set(0, 0, 0);
@@ -1335,6 +1444,7 @@ function updateLocal(dt) {
   me.group.position.copy(local.pos);
   me.group.rotation.y = local.yaw;
   me.blocking = local.blocking;
+  me.riding = !!local.ride;   // predicted: seated on the ram from the moment we mount
   me.charging = local.charging;
   me.slowed = now < local.slowUntil; me.bound = bound && !me.dead; me.frozen = now < local.frozenUntil || (me.frozen && me.bound);
   me.updateAnimation(!!moving, dt);
@@ -1401,7 +1511,7 @@ function updateHud(dt) {
   // primary: ammo pips, and the reload sweeping down over the slot
   const MAG = C.primaryMag(K.primary);
   if (local.reloadUntil) cdFill('fast', local.reloadUntil, MAG.reload); else cdFill('fast', local.cd.fast, SPELL[K.primary].cooldown);
-  ui.ammo.forEach((el, i) => { el.classList.toggle('full', i < local.ammo); el.classList.toggle('fin', i === 0); });
+  ui.ammo.forEach((el, i) => { el.style.display = i < MAG.magazine ? '' : 'none'; el.classList.toggle('full', i < local.ammo); el.classList.toggle('fin', i === 0); });
   ui.ab.fast.classList.toggle('reloading', !!local.reloadUntil);
   cdFill('power', local.cd.power, SPELL[K.power].cooldown);
   // Black Death: the whip's stored charge, as a crimson ring around the RMB slot
@@ -1412,9 +1522,9 @@ function updateHud(dt) {
   cdFill('block', local.cd.guard, SPELL[K.guard].cooldown);
   if (!me.carrying && !me.carryingGoat && now < local.liftCdUntil) cdFill('throw', local.liftCdUntil, SPELL[K.utility].liftCooldown);   // lift cooldown
   else cdFill('throw', local.cd.throw, C.THROW_COOLDOWN);
-  ui.ab.block.classList.toggle('active', local.blocking || me.veiled || [...walls.values()].some(w => w.data.owner === myId) || [...firewalls.values()].some(f => f.data.owner === myId));
+  ui.ab.block.classList.toggle('active', local.blocking || me.veiled || [...walls.values()].some(w => w.data.owner === myId) || [...firewalls.values()].some(f => f.data.owner === myId) || me.ramGuard);
   ui.ab.power.classList.toggle('active', local.charging || !!local.cyclone || !!local.lash || local.frostAim);
-  ui.ab.mobility.classList.toggle('active', !!local.flight);
+  ui.ab.mobility.classList.toggle('active', !!local.flight || !!local.ride);
   ui.ab.block.classList.toggle('disabled', bound || (C.isWard(K.guard) && me.st < 3) || !!local.flight);
   ui.ab.throw.classList.toggle('active', holdingNow || !!local.fHold);
   ui.ab.throw.classList.toggle('disabled', bound);
@@ -1464,12 +1574,20 @@ function updateHud(dt) {
   const rn = performance.now() / 1000;
   const inMeteor = !me.dead && [...strikes.values()].some(e => e.landAt - rn < CATA.warn && e.landAt > rn && Math.hypot(e.group.position.x - local.pos.x, e.group.position.z - local.pos.z) < CATA.impact + 0.3);
   const caged = !me.dead && [...cages.values()].some(c => c.foes.includes(myId) && c.inside.includes(myId));
+  for (const [id, e] of stampedeFx) if (performance.now() / 1000 > e.endAt) stampedeFx.delete(id);
+  const inLaneNow = !me.dead && [...stampedeFx.values()].some(e => {
+    const st = e; const dx = local.pos.x - st.p[0], dz = local.pos.z - st.p[2];
+    const along = dx * st.dir[0] + dz * st.dir[2], side = -dx * st.dir[2] + dz * st.dir[0];
+    return players.get(st.owner) !== me && along > -1 && along < st.length && Math.abs(side) < st.width / 2 + 0.5;
+  });
   if (hunted) hint = C.isWard(K.guard) ? 'A goat is charging you! Ward (Space) facing it, or get out of the way' : 'A goat is charging you! Wall it off (Space) or get out of the way';
   else if (bound && now < local.frozenUntil) hint = 'Frozen!';
   else if (bound) hint = 'Bound!';
   else if (inFrost) hint = 'Ice falling! Get out of the shadow';
   else if (inMeteor) hint = 'Meteor! Get out of the shadow';
   else if (caged) hint = 'Caged! You can\'t cross the black ring';
+  else if (inLaneNow) hint = 'Stampede! Get out of the lane';
+  else if (local.ride) hint = now < local.ride.rideAt ? 'Mounting…' : now < local.ride.dismountAt ? 'Riding! Steer with the mouse' : 'Dismounting…';
   else if (local.cataAim) hint = K.ultimate === 'night_cage' ? 'Release Q to raise the Night Cage' : 'Release Q to call down the meteors';
   else if (now < local.eyeUntil) hint = 'Eye of the Storm! Run them down';
   else if (now < local.zeroUntil) hint = 'Absolute Zero…';
@@ -1485,7 +1603,7 @@ function updateHud(dt) {
   else if (tkHover) hint = K.utility === 'trapped_relic' ? (tkHover.data.id === cursedProp ? 'Your relic · F lift (removes the curse)' : 'F lift · hold F to curse') : 'F lift';
   else if (slowed) hint = 'Slowed by frost';
   else if (local.reloadUntil && now - local.lastShot < 1) hint = 'Reloading…';
-  ui.hint.textContent = hint; ui.hint.classList.toggle('on', !!hint); ui.hint.classList.toggle('danger', hunted || ((inFrost || inMeteor || caged) && !bound));
+  ui.hint.textContent = hint; ui.hint.classList.toggle('on', !!hint); ui.hint.classList.toggle('danger', hunted || ((inFrost || inMeteor || caged || inLaneNow) && !bound));
   ui.hint.classList.toggle('bound', !hunted && (bound || rooted)); ui.hint.classList.toggle('frost', !hunted && !bound && !rooted && slowed && hint === 'Slowed by frost');
 
   if (vignetteT > 0) { vignetteT -= dt; if (vignetteT <= 0) ui.vignette.classList.remove('hit'); }
@@ -1569,6 +1687,12 @@ function frame(t) {
   }
 
   for (const g of goats.values()) g.update(dt, effects, sfx);
+  // a Ram Ride mount sits right under its rider (the rider is drawn ahead of the snapshots)
+  for (const g of goats.values()) {
+    if (g.state !== 'mount') continue;
+    const w = players.get(g.owner);
+    if (w) { g.group.position.set(w.group.position.x, 0, w.group.position.z); g.group.rotation.y = w.group.rotation.y; }
+  }
 
   // prop pop-in + spinning crystals
   for (const e of props.values()) {
@@ -1583,4 +1707,4 @@ function frame(t) {
 requestAnimationFrame(frame);
 
 // Debug handle (used by the automated smoke test; harmless in production).
-window.__wa = { input, net, local, players, props, goats, effects, scene, camera, sfx, decoys, walls, frosts, frostMark, strikes, cataMark, cageMark, cages, firewalls, C, get cursedProp() { return cursedProp; } };
+window.__wa = { input, net, local, players, props, goats, effects, scene, camera, sfx, decoys, walls, frosts, frostMark, strikes, cataMark, cageMark, laneMark, cages, firewalls, stampedeFx, C, get cursedProp() { return cursedProp; } };

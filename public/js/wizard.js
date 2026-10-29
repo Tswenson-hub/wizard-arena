@@ -426,6 +426,7 @@ export class Wizard {
     const floating = !this.dead && this.actions.float && this.group.position.y > 0.3;
     if (floating) this.floatT = (this.floatT ?? 0) + dt; else this.floatT = 0;
     if (this.dead) { this.setBase(this.actions.death ? 'death' : 'stun', 0.1); }
+    else if (this.riding && !this.inOneShot()) this.setBase(this.actions.ride ? 'ride' : 'idle', 0.15);   // Jeb's Ram Ride: seated
     else if (floating && !this.inOneShot()) {
       const back = this.current !== 'float';
       this.setBase('float', 0.2);
@@ -496,7 +497,9 @@ export class Wizard {
       const k = this.hopT / 0.8;
       if (k >= 1 || this.dead) this.hopT = -1; else hop = 4 * k * (1 - k) * this.hopH;
     }
-    this.model.position.y = -this.dissolve * 1.6 + hop;
+    // on a ram (Ram Ride): he sits up on its back while mounted
+    this.rideLift = (this.rideLift ?? 0) + ((this.riding && !this.dead ? C.SPELLBOOK.ram_ride.height : 0) - (this.rideLift ?? 0)) * Math.min(1, dt * 10);
+    this.model.position.y = -this.dissolve * 1.6 + hop + this.rideLift;
     this.model.rotation.x = this.dissolve * 0.5;
   }
 

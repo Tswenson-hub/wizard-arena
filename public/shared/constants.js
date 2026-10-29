@@ -104,6 +104,16 @@ export const SPELLS = {
     staminaCost: 12,
     knockback: 3,
   },
+  sling: {               // Jeb's primary: a sling stone; a hit calls a ram on the target
+    damage: 7,
+    stun: 0.45,
+    speed: 32,
+    radius: 0.22,
+    life: 1.0,           // about 32 m
+    cooldown: 0.4,
+    staminaCost: 8,
+    knockback: 1,
+  },
   hex: {                 // Vesper's primary: a crimson glyph flying a curved path to the aim point
     damage: 11,
     stun: 0.55,
@@ -199,6 +209,14 @@ export const SPELLBOOK = {
     cooldown: SPELLS.shear.cooldown,
     magazine: 3, reload: 1.5, idleReload: 2,
   },
+  sling: {
+    id: 'sling', slot: 'primary', name: "Shepherd's Sling", short: 'Sling',
+    blurb: 'Sling stones, 2 to a pouch. A hit calls the nearest calm goat to charge the target. The 2nd breaks a wind-up.',
+    cooldown: SPELLS.sling.cooldown,
+    magazine: 2, reload: 1.5, idleReload: 2,
+    callRange: 22,       // a calm map goat this close to the target answers the call
+    callLockout: 3,      // seconds before the same target can have another ram called on it
+  },
   hex_shards: {
     id: 'hex_shards', slot: 'primary', name: 'Hex Shards', short: 'Hex',
     blurb: 'Crimson glyphs that curve in on the aim point: from the left, from the right, then a high lob that breaks a wind-up.',
@@ -246,6 +264,21 @@ export const SPELLBOOK = {
     unblockable: true,   // it comes from above: wards and ice walls don't stop it
     airCast: true,       // the one power spell Rime can cast during a Skyward Flash
     cooldown: 14,
+  },
+  battering_ram: {
+    id: 'battering_ram', slot: 'power', name: 'Battering Ram', short: 'Ram',
+    blurb: 'A ram bursts out in front of you and charges dead straight along your aim. It flattens the first enemy it meets, unless a ward, wall or Veil stops it.',
+    spawnDist: 1.4,
+    maxTime: 3,          // the charge runs at GOAT.chargeSpeed for at most this long
+    cooldown: 9,
+  },
+  ram_ride: {
+    id: 'ram_ride', slot: 'mobility', name: 'Ram Ride', short: 'Ride',
+    blurb: 'Mount a ram and ride 14 m at a gallop (steer with the mouse). Riding into an enemy shoves them for 15.',
+    mount: 0.4, dismount: 0.4,   // he can't act while getting on and off
+    speed: 11, distance: 14,
+    height: 0.55,        // he sits this high on the ram (visual)
+    cooldown: 8,
   },
   blink: {
     id: 'blink', slot: 'mobility', name: 'Blink', short: 'Blink',
@@ -314,6 +347,12 @@ export const SPELLBOOK = {
     duration: 2,         // Ty: shields much shorter (was 3 s)
     cooldown: 10,        // from activation; it can't be refreshed while up
   },
+  ram_guard: {
+    id: 'ram_guard', slot: 'guard', name: 'Ram Guard', short: 'Ram Guard',
+    blurb: 'Tap: 3 rams circle you for 3 s and take shots meant for you. Whoever hits one gets charged by it.',
+    count: 3, radius: 2.2, lap: 1.5, life: 3,
+    cooldown: 10,
+  },
   glacial_bulwark: {
     id: 'glacial_bulwark', slot: 'guard', name: 'Glacial Bulwark', short: 'Bulwark',
     blurb: 'Tap to raise a 6 m ice wall ahead that blocks everything and freezes enemies who touch it. 5 s or 120 damage.',
@@ -371,6 +410,9 @@ export const SPELLBOOK = {
   firewall_burn: {       // walking through a Firewall (a hit kind)
     id: 'firewall_burn', name: 'Firewall', damage: 15, stun: 0, knockback: 0, staminaCost: 0, unblockable: true, noInterrupt: true,
   },
+  ram_shove: {           // Ram Ride running into an enemy (a hit kind)
+    id: 'ram_shove', name: 'Ram Ride', damage: 15, stun: 0.4, knockback: 8, staminaCost: 20,
+  },
   bulwark_frost: {       // touching an enemy Glacial Bulwark (a hit kind)
     id: 'bulwark_frost', name: 'Glacial Bulwark', damage: 4, stun: 0, knockback: 0, staminaCost: 0, unblockable: true,
     bind: 1.5, freeze: true,
@@ -387,6 +429,16 @@ export const SPELLBOOK = {
     damage: 40, stun: 0, knockback: 0, staminaCost: 0,
     bind: 2.5, freeze: true,   // Frostfall's freeze
     unblockable: true,
+  },
+  stampede: {
+    id: 'stampede', slot: 'ultimate', name: 'Stampede', short: 'Stampede', ult: true,
+    blurb: 'Hold Q to aim a lane, release: after a 1 s rumble, 8 rams thunder down it (6 m wide, 28 m long). Each flattens the first enemy it meets.',
+    width: 6, length: 28,
+    telegraph: 1,
+    rams: 8,
+    spread: 2,           // first to last ram
+    range: 28,           // the aim point only sets the lane's direction
+    castPose: 0.7,
   },
   night_cage: {
     id: 'night_cage', slot: 'ultimate', name: 'Night Cage', short: 'Cage', ult: true,
@@ -408,7 +460,7 @@ export const boltColor = (wizard) => BOLT_COLORS[wizard] ?? 0x7ad8ff;
 // of a magazine (the "finisher") stuns and interrupts wind-ups; the others just do their damage.
 export const primaryMag = (id) => SPELLBOOK[id] || SPELLBOOK.spark;
 // The projectile kind each primary fires, and the kinds that follow the magazine rule (only the finisher interrupts).
-export const PRIMARY_KIND = { spark: 'fast', glacial_skim: 'skim', fireball: 'fireball', gale_shear: 'shear', hex_shards: 'hex' };
+export const PRIMARY_KIND = { spark: 'fast', glacial_skim: 'skim', fireball: 'fireball', gale_shear: 'shear', hex_shards: 'hex', sling: 'sling' };
 export const PRIMARY_KINDS = new Set(Object.values(PRIMARY_KIND));
 // Ward-style guards (hold Space, drain stamina): the Ward and Black Death.
 export const isWard = (id) => !!SPELLBOOK[id]?.ward;

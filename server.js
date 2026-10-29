@@ -82,7 +82,7 @@ function newPlayer(id, name, wizard = C.DEFAULT_WIZARD) {
     slowUntil: 0,                 // Glacial Skim slow
     rootUntil: 0, silenceUntil: 0,   // Sanguine Lash bind (both), or a missed lash's recovery (root only)
     frozenUntil: 0,               // Frostfall: the bind above, shown as ice
-    ammo: 3, reloadUntil: 0, lastShotAt: 0,   // primary magazine (constants: primaryMag)
+    ammo: C.primaryMag(C.kitOf(wizard).primary).magazine, reloadUntil: 0, lastShotAt: 0,   // primary magazine (constants: primaryMag)
     veilUntil: 0,                 // Tempest Veil: every hit is absorbed until then
     ult: 0,                       // ultimate charge, 0–100 (C.ULT_CHARGE); kept through death
     eye: null,                    // Eye of the Storm: { until, nextTick, nextPull }
@@ -108,6 +108,8 @@ function playerPublic(p) {
     ammo: p.ammo, reload: p.reloadUntil > now() ? +(p.reloadUntil - now()).toFixed(2) : 0,
     slow: p.slowUntil > now(), bound: p.silenceUntil > now(), rooted: p.rootUntil > now(), frozen: p.frozenUntil > now(),
     ult: Math.floor(p.ult), eye: !!p.eye, zero: !!p.zero, lashBonus: Math.round(p.lashBonus || 0),
+    ride: p.ride ? (now() < p.ride.rideAt ? 'mount' : now() < p.ride.dismountAt ? 'ride' : 'dismount') : null,
+    ramGuard: p.ramGuardUntil > now(),
     bot: p.bot ? p.bot.difficulty : undefined,
   };
 }
@@ -132,7 +134,7 @@ const enemyOf = (ownerId, q) => enemies(players.get(ownerId), q);
 
 // ---------------------------------------------------------------- wizard choice
 // A switch applies at once if the player is alive and not mid-cast, else when the cast ends or at respawn.
-const midCast = (p) => p.charging || !!p.cyclone || !!p.lash || isAirborne(p) || unstoppable(p);
+const midCast = (p) => p.charging || !!p.cyclone || !!p.lash || isAirborne(p) || unstoppable(p) || !!p.ride;
 function requestWizard(p, id) {
   if (!C.isWizard(id)) return;
   p.pendingWizard = id === p.wizard ? null : id;
@@ -149,6 +151,7 @@ function applyWizard(p, id) {
   p.color = C.WIZARDS[id].color;
   if (p.blocking && !C.isWard(kit(p).guard)) { p.blocking = false; p.blockReleasedAt = now(); }
   if (kit(p).utility !== 'trapped_relic') clearCurse(p);
+  p.ammo = C.primaryMag(kit(p).primary).magazine; p.reloadUntil = 0;   // a fresh pouch or magazine for the new primary
   broadcast({ t: 'wizard', id: p.id, wizard: id, color: p.color });
 }
 
@@ -309,6 +312,7 @@ function killPlayer(target, attacker, cause = null) {
   cancelLash(target);
   target.slowUntil = target.rootUntil = target.silenceUntil = target.frozenUntil = 0;
   endUltimates(target);
+  endRide(target);
   if (target.veilUntil) { target.veilUntil = 0; broadcast({ t: 'veilEnd', id: target.id }); }
   for (const d of [...decoys.values()]) if (d.owner === target.id) endDecoy(d, false);
   target.flightUntil = 0; target.p[1] = 0;
@@ -328,8 +332,9 @@ function respawn(p) {
   p.hp = C.MAX_HP; p.st = C.MAX_STAMINA;
   p.dead = false; p.stunUntil = 0; p.blocking = false; p.charging = false; p.cyclone = null; p.lash = null; p.flightUntil = 0;
   p.slowUntil = p.rootUntil = p.silenceUntil = p.frozenUntil = 0;
-  p.ammo = 3; p.reloadUntil = 0;
+  p.ammo = C.primaryMag(kit(p).primary).magazine; p.reloadUntil = 0;
   endUltimates(p);
+  endRide(p);
   if (p.pendingWizard) applyWizard(p, p.pendingWizard);
   broadcast({ t: 'respawn', id: p.id, p: p.p });
 }
@@ -391,10 +396,10 @@ function cyclonePulse(p) {
       if (prop.state !== 'idle') continue;
       if (dist2D(p.p, [prop.x, 0, prop.z]) < CYCLONE.radius + C.PROP_TYPES[prop.type].r) hitProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z]);
     }
-    for (const g of goats) {
-      if (g.holder === p.id || Math.hypot(g.x - p.p[0], g.z - p.p[2]) > CYCLONE.radius + C.GOAT.radius) continue;
+    for (const g of allGoats()) {
+      if (g.holder === p.id || g.owner === p.id || Math.hypot(g.x - p.p[0], g.z - p.p[2]) > CYCLONE.radius + C.GOAT.radius) continue;
       // A goat already rearing or charging gets spun dizzy; any other goat is now angry at the caster.
-      if (!Goats.dizzyGoat?.(g, goatCtx)) angerGoat(g, p.id, goatCtx);
+      stirGoat(g, p.id);
     }
   }
   broadcast({ t: 'cyclonePulse', id: p.id, p: p.p, hits });
@@ -568,10 +573,10 @@ function frostfallImpact(f) {
     if (prop.state !== 'idle') continue;
     if (dist2D(at, [prop.x, 0, prop.z]) < FROST.radius + C.PROP_TYPES[prop.type].r * 0.5) hitProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z]);
   }
-  for (const g of goats) {
-    if (g.holder === f.owner || Math.hypot(g.x - f.x, g.z - f.z) > FROST.radius + C.GOAT.radius * 0.5) continue;
+  for (const g of allGoats()) {
+    if (g.holder === f.owner || g.owner === f.owner || Math.hypot(g.x - f.x, g.z - f.z) > FROST.radius + C.GOAT.radius * 0.5) continue;
     // a rearing or charging goat is knocked dizzy; any other goat is now angry at the caster
-    if (!Goats.dizzyGoat?.(g, goatCtx)) angerGoat(g, f.owner, goatCtx);
+    stirGoat(g, f.owner);
   }
   broadcast({ t: 'frostfallHit', id: f.id, p: at, hits });
 }
@@ -610,6 +615,212 @@ function relicBlast(prop, victim) {
   return hits;
 }
 
+// ---------------------------------------------------------------- Jeb's rams
+// Summoned rams follow the goat contract (docs/agents/round7-jeb.md): server/goats.js (environment) owns them through
+// summonRam / callRam once those exist. Until then (or if they're missing) this file runs a minimal stand-in with
+// the same rules: a straight charge that one-shots the first enemy it meets unless a facing ward, a Veil or Black Death
+// stops it (it goes dizzy), dizzy on colliders, never touching its owner or the owner's team, and despawning once
+// it has recovered. Stand-in rams live in `rams`, not `goats`, and go out in snapshots alongside the goats.
+const envRams = () => typeof Goats.summonRam === 'function';
+const rams = [];
+let nextRamId = 1000;
+const G_ = C.GOAT;
+const SLING = C.SPELLBOOK.sling, BRAM = C.SPELLBOOK.battering_ram, RGUARD = C.SPELLBOOK.ram_guard, RIDE = C.SPELLBOOK.ram_ride, STAMP = C.SPELLBOOK.stampede;
+const ramPublic = (r) => ({ id: r.id, p: [+r.x.toFixed(2), +r.z.toFixed(2)], yaw: +r.yaw.toFixed(2), s: r.state === 'orbit' || r.state === 'mount' ? 'charge' : r.state,
+  tgt: r.target, y: 0, holder: null, summoned: true, owner: r.owner, mode: r.mode });
+// Everything goat-like spells interact with: the map goats and any stand-in rams.
+const allGoats = () => rams.length ? [...goats, ...rams] : goats;
+const findRam = (id) => rams.find(r => r.id === id) || goats.find(g => g.id === id);
+// A spell stirs a goat: map goats go dizzy or get angry at the caster; summoned rams only go dizzy.
+function stirGoat(g, casterId) {
+  if (g.summoned) { if (g.state === 'charge' || g.state === 'windup') ramDizzy(g); return; }
+  if (!Goats.dizzyGoat?.(g, goatCtx)) angerGoat(g, casterId, goatCtx);
+}
+
+// opts: { x, z, yaw, ownerId, mode: 'charge' | 'orbit' | 'mount', targetId?, speed?, maxTime?, angle? }
+function summonRam(opts) {
+  const owner = players.get(opts.ownerId);
+  if (envRams()) {
+    const g = Goats.summonRam({ ...opts, team: owner?.team ?? null }, goatCtx);
+    if (g) broadcast({ t: 'ramSpawn', id: g.id, p: [g.x, 0, g.z], mode: opts.mode });
+    return g;
+  }
+  const t = now();
+  const r = { id: nextRamId++, summoned: true, owner: opts.ownerId, mode: opts.mode, x: opts.x, z: opts.z, yaw: opts.yaw ?? 0,
+    state: opts.mode === 'charge' ? 'charge' : opts.mode, until: t + (opts.maxTime ?? G_.chargeTime), speed: opts.speed ?? G_.chargeSpeed,
+    target: opts.targetId ?? null, angle: opts.angle ?? 0, hardUntil: t + 10, born: t };
+  rams.push(r);
+  broadcast({ t: 'ramSpawn', id: r.id, p: [r.x, 0, r.z], mode: r.mode });
+  return r;
+}
+function despawnRam(r) {
+  if (envRams() && !rams.includes(r)) { Goats.despawnRam?.(r, goatCtx); return; }
+  const i = rams.indexOf(r);
+  if (i < 0) return;
+  rams.splice(i, 1);
+  broadcast({ t: 'goatGone', id: r.id, p: [r.x, 0, r.z] });
+}
+function ramDizzy(r) {
+  if (!rams.includes(r)) { Goats.dizzyGoat?.(r, goatCtx); return; }
+  r.state = 'dizzy'; r.until = now() + G_.dizzyTime;
+  broadcast({ t: 'goatBonk', id: r.id, p: [r.x, 0.8, r.z] });
+}
+// An orbiting ram took a shot from `shooterId`: it breaks orbit and charges the shooter (homing like a map goat).
+function ramProvoked(r, shooterId) {
+  if (!rams.includes(r)) { (Goats.ramHitByProjectile || ((g, id) => angerGoat(g, id, goatCtx)))(r, shooterId, goatCtx); return; }
+  if (r.state !== 'orbit') return;
+  r.mode = 'charge'; r.state = 'charge'; r.target = shooterId; r.until = now() + G_.chargeTime;
+  const s = players.get(shooterId);
+  if (s) r.yaw = Math.atan2(s.p[0] - r.x, s.p[2] - r.z);
+  broadcast({ t: 'goatAngry', id: r.id, target: shooterId });
+}
+// The goat rule for a summoned ram meeting an enemy wizard.
+function ramHits(r, p, t) {
+  const dir = [Math.sin(r.yaw), 0, Math.cos(r.yaw)];
+  const facing = p.blocking && p.st > 0 && (C.SPELLBOOK[kit(p).guard]?.allSides
+    || (Math.sin(p.yaw) * -dir[0] + Math.cos(p.yaw) * -dir[2]) >= Math.cos((C.BLOCK_CONE_DEG / 2) * Math.PI / 180));
+  if (isVeiled(p) || facing) {
+    if (!isVeiled(p)) {
+      const shattered = p.st < G_.blockCost;
+      p.st = Math.max(0, p.st - G_.blockCost);
+      if (shattered) { p.blocking = false; p.blockReleasedAt = t; p.stunUntil = Math.max(p.stunUntil, t + C.BLOCK_BREAK_STUN); broadcast({ t: 'blockBreak', id: p.id }); }
+      if (p.bot) botKnockback(p, dir, G_.blockKnockback);
+    }
+    r.yaw += Math.PI; r.x -= dir[0] * 0.8; r.z -= dir[2] * 0.8;
+    broadcast({ t: 'goatRam', id: r.id, target: p.id, blocked: true, veil: isVeiled(p), dir, p: [p.p[0], 1, p.p[2]] });
+    ramDizzy(r);
+    return;
+  }
+  broadcast({ t: 'goatRam', id: r.id, target: p.id, blocked: false, dir, p: [p.p[0], 1, p.p[2]] });
+  const owner = players.get(r.owner);
+  p.lastHitBy = owner ? owner.id : null;
+  killPlayer(p, owner || null, 'ram');
+  r.state = 'recover'; r.until = t + G_.recoverTime;
+}
+function updateRams(dt, t) {
+  for (const r of [...rams]) {
+    const owner = players.get(r.owner);
+    if (t >= r.hardUntil) { despawnRam(r); continue; }
+    if (r.state === 'orbit') {
+      if (!owner || owner.dead || t >= r.until) { despawnRam(r); continue; }
+      const a = r.angle + (t - r.born) * Math.PI * 2 / RGUARD.lap;
+      r.x = owner.p[0] + Math.sin(a) * RGUARD.radius; r.z = owner.p[2] + Math.cos(a) * RGUARD.radius;
+      r.yaw = a + Math.PI / 2;
+      continue;
+    }
+    if (r.state === 'mount') { if (!owner || owner.dead || !owner.ride) despawnRam(r); continue; }   // placed by the ride
+    if (r.state === 'dizzy' || r.state === 'recover') { if (t >= r.until) despawnRam(r); continue; }
+    if (r.state !== 'charge') continue;
+    // a provoked guard ram homes like a map goat; Battering Rams and Stampede rams run dead straight
+    const tg = r.target != null && players.get(r.target);
+    if (tg && !tg.dead) { const want = Math.atan2(tg.p[0] - r.x, tg.p[2] - r.z); let d = Math.atan2(Math.sin(want - r.yaw), Math.cos(want - r.yaw)); d = clamp(d, -G_.turnRate * dt, G_.turnRate * dt); r.yaw += d; }
+    r.x += Math.sin(r.yaw) * r.speed * dt; r.z += Math.cos(r.yaw) * r.speed * dt;
+    for (const prop of props.values()) if (prop.state === 'idle' && Math.hypot(prop.x - r.x, prop.z - r.z) < C.PROP_TYPES[prop.type].r + G_.radius) hitProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z]);
+    let done = false;
+    for (const q of players.values()) {
+      if (q.dead || q.p[1] >= G_.rammableBelow || !enemies(owner, q) || q.id === r.owner) continue;
+      if (Math.hypot(q.p[0] - r.x, q.p[2] - r.z) > G_.radius + C.PLAYER_RADIUS + 0.25) continue;
+      ramHits(r, q, t); done = true; break;
+    }
+    if (done) continue;
+    for (const o of C.COLLIDERS) {
+      if (o.kind === 'fence' || o.kind === 'crop') continue;
+      if (Math.hypot(o.x - r.x, o.z - r.z) < o.r + G_.radius) { ramDizzy(r); done = true; break; }
+    }
+    if (done) continue;
+    // a charging ram runs over enemy decoys
+    for (const d of [...decoys.values()]) if (enemyOf(r.owner, players.get(d.owner)) && Math.hypot(d.p[0] - r.x, d.p[2] - r.z) < G_.radius + C.PLAYER_RADIUS + 0.25) endDecoy(d, true);
+    if (Math.hypot(r.x, r.z) > C.ARENA_RADIUS - 1 || t >= r.until) { r.state = 'recover'; r.until = t + G_.recoverTime; }
+  }
+}
+
+// Shepherd's Sling: a hit calls the nearest calm map goat to charge the target, credited to the slinger.
+const CALM = new Set(['graze', 'wander', 'return', 'stumble', 'recover']);
+function callRamOn(target, slinger) {
+  const t = now();
+  slinger.slingLock ??= new Map();
+  if (t < (slinger.slingLock.get(target.id) ?? 0)) return;
+  let g = null;
+  if (typeof Goats.callRam === 'function') g = Goats.callRam(target.id, slinger.id, target.p, SLING.callRange, goatCtx);
+  else {
+    let bd = SLING.callRange;
+    for (const q of goats) {
+      if (q.summoned || !CALM.has(q.state) || q.holder || (q.y || 0) > 0.05) continue;
+      const d = Math.hypot(q.x - target.p[0], q.z - target.p[2]);
+      if (d < bd) { bd = d; g = q; }
+    }
+    if (g) { angerGoat(g, target.id, goatCtx); g.angeredBy = slinger.id; }   // it charges the target; a kill is the slinger's
+  }
+  if (!g) return;
+  slinger.slingLock.set(target.id, t + SLING.callLockout);
+  broadcast({ t: 'ramCalled', goat: g.id, target: target.id, by: slinger.id });
+}
+
+// Ram Ride: mount (can't act), gallop forward along the rider's facing for RIDE.distance, dismount, the ram goes.
+// Clients move themselves (the speed check allows the gallop); the server moves bots. An enemy in the way is shoved.
+function startRide(p, yaw) {
+  const t = now();
+  const rideTime = RIDE.distance / RIDE.speed;
+  p.ride = { start: t, rideAt: t + RIDE.mount, dismountAt: t + RIDE.mount + rideTime, endAt: t + RIDE.mount + rideTime + RIDE.dismount, yaw, shoved: new Set() };
+  p.yaw = yaw;
+  const r = summonRam({ x: p.p[0], z: p.p[2], yaw, ownerId: p.id, mode: 'mount', maxTime: RIDE.mount + RIDE.distance / RIDE.speed + RIDE.dismount + 1 });
+  p.ride.ram = r?.id ?? null; p.ride.ramObj = r || null;   // (goats.js adds it to the array on its next update)
+  p.rootUntil = Math.max(p.rootUntil, p.ride.rideAt);   // getting on
+  if (p.blocking) { p.blocking = false; p.blockReleasedAt = t; }
+  broadcast({ t: 'ride', id: p.id, yaw, ram: p.ride.ram, mount: RIDE.mount, ride: rideTime, dismount: RIDE.dismount });
+}
+const riding = (p) => !!p.ride;
+const galloping = (p, t = now()) => !!p.ride && t >= p.ride.rideAt && t < p.ride.dismountAt;
+function updateRide(p, t) {
+  const R = p.ride;
+  const ram = R.ramObj;
+  if (ram) { ram.x = p.p[0]; ram.z = p.p[2]; ram.yaw = p.yaw; }
+  if (t >= R.dismountAt && !R.off) { R.off = true; p.rootUntil = Math.max(p.rootUntil, R.endAt); }   // getting off
+  if (galloping(p, t)) {
+    for (const q of players.values()) {
+      if (q === p || q.dead || R.shoved.has(q.id) || !enemies(p, q) || q.p[1] > 1) continue;
+      if (dist2D(q.p, p.p) > C.PLAYER_RADIUS * 2 + G_.radius * 0.6) continue;
+      R.shoved.add(q.id);
+      const dx = q.p[0] - p.p[0], dz = q.p[2] - p.p[2], l = Math.hypot(dx, dz) || 1;
+      applyHit(q, { kind: 'ram_shove', owner: p.id, v: [dx / l, 0, dz / l] });
+    }
+  }
+  if (t >= R.endAt) endRide(p);
+}
+function endRide(p) {
+  if (!p.ride) return;
+  const ram = p.ride.ramObj;
+  p.ride = null;
+  if (ram) despawnRam(ram);
+  broadcast({ t: 'rideEnd', id: p.id });
+}
+
+// Stampede: a lane from Jeb toward the aim point. After the telegraph, the rams pour down it one after another.
+const stampedes = new Map();   // id -> { id, owner, p, dir, at, spawned, next }
+function castStampede(p, at) {
+  let dx = at[0] - p.p[0], dz = at[1] - p.p[2];
+  let l = Math.hypot(dx, dz);
+  if (l < 1) { dx = Math.sin(p.yaw); dz = Math.cos(p.yaw); l = 1; }
+  const dir = [dx / l, 0, dz / l];
+  const start = [p.p[0] - dir[0] * 1.5, 0, p.p[2] - dir[2] * 1.5];
+  const st = { id: nextFxId++, owner: p.id, p: start, dir, at: now() + STAMP.telegraph, spawned: 0 };
+  stampedes.set(st.id, st);
+  p.yaw = Math.atan2(dir[0], dir[2]);
+  broadcast({ t: 'stampede', id: st.id, owner: p.id, p: start, dir, left: STAMP.telegraph, width: STAMP.width, length: STAMP.length });
+}
+function updateStampedes(t) {
+  for (const st of [...stampedes.values()]) {
+    const due = Math.min(STAMP.rams, Math.floor((t - st.at) / (STAMP.spread / (STAMP.rams - 1))) + 1);
+    while (t >= st.at && st.spawned < due) {
+      const side = (Math.random() - 0.5) * (STAMP.width - 1.2), back = Math.random() * 1.5;
+      const x = st.p[0] - st.dir[2] * side - st.dir[0] * back, z = st.p[2] + st.dir[0] * side - st.dir[2] * back;
+      summonRam({ x, z, yaw: Math.atan2(st.dir[0], st.dir[2]), ownerId: st.owner, mode: 'charge', maxTime: (STAMP.length + back) / G_.chargeSpeed });
+      st.spawned++;
+    }
+    if (st.spawned >= STAMP.rams) { stampedes.delete(st.id); broadcast({ t: 'stampedeEnd', id: st.id }); }
+  }
+}
+
 // ---------------------------------------------------------------- ultimates (Q)
 // Charge is server-authoritative (C.ULT_CHARGE): damage dealt, a passive trickle, kills, and whatever a game
 // mode adds (match.js calls ctx.addUltCharge; a negative amount takes charge away, e.g. a reset).
@@ -635,9 +846,9 @@ function crushArea(ownerId, x, z, r) {
     if (prop.state !== 'idle') continue;
     if (Math.hypot(prop.x - x, prop.z - z) < r + C.PROP_TYPES[prop.type].r * 0.5) hitProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z]);
   }
-  for (const g of goats) {
-    if (g.holder === ownerId || Math.hypot(g.x - x, g.z - z) > r + C.GOAT.radius * 0.5) continue;
-    if (!Goats.dizzyGoat?.(g, goatCtx)) angerGoat(g, ownerId, goatCtx);
+  for (const g of allGoats()) {
+    if (g.holder === ownerId || g.owner === ownerId || Math.hypot(g.x - x, g.z - z) > r + C.GOAT.radius * 0.5) continue;
+    stirGoat(g, ownerId);
   }
 }
 
@@ -731,7 +942,7 @@ function zeroBlast(p) {
     hits.push({ id: q.id, dmg });
   }
   for (const d of [...decoys.values()]) if (enemyOf(p.id, players.get(d.owner)) && dist2D(d.p, p.p) < ZERO.radius && !C.pillarBlocks(p.p, d.p, 0)) endDecoy(d, true);
-  for (const g of goats) if (Math.hypot(g.x - p.p[0], g.z - p.p[2]) < ZERO.radius && !C.pillarBlocks(p.p, [g.x, 0, g.z], 0)) Goats.dizzyGoat?.(g, goatCtx);
+  for (const g of allGoats()) if (g.owner !== p.id && Math.hypot(g.x - p.p[0], g.z - p.p[2]) < ZERO.radius && !C.pillarBlocks(p.p, [g.x, 0, g.z], 0)) { if (g.summoned) stirGoat(g, p.id); else Goats.dizzyGoat?.(g, goatCtx); }
   broadcast({ t: 'zeroBlast', id: p.id, p: p.p, hits });
 }
 
@@ -792,6 +1003,9 @@ function castUltimate(p, msg) {
     p.zero = { at: t + ZERO.windup };
     p.rootUntil = Math.max(p.rootUntil, p.zero.at);
     broadcast({ t: 'zeroStart', id: p.id, p: p.p, left: ZERO.windup });
+  } else if (U === 'stampede') {
+    if (!Array.isArray(msg.at) || msg.at.length < 2 || !Number.isFinite(msg.at[0]) || !Number.isFinite(msg.at[msg.at.length - 1])) return refuse();
+    castStampede(p, [msg.at[0], msg.at[msg.at.length - 1]]);
   } else if (U === 'night_cage') {
     if (!Array.isArray(msg.at) || msg.at.length < 2 || !Number.isFinite(msg.at[0]) || !Number.isFinite(msg.at[msg.at.length - 1])) return refuse();
     castNightCage(p, [msg.at[0], msg.at[msg.at.length - 1]]);
@@ -814,6 +1028,8 @@ function simulate(dt) {
   for (const st of [...strikes.values()]) if (t >= st.at) meteorImpact(st);
   updateCages(t);
   updateFirewalls(t);
+  updateRams(dt, t);
+  updateStampedes(t);
   for (const w of walls.values()) bulwarkTouch(w, t);
 
   for (const p of players.values()) {
@@ -824,6 +1040,7 @@ function simulate(dt) {
     // ultimates: the passive charge, and whichever one is running
     p.ult = Math.min(C.ULT_CHARGE.max, p.ult + C.ULT_CHARGE.passive * dt);
     if (p.eye) updateEye(p, t);
+    if (p.ride) updateRide(p, t);
     if (p.zero && t >= p.zero.at) zeroBlast(p);
     // stamina
     if (p.blocking) {
@@ -915,10 +1132,15 @@ function simulate(dt) {
 
     // goats: no damage, but a spell makes it angry at its caster. A goat in the air is hit at its height;
     // a held one takes the hit for its holder (it drops and charges the caster). Not by its own holder's shots.
-    for (const g of goats) {
+    for (const g of allGoats()) {
       if (g.holder && g.holder === proj.owner) continue;
-      if (Math.hypot(proj.p[0] - g.x, proj.p[1] - ((g.y || 0) + C.GOAT.hitY), proj.p[2] - g.z) < C.GOAT.radius + proj.radius) {
-        angerGoat(g, proj.owner, goatCtx);
+      // Jeb's rams: a guard ram absorbs an enemy's shot and charges the shooter; other summoned rams let shots through
+      if (g.summoned && (g.owner === proj.owner || !enemyOf(g.owner, shooter) || !(g.state === 'orbit' || g.mode === 'orbit'))) continue;
+      // (a guard ram catches a little wider than its body: three of them have a whole circle to cover)
+      const catchR = C.GOAT.radius + proj.radius + (g.summoned ? 0.35 : 0);
+      if (Math.hypot(proj.p[0] - g.x, proj.p[1] - ((g.y || 0) + C.GOAT.hitY), proj.p[2] - g.z) < catchR) {
+        if (g.summoned) ramProvoked(g, proj.owner);
+        else angerGoat(g, proj.owner, goatCtx);
         endProjectile(proj, true, { surface: 'goat', goat: g.id });
         done = true; break;
       }
@@ -932,7 +1154,8 @@ function simulate(dt) {
       const c = [pl.p[0], pl.p[1] + C.HIT_CENTER_Y, pl.p[2]];
       const d = Math.hypot(proj.p[0] - c[0], proj.p[1] - c[1], proj.p[2] - c[2]);
       if (d < C.HIT_RADIUS + proj.radius) {
-        const { blocked } = applyHit(pl, proj);
+        const { blocked, dmg: dealt } = applyHit(pl, proj);
+        if (proj.kind === 'sling' && !blocked && dealt > 0 && shooter && !pl.dead) callRamOn(pl, shooter);   // Shepherd's Sling
         if (proj.pierce) {
           proj.hitIds.add(pl.id);
           if (!blocked) { proj.landed++; continue; }
@@ -984,10 +1207,10 @@ function simulate(dt) {
 
 // ---------------------------------------------------------------- messages
 // Gale's tornado and Rime's flare: nothing else can be cast meanwhile (Gale can still move).
-const ULT_LOCKED = new Set(['block', 'cast', 'chargeStart', 'cyclone', 'lashStart', 'frostfall', 'smoke', 'mirror', 'veil', 'bulwark', 'firewall', 'curse', 'skyward', 'teleport', 'pickup', 'throw', 'reload']);
+const ULT_LOCKED = new Set(['ult', 'ram', 'ramGuard', 'ride', 'block', 'cast', 'chargeStart', 'cyclone', 'lashStart', 'frostfall', 'smoke', 'mirror', 'veil', 'bulwark', 'firewall', 'curse', 'skyward', 'teleport', 'pickup', 'throw', 'reload']);
 function handle(p, msg) {
   const t = now();
-  if (unstoppable(p) && ULT_LOCKED.has(msg.t)) return;
+  if ((unstoppable(p) || p.ride) && ULT_LOCKED.has(msg.t)) return;   // a tornado, a rune flare or a ram ride: nothing else
   switch (msg.t) {
     case 'ult': {
       castUltimate(p, msg);
@@ -1021,7 +1244,7 @@ function handle(p, msg) {
       // the fastest this wizard can go this way: its run speed, the backpedal cap against its facing, or a dash
       const run = C.backpedalSpeed(C.speedOf(p.wizard) * (p.eye ? EYE.speedMul : 1), np[0] - p.p[0], np[2] - p.p[2], Number.isFinite(msg.yaw) ? msg.yaw : p.yaw)
         + (p.pulledUntil > t ? EYE.pull : 0);   // dragged by an Eye of the Storm
-      const maxStep = ((dashing ? SMOKE.distance / SMOKE.dashTime : run) + C.SPELLS.heavy.knockback + 2) * dt + 0.6;
+      const maxStep = ((dashing ? SMOKE.distance / SMOKE.dashTime : galloping(p, t) ? RIDE.speed + 1 : run) + C.SPELLS.heavy.knockback + 2) * dt + 0.6;
       if (p.lastStateAt && d > maxStep && !p.justTeleported) {
         // Moving faster than any legitimate wizard can: let the server's copy catch up at the
         // maximum plausible speed instead of snapping (so a laggy-but-honest client converges).
@@ -1188,6 +1411,36 @@ function handle(p, msg) {
       p.cd.guard = t + VEIL.cooldown;
       p.veilUntil = t + VEIL.duration;
       broadcast({ t: 'veil', id: p.id, left: VEIL.duration });
+      break;
+    }
+    case 'ram': {
+      // Battering Ram: straight along the aim from just in front of Jeb
+      if (kit(p).power !== 'battering_ram' || !canAct(p) || p.blocking || p.charging || p.cyclone || p.lash || holding(p) || isAirborne(p) || t < p.cd.power) break;
+      const d = sanitizeDir([msg.dir?.[0] ?? 0, 0, msg.dir?.[2] ?? 0], p);
+      const yaw = Math.atan2(d[0], d[2]);
+      p.cd.power = t + BRAM.cooldown;
+      p.yaw = yaw;
+      summonRam({ x: p.p[0] + d[0] * BRAM.spawnDist, z: p.p[2] + d[2] * BRAM.spawnDist, yaw, ownerId: p.id, mode: 'charge', maxTime: BRAM.maxTime });
+      broadcast({ t: 'batteringRam', id: p.id, yaw });
+      break;
+    }
+    case 'ramGuard': {
+      if (kit(p).guard !== 'ram_guard' || !canAct(p) || t < p.cd.guard) break;
+      p.cd.guard = t + RGUARD.cooldown;
+      p.ramGuardUntil = t + RGUARD.life;
+      for (let i = 0; i < RGUARD.count; i++) {
+        const a = i / RGUARD.count * Math.PI * 2;
+        const r = summonRam({ x: p.p[0] + Math.sin(a) * RGUARD.radius, z: p.p[2] + Math.cos(a) * RGUARD.radius, yaw: a + Math.PI / 2, ownerId: p.id, mode: 'orbit', angle: a,
+          radius: RGUARD.radius, lap: RGUARD.lap, maxTime: RGUARD.life });
+        if (r && rams.includes(r)) r.until = t + RGUARD.life;
+      }
+      broadcast({ t: 'ramGuard', id: p.id, left: RGUARD.life });
+      break;
+    }
+    case 'ride': {
+      if (kit(p).mobility !== 'ram_ride' || !canAct(p) || isRooted(p) || p.charging || p.cyclone || p.lash || holding(p) || isAirborne(p) || t < p.cd.mobility) break;
+      p.cd.mobility = t + RIDE.cooldown;
+      startRide(p, Number.isFinite(msg.yaw) ? msg.yaw : p.yaw);
       break;
     }
     case 'firewall': {
@@ -1360,7 +1613,7 @@ function removePlayer(id) {
 }
 
 // cycloneStopsGoats: the goat module can knock a charging goat dizzy (bots then answer a charge with a cyclone)
-const world = { players, props, projectiles, goats, decoys, walls, frostfalls, smokes, strikes, cages, firewalls, handle, now, cycloneStopsGoats: !!Goats.dizzyGoat };
+const world = { players, props, projectiles, goats, decoys, walls, frostfalls, smokes, strikes, cages, firewalls, rams, stampedes, handle, now, cycloneStopsGoats: !!Goats.dizzyGoat };
 // Game modes (server/match.js, modes agent). addUltCharge is the spells agent's to implement.
 const match = createMatch({
   players, props, now, broadcast, send, propPublic,
@@ -1375,7 +1628,9 @@ const match = createMatch({
 });
 world.match = match;
 const goatCtx = {
-  players, props, now, broadcast, breakProp: (prop, at) => hitProp(prop, at),   // a charging goat knocks the Sacred Relic loose rather than shattering it
+  players, props, now, broadcast, goats,
+  isEnemy: (a, b) => enemies(a, b),   // Jeb's rams pass their owner and his team
+  breakProp: (prop, at) => hitProp(prop, at),   // a charging goat knocks the Sacred Relic loose rather than shattering it
   // a Tempest Veil survives a ram (goats.js treats the veil as a ward once that request is in; this is the fallback)
   killPlayer: (p, attacker, cause) => { if (cause === 'goat' && isVeiled(p)) return; killPlayer(p, attacker, cause); },
   // humans apply goat knockback themselves from the goatRam message
@@ -1416,7 +1671,7 @@ function tkTarget(p, aimOrigin, aimDir, withGoats = false) {
   }
   if (withGoats) {
     for (const g of goats) {
-      if (!Goats.canLift?.(g)) continue;
+      if (g.summoned || !Goats.canLift?.(g)) continue;
       const d2 = Math.hypot(g.x - p.p[0], g.z - p.p[2]);
       if (d2 < nd) { nd = d2; near = { goat: g }; }
       if (d2 > C.TK.range) continue;
@@ -1468,7 +1723,8 @@ wss.on('connection', (ws) => {
         t: 'welcome', id,
         players: [...players.values()].map(playerPublic),
         props: [...props.values()].map(propPublic),
-        goats: goats.map(goatPublic),
+        goats: [...goats.map(goatPublic), ...rams.map(ramPublic)],
+        stampedes: [...stampedes.values()].map(st => ({ id: st.id, owner: st.owner, p: st.p, dir: st.dir, left: Math.max(0, st.at - now()), width: STAMP.width, length: STAMP.length })),
         projectiles: [...projectiles.values()].map(pr => ({ id: pr.id, kind: pr.kind, owner: pr.owner, propType: pr.propType, p: pr.p, v: pr.v, g: pr.g, r: pr.radius, life: pr.life - (now() - pr.born) })),
         walls: [...walls.values()].map(wallPublic),
         frostfalls: [...frostfalls.values()].map(frostPublic),
@@ -1514,7 +1770,7 @@ setInterval(() => {
 
 setInterval(() => {
   if (players.size === 0) return;
-  broadcast({ t: 'snap', time: now(), players: [...players.values()].map(playerPublic), goats: goats.map(goatPublic), decoys: [...decoys.values()].map(decoyPublic), ...match.snapshotExtras() });
+  broadcast({ t: 'snap', time: now(), players: [...players.values()].map(playerPublic), goats: rams.length ? [...goats.map(goatPublic), ...rams.map(ramPublic)] : goats.map(goatPublic), decoys: [...decoys.values()].map(decoyPublic), ...match.snapshotExtras() });
 }, 1000 / C.SNAPSHOT_RATE);
 
 httpServer.listen(PORT, () => console.log(`Wizard Arena listening on http://localhost:${PORT}`));

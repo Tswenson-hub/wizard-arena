@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import * as C from '../shared/constants.js';
 import { makePropMesh, makeFragments } from './world.js';
 
-const SPELL_COLORS = { fast: 0x7ad8ff, heavy: 0xff7a2a, prop: 0xb48cff, skim: 0xbfeaff, lash: 0xff2a3c, fireball: 0xff6a1e, shear: 0xd8c8ff, hex: 0xff1f3d };
+const SPELL_COLORS = { fast: 0x7ad8ff, heavy: 0xff7a2a, prop: 0xb48cff, skim: 0xbfeaff, lash: 0xff2a3c, fireball: 0xff6a1e, shear: 0xd8c8ff, hex: 0xff1f3d, sling: 0xd8c8a8 };
 const HEX_SHAPES = [3, 4, 0];   // Hex Shards: a triangle, a diamond, then a crescent (0)
 const BULWARK = C.SPELLBOOK.glacial_bulwark, FROST = C.SPELLBOOK.frostfall, SMOKE = C.SPELLBOOK.smoke_screen;
 const CAGE = C.SPELLBOOK.night_cage;
@@ -169,6 +169,12 @@ export class Effects {
       if (msg.fin) { const ring = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.04, 6, 20), this.mat(hot.getHex(), { opacity: 0.85 })); g.add(ring); g.userData.shell = ring; }
       light = new THREE.PointLight(color, msg.fin ? 7 : 3, msg.fin ? 9 : 6);
       g.add(light);
+    } else if (msg.kind === 'sling') {
+      // Shepherd's Sling: a tumbling river stone with a pale streak; the 2nd shot is bigger, with a ring
+      const stone = new THREE.Mesh(new THREE.DodecahedronGeometry(msg.fin ? 0.17 : 0.12, 0), new THREE.MeshStandardMaterial({ color: 0x8a8070, roughness: 0.9, flatShading: true }));
+      g.add(stone);
+      g.userData.spin = new THREE.Vector3(9, 6, 4);
+      if (msg.fin) { const ring = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.03, 6, 20), this.mat(0xffe0a0, { opacity: 0.8 })); g.add(ring); }
     } else if (msg.kind === 'fireball') {
       // Cinder's Fireball: a white-hot core in a fat flame shell, bigger again for the 3rd shot
       const k = msg.fin ? 1.45 : 1;
@@ -266,6 +272,7 @@ export class Effects {
       else if (pr.kind === 'fireball') { this.burst(p, 0xff7a1e, pr.fin ? 30 : 20, pr.fin ? 6 : 5, pr.fin ? 0.7 : 0.55); this.burst(p, 0xffd080, 8, 3, 0.35, 0); }
       else if (pr.kind === 'shear') this.burst(p, 0xe8dcff, 12, 5, 0.3, 0);
       else if (pr.kind === 'hex') this.burst(p, 0xff1f3d, pr.fin ? 18 : 12, 4, 0.35);
+      else if (pr.kind === 'sling') { this.burst(p, 0xb8a888, pr.fin ? 12 : 7, 3, 0.25, 8); this.dust(p, 2); }
       // thrown props shatter via the propBreak message
     } else {
       this.burst(p, pr.color ?? SPELL_COLORS[pr.kind] ?? 0xffffff, 6, 1.5, 0.3);
@@ -922,6 +929,57 @@ export class Effects {
     this.burst(pos, 0xffd080, 8, 2, 0.3, -1);
   }
 
+  // ---------------------------------------------------------------- Jeb
+  // A summoned ram appearing or vanishing: a puff of dust and golden motes.
+  ramPoof(p) {
+    const pos = new THREE.Vector3(p[0], 0.5, p[2]);
+    for (let i = 0; i < 6; i++) this.dust(pos, 3);
+    this.burst(pos.clone().setY(0.8), 0xe8d090, 10, 2.5, 0.35, -1);
+  }
+  // The Stampede lane: a marker on the ground and a wall of dust rising along it during the telegraph, then trampled
+  // dust as the rams pass. Anchored at `p`, running `length` along `dir`.
+  stampedeLane(p, dir, width, length, left) {
+    const g = new THREE.Group();
+    g.position.set(p[0], 0, p[2]);
+    g.rotation.y = Math.atan2(dir[0], dir[2]);
+    const fill = new THREE.Mesh(new THREE.PlaneGeometry(width, length).rotateX(-Math.PI / 2).translate(0, 0, length / 2),
+      new THREE.MeshBasicMaterial({ color: 0xc8902a, transparent: true, opacity: 0, depthWrite: false }));
+    fill.position.y = 0.14;
+    const edges = [-1, 1].map(sd => {
+      const e = new THREE.Mesh(new THREE.PlaneGeometry(0.22, length).rotateX(-Math.PI / 2).translate(sd * width / 2, 0, length / 2),
+        new THREE.MeshBasicMaterial({ color: 0xffd080, transparent: true, opacity: 0, depthWrite: false }));
+      e.position.y = 0.15; g.add(e); return e;
+    });
+    // chevrons pointing down the lane
+    const chev = [];
+    for (let i = 1; i < 7; i++) {
+      const c = new THREE.Mesh(new THREE.RingGeometry(0.9, 1.25, 3, 1, Math.PI / 2 - 0.9, 1.8).rotateX(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({ color: 0xffe0a0, transparent: true, opacity: 0, depthWrite: false }));
+      c.position.set(0, 0.16, i * length / 7); g.add(c); chev.push(c);
+    }
+    g.add(fill);
+    this.scene.add(g);
+    const e = { group: g, fill, edges, chev, born: realNow(), runAt: realNow() + left, endAt: realNow() + left + 3.2, width, length, dir, p, dust: 0 };
+    (this.lanes ??= new Set()).add(e);
+    return e;
+  }
+  // The caster's lane marker while Q is held (Stampede).
+  laneAim(width, length) {
+    const g = new THREE.Group();
+    const fill = new THREE.Mesh(new THREE.PlaneGeometry(width, length).rotateX(-Math.PI / 2).translate(0, 0, length / 2),
+      new THREE.MeshBasicMaterial({ color: 0xc8902a, transparent: true, opacity: 0.14, depthWrite: false }));
+    fill.position.y = 0.16;
+    g.add(fill);
+    for (const sd of [-1, 1]) {
+      const e = new THREE.Mesh(new THREE.PlaneGeometry(0.15, length).rotateX(-Math.PI / 2).translate(sd * width / 2, 0, length / 2),
+        new THREE.MeshBasicMaterial({ color: 0xffd080, transparent: true, opacity: 0.9, depthWrite: false }));
+      e.position.y = 0.17; g.add(e);
+    }
+    g.visible = false;
+    this.scene.add(g);
+    return g;
+  }
+
   // ---------------------------------------------------------------- update
   update(dt) {
     this.clock += dt;
@@ -949,6 +1007,7 @@ export class Effects {
         const m = new THREE.Mesh(this.sphereGeo, this.mat(pr.kind === 'fast' ? pr.color : SPELL_COLORS[pr.kind], { opacity: pr.fin ? 0.7 : 0.5 }));
         m.position.copy(pr.pos);
         if (pr.kind === 'prop') m.position.add(new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(0.6));
+        if (pr.kind === 'sling') m.scale.setScalar(0.07 * (pr.fin ? 1.5 : 1)); else
         m.scale.setScalar((pr.kind === 'heavy' ? 0.5 : pr.kind === 'fireball' ? 0.3 : pr.kind === 'prop' ? 0.14 : pr.kind === 'skim' ? 0.11 : pr.kind === 'lash' ? 0.13 : pr.kind === 'shear' ? 0.16 : 0.2) * (pr.fin ? 1.6 : 1));
         this.scene.add(m);
         this.particles.push({ mesh: m, vel: new THREE.Vector3(), life: 0, maxLife: pr.kind === 'heavy' ? 0.4 : 0.25, grav: 0, shrink: true });
@@ -1022,6 +1081,20 @@ export class Effects {
         this.scene.add(m);
         const inx = -Math.sin(a), inz = -Math.cos(a);
         this.particles.push({ mesh: m, vel: new THREE.Vector3((inx * 0.6 + inz) * r * 1.6, 1.5, (inz * 0.6 - inx) * r * 1.6), life: 0, maxLife: 0.45, grav: -2, shrink: true });
+      }
+    }
+    for (const e of this.lanes || []) {
+      if (rn > e.endAt) { this.lanes.delete(e); this.scene.remove(e.group); continue; }
+      const warm = Math.min(1, (rn - e.born) / Math.max(0.05, e.runAt - e.born)), fade = Math.max(0, Math.min(1, (e.endAt - rn) / 0.6));
+      e.fill.material.opacity = (0.1 + 0.15 * warm + Math.sin(this.clock * 10) * 0.04) * fade;
+      for (const ed of e.edges) ed.material.opacity = (0.5 + 0.4 * warm) * fade;
+      e.chev.forEach((c, i) => { c.material.opacity = Math.max(0, Math.sin(this.clock * 8 - i * 0.9)) * 0.7 * fade * (rn < e.runAt + 2.2 ? 1 : 0.3); });
+      // the ground shakes loose: dust along the lane, thick once the rams are running
+      e.dust += dt * (rn < e.runAt ? 18 : 40);
+      while (e.dust > 1) {
+        e.dust -= 1;
+        const along = Math.random() * e.length, side = (Math.random() - 0.5) * e.width;
+        this.dust(new THREE.Vector3(e.p[0] + e.dir[0] * along - e.dir[2] * side, 0.1, e.p[2] + e.dir[2] * along + e.dir[0] * side), 1);
       }
     }
     for (const e of this.firewalls || []) {
