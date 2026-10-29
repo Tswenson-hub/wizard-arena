@@ -382,6 +382,7 @@ function handleMessage(msg) {
         const w = players.get(s.id) || addPlayer(s);
         applySnapshot(w, s);
       }
+      updateTakenHeroes(msg);
       updateDecoys(msg.decoys || []);
       for (const g of msg.goats || []) { const v = goats.get(g.id) || addGoat(g); v.apply(g); }
       // a summoned ram no longer in the snapshot is gone, even if we missed its goatGone
@@ -1059,6 +1060,21 @@ function handleMessage(msg) {
     default:
       if (msg.t.startsWith('match')) { matchSounds(msg); matchUI.onMessage(msg); }
   }
+}
+
+// One of each hero per team: both pickers grey out heroes a human teammate holds (a bot gives way, so its hero stays
+// pickable). FFA (teamHeroes null) clears them. select.js's setTaken repaints only when the list changes.
+function updateTakenHeroes(msg) {
+  const meS = msg.players.find(s => s.id === myId), teamList = meS?.team ? msg.teamHeroes?.[meS.team] : null;
+  const taken = {};
+  for (const id of teamList || []) {
+    if (id === meS.wizard) continue;                                   // my current hero (mid-switch)
+    const holders = msg.players.filter(s => s.id !== myId && s.team === meS.team && s.wizard === id);
+    const isBot = (s) => !!(s.bot ?? players.get(s.id)?.bot);
+    if (holders.length && holders.every(isBot)) continue;
+    taken[id] = holders.find(s => !isBot(s))?.name || '';               // '' = a teammate's pending switch
+  }
+  for (const pk of pickers) pk.setTaken?.(taken);                       // the <select> fallback has no setTaken
 }
 
 // ---------------------------------------------------------------- game-mode sounds and menu music

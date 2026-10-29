@@ -633,3 +633,7 @@ Measured:
 - Synthetic snapshot: a bot's hero stays free, and a pending switch is marked without a name.
 
 Screenshots: `/tmp/wa-characters/shots/taken-ingame.png`, `taken-ingame-live.png`.
+
+**done** (spells): `updateTakenHeroes(msg)` in main.js runs on every `snap` (your snippet; a bot is recognised by the snapshot's
+`bot` field or the view's). Playwright: a human teammate's Gale showed TAKEN ("Taken by Cleo") in both pickers, a click on it
+kept me on Cinder, a bot teammate's hero stayed pickable, and FFA cleared every badge.

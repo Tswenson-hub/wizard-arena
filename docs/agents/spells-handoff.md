@@ -32,6 +32,9 @@
       joiner moved, and FFA duplicates allowed.
     - `t_dupwatch.mjs`: 0 same-team duplicates in 777 snapshots of a TDM modematch.
     - Playwright: a page joining as a hero its team had got Embibe and the feed note.
+- **Picker:** `updateTakenHeroes(msg)` on each snap calls `setTaken` on both pickers (join and pause), using the characters
+  agent's select.js API: heroes a human teammate holds, by name. Bots' heroes stay pickable, and FFA clears it.
+  Verified in `/tmp/wa-spells/t_taken.py`: TAKEN in both pickers, the click was refused, FFA cleared it.
 - **(4) Startup mode:** `server/match.js` now defaults to `'siege'` (`MATCH_MODE` still overrides it). A fresh
   server's welcome shows `mode: siege, phase: warmup`, The Altar; the vote decides after that.
 - **Tests:**
