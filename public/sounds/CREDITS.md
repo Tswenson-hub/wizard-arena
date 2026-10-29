@@ -12,7 +12,7 @@ An in-game credits line (join screen and pause menu) credits Leonardo Calvo and 
 - **"Nordic Fantasia Lofi (Skyrim Lofi Opener)"** by turning_pages, from Pixabay (`turning_pages-nordic-fantasia-lofi-skyrim-lofi-opener-406706.mp3`). License: Pixabay Content License
 - Kenney (www.kenney.nl): Impact Sounds, Sci-Fi Sounds, RPG Audio, Interface Sounds, Digital Audio packs. License: CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/)
 - OpenGameArt.org CC0 entries: "Park ambiences" by thimras, "Swishes Sound Pack" by artisticdude, "Air whoosh" by pyranostudios. License: CC0 1.0
-- Files provided by Ty (some from Pixabay): see the last two tables.
+- Files provided by Ty (some from Pixabay, including the goat bleats by dragon-studio): see the last four tables.
 
 ## Kenney and OpenGameArt (CC0)
 Processing: decoded, downmixed to mono (except `ambient_loop`, stereo), leading silence trimmed, short fade-outs, peak-normalized, some files layered from 2 sources, loops cut with an equal-power crossfade; encoded to AAC .m4a with macOS `afconvert`.
@@ -30,17 +30,13 @@ Processing: decoded, downmixed to mono (except `ambient_loop`, stereo), leading 
 | `ward_block_2.m4a` | Kenney Impact Sounds (kenney.nl/assets/impact-sounds) — `impactPlate_light_000.ogg` | CC0 1.0 |  |
 | `ward_block_3.m4a` | Kenney Impact Sounds (kenney.nl/assets/impact-sounds) — `impactBell_heavy_002.ogg` | CC0 1.0 |  |
 | `ward_break.m4a` | Kenney Impact Sounds (kenney.nl/assets/impact-sounds) — `impactGlass_medium_000.ogg`<br>Kenney Sci-Fi Sounds (kenney.nl/assets/sci-fi-sounds) — `forceField_000.ogg` (-6 dB) | CC0 1.0 | glass shatter + forcefield whump |
-| `tk_lift.m4a` | Kenney Digital Audio (kenney.nl/assets/digital-audio) — `phaserUp3.ogg`<br>Kenney Interface Sounds (kenney.nl/assets/interface-sounds) — `glass_004.ogg` (offset 0.1s, -14 dB) | CC0 1.0 | phaser rise + faint glass shimmer |
-| `tk_throw_1.m4a` | OpenGameArt "Swishes Sound Pack" by artisticdude (opengameart.org/content/swishes-sound-pack) — `swish-3.wav` | CC0 1.0 |  |
-| `tk_throw_2.m4a` | OpenGameArt "Swishes Sound Pack" by artisticdude (opengameart.org/content/swishes-sound-pack) — `swish-7.wav` | CC0 1.0 |  |
-| `tk_throw_3.m4a` | OpenGameArt "Air whoosh" by pyranostudios (opengameart.org/content/air-whoosh) — `whoosh2_0.wav` (from 0.85s) | CC0 1.0 | single whoosh cut from a longer whoosh recording |
 | `prop_shatter_wood_1.m4a` | Kenney Impact Sounds (kenney.nl/assets/impact-sounds) — `impactPlank_medium_000.ogg`<br>Kenney Impact Sounds (kenney.nl/assets/impact-sounds) — `impactWood_heavy_001.ogg` (offset 0.04s, -4 dB) | CC0 1.0 | plank impact + heavy wood layer |
 | `prop_shatter_wood_2.m4a` | Kenney Impact Sounds (kenney.nl/assets/impact-sounds) — `impactPlank_medium_002.ogg`<br>Kenney Impact Sounds (kenney.nl/assets/impact-sounds) — `impactWood_heavy_003.ogg` (offset 0.05s, -5 dB) | CC0 1.0 | plank impact + heavy wood layer |
 | `prop_shatter_stone.m4a` | Kenney Impact Sounds (kenney.nl/assets/impact-sounds) — `impactMining_000.ogg` | CC0 1.0 |  |
-| `footstep_1.m4a` | Kenney Impact Sounds (kenney.nl/assets/impact-sounds) — `footstep_grass_000.ogg` | CC0 1.0 |  |
-| `footstep_2.m4a` | Kenney Impact Sounds (kenney.nl/assets/impact-sounds) — `footstep_grass_001.ogg` | CC0 1.0 |  |
-| `footstep_3.m4a` | Kenney Impact Sounds (kenney.nl/assets/impact-sounds) — `footstep_grass_002.ogg` | CC0 1.0 |  |
-| `footstep_4.m4a` | Kenney Impact Sounds (kenney.nl/assets/impact-sounds) — `footstep_grass_003.ogg` | CC0 1.0 |  |
+| `swell.m4a` | Kenney Digital Audio (kenney.nl/assets/digital-audio) — `phaserUp3.ogg`<br>Kenney Interface Sounds (kenney.nl/assets/interface-sounds) — `glass_004.ogg` (offset 0.1s, -14 dB) | CC0 1.0 | phaser rise + faint glass shimmer |
+| `whoosh_1.m4a` | OpenGameArt "Swishes Sound Pack" by artisticdude (opengameart.org/content/swishes-sound-pack) — `swish-3.wav` | CC0 1.0 |  |
+| `whoosh_2.m4a` | OpenGameArt "Swishes Sound Pack" by artisticdude (opengameart.org/content/swishes-sound-pack) — `swish-7.wav` | CC0 1.0 |  |
+| `whoosh_3.m4a` | OpenGameArt "Air whoosh" by pyranostudios (opengameart.org/content/air-whoosh) — `whoosh2_0.wav` (from 0.85s) | CC0 1.0 | single whoosh cut from a longer whoosh recording |
 | `respawn.m4a` | Kenney Interface Sounds (kenney.nl/assets/interface-sounds) — `maximize_005.ogg`<br>Kenney Interface Sounds (kenney.nl/assets/interface-sounds) — `glass_004.ogg` (offset 0.42s, -6 dB) | CC0 1.0 | rising sweep into glass shimmer |
 | `ui_click.m4a` | Kenney Interface Sounds (kenney.nl/assets/interface-sounds) — `toggle_004.ogg` | CC0 1.0 |  |
 | `ambient_loop.m4a` | OpenGameArt "Park ambiences" by thimras (opengameart.org/content/park-ambiences) — `park_ambience_wind.wav`<br>OpenGameArt "Park ambiences" by thimras (opengameart.org/content/park-ambiences) — `park_ambience_birds.wav` (from 30.0s, -3 dB) | CC0 1.0 | 20 s crossfade loop; wind bed with birds mixed under (stereo) |
@@ -87,9 +83,6 @@ stereo 44.1 kHz 80 kbps.
 | `hit_light_3.m4a` | 80-CC0-RPG-SFX.zip → wood_05.ogg | CC0 (80-CC0-RPG-SFX) |  |
 | `hit_heavy_1.m4a` | Magic Spell Full Pack.part1/2.rar → Magic Spell/EARTH SPELL/Earth Spell Pack/48000kHz/ogg/earth_spell_cast_impact_ground_rock_debris_01.ogg | CC BY 4.0, Leonardo Calvo (Magic Spell Full Pack) | meteors, rams, Stampede |
 | `hit_heavy_2.m4a` | Magic Spell Full Pack.part1/2.rar → Magic Spell/EARTH SPELL/Earth Spell Pack/48000kHz/ogg/earth_spell_cast_impact_ground_rock_debris_02.ogg | CC BY 4.0, Leonardo Calvo (Magic Spell Full Pack) |  |
-| `hurt_1.m4a` | 80-CC0-RPG-SFX.zip → creature_hurt_01.ogg | CC0 (80-CC0-RPG-SFX) | creature grunts; not human |
-| `hurt_2.m4a` | 80-CC0-RPG-SFX.zip → creature_hurt_02.ogg | CC0 (80-CC0-RPG-SFX) |  |
-| `death_1.m4a` | 80-CC0-RPG-SFX.zip → creature_die_01.ogg | CC0 (80-CC0-RPG-SFX) |  |
 | `hit_marker.m4a` | 80-CC0-RPG-SFX.zip → item_gem_03.ogg | CC0 (80-CC0-RPG-SFX) | own landed hit tick |
 | `meteor_cast.m4a` | Magic Spell Full Pack.part1/2.rar → Magic Spell/FIRE SPELL/Fire Spell Pack/48000kHz/ogg/fire_spell_long_hard_02.ogg | CC BY 4.0, Leonardo Calvo (Magic Spell Full Pack) | launch roar, fades out |
 | `meteor_impact_1.m4a` | Magic Spell Full Pack.part1/2.rar → Magic Spell/EARTH SPELL/Earth Spell Pack/48000kHz/ogg/earth_spell_cast_meteor_explosion_02.ogg | CC BY 4.0, Leonardo Calvo (Magic Spell Full Pack) |  |
@@ -126,8 +119,6 @@ stereo 44.1 kHz 80 kbps.
 | `night_cage_chains.m4a` | 80-CC0-RPG-SFX.zip → chain_03.ogg | CC0 (80-CC0-RPG-SFX) |  |
 | `stampede.m4a` | Magic Spell Full Pack.part1/2.rar → Magic Spell/EARTH SPELL/Earth Spell Pack/48000kHz/ogg/earth_spell_cast_earthquake_power_01.ogg | CC BY 4.0, Leonardo Calvo (Magic Spell Full Pack) | earth rumble |
 | `brew_roar.m4a` | 80-CC0-RPG-SFX.zip → creature_roar_01.ogg | CC0 (80-CC0-RPG-SFX) | plus Ty's brew_drink |
-| `ram_summon_1.m4a` | 80-CC0-RPG-SFX.zip → creature_roar_03.ogg | CC0 (80-CC0-RPG-SFX) | stand-in snort/roar; no sheep/goat sounds exist |
-| `ram_summon_2.m4a` | 80-CC0-RPG-SFX.zip → creature_roar_02.ogg | CC0 (80-CC0-RPG-SFX) |  |
 | `fight_start.m4a` | Magic Spell Full Pack.part1/2.rar → Magic Spell/LIGHTNING SPELL/Lightning Spell Pack/48000kHz/ogg/lighting_spell_electric_impact_thunder_loud_dark_03.ogg | CC BY 4.0, Leonardo Calvo (Magic Spell Full Pack) | thunder clap |
 | `siege_capture.m4a` | Magic Spell Full Pack.part1/2.rar → Magic Spell/HOLY SPELL/Holy Spell Pack/48000kHz/ogg/Holy_spell_heal_cast_bright_01.ogg | CC BY 4.0, Leonardo Calvo (Magic Spell Full Pack) | capturing tone |
 | `siege_contested.m4a` | Magic Spell Full Pack.part1/2.rar → Magic Spell/LIGHTNING SPELL/Lightning Spell Pack/48000kHz/ogg/lighting_spell_electric_zap_blast_sparkle_dark_06.ogg | CC BY 4.0, Leonardo Calvo (Magic Spell Full Pack) | warning buzz |
@@ -170,3 +161,49 @@ the loops), short fades, peak-normalized to -1 dB, AAC .m4a at 44.1 kHz via `afc
 | `flask_land.m4a` | `freesound_community-breaking-glass-83809.mp3` (first 0.75 s), freesound_community, provided by Ty (Pixabay) | Flask Step landing |
 | `fizz_loop.m4a` | `freesound_community-soda-fizzing-80464.mp3` (1.0-4.5 s, looped), freesound_community, provided by Ty (Pixabay) | The Toxic Flask pool while it lasts (3D at the pool, fading out at the end) |
 | `brew_drink.m4a` | `freesound_community-soda-fizzing-80464.mp3` (0.4-1.9 s), freesound_community, provided by Ty (Pixabay) | Berserker Brew, the drink |
+
+## Provided by Ty (second batch: voices, grass steps, telekinesis)
+Original files supplied by Ty. Processing: decoded, downmixed to mono, split into single sounds by an energy envelope
+where a file holds several, short fades, loudness-matched to the set (active RMS about -16 dBFS for voices and effects,
+-24 dBFS for steps and the hold loop, -1 dBFS peak ceiling), AAC .m4a 44.1 kHz 64 kbps via `afconvert`.
+
+| File | Source (Ty's file), section | Used for |
+|---|---|---|
+| `hurt_m_01.m4a` | `Male_hurt.mp3`, 14.49-14.86 s | Hurt voice, male heroes (Rime, Jeb) |
+| `hurt_m_02.m4a` | `Male_hurt.mp3`, 5.59-5.94 s | Hurt voice, male heroes (Rime, Jeb) |
+| `hurt_m_03.m4a` | `Male_hurt.mp3`, 8.06-8.58 s | Hurt voice, male heroes (Rime, Jeb) |
+| `hurt_m_04.m4a` | `Male_hurt.mp3`, 23.62-23.93 s | Hurt voice, male heroes (Rime, Jeb) |
+| `hurt_m_05.m4a` | `Male_hurt.mp3`, 13.32-13.72 s | Hurt voice, male heroes (Rime, Jeb) |
+| `hurt_m_06.m4a` | `Male_hurt.mp3`, 3.28-3.56 s | Hurt voice, male heroes (Rime, Jeb) |
+| `hurt_m_07.m4a` | `Male_hurt.mp3`, 37.87-38.32 s | Hurt voice, male heroes (Rime, Jeb) |
+| `hurt_m_08.m4a` | `Male_hurt.mp3`, 28.22-28.61 s | Hurt voice, male heroes (Rime, Jeb) |
+| `hurt_m_09.m4a` | `Male_hurt.mp3`, 25.97-26.25 s | Hurt voice, male heroes (Rime, Jeb) |
+| `hurt_m_10.m4a` | `Male_hurt.mp3`, 4.55-4.88 s | Hurt voice, male heroes (Rime, Jeb) |
+| `hurt_m_11.m4a` | `Male_hurt.mp3`, 30.13-30.51 s | Hurt voice, male heroes (Rime, Jeb) |
+| `hurt_m_12.m4a` | `Male_hurt.mp3`, 9.41-9.75 s | Hurt voice, male heroes (Rime, Jeb) |
+| `death_m_1.m4a` | `Male_hurt.mp3`, 31.12-31.87 s, the longest grunts | Death voice, male heroes |
+| `death_m_2.m4a` | `Male_hurt.mp3`, 36.48-37.26 s, the longest grunts | Death voice, male heroes |
+| `hurt_f_1.m4a` | `Female_hurt.mp3`, 0.10-0.50 s | Hurt voice, female heroes (Cinder, Gale, Vesper, Embibe) |
+| `hurt_f_2.m4a` | `Female_hurt_2.mp3`, 0.25-0.78 s | Hurt voice, female heroes (Cinder, Gale, Vesper, Embibe) |
+| `hurt_f_3.m4a` | `Female_hurt.mp3`, derived: pitched down 7% | Hurt voice, female heroes (Cinder, Gale, Vesper, Embibe) |
+| `hurt_f_4.m4a` | `Female_hurt_2.mp3`, derived: pitched up 7% | Hurt voice, female heroes (Cinder, Gale, Vesper, Embibe) |
+| `hurt_f_5.m4a` | `Female_hurt.mp3`, derived: pitched up 6% | Hurt voice, female heroes (Cinder, Gale, Vesper, Embibe) |
+| `death_f_1.m4a` | `Female_hurt_2.mp3`, derived: the longer grunt, 12% lower | Death voice, female heroes |
+| `step_grass_1.m4a` | `Grass_sounds.mp3`, step at 0.42 s | Footsteps (walk; sprint plays them louder and lower) |
+| `step_grass_2.m4a` | `Grass_sounds.mp3`, step at 0.69 s | Footsteps (walk; sprint plays them louder and lower) |
+| `step_grass_3.m4a` | `Grass_sounds.mp3`, step at 0.94 s | Footsteps (walk; sprint plays them louder and lower) |
+| `step_grass_4.m4a` | `Grass_sounds.mp3`, step at 1.21 s | Footsteps (walk; sprint plays them louder and lower) |
+| `step_grass_5.m4a` | `Grass_sounds.mp3`, step at 1.46 s | Footsteps (walk; sprint plays them louder and lower) |
+| `step_grass_6.m4a` | `Grass_sounds.mp3`, step at 1.73 s | Footsteps (walk; sprint plays them louder and lower) |
+| `step_grass_7.m4a` | `Grass.mp3`, the whole rustle | Footsteps (walk; sprint plays them louder and lower) |
+| `tk_lift.m4a` | `Telekinesis_Pull.mp3`, 1.40-2.25 s, around the strongest swell | Telekinesis lift |
+| `tk_hold_loop.m4a` | `Telekinesis_Pull.mp3`, 6.0-9.0 s looped, 0.4 s crossfade seam | Telekinesis hold hum (loop) |
+| `tk_throw.m4a` | `telekinesis_throw.mp3`, whole file, trimmed | Telekinesis throw |
+
+## Provided by Ty (Pixabay: dragon-studio)
+Pixabay Content License; credited to dragon-studio on Pixabay. Processed as the batch above.
+
+| File | Source (Ty's file, author) | Used for |
+|---|---|---|
+| `goat_bleat_1.m4a` | `dragon-studio-goat-sound-390298.mp3` (0.80-1.36 s), dragon-studio, provided by Ty (Pixabay) | Goats and rams: grazing, angered, summoned, called and bonked (pitch-varied; angry ones lower and louder) |
+| `goat_bleat_2.m4a` | `dragon-studio-goat-baa-390303.mp3` (0.38-1.06 s), dragon-studio, provided by Ty (Pixabay) | Goats and rams: grazing, angered, summoned, called and bonked (pitch-varied; angry ones lower and louder) |

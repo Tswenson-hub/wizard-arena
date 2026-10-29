@@ -36,9 +36,7 @@
     "tk_lift.m4a"
   ],
   "tk_throw": [
-    "tk_throw_1.m4a",
-    "tk_throw_2.m4a",
-    "tk_throw_3.m4a"
+    "tk_throw.m4a"
   ],
   "prop_shatter_wood": [
     "prop_shatter_wood_1.m4a",
@@ -46,19 +44,6 @@
   ],
   "prop_shatter_stone": [
     "prop_shatter_stone.m4a"
-  ],
-  "footstep": [
-    "footstep_1.m4a",
-    "footstep_2.m4a",
-    "footstep_3.m4a",
-    "footstep_4.m4a"
-  ],
-  "death": [
-    "death_1.m4a"
-  ],
-  "hurt": [
-    "hurt_1.m4a",
-    "hurt_2.m4a"
   ],
   "respawn": [
     "respawn.m4a"
@@ -282,10 +267,6 @@
   "brew_roar": [
     "brew_roar.m4a"
   ],
-  "ram_summon": [
-    "ram_summon_1.m4a",
-    "ram_summon_2.m4a"
-  ],
   "fight_start": [
     "fight_start.m4a"
   ],
@@ -315,5 +296,57 @@
   ],
   "menu_music": [
     "menu_music.m4a"
+  ],
+  "swell": [
+    "swell.m4a"
+  ],
+  "whoosh": [
+    "whoosh_1.m4a",
+    "whoosh_2.m4a",
+    "whoosh_3.m4a"
+  ],
+  "hurt_male": [
+    "hurt_m_01.m4a",
+    "hurt_m_02.m4a",
+    "hurt_m_03.m4a",
+    "hurt_m_04.m4a",
+    "hurt_m_05.m4a",
+    "hurt_m_06.m4a",
+    "hurt_m_07.m4a",
+    "hurt_m_08.m4a",
+    "hurt_m_09.m4a",
+    "hurt_m_10.m4a",
+    "hurt_m_11.m4a",
+    "hurt_m_12.m4a"
+  ],
+  "death_male": [
+    "death_m_1.m4a",
+    "death_m_2.m4a"
+  ],
+  "hurt_female": [
+    "hurt_f_1.m4a",
+    "hurt_f_2.m4a",
+    "hurt_f_3.m4a",
+    "hurt_f_4.m4a",
+    "hurt_f_5.m4a"
+  ],
+  "death_female": [
+    "death_f_1.m4a"
+  ],
+  "step_grass": [
+    "step_grass_1.m4a",
+    "step_grass_2.m4a",
+    "step_grass_3.m4a",
+    "step_grass_4.m4a",
+    "step_grass_5.m4a",
+    "step_grass_6.m4a",
+    "step_grass_7.m4a"
+  ],
+  "goat_bleat": [
+    "goat_bleat_1.m4a",
+    "goat_bleat_2.m4a"
+  ],
+  "tk_hold_loop": [
+    "tk_hold_loop.m4a"
   ]
 }

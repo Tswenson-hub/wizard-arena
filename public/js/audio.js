@@ -5,6 +5,9 @@
 const SOUND_DIR = '/sounds/';
 const PREFS_KEY = 'wizardAudio';
 
+const VOICE_MALE = new Set(['rime', 'jeb']);   // Cinder, Gale, Vesper and Embibe use the female set
+const VOICE_PITCH = { cinder: 1.04, gale: 1.1, vesper: 0.94, embibe: 1, rime: 0.96, jeb: 1.06 };
+
 export class Sfx {
   constructor() {
     this.ctx = null; this.master = null;
@@ -95,18 +98,34 @@ export class Sfx {
   }
 
   // Play a one-shot sample. pos: THREE.Vector3 or [x, y, z]; null plays it flat (UI, your own hurt grunt).
-  play(key, { pos = null, vol = 1, rate = 1, jitter = 0.08, delay = 0 } = {}) {
+  play(key, { pos = null, vol = 1, rate = 1, jitter = 0.08, delay = 0, bag = null } = {}) {
     if (!this.ctx) return null;
     const list = this.buffers[key];
     if (!list?.length) { this.fallback(key, vol); return null; }
     const src = this.ctx.createBufferSource();
-    src.buffer = list[Math.floor(Math.random() * list.length)];
+    src.buffer = list[bag ? this.fromBag(key, bag) : Math.floor(Math.random() * list.length)];
     src.playbackRate.value = rate * (1 + (Math.random() * 2 - 1) * jitter);
     const g = this.ctx.createGain(); g.gain.value = vol;
     src.connect(g);
     if (pos) g.connect(this.panner(pos)).connect(this.sfxBus); else g.connect(this.sfxBus);
     src.start(this.ctx.currentTime + delay);
     return src;
+  }
+
+  // A shuffled bag of a key's variants per owner (a wizard, a goat): every variant plays once before any repeats,
+  // and a reshuffle never puts the last one first, so the same sample never plays twice in a row.
+  fromBag(key, owner) {
+    const n = this.buffers[key].length, id = key + ':' + owner;
+    this.bags ??= new Map();
+    let b = this.bags.get(id);
+    if (!b || b.n !== n) { b = { n, order: [], last: -1 }; this.bags.set(id, b); }
+    if (!b.order.length) {
+      b.order = [...Array(n).keys()];
+      for (let i = n - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [b.order[i], b.order[j]] = [b.order[j], b.order[i]]; }
+      if (n > 1 && b.order[b.order.length - 1] === b.last) [b.order[0], b.order[b.order.length - 1]] = [b.order[b.order.length - 1], b.order[0]];
+    }
+    b.last = b.order.pop();
+    return b.last;
   }
 
   // A looping sample that follows something around. Returns a handle; call stop() when done.
@@ -176,25 +195,33 @@ export class Sfx {
   blockBreak(pos) { this.play('ward_break', { pos, vol: 1 }); }
   teleport(pos) { this.play('blink', { pos, vol: 0.7 }); }
   shatter(pos, type) { this.play(type === 'rock' || type === 'pot' ? 'prop_shatter_stone' : 'prop_shatter_wood', { pos, vol: 0.8 }); }
-  pickup(pos) { this.play('tk_lift', { pos, vol: 0.55, jitter: 0.05 }); }
-  throw_(pos) { this.play('tk_throw', { pos, vol: 0.85 }); }
-  death(pos) { this.play('death', { pos, vol: 0.9, jitter: 0.03 }); }
+  pickup(pos) { this.play('tk_lift', { pos, vol: 0.6, jitter: 0.05 }); }
+  throw_(pos) { this.play('tk_throw', { pos, vol: 0.85, jitter: 0.06 }); }
+  // Hurt and death voices, by the hero's gender, each hero pitched a little apart. Ours plays flat, others in 3D.
+  // At most one grunt per wizard every 0.35 s, so a damage-over-time tick doesn't stutter.
+  voice(w, pos, death = false) {
+    const male = VOICE_MALE.has(w.wizard), now = performance.now();
+    if (!death && now - (w.voiceAt || 0) < 350) return;
+    w.voiceAt = now;
+    const key = (death ? 'death_' : 'hurt_') + (male ? 'male' : 'female');
+    this.play(key, { pos, vol: death ? 0.9 : 0.6, rate: VOICE_PITCH[w.wizard] ?? 1, jitter: 0.025, bag: w.id });
+  }
   respawn(pos) { this.play('respawn', { pos, vol: 0.55 }); }
-  footstep(pos, vol = 0.35) { this.play('footstep', { pos, vol, jitter: 0.12 }); }
-  hurt() { this.play('hurt', { vol: 0.5 }); }
+  // grass steps, cycled per wizard; a sprint lands heavier and a little lower
+  footstep(pos, vol = 0.35, sprint = false, owner = 'x') { this.play('step_grass', { pos, vol: sprint ? vol * 1.5 : vol, rate: sprint ? 0.88 : 1, jitter: 0.06, bag: owner }); }
   click() { this.play('ui_click', { vol: 0.5, jitter: 0.02 }); }
-  hoof(pos) { this.play('footstep', { pos, vol: 0.7, rate: 0.75, jitter: 0.15 }); }
+  hoof(pos) { this.play('step_grass', { pos, vol: 0.8, rate: 0.7, jitter: 0.12 }); }   // no hoof recordings yet: a grass step, lower
   goatRam(pos, blocked) { this.play(blocked ? 'ward_block' : 'hit_heavy', { pos, vol: 1.1, rate: blocked ? 0.7 : 1 }); if (!blocked) this.play('hit_light', { pos, vol: 0.9, rate: 0.8 }); }
   // Arcane Cyclone: a low rising hum on the wind-up, then a swoosh and a deep thump on the spin.
-  cycloneWindup(pos) { this.play('tk_lift', { pos, vol: 0.8, rate: 0.55, jitter: 0.03 }); }
+  cycloneWindup(pos) { this.play('swell', { pos, vol: 0.8, rate: 0.55, jitter: 0.03 }); }
   cyclonePulse(pos) {
-    this.play('tk_throw', { pos, vol: 1.1, rate: 0.65, jitter: 0.04 });
+    this.play('whoosh', { pos, vol: 1.1, rate: 0.65, jitter: 0.04 });
     this.play('impact_big', { pos, vol: 1.0, rate: 0.6, jitter: 0.04, delay: 0.03 });
   }
   // Skyward Flash: the blink, pitched up; a soft thud on landing.
   skyward(pos) { this.play('skyward_launch', { pos, vol: 0.85, jitter: 0.04 }); }
   land(pos) { this.play('skyward_land', { pos, vol: 0.6, jitter: 0.1 }); }
-  goatBonk(pos) { this.play('impact_small', { pos, vol: 1, rate: 0.55 }); }
+  goatBonk(pos) { this.play('impact_small', { pos, vol: 1, rate: 0.55 }); this.bleat(pos, false, { delay: 0.05 }); }
   // The last shot of a magazine: a heavier, lower crack with a bright ring on top.
   castFinisher(pos) {
     this.play('spark_cast', { pos, vol: 0.8, rate: 0.75, jitter: 0.03 });
@@ -225,20 +252,28 @@ export class Sfx {
   }
   // Frostfall: a cold rising chime as it's cast; a crushing crash of ice on impact.
   frostCast(pos) {
-    this.play('tk_lift', { pos, vol: 0.7, rate: 1.4, jitter: 0.04 });
+    this.play('swell', { pos, vol: 0.7, rate: 1.4, jitter: 0.04 });
     this.play('ward_block', { pos, vol: 0.4, rate: 1.6, jitter: 0.05, delay: 0.05 });
   }
   frostImpact(pos) { this.play('frostfall_impact', { pos, vol: 1.2, jitter: 0.04 }); }
   // Trapped Relic: a quiet hiss when you lay the curse; a deep blast when it goes off.
-  curse() { this.play('tk_lift', { vol: 0.35, rate: 0.45, jitter: 0.03 }); }
+  curse() { this.play('swell', { vol: 0.35, rate: 0.45, jitter: 0.03 }); }
   relicBlast(pos) {
     this.play('impact_big', { pos, vol: 1.2, rate: 0.75, jitter: 0.04 });
     this.play('meteor_cast', { pos, vol: 0.6, rate: 0.6, jitter: 0.04, delay: 0.02 });
   }
 
   // Synthesized goat bleat: a buzzy tone with a fast wobble, shaped by a nasal formant filter.
-  bleat(pos, angry = true) {
+  // A goat or ram: calm ones higher and softer, angry ones lower and louder (graze: a quiet one now and then).
+  bleat(pos, angry = true, { vol = null, delay = 0, owner = null } = {}) {
     if (!this.ctx) return;
+    if (this.buffers.goat_bleat?.length) {
+      this.play('goat_bleat', { pos, vol: vol ?? (angry ? 1.1 : 0.7), rate: angry ? 0.8 + Math.random() * 0.08 : 0.95 + Math.random() * 0.2, jitter: 0, delay, bag: owner ?? 'any' });
+      return;
+    }
+    this.synthBleat(pos, angry);
+  }
+  synthBleat(pos, angry) {
     const ctx = this.ctx, t = ctx.currentTime, dur = angry ? 0.75 : 0.55;
     const base = (angry ? 330 : 400) * (0.92 + Math.random() * 0.16);
     const o = ctx.createOscillator(); o.type = 'sawtooth';
@@ -272,7 +307,7 @@ export class Sfx {
       meteor_cast: () => { this.tone({ type: 'sawtooth', f0: 320, f1: 60, dur: 0.5, vol: 0.8 }); this.noise({ dur: 0.35, vol: 0.5, f: 600 }); },
       impact_small: () => this.noise({ dur: 0.18, vol: 0.5, f: 2000 }),
       impact_big: () => { this.noise({ dur: 0.45, vol: 0.9, f: 500 }); this.tone({ type: 'sine', f0: 120, f1: 30, dur: 0.5, vol: 0.9 }); },
-      hit_body: () => this.tone({ type: 'triangle', f0: 200, f1: 60, dur: 0.15, vol: 0.5 }),
+      hit_light: () => this.tone({ type: 'triangle', f0: 200, f1: 60, dur: 0.15, vol: 0.5 }),
       ward_block: () => this.tone({ type: 'sine', f0: 1400, f1: 1800, dur: 0.1, vol: 0.5 }),
       ward_break: () => this.noise({ dur: 0.3, vol: 0.7, f: 3000 }),
       blink: () => this.tone({ type: 'sine', f0: 300, f1: 1800, dur: 0.25, vol: 0.5 }),
@@ -282,8 +317,10 @@ export class Sfx {
       prop_shatter_stone: () => this.noise({ dur: 0.3, vol: 0.6, f: 1500 }),
       tk_lift: () => this.tone({ type: 'sine', f0: 400, f1: 700, dur: 0.2, vol: 0.4 }),
       tk_throw: () => this.noise({ dur: 0.2, vol: 0.4, f: 900 }),
-      death: () => this.tone({ type: 'sawtooth', f0: 400, f1: 40, dur: 0.9, vol: 0.6 }),
-      hurt: () => this.tone({ type: 'square', f0: 250, f1: 120, dur: 0.12, vol: 0.35 }),
+      death_male: () => this.tone({ type: 'sawtooth', f0: 400, f1: 40, dur: 0.9, vol: 0.6 }),
+      death_female: () => this.tone({ type: 'sawtooth', f0: 600, f1: 60, dur: 0.9, vol: 0.6 }),
+      hurt_male: () => this.tone({ type: 'square', f0: 250, f1: 120, dur: 0.12, vol: 0.35 }),
+      hurt_female: () => this.tone({ type: 'square', f0: 400, f1: 200, dur: 0.12, vol: 0.35 }),
     }[key];
     if (f) f(vol);
   }

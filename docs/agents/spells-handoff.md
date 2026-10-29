@@ -1,5 +1,24 @@
 # Spells hand-off
 
+## Ty's second sound batch: voices, grass steps, goats, telekinesis
+
+- **Details:** docs/agents/sound-report.md (top section). The cuts are made by /tmp/wa-spells/snd2/make.py from
+  Ty's ~/Desktop files.
+- **audio.js:**
+  - `play(..., { bag })` picks through a shuffled per-owner bag (`fromBag`): no repeats until all have played, and
+    never the same sample twice in a row.
+  - `voice(w, pos, death)` plays hurt or death by gender (Rime and Jeb male), with a pitch per hero, rate-limited to
+    0.35 s per wizard.
+  - `footstep(pos, vol, sprint, owner)` plays grass steps; a sprint is 1.5× louder and rate 0.88.
+  - `bleat(pos, angry, { vol, delay, owner })` plays the samples, with the synth kept as a fallback.
+  - The old tk files are now `swell` and `whoosh`, and the spell layers use those.
+- **main.js:**
+  - The hurt voice plays in `hit` for every hero, and the death voice in `death`.
+  - `tk_hold_loop` (`w.sndHold`) plays while a prop or goat is held.
+  - `updateGoatAudio` makes grazing goats bleat now and then.
+  - Rams bleat on summon, Stampede, the Sling call, rearing and the bonk.
+- **Pruned:** `footstep_*`, `hurt_1-2`, `death_1`, `ram_summon_*`. There are now 100 keys and 150 files (3.41 MB).
+
 ## Sound pass, stage 2 (integration, menu music, credits)
 
 - **Report:** docs/agents/sound-report.md has every slot and its hook, what was pruned, the verification and the gaps.

@@ -395,7 +395,7 @@ function handleMessage(msg) {
       break;
     case 'goatAngry': {
       const g = goats.get(msg.id);
-      if (g) { g.apply({ p: [g.target.x, g.target.z], yaw: g.targetYaw, s: 'windup', tgt: msg.target }); sfx.bleat(g.group.position.clone().setY(1)); }
+      if (g) { g.apply({ p: [g.target.x, g.target.z], yaw: g.targetYaw, s: 'windup', tgt: msg.target }); sfx.bleat(g.group.position.clone().setY(1), true, { vol: 1.2, owner: g.id }); }   // angered: rearing to charge
       if (msg.target === myId) feed('You angered a goat! <b>Ward (Space) facing it</b> or get out of the way');
       break;
     }
@@ -436,7 +436,7 @@ function handleMessage(msg) {
         if (msg.fin && C.PRIMARY_KINDS.has(msg.kind) && !(performance.now() - (owner.finSndAt || 0) < 150)) { owner.finSndAt = performance.now(); sfx.finisher(msg.p, owner.wizard); }   // the 3rd-shot accent, by element (once for Skim's three shards)
         if (msg.kind === 'potion') { if (!combo) owner.oneShot('cast_fast', 0.45, 2.4, 0.25); sfx.play('potion_toss', { pos: msg.p, vol: 0.8, jitter: 0.08 }); }
         else if (msg.kind === 'toxic') { owner.oneShot('cast_fast', 0.5, 2, 0.25); sfx.play('potion_toss', { pos: msg.p, vol: 0.85, rate: 0.85 }); }
-        else if (msg.kind === 'flaskstep') { sfx.play('tk_throw', { pos: msg.p, vol: 0.6, rate: 1.3 }); }
+        else if (msg.kind === 'flaskstep') { sfx.play('whoosh', { pos: msg.p, vol: 0.6, rate: 1.3 }); }
         else if (msg.kind === 'fast') { if (!combo) owner.oneShot('cast_fast', 0.45, 2.6, 0.25); if (!msg.fin) sfx.castFast(msg.p); }
         else if (msg.kind === 'fireball') { if (!combo) owner.oneShot('cast_fast', 0.5, 2.3, 0.25); sfx.play('spark_cast', { pos: msg.p, vol: 0.7, rate: msg.fin ? 0.75 : 0.85 }); }
         else if (msg.kind === 'shear') { if (!combo) owner.oneShot('cast_fast', 0.35, 3, 0.25); sfx.play('shear_cast', { pos: msg.p, vol: msg.fin ? 0.95 : 0.75, rate: msg.fin ? 0.9 : 1, jitter: 0.06 }); }
@@ -485,6 +485,7 @@ function handleMessage(msg) {
         if ((msg.kind === 'prop' || msg.kind === 'goat') && target.actions.hit_waist) target.oneShot('hit_waist', target.actions.hit_waist.getClip().duration, 1, 0);
         else if (C.hitSpec(msg.kind)?.stun !== 0 && msg.int !== false) target.oneShot('stun', msg.kind === 'heavy' ? 0.5 : 0.55, 3.0, 0.3);
         sfx.hitBody(c);
+        sfx.voice(target, target === me ? null : c);   // a grunt, by gender (rate-limited per wizard)
         if (msg.slow) target.slowed = true;
         if (msg.launch) target.launch(msg.launch);
         if (msg.bind && (msg.freeze || msg.kind === 'frostfall')) { target.bound = true; target.frozen = true; target.endLash(); target.cancelCyclone(); target.oneShot('stun', 0.15, 3, 0.3); }
@@ -492,7 +493,7 @@ function handleMessage(msg) {
       }
       if (target === me) {
         if (!msg.blocked) {
-          sfx.hurt(); flashVignette(); shake(msg.kind === 'heavy' || msg.kind === 'cyclone' || msg.kind === 'trapped_relic' || ULT_KINDS.has(msg.kind) ? 0.6 : 0.25);
+          flashVignette(); shake(msg.kind === 'heavy' || msg.kind === 'cyclone' || msg.kind === 'trapped_relic' || ULT_KINDS.has(msg.kind) ? 0.6 : 0.25);
           if (msg.int !== false) local.stunUntil = Math.max(local.stunUntil, now + (C.hitSpec(msg.kind)?.stun ?? 0.4));
           if (msg.slow) local.slowUntil = now + msg.slow;
           if (msg.bind) {
@@ -741,7 +742,7 @@ function handleMessage(msg) {
       if (!w) break;
       w.dead = true;
       effects.death([w.group.position.x, 0, w.group.position.z]);
-      sfx.death(wpos(w));
+      sfx.voice(w, w === me ? null : wpos(w), true);
       if (w === me) {
         ui.death.querySelector('.big').textContent = msg.cause === 'goat' ? 'Rammed by a goat' : msg.cause === 'ram' ? 'Flattened by a ram' : 'You were vanquished';
         ui.death.classList.remove('hidden'); local.charging = false; local.blocking = false;
@@ -796,7 +797,7 @@ function handleMessage(msg) {
       break;
     case 'eyeTick': {
       const w = players.get(msg.id);
-      if (w) sfx.play('tk_throw', { pos: wpos(w), vol: 0.6, rate: 0.6 + Math.random() * 0.2 });
+      if (w) sfx.play('whoosh', { pos: wpos(w), vol: 0.6, rate: 0.6 + Math.random() * 0.2 });
       break;
     }
     case 'eyeBurst': {
@@ -907,7 +908,9 @@ function handleMessage(msg) {
     }
     // ---- Jeb
     case 'ramSpawn':
-      effects.ramPoof(msg.p); sfx.play('ram_summon', { pos: [msg.p[0], 1, msg.p[2]], vol: msg.mode === 'mount' ? 0.5 : 0.75, jitter: 0.08 });   // (no sheep or goat sounds yet: a creature snort stands in)
+      effects.ramPoof(msg.p);
+      // a summoned ram bleats: a charging one angry; a guard's rams one at a time
+      if (msg.mode !== 'orbit' || performance.now() - (lastGuardBleat || 0) > 300) { if (msg.mode === 'orbit') lastGuardBleat = performance.now(); sfx.bleat([msg.p[0], 1, msg.p[2]], msg.mode !== 'mount', { vol: msg.mode === 'mount' ? 0.6 : 0.9, owner: msg.id }); }
       break;
     case 'goatGone': {
       const g = goats.get(msg.id);
@@ -916,7 +919,7 @@ function handleMessage(msg) {
     }
     case 'ramCalled': {
       const by = players.get(msg.by), tg = players.get(msg.target), g = goats.get(msg.goat);
-      if (g) sfx.bleat(g.group.position.clone().setY(1));
+      if (g) sfx.bleat(g.group.position.clone().setY(1), true, { owner: msg.goat });
       if (msg.target === myId) feed(`<b>${esc(by?.name || '?')}</b> called a ram on you! <b>Ward facing it</b> or get out of the way`);
       else if (msg.by === myId) feed(`Your sling calls a ram on <b>${esc(tg?.name || '?')}</b>`);
       break;
@@ -960,6 +963,7 @@ function handleMessage(msg) {
       if (w) w.oneShot(w.actions.ult ? 'ult' : 'cast_heavy', STAMP.castPose, w.actions.ult ? 1 : 1.5, w.actions.ult ? 0 : 1.9);
       // the rumble rolling down the lane
       sfx.play('stampede', { pos: [msg.p[0] + msg.dir[0] * 14, 0.5, msg.p[2] + msg.dir[2] * 14], vol: 1.1, jitter: 0 });
+      for (let i = 0; i < 3; i++) sfx.bleat([msg.p[0] + msg.dir[0] * (4 + i * 6), 1, msg.p[2] + msg.dir[2] * (4 + i * 6)], true, { vol: 0.8, delay: 0.15 + i * 0.35, owner: 'stampede' });   // the herd
       const dx = local.pos.x - msg.p[0], dz = local.pos.z - msg.p[2];
       const along = dx * msg.dir[0] + dz * msg.dir[2], side = -dx * msg.dir[2] + dz * msg.dir[0];
       if (msg.owner !== myId && along > -1 && along < msg.length && Math.abs(side) < msg.width / 2 + 1) feed('<b>Stampede!</b> Get out of the lane');
@@ -983,7 +987,7 @@ function handleMessage(msg) {
     case 'toxicThrow': break;   // the throw pose plays from the projectile
     case 'flaskWind': {
       const w = players.get(msg.id);
-      if (w) { w.oneShot(w.actions.combo1 ? 'combo1' : 'cast_heavy', msg.left, 1, w.actions.combo1 ? 0 : 1.2); effects.burst(w.group.position.clone().setY(1.3), 0xa050e0, 8, 1.5, 0.3, -1); sfx.play('tk_lift', { pos: wpos(w), vol: 0.6, rate: 1.2 }); }
+      if (w) { w.oneShot(w.actions.combo1 ? 'combo1' : 'cast_heavy', msg.left, 1, w.actions.combo1 ? 0 : 1.2); effects.burst(w.group.position.clone().setY(1.3), 0xa050e0, 8, 1.5, 0.3, -1); sfx.play('swell', { pos: wpos(w), vol: 0.6, rate: 1.2 }); }
       break;
     }
     case 'flaskCancel':
@@ -1058,7 +1062,17 @@ function handleMessage(msg) {
 // ---------------------------------------------------------------- game-mode sounds and menu music
 // (match-ui.js draws the mode; its tones live here with the rest of the sound)
 let lastMatch = null;
-let lastGuardBreak = 0;   // the guard's rams go together: one break sound
+let lastGuardBreak = 0, lastGuardBleat = 0;
+// Grazing goats bleat now and then, quietly (only the near ones, so a field of them doesn't chatter).
+function updateGoatAudio(dt) {
+  for (const g of goats.values()) {
+    if (g.summoned || (g.state !== 'graze' && g.state !== 'wander')) continue;
+    g.bleatIn = (g.bleatIn ?? 6 + Math.random() * 14) - dt;
+    if (g.bleatIn > 0) continue;
+    g.bleatIn = 9 + Math.random() * 16;
+    if (g.group.position.distanceTo(camera.position) < 28) sfx.bleat(g.group.position.clone().setY(0.8), false, { vol: 0.3, owner: g.id });
+  }
+}   // the guard's rams go together: one break sound
 function myTeamOf() { return me?.team ?? null; }
 function matchSounds(msg) {
   if (msg.t === 'matchPhase' && msg.match.phase === 'live' && lastMatch?.phase === 'warmup') sfx.ui('fight_start', 0.8);
@@ -1933,9 +1947,14 @@ function updateWizardAudio(w, dt) {
   const moving = !w.dead && speed > 1.5;
   const interval = speed > 4 ? 0.3 : 0.5;
   w.stepT = (w.stepT || 0) + dt;
-  if (moving && w.stepT > interval) { w.stepT = 0; sfx.footstep(w.group.position, w === me ? 0.28 : 0.4); }
+  if (moving && w.stepT > interval) { w.stepT = 0; sfx.footstep(w.group.position, w === me ? 0.28 : 0.4, w.sprinting, w.id); }
+  // a quiet telekinetic hum while something is held
+  const holding = !w.dead && !!(w.carrying || w.carryingGoat);
+  if (holding && !w.sndHold) w.sndHold = sfx.loop('tk_hold_loop', { pos, vol: 0.35, fadeIn: 0.25 });
+  else if (!holding && w.sndHold) { w.sndHold.stop(0.2); w.sndHold = null; }
+  if (w.sndHold) w.sndHold.setPos(pos);
 }
-function stopWizardAudio(w) { w.sndCharge?.stop(); w.sndWard?.stop(); w.sndCharge = w.sndWard = null; }
+function stopWizardAudio(w) { w.sndCharge?.stop(); w.sndWard?.stop(); w.sndHold?.stop(); w.sndCharge = w.sndWard = w.sndHold = null; }
 
 // ---------------------------------------------------------------- main loop
 let last = performance.now();
@@ -1977,6 +1996,7 @@ function frame(t) {
     if (input.justPressed('KeyM')) { sfx.muted = !sfx.muted; ui.mute.checked = sfx.muted; feed(sfx.muted ? 'Sound muted (M)' : 'Sound on'); }
     sfx.setListener(camera);
     updateMusic();
+    updateGoatAudio(dt);
     for (const w of players.values()) updateWizardAudio(w, dt);
   } else {
     // idle camera drift on the join screen
