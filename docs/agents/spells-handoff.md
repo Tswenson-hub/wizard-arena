@@ -1,5 +1,133 @@
 # Spells hand-off
 
+## Round 7: Jeb the Shepherd, a walking pace, ultimate wind-ups, Blizzard and Meteor Rain
+
+Commits:
+- `d46e7ae` and `40e59ab`: Jeb.
+- `b121951` and `7ae60e3`: the walk, plus Jeb tuning.
+- `8ecf4b7`: the relic cleanup and the siege `area` hint.
+- `962027f` and `4910c68`: the ultimates.
+
+### Jeb (`kit: sling / battering_ram / ram_ride / ram_guard / telekinesis / stampede`, 3.0 m/s)
+The rams go through the environment agent's contract (`summonRam`, `callRam`, `despawnRam`, `angerGoat` for guard rams,
+`goatCtx.goats` and `goatCtx.isEnemy`). If those functions are missing, `server.js` runs a stand-in with the same rules
+(`rams` array, `ramPublic`), so either side can land first.
+- **Shepherd's Sling:** 7 damage, a **2-stone pouch** (the 2nd interrupts), and the HUD shows 2 pips. A hit calls the nearest calm
+  map goat within 22 m of the target to charge it, with the kill credited to Jeb. There's a **6 s** per-target lockout
+  (the brief said 3; the balance runs cut it). Message: `ramCalled`.
+- **Battering Ram:** a ram spawns 1.4 m ahead and charges dead straight along the aim for 3 s, one-shotting an enemy (goat
+  rule: a facing ward, Veil, Black Death or wall stops it). Cooldown **12 s** (the brief said 9; the balance runs raised it).
+- **Ram Guard:** 3 orbit rams (2.2 m, a lap every 1.5 s, 3 s). An enemy shot that touches one is absorbed, and that ram charges the
+  shooter. They catch 0.35 m wider than their bodies, because three rams cover only about 43 % of the circle otherwise.
+  Snapshot `ramGuard`; bots hold fire into it.
+- **Ram Ride:**
+  - The server times it: 0.4 s mount (rooted), a 14 m gallop at 11 m/s along the facing (steer with the mouse or A/D), then
+    a 0.4 s dismount (rooted).
+  - A shove does 15 (`ram_shove`), once per enemy per ride. The mount ram is placed under the rider every tick.
+  - The client predicts the gallop on real time, and Jeb's model sits 0.55 m up with the `ride` clip.
+  - Messages: `ride`, `rideEnd`; snapshot `ride` (`mount` / `ride` / `dismount`).
+- **Stampede:** hold Q to aim a lane (6 × 28 m marker from Jeb toward the crosshair), release. After the wind-up, a 1 s
+  telegraph (lane marker, chevrons, dust, rumble), then 8 rams over 2 s, each one-shotting (goat rule).
+  Messages: `stampede`, `stampedeEnd`; `welcome.stampedes`.
+- **Bots playing Jeb** sling at range, Battering-Ram stuck or close targets down clear lines, guard against incoming big
+  shots, ride away when hurt or into close targets, and Stampede down the lane with the most enemies.
+- **Every bot** treats summoned charging rams like charging goats (ward, Veil, wall or sidestep) and gets out of Stampede lanes.
+- Players now start with, and refill on a wizard switch to, their own primary's magazine size.
+
+### A walking pace (Ty)
+- **Speeds:** `wizards.js` is 3.0 m/s for everyone, 3.6 for Gale. `BACKPEDAL_SPEED` is 2.0, and strafing goes at the
+  forward speed. `MOVE_SPEED` is 3.6, and the wind-up and ward speeds keep their old fractions of a wizard's walk.
+  Movement abilities keep their own speeds.
+- **Animation:** locomotion always uses `walk_fight` (forward, sideways) and `back` (backward), time-scaled to the ground
+  speed by each clip's measured gait speed. `run` only plays for a body without the fight walk.
+  - Verified by stepping each body at the exact walk speed in 1/60 s steps (`t_walk2.py`): the slide (ground speed minus gait ×
+    time scale) is **0.000** for all five wizards forward, sideways, diagonally and backward, at time scales of 2.7–4.1×.
+- **Eye of the Storm's pull** is 1.9 m/s (was 3.4), so a walker can still get out.
+- **Bots** judge projectiles from 2.4 s out (was 1.6) and rams from 1.7 s (was 1.2). The "teleport" filter no longer treats an
+  11 m/s gallop as a blink.
+
+### Sacred Relic leftovers removed, `area` hint (modes request)
+- **Removed:** `hitProp` and every `protectProp` branch (callers use `breakProp`), plus the relic hint and Drop label.
+  `canThrow` and `lift` stay as generic hooks.
+- **`area: [x, z, r]`:** bots inside 0.85·r fight where they stand, and their movement loses any outward part near the edge;
+  outside, they walk to `moveTo`. `modematch siege 150 hard`: 0 friendly fire, on pace.
+
+### Ultimates (Ty)
+- **A wind-up for every ultimate** (`ULT_CHARGE.windup` 1.3 s): the cast pose (the body's `ult` clip, else `cast_heavy`), a light column and
+  tightening ring in the wizard's colour (`effects.ultTell`), a gold staff glow and the charge hum.
+  - Messages: `ultWindup`, then `ult` when it fires; snapshot `ultWind`.
+  - Interrupted by the same things as other wind-ups: a finisher, a thrown object or goat, a ram, a stun, a bind or a freeze
+    (including the Bulwark's touch). Then it **fizzles** (`ultFizzle`) and the charge drops to **50**.
+  - Aimed ultimates (Night Cage, Stampede) take their aim before the wind-up.
+- **Blizzard** (Rime, replaces Absolute Zero): a 70° × 14 m cone of snow for 2.5 s.
+  - **Steering:** it follows Rime's facing at 0.9 rad/s, and Rime is rooted while it runs.
+  - **Effect:** enemies in it (walls and pillars block it; wards don't) are pushed back at 3.2 m/s (bots by the server,
+    humans by `eyePull`), take 10 damage a second (`blizzard_chip` every 0.25 s), and are frozen 2.5 s
+    (`blizzard_freeze`, Frostfall's ice block) after 0.8 s inside in total.
+  - **Visuals:** a swirling flattened cone of snow streaks over a pale mist, a stream of flakes, and frost spreading on the
+    ground. Messages: `blizzard`, `blizzardEnd`; snapshot `blizz` (the cone's yaw).
+- **Meteor Rain** (Cinder, replaces Cataclysm): after the wind-up, a fiery leap to 12 m (0.5 s); she hovers up to 4 s.
+  - **Aiming:** the client sends `mrainAim` every 0.2 s (a 4 m circle, max 24 m from the leap), and the server shows the aim to
+    **everyone** (`mrainAim`), so targets can run. Q or a click dives (`mrainDive`); otherwise it dives at 4 s.
+  - **The dive** lasts 0.6 s and kills everyone in the circle or within 1.2 m of the path (`meteor_rain_hit`, damage 1000,
+    unblockable; a Tempest Veil absorbs it).
+  - **Wall:** an ice wall in the path stops her there (the wall breaks).
+  - **Interrupt:** an interrupting hit while she's up knocks her down (`mrainFall`, a plain fall, ult spent).
+  - The server owns her position throughout, and the client mirrors it.
+  - **Visuals:** launch streak, flame aura, the aim circle, a blazing dive trail, and a scorch mark that lasts 8 s.
+- **Bots:**
+  - Wind-ups and hovers count as wind-ups to punish, so finishers go into them.
+  - They don't start a wind-up while an enemy in sight holds a loaded finisher or a prop (85 %).
+  - Rime faces the cluster that fills the cone and steers it onto the nearest unfrozen enemy.
+  - Cinder leaps when someone is within reach, aims at the best target (led), and dives after 0.6–1.8 s, or at once on a
+    stuck target.
+  - Everyone leaves a cone sideways (or behind cover, a Veil, a wall) and runs from an aimed Meteor Rain circle.
+
+### Verification (port 4101)
+**Rules** (raw sockets, `/tmp/wa-spells/`):
+- **`t_jeb.mjs`:**
+  - Sling: 7 / 7 (2nd interrupts), and a 3rd shot is refused for the reload.
+  - One `ramCalled` (lockout); the called goat flattened the target, credited to Jeb.
+  - Battering Ram: one-shot, cause `ram`, credited to Jeb; a veiled Gale bounced it; the ram despawned.
+  - Ram Guard: 3 rams at 2.20 m; 2 of 3 Hex shards absorbed, and a guard ram flattened the shooter.
+  - Ride: rooted 0.00 m while mounting, a 13 m gallop, a 15 shove, `rideEnd` at 2.1 s.
+  - Stampede: killed the target in the lane, spared one 7 m to the side.
+- **`t_ult2.mjs`:**
+  - Wind-up: 1.3 s, then `eyeStart` at 1.31 s; a finisher in the wind-up fizzled it (no Eye, charge 50).
+  - Blizzard: 10 chips (25 damage), freeze (bind 2.5), pushed at about 3.2 m/s; an enemy outside the cone untouched.
+  - Meteor Rain: leap to 12.00 m, aim broadcast, the dive killed D1 and a veiled Gale beside it absorbed it; a finisher during
+    the hover → `mrainFall`, ult spent, down to 0 m; an ice wall in the path → `mrainLand {wall: true}`, the wall down, no kills.
+
+**Browser** (no console errors): Jeb's HUD (`r7_hud.png`, 2 pips), Ram Guard (`r7_ram_guard.png`), riding (`r7_ride.png`),
+the Stampede lane and rams (`r7_stampede_telegraph.png`), the wind-up tell (`r7u_windup.png`), and the looks rendered with
+long lives: `r7u_blizzard_look.png`, `r7u_mrain_hover_look.png` and `r7u_mrain_land_look.png`.
+The machine is heavily loaded, so pages stall for seconds; the timed checks are the socket tests.
+
+**Balance** (5 Hard bots, one per wizard, FFA, 120 s, server restarted between runs), K/D:
+| State | Cinder | Gale | Rime | Vesper | Jeb |
+|---|---|---|---|---|---|
+| Jeb added, old speeds (3 runs) | 9/9 | 10/11 | 10/10 | 4/11 | **17/9** |
+| Walk (3 runs) | 12/10 | 13/16 | 12/10 | 8/13 | 13/9 |
+| Walk + Battering Ram 12 s + Black Death hit cost 2× (3 runs) | 8/12 | 10/15 | 10/10 | 7/8 | 17/11 |
+| New ultimates, sling lockout 6 s (3 runs) | 9/9 | 7/16 | 13/10 | 10/10 | 16/14 |
+| + Gale Shear 16 (3 runs) | 9/9 | 7/14 | 6/6 | 6/4 | 12/8 |
+
+- **Rime doesn't dominate at walking speed.** Long-range kits gained less than feared, because bots now judge shots earlier.
+- **Gale is consistently last** (0.44–0.67): at 3.6 m/s her 8 m Shear rarely closes. Ty may want her faster or her Shear longer.
+- **Jeb is on top or near it:** most of his kills are ram one-shots.
+- **Ultimates:** about a third of the wind-ups fizzled in the first set. Meteor Rain killed in all 3 of its casts in the last set;
+  Blizzard mostly chips and freezes.
+- Kill counts are small, so these numbers are noisy.
+
+### Open
+- **README** (coordinator) needs:
+  - Jeb's kit, the walk speeds, the wind-up rule, Blizzard and Meteor Rain.
+  - Messages: `ramSpawn`, `ramCalled`, `batteringRam`, `ramGuard`, `ride`/`rideEnd`, `stampede`/`stampedeEnd`, `ultWindup`,
+    `ultFizzle`, `blizzard`/`blizzardEnd`, `mrainLeap`/`mrainAim`/`mrainDive`/`mrainLand`/`mrainFall`/`mrainEnd`.
+  - Snapshot fields `ride`, `ramGuard`, `ultWind`, `blizz`, `mrain`.
+  - Remove Cataclysm and Absolute Zero (`cataclysm`, `meteorHit`, `zero*`).
+- **Characters:** Jeb's `ult` clip plays over the wind-up; others use `cast_heavy`.
+
 ## Round 6b: Firewall, and shorter shields (Ty)
 
 **Cinder's guard is now Firewall** (`firewall`; Flame Ward and its `flame_lash`/`flameLash` are gone).
