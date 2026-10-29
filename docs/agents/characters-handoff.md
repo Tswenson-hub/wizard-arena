@@ -272,6 +272,17 @@
   retargeted clip ended on its first pose. That would have stood Gale's clamped death back up. It now plays the source LoopOnce + clamp.
   This affects how `hit_waist`, `tk_*` (on everyone but Cinder) and the retargeted `stun`/`dash`/`block` end (requested note posted).
 - `tools/prepare-wizard-model.sh` now recognises Mixamo-style rigs in its inspect report. It used to say "RightHand bone: NO".
+- **One of each hero per team (team modes).** `pk.setTaken(ids | { id: teammateName })` on the picker handle.
+  - Taken cards are greyed (CSS `.wp-card.taken`), carry a TAKEN badge (`.wp-taken`), and have a "Taken by …" tooltip and `aria-disabled`.
+  - Their preview stops turning and gets a dark veil drawn in the shared canvas, because the card's CSS filter can't reach the WebGL overlay.
+  - Clicks and Enter/Space on them are ignored; arrow keys still move focus over them.
+  - The picker's own current pick is never marked. `null` (FFA) clears all badges, and an unchanged list is a no-op.
+  - The data is the server's `snap.teamHeroes` (spells agent). Calling it is main.js's job: the snippet is in `requests.md`
+    ("characters → spells: call the picker's setTaken"). Until the spells agent adds it, the picker shows every hero, and the server
+    rule still applies (the nearest free hero plus a notice).
+  - Verified in a live Siege match on 4103 with raw-socket teammates (`/tmp/wa-characters/takengame.py`): Gale was "Taken by Bram",
+    and the badge moved to Cinder when he switched. Bot holders were checked on a synthetic snapshot.
+    Shots: `taken-team.png`, `taken-live.png`, `taken-ffa.png`, `taken-ingame*.png`.
 - **All six wizards have Ty's models.** The recoloured stand-in (`STAND_IN`, `bodyMaterial`) is only used if a model fails to load.
 
 ## Verification

@@ -606,3 +606,30 @@ Every `snap` carries **`teamHeroes`**: `{ ember: ['cinder', 'jeb', ...], frost: 
 **bot** teammate has is allowed (the bot switches). Picking one a **human** teammate has gets the nearest free hero
 and a `{ t: 'notice', text }` message, which main.js shows in the feed. So the grey-out is a hint and nothing breaks
 without it. The join screen has no team yet, so it needs nothing.
+
+## characters → spells: call the picker's `setTaken` from each snap (team heroes, reply)
+select.js now has **`pk.setTaken(list)`** on the picker handle. `list` is either an array of hero ids or `{ heroId: teammateName }`
+(the name goes in a "Taken by …" tooltip). Taken cards are greyed, carry a TAKEN badge, show a frozen, veiled preview, and ignore
+click and Enter/Space. The picker's own current pick is never marked. Empty, `null` or `undefined` shows every hero (FFA).
+It repaints only when the list changes, so calling it on every snap is cheap.
+
+Please add this to `case 'snap':` in main.js, after the `applySnapshot` loop. It's tested against a live Siege match on 4103 and a
+synthetic snapshot:
+```js
+// one of each hero per team: grey out heroes a human teammate holds (a bot gives way, so its hero stays pickable)
+const meS = msg.players.find(s => s.id === myId), teamList = meS?.team ? msg.teamHeroes?.[meS.team] : null;
+const taken = {};
+for (const id of teamList || []) {
+  if (id === meS.wizard) continue;                                   // my current hero (mid-switch)
+  const holders = msg.players.filter(s => s.id !== myId && s.team === meS.team && s.wizard === id);
+  if (holders.length && holders.every(s => players.get(s.id)?.bot)) continue;
+  taken[id] = holders.find(s => !players.get(s.id)?.bot)?.name || '';   // '' = a teammate's pending switch
+}
+for (const pk of pickers) pk.setTaken?.(taken);                       // the <select> fallback has no setTaken
+```
+Measured:
+- A teammate dummy on Gale showed "Taken by Bram". When he switched to Cinder, the badge moved within one snapshot.
+- The other team's heroes stayed free, and FFA (`teamHeroes: null`) cleared every badge.
+- Synthetic snapshot: a bot's hero stays free, and a pending switch is marked without a name.
+
+Screenshots: `/tmp/wa-characters/shots/taken-ingame.png`, `taken-ingame-live.png`.
