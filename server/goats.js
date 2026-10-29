@@ -33,7 +33,11 @@ export function createGoats() {
 
 export const goatPublic = (g) => {
   const o = { id: g.id, p: [round(g.x), round(g.z)], yaw: round(g.yaw), s: g.state, tgt: g.target, y: round(g.y), holder: g.holder };
-  if (g.summoned) { o.summoned = true; o.owner = g.owner; o.team = g.team; if (g.speed !== G.chargeSpeed) o.speed = g.speed; }
+  if (g.summoned) {
+    o.summoned = true; o.owner = g.owner; o.team = g.team;
+    if (g.speed !== G.chargeSpeed) o.speed = g.speed;
+    if (g.state === 'orbit') o.orb = [g.orbitR, g.orbitLap];   // lets clients run the circle between snapshots
+  }
   if (g.state === 'flying') o.v = [round(g.vx), round(g.vy), round(g.vz)];   // lets clients extrapolate the arc
   return o;
 };
@@ -78,10 +82,10 @@ function hostile(g, p, ctx) {
   return ctx.isEnemy ? ctx.isEnemy(o, p) : !(o.team && o.team === p.team);
 }
 
-// opts: { x, z, yaw, ownerId, mode: 'charge' | 'orbit' | 'mount', targetId?, speed?, maxTime? }
+// opts: { x, z, yaw, ownerId, mode: 'charge' | 'orbit' | 'mount', targetId?, speed?, maxTime?, radius?, lap? }
 //   charge: dead straight along yaw (homing only if targetId is given) until a collider (dizzy), a wizard
 //           (ram) or maxTime (recover); then it vanishes.
-//   orbit:  circles the owner (GOAT.orbitRadius, one lap per GOAT.orbitLap) for maxTime (GOAT.orbitTime), then vanishes.
+//   orbit:  circles the owner (radius / lap, default GOAT.orbitRadius / orbitLap) for maxTime (GOAT.orbitTime), then vanishes.
 //   mount:  no AI: server.js sets x / z / yaw under the rider each tick and calls despawnRam at the dismount.
 // The ram goes into ctx.goats when the ctx has it, otherwise into the array on the next updateGoats.
 export function summonRam(opts, ctx) {
@@ -93,7 +97,7 @@ export function summonRam(opts, ctx) {
     state: mode, target: opts.targetId ?? null, angeredBy: opts.ownerId, calledBy: null,
     speed: opts.speed ?? G.chargeSpeed, maxTime: opts.maxTime ?? (mode === 'orbit' ? G.orbitTime : G.chargeTime),
     holder: null, thrower: null, hitIds: null, route: null, dest: null, ghost: false,
-    born: t, orbitA: 0,
+    born: t, orbitA: 0, orbitR: opts.radius ?? G.orbitRadius, orbitLap: opts.lap ?? G.orbitLap,
   };
   g.until = t + g.maxTime;
   g.dieAt = t + Math.max(G.ramLife, g.maxTime + G.dizzyTime + 1);
@@ -106,9 +110,20 @@ export function summonRam(opts, ctx) {
   return g;
 }
 
-// Remove a summoned ram (the dismount, or the spells side clearing up). It goes on the next update.
-export function despawnRam(g) {
-  if (g?.summoned) g.state = 'gone';
+// Remove a summoned ram now (the dismount, or the spells side clearing up), with a goatGone broadcast.
+export function despawnRam(g, ctx) {
+  if (!g?.summoned) return;
+  g.state = 'gone';
+  if (ctx) sweep(lastGoats, ctx);
+}
+// Take every spent ram out of the array (and the pending list) and tell the clients.
+function sweep(goats, ctx) {
+  for (const list of [goats, pending]) for (let i = list.length - 1; i >= 0; i--) {
+    const g = list[i];
+    if (!g.summoned || g.state !== 'gone') continue;
+    list.splice(i, 1);
+    ctx.broadcast({ t: 'goatGone', id: g.id, p: [round(g.x), round(g.z)] });
+  }
 }
 
 // Send the nearest calm map goat within `range` of `from` ([x, z], [x, y, z] or {x, z}) at targetId,
@@ -130,8 +145,8 @@ export function callRam(targetId, creditId, from, range, ctx) {
 let lastGoats = [];
 
 function placeOrbit(g, owner) {
-  g.x = owner.p[0] + Math.sin(g.orbitA) * G.orbitRadius;
-  g.z = owner.p[2] + Math.cos(g.orbitA) * G.orbitRadius;
+  g.x = owner.p[0] + Math.sin(g.orbitA) * g.orbitR;
+  g.z = owner.p[2] + Math.cos(g.orbitA) * g.orbitR;
   g.yaw = wrap(g.orbitA + Math.PI / 2);     // running round him, counter-clockwise seen from above
 }
 
@@ -226,11 +241,9 @@ export function updateGoats(goats, dt, ctx) {
     if (!g.summoned) continue;
     const owner = ctx.players.get(g.owner);
     const down = !owner || owner.dead;
-    if (g.state === 'gone' || t >= g.dieAt || ((g.state === 'orbit' || g.state === 'mount') && down)) {
-      goats.splice(i, 1);
-      ctx.broadcast({ t: 'goatGone', id: g.id, p: [round(g.x), round(g.z)] });
-    }
+    if (t >= g.dieAt || ((g.state === 'orbit' || g.state === 'mount') && down)) g.state = 'gone';
   }
+  sweep(goats, ctx);
   for (const g of goats) {
     if (!g.started) { g.started = true; g.until = t + g.until; }
     if (g.summoned && updateRam(g, dt, t, ctx)) continue;
@@ -279,14 +292,16 @@ export function updateGoats(goats, dt, ctx) {
         break;
     }
   }
+  sweep(goats, ctx);       // rams that were spent this tick never reach a snapshot
 }
 
 // The parts of a summoned ram's life that differ from a goat's. True if handled.
+// (A ram that ends its life here is marked 'gone' and swept at the end of updateGoats.)
 function updateRam(g, dt, t, ctx) {
   switch (g.state) {
     case 'orbit': {
       const owner = ctx.players.get(g.owner);
-      g.orbitA = wrap(g.orbitA + dt * Math.PI * 2 / G.orbitLap);
+      g.orbitA = wrap(g.orbitA + dt * Math.PI * 2 / g.orbitLap);
       placeOrbit(g, owner);
       if (t >= g.until) g.state = 'gone';
       return true;
@@ -372,7 +387,7 @@ function ram(g, p, t, ctx) {
   // Whoever angered the goat gets the credit, unless it was their own goat that got them.
   const culprit = g.angeredBy !== p.id ? ctx.players.get(g.angeredBy) : null;
   p.lastHitBy = culprit ? culprit.id : null;
-  ctx.killPlayer(p, culprit || null, 'goat');
+  ctx.killPlayer(p, culprit || null, g.summoned ? 'ram' : 'goat');
   g.state = 'recover'; g.until = t + G.recoverTime;
 }
 

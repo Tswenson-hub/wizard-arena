@@ -4,7 +4,8 @@
 // Telekinesis: a held goat floats at the snapshot's height, kicking (body wobble); a thrown one
 // tumbles end over end along an arc extrapolated from the snapshot's velocity.
 // Jeb's summoned rams (snapshot `summoned: true`) are 1.15x, tinted gold, appear and vanish in a poof
-// (call despawn() on goatGone), gallop under their rider ('mount') and run circles round him ('orbit').
+// (poof(effects) / despawn(scene, effects), for whoever handles ramSpawn / goatGone), gallop under their
+// rider ('mount') and run circles round him ('orbit').
 import * as THREE from 'three';
 import * as C from '../shared/constants.js';
 import { models, trampleCrops, updateCrops } from './world.js';
@@ -14,7 +15,6 @@ const PEN_CX = (C.PEN.x0 + C.PEN.x1) / 2, PEN_CZ = (C.PEN.z0 + C.PEN.z1) / 2;
 const starGeo = new THREE.OctahedronGeometry(0.07, 0);
 const starMat = new THREE.MeshBasicMaterial({ color: 0xffe066 });
 const GOLD = new THREE.Color(0xffe7b0), GOLD_GLOW = new THREE.Color(0x5a3c00);
-const ORBIT_W = Math.PI * 2 / C.GOAT.orbitLap;   // rad/s round the owner
 
 // A summoned ram's look: every material cloned, tinted gold and glowing faintly.
 function gild(root) {
@@ -57,7 +57,7 @@ export class GoatView {
     this.body.add(this.summoned ? gild(look) : look);
     if (this.summoned) this.group.scale.setScalar(C.GOAT.ramScale);
     this.speed = info.speed || C.GOAT.chargeSpeed;
-    this.poofPending = this.summoned;        // the spawn poof plays on the first update (effects aren't here yet)
+    this.orb = info.orb || [C.GOAT.orbitRadius, C.GOAT.orbitLap];   // orbit radius and lap time
     this.moved = 0;                          // ground speed seen between snapshots (the mount's gallop)
     this.alert = makeAlert(); this.alert.position.y = 2.0; this.alert.visible = false;
     this.group.add(this.alert);
@@ -79,6 +79,7 @@ export class GoatView {
   apply(s) {
     if (this.summoned) this.moved = Math.hypot(s.p[0] - this.target.x, s.p[1] - this.target.z);
     this.speed = s.speed || C.GOAT.chargeSpeed;
+    if (s.orb) this.orb = s.orb;
     this.target.set(s.p[0], s.y || 0, s.p[1]);
     if (s.s === 'flying' && s.v) this.vel.set(s.v[0], s.v[1], s.v[2]);
     this.targetYaw = s.yaw;
@@ -93,7 +94,6 @@ export class GoatView {
   update(dt, effects, sfx) {
     this.stateT += dt; this.phase += dt;
     const charging = this.state === 'charge', orbit = this.state === 'orbit', mount = this.state === 'mount';
-    if (this.poofPending) { this.poofPending = false; this.poof(effects); }
     // dead-reckon a charge between snapshots so the goat doesn't lag behind the server
     if (charging) {
       this.target.x += Math.sin(this.targetYaw) * this.speed * dt;
@@ -101,9 +101,9 @@ export class GoatView {
     }
     // and an orbit: along the tangent, turning at the orbit's rate, so it runs a circle, not a polygon
     if (orbit) {
-      const v = ORBIT_W * C.GOAT.orbitRadius;
+      const w = Math.PI * 2 / this.orb[1], v = w * this.orb[0];
       this.target.x += Math.sin(this.targetYaw) * v * dt; this.target.z += Math.cos(this.targetYaw) * v * dt;
-      this.targetYaw += ORBIT_W * dt;
+      this.targetYaw += w * dt;
     }
     // a mount gallops while its rider moves (snapshot steps of more than a few cm)
     const galloping = charging || (mount && this.moved > 0.08);
