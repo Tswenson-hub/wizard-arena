@@ -1,5 +1,65 @@
 # Environment hand-off: the farmstead
 
+## Round 7: Jeb the Shepherd's rams (goat side of the contract in docs/agents/round7-jeb.md)
+**`server/goats.js`:**
+- **`summonRam(opts, ctx)`**: a summoned ram lives in the same `goats` array, with ids from 1000.
+  - It joins `ctx.goats` at once if the ctx has it; otherwise it waits in a `pending` list and joins at the next `updateGoats`.
+  - opts: `{ x, z, yaw, ownerId, mode, targetId?, speed?, maxTime?, radius?, lap? }`.
+  - **charge:** dead straight (it homes only with `targetId`), at `speed` for `maxTime`. A collider leaves it `dizzy`, a wizard gets rammed, and time running out means `recover`.
+  - **orbit:** circles the owner (`radius` / `lap`, defaulting to `GOAT.orbitRadius` 2.2 and `orbitLap` 1.5), starting from where it stands, until `maxTime` (`orbitTime` 3).
+  - **mount:** no AI. server.js moves it under the rider.
+  - A **stampede** is just a batch of charge rams, spawned by the spells side.
+- **Never penned:** summoned rams never return home, wander or graze. Spent rams are marked `gone` and swept at the start and end of every
+  `updateGoats`, with a `goatGone {id, p}` broadcast, so no snapshot carries one. A ram is spent when any of these happens:
+  - its dizzy or recover ends
+  - an orbit ram reaches its time
+  - an orbit or mount ram's owner is dead or gone
+  - `GOAT.ramLife` (9 s) passes
+  - `despawnRam(ram, ctx)` is called
+- **Friendly rule:** `hostile(g, p, ctx)` is used in `charge()`. A summoned ram passes its owner and anyone `ctx.isEnemy(owner, p)` says
+  isn't an enemy (fallback: the same `team`). A map goat sent by `callRam` passes its caller and his team in the same way (`g.calledBy`,
+  cleared when it calms down or goes home). Sparked goats are unchanged: they ram anyone, including their angerer.
+- **Credit:** a summoned ram has `angeredBy = owner`, so kills go to Jeb with cause `'ram'`. The goat rule is unchanged: a facing ward,
+  Veil or Black Death leaves it dizzy.
+- **`angerGoat` on a ram** works only on an orbiting ram hit by an enemy of its owner. It rears up for 0.3 s, then homing-charges the shooter.
+  Otherwise it returns false. `angerGoat` now returns a boolean.
+- **`callRam(targetId, creditId, from, range, ctx)`:** the nearest calm map goat (not winding up, charging, held or flying, and not summoned)
+  rears up at the target and broadcasts `goatAngry` with `caller`. It returns null when no goat qualifies.
+- `canLift` is false for summoned rams.
+- `goatPublic` adds `summoned, owner, team`, `speed` (when it isn't the charge speed) and `orb: [r, lap]` (while orbiting).
+- `map.js` `GOAT` gained `ramScale` 1.15, `orbitRadius` 2.2, `orbitLap` 1.5, `orbitTime` 3 and `ramLife` 9.
+
+**`public/js/goats.js`:**
+- Summoned rams are scaled 1.15× and given a faint gold tint (cloned materials, colour ×0xffe7b0, emissive 0x5a3c00 at 0.35).
+- Orbit is dead-reckoned as an arc (tangent velocity plus a yaw turning at the orbit rate, from `orb`), with a leaning trot and dust.
+- A mount gallops while its snapshots move, and stands still otherwise.
+- Herd charges get dust and hoofbeats, but no '!' marker (only a ram turning on a shooter shows it).
+- `poof(effects)` and `despawn(scene, effects)` exist, but the spells side already poofs on `ramSpawn` and `goatGone`, so a view doesn't poof on its own.
+
+**Verified:**
+- `/tmp/wa-environment/ramsummon_test.mjs`, fake ctx, **43 checks, all passing**. The list is in requests.md
+  ("environment → spells: Jeb's rams").
+- `goatthrow_test.mjs`, `ramtest.mjs` (ward, Veil, Black Death) and `homesim.mjs` (30 spots, all home, no ghosting) still pass.
+- Live through the spells agent's working-tree wiring (`/tmp/wa-environment/jebwatch.mjs`, 2 Jeb bots + 3 others, 120 s):
+  - 93 rams spawned, 89 `goatGone`, 4 live at the end
+  - 12 ram kills, 14 goats called
+  - orbit, mount, windup, charge, dizzy and recover all seen; the longest ram life was 4.7 s
+  - pen goats never grazing outside the pen
+- **Botmatch 4102, 90 s:** 7 kills, goats penned, none angry. The 120 s stuck-watch had 20 kills and no stalls.
+  - This was run on a HEAD snapshot plus my files (`/tmp/wa-environment/headtree`). The working-tree `server.js` currently crashes when a
+    charging goat meets a prop: a spells edit put `breakProp` behind a `//` on the `isEnemy` line of `goatCtx`. I reported it in requests.md.
+- **Visuals** (`ramviz.py`, which fakes ram snapshots on the client), screenshots looked at:
+  - `ram_scene_0..2.png`: 3 orbiting rams, a galloping mount, a 4-ram herd, and a plain goat for comparison
+  - `ram_compare.png`: gold, larger ram next to a white goat
+  - `ram_poof.png`: the despawn puff
+  - No page errors.
+
+**Known / for spells (in requests.md):**
+- add `goats` to `goatCtx`
+- skip `state === 'mount'` in main.js's goat push-out, or Jeb gets shoved off his mount
+- the `breakProp` bug above
+
+
 ## Round 6: the altar and the blast site (current layout; positions in older sections below are out of date)
 Ty asked for the map to read as one magical explosion around a stone altar, with the farm organised on its own and nothing strewn about.
 

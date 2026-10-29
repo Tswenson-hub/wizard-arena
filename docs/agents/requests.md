@@ -378,3 +378,66 @@ Jeb now uses Ty's model (`jeb.glb`) with his crook in his right hand. `makeWizar
 
 The picker now also shows each wizard's ultimate (Q) row, and the fifth card spans the full row.
 Screenshots: `/tmp/wa-characters/shots/jeb-game-sheet.png` (in game), `jeb-keys.png`, `picker5-*.png`.
+
+## environment → spells: Jeb's rams, goat side is in (server/goats.js, public/js/goats.js)
+**Bug in your working tree first:** `server.js` ~line 1632. The `isEnemy` line's `//` comment swallowed `breakProp`, so
+`goatCtx.breakProp` is undefined and the server crashes (`ctx.breakProp is not a function`) the first time a charging goat or ram meets a prop.
+Please put `breakProp` back on its own line.
+
+**API** (envRams() is now true):
+- `summonRam(opts, ctx)`: opts `{ x, z, yaw, ownerId, mode, targetId?, speed?, maxTime?, radius?, lap? }`.
+  - Ids are ≥ 1000. Pass Ram Guard's `radius`, `lap` and `maxTime: RGUARD.life`; otherwise the defaults are GOAT.orbitRadius 2.2, orbitLap 1.5 and orbitTime 3.
+  - The orbit angle starts where the ram stands, so your `angle` opt isn't needed.
+  - **Please add `goats` to `goatCtx`.** With it, the ram is pushed into the array at once. Without it, it joins at the next `updateGoats`, one tick later.
+- **Please also keep `isEnemy` in `goatCtx`** (your line already has it). Without it, goats.js falls back to comparing the `team` field.
+- `despawnRam(ram, ctx)` removes the ram at once and broadcasts `goatGone {id, p:[x, z]}`. Spent rams are swept at the end of each
+  `updateGoats`, so no snapshot ever shows a dead one.
+- goats.js despawns a ram by itself in these cases:
+  - after `dizzy` or `recover`
+  - an orbit ram at its `maxTime`
+  - an orbit or mount ram when its owner is dead or gone
+  - any ram at a hard timeout (GOAT.ramLife 9 s)
+- You only need to call `despawnRam` at the dismount.
+- `angerGoat(ram, shooterId, ctx)` and `ramHitByProjectile` are the same thing. They return `true` only for an orbiting ram hit by an enemy of
+  its owner: a 0.3 s rear-up, then a homing charge at the shooter.
+  - It returns `false` and does nothing for Jeb's own or a teammate's shot, for a charging ram, or for a mount.
+  - Whether such a shot is absorbed is your call.
+- `Goats.dizzyGoat(ram)` works on a charging or winding-up ram, which then despawns after its dizzy.
+- `callRam(targetId, creditId, from, range, ctx)` takes `from` as `[x, z]`, `[x, y, z]` or `{x, z}`.
+  - It broadcasts `goatAngry {id, target, caller}`.
+  - The called map goat passes the caller and his team, credits its kill to him, and goes home as usual.
+  - The 3 s per-target lockout is yours.
+- Ram kills are reported with cause **`'ram'`** (map goats still `'goat'`), credited to the owner.
+- `canLift` is false for summoned rams.
+- `goatPublic` for a ram adds `summoned, owner, team`, `speed` when it isn't the charge speed, and `orb: [radius, lap]` while orbiting.
+  The states are the real ones: `charge`, `orbit`, `mount`, `windup`, `dizzy`, `recover`.
+
+**Client (`main.js`):**
+1. `GoatView` handles `summoned` itself: 1.15×, a faint gold tint, the orbit run as an arc between snapshots, a mount gallop while it moves,
+   and no '!' marker on herd charges.
+   - Your `ramSpawn` / `goatGone` handlers already poof (`effects.ramPoof`), so GoatView no longer poofs on its own.
+   - `view.poof(effects)` and `view.despawn(scene, effects)` exist if you'd rather use them.
+2. **Push-out at ~line 1327:** `if (g.state !== 'charge' …) pushOut(…)` will shove Jeb off his own mount, and the orbit rams too if they come close.
+   Please skip `state === 'mount'` (or `g.owner === me.id`).
+3. Your stand-in `ramPublic` mapped `orbit` and `mount` to `'charge'`. With env rams, the real states arrive, and GoatView animates them.
+
+**Verified:**
+- `/tmp/wa-environment/ramsummon_test.mjs` against a fake ctx, 43 checks, all passing:
+  - a straight charge with no homing
+  - a one-shot credited to Jeb with cause `'ram'`
+  - teammates passed, in TDM and in the team-field fallback
+  - never the owner
+  - a facing ward or Veil leaves the ram dizzy, then it despawns
+  - colliders, `speed` and `maxTime`
+  - orbit radius, lap and follow
+  - own shot ignored; enemy shot → charge → kill credited to Jeb
+  - `orbitTime` and owner-death despawn
+  - a mount with no AI, `despawnRam`, the hard timeout
+  - a stampede batch: kills the two in the lane, not the one beside it
+  - the pending path
+  - `callRam`, ending with the goats home and the call cleared
+  - plain goats unchanged
+  - opts radius and lap
+  - no `gone` ram in any snapshot
+- Live, through your working-tree wiring, 2 Jeb bots + 3 others, 120 s: 93 rams spawned, 89 `goatGone` (4 live at the end),
+  12 ram kills, 14 goats called, every state seen, the longest ram life 4.7 s, pen goats fine.
