@@ -318,6 +318,7 @@ export const SPAWN_POINTS = [...TEAM_SPAWNS.ember, ...TEAM_SPAWNS.frost];
 //                    underneath it. Without it a piece is solid from the ground up.
 //   moveOnly: true   blocks movement only: shots and line of sight pass through (ladders, railings)
 //   ladder: true     a steep ramp standing in front of a ladder (for climbing animations; otherwise a ramp)
+//   noStand: true    a thin wall (railing, parapet): never stood on, a wall to anyone whose feet are below its top
 // A piece's sides are walls for anyone whose feet are more than STEP_UP below its top there (and whose body
 // reaches its underside); shots and line of sight are blocked inside its solid part. Surfaces are not in
 // COLLIDERS (those block at any height); every system asks the helpers below. Goats stay on the ground.
@@ -361,7 +362,7 @@ export function surfaceHeight(x, z, footY = 0) {
   let h = 0;
   for (const s of SURFACES) {
     const [lx, lz] = sLocal(s, x, z);
-    if (!sInside(s, lx, lz)) continue;
+    if (s.noStand || !sInside(s, lx, lz)) continue;
     const t = sTop(s, lz);
     if (t <= footY + STEP_UP && t > h) h = t;
   }
@@ -385,7 +386,7 @@ export function surfacePushOut(x, z, footY, r, height = BODY_HEIGHT) {
         nx = d > 1e-6 ? lx * k : R + r; nz = d > 1e-6 ? lz * k : 0;
       } else {
         const cx = Math.max(-s.w / 2, Math.min(s.w / 2, lx)), cz = Math.max(-s.d / 2, Math.min(s.d / 2, lz));
-        if (sTop(s, cz) <= footY + STEP_UP) continue;            // low enough to step onto here
+        if (sTop(s, cz) <= footY + (s.noStand ? 0 : STEP_UP)) continue;   // low enough to step onto (a thin wall: to pass over)
         if (s.thick && footY + height <= sBottom(s, cz)) continue; // walking under a deck
         if (cx === lx && cz === lz) {
           // centre inside the footprint: out through the nearest side
@@ -470,7 +471,7 @@ function piece(id, model, at, parts) {
   const kx = P.h * P.sx, kz = P.h * P.sz;
   const toWorld = (lx, lz) => place(P, [lx * kx, lz * kz]);
   parts.forEach((pt, i) => {
-    const name = `${id}-${pt.name || i}`, extra = { name, piece: id, style: pt.style, ...(pt.opts || {}) };
+    const name = `${id}-${pt.name || i}`, extra = { name, piece: id, style: pt.style, ...(pt.style === 'rail' || pt.wall ? { noStand: true } : {}), ...(pt.opts || {}) };
     if (pt.box) {
       const [x0, x1, z0, z1] = pt.box, [cx, cz] = toWorld((x0 + x1) / 2, (z0 + z1) / 2);
       SURFACES.push({ kind: 'box', x: cx, z: cz, w: (x1 - x0) * kx, d: (z1 - z0) * kz, yaw: P.yaw, top: P.y + pt.top * P.h, ...extra });
@@ -495,8 +496,8 @@ function piece(id, model, at, parts) {
   piece('plateau-low-steps', 'ruin_steps', { x: 23.8, z: -22.5, yaw: -Math.PI / 2, h: 2.42 }, [
     { name: 'treads', ramp: [-0.18, 0.21], lz: [0.56, -0.3], y: [0.03, 0.62], style: 'stone' },
     { name: 'landing', box: [-0.18, 0.21, -0.56, -0.3], top: 0.62, style: 'stone' },
-    { name: 'wall-l', ramp: [-0.38, -0.18], lz: [0.5, -0.1], y: [0.5, 0.95], style: 'stone' },
-    { name: 'wall-r', ramp: [0.21, 0.4], lz: [0.5, -0.1], y: [0.36, 0.82], style: 'stone' },
+    { name: 'wall-l', ramp: [-0.38, -0.18], lz: [0.5, -0.1], y: [0.5, 0.95], style: 'stone', wall: true },
+    { name: 'wall-r', ramp: [0.21, 0.4], lz: [0.5, -0.1], y: [0.36, 0.82], style: 'stone', wall: true },
   ]);
   // The high one (2.5 m) in the north-east meadow past the pen, up free-standing wooden stairs (wooden_stairs:
   // treads rising toward -z to a 0.69 landing, rails along both sides). The barn and the pen's hay hide the

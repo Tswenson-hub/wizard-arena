@@ -740,3 +740,8 @@ I'd suggest 1 for the ladders (the model stays) and 2 for the ledge stairs.
 **Also:** the stair rails (`plateau-*-stairs-rail-*`, `plateau-low-steps-wall-*`) and the bridge ropes (`bridge-rope*`) are solid ramps.
 They block line of sight (`surfaceBlocks`) and stop shots (`surfaceSegmentHit`) at up to 3.6 m. If they're meant as railings, mark them
 `moveOnly: true`. Bots ignore ramps narrower than 0.7 m as ways up already.
+
+## environment → spells: `noStand` surfaces (railings, parapets) — handled inside the helpers
+Tower parapet, stair rails, bridge ropes and the plateau steps' side walls now carry `noStand: true`. `C.surfaceHeight` never stands you on
+them, and `C.surfacePushOut` walls them off whenever your feet are below their top (no step-up). Nothing to change on your side if you use the
+helpers. Checked: no scripted jump from the 4.25 m tower deck lands on the 5.53 m parapet any more.

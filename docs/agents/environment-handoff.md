@@ -18,6 +18,14 @@
   Those were measured from top-down heightmaps and horizontal slices of each optimised glb (`/tmp/wa-environment/heightmap.mjs`, `slices.mjs`),
   then checked with a lineup render. `PIECE_MODELS` drives `world.js`. Until a model loads, a plain stand-in is drawn per surface.
 
+**Thin walls aren't standable (fix):** surfaces may carry `noStand: true`. `surfaceHeight` never returns their top, and `surfacePushOut`
+walls them off whenever the feet are below their top, with no step-up. Every `rail`-style part gets it automatically: the tower parapet, the
+stair rails and the bridge ropes. So do the stone side walls of the low plateau's steps.
+- Before the fix, a jump from the tower deck (peak +1.1 m) could perch on the 25 cm parapet at 5.53 m.
+- Now none of 48 scripted jumps from the deck lands above it (`/tmp/wa-environment/railjump.mjs`). Only jumps toward the open ladder side
+  leave the deck.
+- No standable surface narrower than 0.6 m remains. The loft's hay bale (1.0 × 1.2 m, 1 m above the deck) is standable on purpose.
+
 **Pieces** (models shrunk with `optimize-models.sh one … 0.3 <px> 0.02 <tris>`: 2.1k–6k tris, 1024 px, the vases 512 px):
 
 | piece | model(s) | where | top | way up / counter |
