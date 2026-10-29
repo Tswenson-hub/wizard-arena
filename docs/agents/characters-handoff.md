@@ -1,4 +1,4 @@
-# Characters hand-off (round 4)
+# Characters hand-off (rounds 4–8)
 
 ## What I built
 **Wizard picker** (`public/js/select.js`, `public/css/select.css`)
@@ -222,7 +222,57 @@
   - **Shots:** `jeb-clips.png` (his raw clips), `jeb-keys.png` (every key with the crook), `jeb-game-sheet.png` (in game:
     run, sling or summon, block, ride, Stampede call, death), and `picker5-*.png` / `picker5-jeb-*.png` (the picker at
     1280×720 and 1920×1080).
-- **All five wizards now have Ty's models.** The recoloured stand-in (`STAND_IN`, `bodyMaterial`) is only used if a model fails to load.
+- **Embibe the Alchemist (round 8, a fresh characters agent).** `Meshy_AI_embibe_alchemist_3d_All_Animations.glb` became
+  `embibe.glb` (11.1 MB went down to **1.89 MB**).
+  - **Rig:** **70 joints**: the 66-bone Mixamo-style rig plus four hood bones (`Bone_029`–`Bone_032`, under `Head`).
+    Every bone in `MIXAMO_TO_BASE` is there, so the retarget needed no new map. She is 1.70 m and faces +z.
+  - **Retarget check:** I compared every leg bone's world rotation against Gale's in the retargeted idle; they differ by ≤ 27°.
+    The base idle's crossed fighting stance looked crumpled on her heavy boots, but it isn't tearing: Gale has the same pose
+    (`legs-close.png`). So she gets her own relaxed idle instead.
+
+    | key | clip | notes |
+    |---|---|---|
+    | idle | Stand_and_Drink 0.2–1.9 s | a relaxed stand before the arm lifts |
+    | run, walk | Running, Walking | natural speeds 5.21 / 1.61 m/s |
+    | cast_fast | Female_Crouch_Pick_Throw_Forward 1.85–3.6 s | overhand throw; the release is at 0.55 s (the spark window) |
+    | cast_heavy | Crouch_Pull_and_Throw 1.0–4.6 s, warped | Toxic Flask: a crouched scoop, then an overhead lob peaking at 2.1 s (meteor convention) |
+    | **flask_step** (new) | Crouch_Charge_and_Throw 4.3–5.7 s, warped to 0.85 s | a crouched charge, then a sidearm lob; the release is at 0.6 s (the wind-up's end) |
+    | **arrival** (new) | Female_Crouch_Pick_Throw_Forward 3.45–4.6 s → 0.8 s | lands crouched and rises |
+    | ult | Stand_and_Drink 1.9–5.9 s, warped to 1.6 s | the flask is at her lips by 0.55 s, head back at 1.15 s |
+    | death | dying_backwards (2.2 s) | flat by about 1.4 s |
+    | combo1/2/3, the shared clips; block, stun, dash retargeted | | |
+
+  - **How I chose the picks:** contact sheets (`embibe-clips.png`, `-combo`, `-drink`, `-charge`, `-pull`, `-misc`), plus a numeric
+    trace of hand height, reach, speed and chest facing (`/tmp/wa-characters/embibetrace.py`). The throws twist her chest by up to ±100°,
+    which is natural for sidearm and overhand throws.
+  - **New pick forms** (MODEL_CLIPS / SHARED_CLIPS):
+    - `{ clip, from, to, warp }` cuts a part of a clip, then retimes it (warp points are in source clip times).
+    - `yaw: deg` turns the whole clip through its Hips tracks, for moves performed from a bladed stance.
+  - **Potions** (`POTIONS` in looks.js): `embibe-potion-purple.glb` (8.0 MB → 205 KB) and `embibe-potion-green.glb` (6.5 MB → 175 KB).
+    - Settings: weld, simplify 0.5, 512 px webp, quantize.
+    - Each is fitted into **both fists**, hidden. `body.holdPotion('purple' | 'green' | null, 'right' | 'left')` shows one.
+    - The right hand is fitted at idle, upright.
+    - The **left hand is fitted at the drink's peak** (new `aim` option: the bottle's neck points from the fist to a spot near
+      the Head bone). Her drinking hand rises above her face, so the flask tips with the cork at her lips (`embibe-drink-head.png`).
+    - A green flask hangs on her right hip (`fitHip` now takes `height`/`side`/`front` for upright objects).
+  - **Look:** her texture is the darkest on the roster (mean luma 52; Gale, Rime and Jeb are 111–132), and in game light she was a black
+    silhouette. `BRIGHTEN.embibe = 1.45` multiplies her base colour (`eg-cmp-2.png`, next to Gale, Jeb and Vesper).
+    `FLAIR.embibe` adds 9 green and violet bubbles rising around her; `motes` now takes a per-point `tint`.
+  - **Picker:** the sixth card needed no code. Six cards make three rows of two, so the odd-card span rule no longer applies, and
+    keyboard rows still work. Shots: `picker6-*.png`, `picker6-embibe-1280x720.png` and `picker6-embibe-560x900.png`.
+- **Shared from Embibe's export** (`SHARED_CLIPS` is now a list of `{ from, to?, keys }` sources):
+  - `combo1`, `combo2`, `combo3` (Embibe and **Gale**) come from Triple_Combo_Attack.
+    - The cuts: 0.3–1.0, 1.0–1.85 and 1.85–3.3 s.
+    - Each is warped so it strikes at 0.15 s; combo1 and combo2 are 0.45 s long, combo3 is 0.8 s.
+    - All three are turned 45°, because the combo stance is about 55° off forward.
+    - combo2 is a spinning backhand that ends facing away; combo3 starts from there.
+    - The spells agent's main.js already plays `combo<shot+1>` for any body that has them, so **Gale Shear uses them now**.
+  - `death` for **Gale** is dying_backwards, retargeted. Gale no longer sinks.
+- **Bug fixed in `retargetClip`:** it sampled its source as a looping action, so the last sample (t = duration) wrapped to frame 0, and every
+  retargeted clip ended on its first pose. That would have stood Gale's clamped death back up. It now plays the source LoopOnce + clamp.
+  This affects how `hit_waist`, `tk_*` (on everyone but Cinder) and the retargeted `stun`/`dash`/`block` end (requested note posted).
+- `tools/prepare-wizard-model.sh` now recognises Mixamo-style rigs in its inspect report. It used to say "RightHand bone: NO".
+- **All six wizards have Ty's models.** The recoloured stand-in (`STAND_IN`, `bodyMaterial`) is only used if a model fails to load.
 
 ## Verification
 All runs used headless Chromium (SwiftShader) against port 4103. Screenshots are in `/tmp/wa-characters/shots/`.
@@ -268,7 +318,20 @@ All runs used headless Chromium (SwiftShader) against port 4103. Screenshots are
   - No `[looks]` warnings and no console errors.
 - **Fixed along the way:** flair points were sized by the whole canvas height, so in the picker's small viewports they were
   about 5× too big. They now scale by viewport height, with no change in game.
-- `public/models/wizards/` (`ls`): `gale.glb` 1.71 MB, `rime.glb` 1.43 MB, `rime-wand.glb` 261 KB, `vesper.glb` 1.23 MB, `vesper-wand.glb` 157 KB, `cinder.glb` 1.78 MB, `vesper-whip.glb` 163 KB, `vesper-whip-coil.glb` 219 KB, `jeb.glb` 1.58 MB, `jeb-crook.glb` 114 KB (about 8.7 MB in total). The base `wizard.glb` is unchanged at 1.4 MB.
+- **Embibe (round 8):** port 4103 (a stale server from the previous agent held it; I restarted it).
+  - `embibekeys.py` / `embibeclose.py`: every key over time, close up. `embibe-close-1..3.png` cover all 20 keys, with the potions
+    shown where they're used. **No skin tearing in any pose**; the boots and cloak hold in the throws, combos, death and the retargeted
+    walk_fight/back/stun/dash/block.
+  - `embibegame.py <wizard> <prefix> key@t1@t2[@potion:hand[@wizard]]`: dummies frozen in game.
+    - `eg-a-*` (run, Potion Toss, Toxic Flask, Flask Step)
+    - `eg-b-*` (arrival, Brew, combo1, death)
+    - `eg-c-*` (combo2, combo3, block, hit_waist)
+    - `eg-gale-*` (Gale's combos and death)
+    - `eg-cmp-*` (Embibe beside Gale, Jeb, Vesper)
+  - `allkeys.py`: every hero's keys and gait speeds after the shared-clip refactor. They're unchanged for the five others, and there were
+    no `[looks]` warnings and no console errors.
+  - `facing.py`: chest facing over each key; it's how I found the yaw offset and the retarget wrap bug.
+- `public/models/wizards/` (`ls`): `gale.glb` 1.71 MB, `rime.glb` 1.43 MB, `rime-wand.glb` 261 KB, `vesper.glb` 1.23 MB, `vesper-wand.glb` 157 KB, `cinder.glb` 1.78 MB, `vesper-whip.glb` 163 KB, `vesper-whip-coil.glb` 219 KB, `jeb.glb` 1.58 MB, `jeb-crook.glb` 114 KB, `embibe.glb` 1.89 MB, `embibe-potion-purple.glb` 205 KB, `embibe-potion-green.glb` 175 KB (about 11 MB in total). The base `wizard.glb` is unchanged at 1.4 MB.
 
 ## Known issues and notes
 - **Vesper vs Cinder:** both are red, but Vesper is darker, has smoke and a pool, and has a different nameplate tone.
@@ -279,6 +342,14 @@ All runs used headless Chromium (SwiftShader) against port 4103. Screenshots are
   (all requested in `requests.md`) to show in play.
 - **wizards.js:** the spells agent had an uncommitted `frostfall` kit edit in the file, so I staged only my `model` line
   (via `git update-index`). Their change is still in the working tree for them to commit.
+- **Round 8, waiting on the spells agent** (`requests.md`, "characters → spells: Embibe's clip keys"):
+  - Flask Step's wind-up should play `flask_step`; it plays `combo1` now.
+  - Toxic Flask should play `cast_heavy` from 1.85 s; it plays `cast_fast` now.
+  - `holdPotion` calls.
+  - Adding the new keys to wizard.js's LoopOnce list.
+  Until then the potions stay hidden in her hands (the belt flask always shows).
+- **Embibe's combos** come from a bladed stance; even after the 45° turn, combo2 spins her to face away for about 0.25 s. If that reads badly
+  for her two-shot primary, playing combo1 then combo3 is the fallback (combo3 ends facing forward).
 - **Retarget limits:** the retarget works for Mixamo-style rigs (`MIXAMO_TO_BASE`). A rig with other bone names needs its
   own map, or Meshy's seven clips exported with it.
 - **Picker canvases:** each mounted picker holds one WebGL context while it exists (2 for join + pause, plus the game's).
