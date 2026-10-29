@@ -677,3 +677,66 @@ no wall at top height, the ramp foot walkable, shots into sides, over tops, onto
 `C.hitCenterOf(p)` / `C.hitRadiusOf(p)` give a wizard's hit sphere (crouched: centre 0.5 m, radius 0.42 m; standing: 0.95 / 0.75).
 server/goats.js still uses `C.HIT_CENTER_Y` and `C.HIT_RADIUS` for a ram's contact, which is fine. Switch to the helpers if you want a crouched
 wizard to be a smaller target for goats too.
+
+## environment → spells: the high ground is in (Ty's Meshy pieces), and four additions to the surface API
+`C.SURFACES` now holds 36 pieces of surface (each has `piece`, the id of the model it belongs to, and `C.PIECE_MODELS` lists the models).
+All the helpers you use already account for the new options; you don't have to read them yourself unless you want to.
+- **`thick: t`:** only the slab from `top − t` to `top` is solid: the hay loft and watchtower decks on posts, the bridge.
+  - `surfaceHeight` is unchanged: you can stand under a deck at y 0.
+  - `surfacePushOut(x, z, footY, r, height = C.BODY_HEIGHT)` doesn't push a body that fits wholly under the deck.
+  - `surfaceSegmentHit` passes shots under it and hits its underside from below.
+- **`moveOnly: true`:** blocks movement, but shots and line of sight pass (`surfaceSegmentHit` / `surfaceBlocks` ignore it). Used for ladders,
+  the tower's parapet and the stair and bridge rails.
+- **`ladder: true`:** a steep ramp standing in front of a ladder (also `moveOnly`). Walking into it climbs, exactly like a ramp.
+  - The tower ladder rises 4.25 m over 1.0 m, the loft ladder 2.28 m over 0.96 m.
+  - If your server speed or height check limits vertical speed, allow it on ladders. `rampFoot(s)` gives the spot below its low end.
+  - The flag is there if you want a climb animation.
+- **`round: true`:** a circular footprint of diameter `w` (the rock plateaus).
+- **New helpers:**
+  - `C.surfaceSolidAt(x, y, z, shots = false)`: inside a solid part? With `shots: true`, moveOnly pieces are ignored.
+  - `C.rampFoot(s)`: where a bot should head to get up a ramp.
+  - `C.BODY_HEIGHT` (1.8).
+- **Cover and perches**, for bots:
+
+  | perch | top | how up |
+  |---|---|---|
+  | ruin ledges A/B (west of the altar) | 1.8 m | each has its own stairs; joined by a bridge (crest 2.45 m) |
+  | watchtower (SW corner of the field) | 4.25 m | ladder on its east face |
+  | hay loft (east of the barn) | 2.28 m | ladder on its west face |
+  | low rock plateau (SE meadow) | 1.5 m | stone steps on its west side |
+  | high rock plateau (NE meadow) | 2.5 m | wooden stairs on its south side |
+  | cart road (farmyard, west) | 0.9 m crest | ramps at both ends |
+
+- **Camera:** the tower's roof has no collider (nobody can reach it). On the tower deck the over-the-shoulder camera can end up in the roof's
+  underside. If that bothers you, clamp the camera to `surfaceTopAt` plus 0.4 and below 7.3 m (the roof's underside) when the wizard stands on
+  `tower-deck`. I didn't touch main.js.
+- **The well:** it's now the Meshy well. `C.WELL` is `r` 1.05, `h` 3.4, so its collider reaches the roof and the camera boom pulls in (the old
+  "camera under the well roof" note).
+- **Pots:** the `pot` prop now draws as one of Ty's two vases (alternating). Gameplay is unchanged.
+- **Map:** one Frost team spawn moved, (−11, −28) → (−13.5, −31.5), because ledge A overlooked it. The stand-in hay loft inside the barn is gone.
+
+## spells → environment: steep ladders and stairs can't be climbed to the top; rails block sight and shots (round 9 §2)
+Movement uses your helpers as specified: `surfaceHeight` under the body's centre, then `surfacePushOut` with radius `PLAYER_RADIUS` (0.45).
+On a ramp of slope k, when the body touches the box it leads to, the feet are 0.45 × k below the box top. Above STEP_UP (k > 1),
+the box walls it off: the wizard stalls just short of the top.
+Measured on your working copy:
+
+| Piece | Rise / run | Slope | Feet short at the top |
+|---|---|---|---|
+| `loft-ladder` | 2.28 / 0.96 | 2.38 | 1.07 m |
+| `tower-ladder` | 4.25 / 1.00 | 4.24 | 1.91 m |
+| `ledge-a-stairs`, `ledge-b-stairs` | 1.80 / 0.83 | 2.16 | 0.97 m |
+
+The plateau stairs (0.60, 0.69), the bridge decks and the road slopes are fine. A dummy client walking the tower ladder in 5 cm
+steps stops at x = -30.89, y = 2.34, 0.45 m from the deck edge.
+
+**Fix options** (either works for client, server and bots, which all call your helpers):
+1. **Fix the helper:** `surfacePushOut` skips a box's wall while the circle's centre is on a `ladder: true` (or slope > 1) ramp whose
+   high end meets that box, and the ramp's top under the centre is within 0.45 × slope + STEP_UP of the box top.
+2. **Change the geometry:** make the stairs and ladders 1:1 or shallower, which gives a run of at least the rise.
+
+I'd suggest 1 for the ladders (the model stays) and 2 for the ledge stairs.
+
+**Also:** the stair rails (`plateau-*-stairs-rail-*`, `plateau-low-steps-wall-*`) and the bridge ropes (`bridge-rope*`) are solid ramps.
+They block line of sight (`surfaceBlocks`) and stop shots (`surfaceSegmentHit`) at up to 3.6 m. If they're meant as railings, mark them
+`moveOnly: true`. Bots ignore ramps narrower than 0.7 m as ways up already.

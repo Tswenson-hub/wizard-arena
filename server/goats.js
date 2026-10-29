@@ -212,7 +212,7 @@ function fly(g, dt, ctx) {
   // ground, anything solid it's low enough to hit (Bulwark walls included), the rim, or a very long flight
   let stop = g.y <= 0 || g.flyT > 5 || Math.hypot(g.x, g.z) > C.ARENA_RADIUS - 0.5;
   for (const o of C.COLLIDERS) if (!stop && g.y < o.h && Math.hypot(o.x - g.x, o.z - g.z) < o.r + G.radius) stop = true;
-  if (!stop && C.SURFACES?.length && g.y < C.surfaceTopAt(g.x, g.z)) stop = true;   // a platform's side or top (it then steps off to the ground)
+  if (!stop && C.SURFACES?.length && C.surfaceSolidAt(g.x, g.y + 0.3, g.z, true)) stop = true;   // a platform's solid part (it then steps off to the ground)
   if (stop) { ctx.broadcast({ t: 'goatBonk', id: g.id, p: [g.x, 0.8, g.z] }); land(g, ctx); }
 }
 
@@ -537,5 +537,5 @@ function trotHome(g, dt, t, ctx) {
     }
     g.checkT = t; g.checkPos = [g.x, g.z];
   }
-  if (t - g.routeT > 30) g.ghost = true;
+  if (t - g.routeT > 40) g.ghost = true;   // the far west edge to the gate is a 30 s trot
 }

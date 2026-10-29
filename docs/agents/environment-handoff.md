@@ -1,5 +1,78 @@
 # Environment hand-off: the farmstead
 
+## Round 9: platforms and ramps (walkable surfaces + Ty's Meshy high-ground pieces)
+**Surface model** (`map.js`, re-exported by constants.js; spells wires movement, projectiles and LOS to it):
+- `SURFACES`: boxes and ramps with options `round`, `thick` (a deck you can walk under), `moveOnly` (ladders and rails: no effect on shots)
+  and `ladder`.
+- Helpers:
+  - `surfaceHeight(x, z, footY)`: STEP_UP 0.45
+  - `surfaceTopAt`
+  - `surfaceSolidAt`
+  - `surfacePushOut(x, z, footY, r, height)`
+  - `surfaceSegmentHit` / `surfaceBlocks`
+  - `surfaceCorners`
+  - `rampFoot`
+- 29 checks in `/tmp/wa-environment/surface_test.mjs` cover steps, slopes, walls from the side and below, decks, round footprints, ladders,
+  and shots into sides, tops, slopes and undersides.
+- `piece(id, model, at, parts)` places a model at `{x, z, yaw, h, sx, sz, y, modelYaw}` and fits its surfaces in the model's own units.
+  Those were measured from top-down heightmaps and horizontal slices of each optimised glb (`/tmp/wa-environment/heightmap.mjs`, `slices.mjs`),
+  then checked with a lineup render. `PIECE_MODELS` drives `world.js`. Until a model loads, a plain stand-in is drawn per surface.
+
+**Pieces** (models shrunk with `optimize-models.sh one … 0.3 <px> 0.02 <tris>`: 2.1k–6k tris, 1024 px, the vases 512 px):
+
+| piece | model(s) | where | top | way up / counter |
+|---|---|---|---|---|
+| ruin ledges A + B | ruin_platform ×2 (h 2.0, 0.8 stretch) + plank_bridge (h 2.6) | west rim of the blast site, r 11.6 at 237° / 273° | 1.8 m, bridge crest 2.45 | each its own stairs (facing away from the altar) plus the bridge; ring pillars and stones as cover |
+| watchtower | wooden_watchtower, h 8.5 | SW corner of the field (−32.8, −14.8) | deck 4.25 m (fits two) | ladder on the east face; parapet blocks walking only, not spells; no cover |
+| hay loft | hay_loft, h 3.3 | east of the barn (20.6, 21.5) | deck 2.28 m, hay bale on it | ladder facing the barn; under the deck is open |
+| low plateau | rock_plateau (h 1.6, ×1.5) + ruin_steps | SE meadow (26.5, −22.5) | 1.5 m | stone steps on the west; hay stacks and the oak screen Frost |
+| high plateau | rock_plateau (h 2.66, ×1.25) + wooden_stairs | NE meadow past the pen (29, 18.5) | 2.5 m | wooden stairs on the south |
+| cart road | embankment ×2 nose to nose (h 1.0, ×1.3) | farmyard west (−10.5, 0.7..8.3) | 0.9 m crest | both ends |
+
+- Also swapped in: the **Meshy well** (`C.WELL` r 1.05, h 3.4, with its collider up to the roof for the camera) and the **two vases** for
+  the `pot` prop (alternating).
+- No piece overlooks a spawn from closer than 15 m. That moved one Frost team spawn, (−11, −28) → (−13.5, −31.5). The barn-nook loft
+  stand-in is gone: the Meshy loft is 3 m wide and the nook is 1.8 m.
+- **Fit notes:**
+  - The ruin platform's built-in stairs are short and steep. Their surface is one ramp from the foot to the top edge, so feet float up to
+    about 0.2 m above a tread mid-flight.
+  - The embankment top is lumpy by ±8 cm.
+  - The bridge arch is 4 ramps (within 3 cm of the deck).
+  - A rope across one end of the bridge is visual only.
+  - The tower roof has no collider. The camera on the deck can meet its underside; that's noted for spells in requests.md.
+
+**Goats:**
+- Footprints are obstacles: push-out, charges go dizzy against a side, thrown goats land on solid parts. Goats walk under decks.
+- Return routes go round each footprint exactly, plan from outside one, and re-plan after two failed side-steps.
+- The crop field is now a detour box too. Returning goats used to walk into it; that predated this round, but no earlier test spot crossed it.
+- The ghost fallback is now 40 s, because the far west edge is a 30 s trot.
+- `homesim`: 57 spots, all home with no ghosting (3 runs, longest 32 s). The goat throw and summoned-ram tests pass.
+
+**Verified (4102):**
+- Botmatch 90 s: no server errors, goats calm.
+- Stuck-watch, 5 bots × 120 s: 13 kills, four 6–10 s stalls, none at a new piece (by the altar's NW ring pillar and in the crop field).
+  Bots don't use surfaces until spells wires them.
+- **`modematch siege 300 hard` ×3** (0 friendly fire, no stalls near spawns):
+
+  | run | Ember | Frost | winner |
+  |---|---|---|---|
+  | 1 | 57 | 100 | Frost |
+  | 2 | 47.6 | 100 | Frost |
+  | 3 | 64.8 | 94.3 | none |
+
+  Per-zone holds were mixed, with Barn Passage going to each team once. Median respawn-to-zone time was Ember 9.8–12.2 s and Frost 7.0–9.4 s.
+  That's the same Frost lean as before this round (Ember bots arrive about 2 s later), not caused by the pieces.
+- **Perf** (5 player-eye views, stand-ins → Meshy): draw calls −85 to −137, triangles +0.06–0.10 M.
+- **Screenshots**, all looked at:
+  - a wizard standing on each piece, from the side: `on_plateau_low`, `on_plateau_low_steps`, `on_plateau_high`, `on_stairs_high`,
+    `on_loft`, `on_tower`, `on_ledge`, `on_bridge`, `on_road`, `on_road_slope`
+  - from below: `hg_below_*`
+  - `hg_well`
+  - the lineup `lu9_*` and `br_*`
+  - The feet sit on every visible top; the client kept each set height.
+- Found and fixed with these shots: a 3 cm gap between the two embankment crests that dropped you to the ground.
+
+
 ## Painted sky and grass (Ty's assets)
 **Sky.** `public/textures/sky.jpg` (2048×1024, 215 KB) is baked by `tools/make-sky.py` from `~/Desktop/Meshy_AI_fantasy_blue_skybox.png`
 (a 1536×864 panorama; the original is untouched).

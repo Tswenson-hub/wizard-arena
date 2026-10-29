@@ -374,86 +374,32 @@ const HG = {
   earth: flat(0x7a5a38), roadTop: decal(0xa88d5e, 3),
 };
 function buildHighGround(scene) {
+  // Plain stand-ins per surface, grouped by piece ('piece:<id>'), shown only until the piece's Meshy model loads.
   for (const sf of C.SURFACES) {
     const g = new THREE.Group(), ramp = sf.kind === 'ramp';
     const top = ramp ? Math.max(sf.y0, sf.y1) : sf.top;
-    const solid = (mat, jitter = 0) => {
-      const geo = ramp ? wedgeGeometry(sf.w, sf.d, sf.y0, sf.y1) : new THREE.BoxGeometry(sf.w, sf.top, sf.d).translate(0, sf.top / 2, 0);
-      if (!jitter) return new THREE.Mesh(geo, mat);
-      // weld the faces first so the roughening keeps the block closed; keep the footprint's outline exact at the base
-      geo.deleteAttribute('normal'); geo.deleteAttribute('uv');
-      const welded = mergeVertices(geo), pos = welded.attributes.position;
-      for (let i = 0; i < pos.count; i++) {
-        if (pos.getY(i) < 0.05) continue;
-        pos.setXYZ(i, pos.getX(i) + (Math.random() - 0.5) * jitter, Math.max(0.05, pos.getY(i) - Math.random() * jitter * 0.6), pos.getZ(i) + (Math.random() - 0.5) * jitter);
-      }
-      welded.computeVertexNormals();
-      return new THREE.Mesh(welded, mat);
-    };
-    switch (sf.style) {
-      case 'hay': {     // hay stacked up to a plank floor
-        g.add(solid(HG.hay));
-        g.add(box(sf.w + 0.1, 0.12, sf.d + 0.1, HG.plank, 0, top - 0.06, 0));
-        for (const k of [-1, 1]) g.add(box(0.14, top, 0.14, HG.post, k * (sf.w / 2 - 0.08), top / 2, sf.d / 2 - 0.08));
-        break;
-      }
-      case 'wood': {
-        if (ramp) {      // stairs (or the loft's ladder): treads on two stringers
-          const n = Math.max(4, Math.round(top / 0.28)), len = Math.hypot(sf.d, top);
-          for (const k of [-1, 1]) {
-            const str = box(0.1, 0.22, len, HG.post, k * (sf.w / 2 - 0.05), top / 2, 0);
-            str.rotation.x = -Math.atan2(top, sf.d); g.add(str);
-          }
-          for (let i = 0; i < n; i++) {
-            const u = (i + 0.5) / n;
-            g.add(box(sf.w, 0.07, sf.d / n + 0.05, HG.plank, 0, sf.y0 + (sf.y1 - sf.y0) * u - 0.035, (u - 0.5) * sf.d));
-          }
-          // solid enough to read as blocking below, without hiding the treads
-          const under = solid(HG.plankDark); under.scale.set(0.6, 0.98, 1); g.add(under);
-        } else {         // the watchtower: four posts, a deck, a rail on three sides
-          for (const [i, k] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) g.add(box(0.22, top + 1.1, 0.22, HG.post, i * (sf.w / 2 - 0.11), (top + 1.1) / 2, k * (sf.d / 2 - 0.11)));
-          for (const [i, k] of [[-1, -1], [1, 1]]) { const br = box(0.1, top * 1.15, 0.1, HG.post, 0, top / 2, k * (sf.d / 2 - 0.11)); br.rotation.z = i * 0.62; g.add(br); }
-          g.add(box(sf.w, 0.16, sf.d, HG.plank, 0, top - 0.08, 0));
-          g.add(box(sf.w * 0.9, 0.06, sf.d * 0.9, HG.plankDark, 0, top * 0.45, 0));
-          for (const [w, d, x, z] of [[sf.w, 0.08, 0, -sf.d / 2], [sf.w, 0.08, 0, sf.d / 2], [0.08, sf.d, -sf.w / 2, 0]]) g.add(box(w, 0.08, d, HG.plank, x, top + 0.95, z));
-          // a pale shell so the box reads as solid ground for shots and movement below the deck
-          const shell = solid(new THREE.MeshStandardMaterial({ color: 0x6e4a2a, transparent: true, opacity: 0.0, depthWrite: false }));
-          g.add(shell);
-        }
-        break;
-      }
-      case 'stone':
-        g.add(solid(HG.ruin, 0.08));
-        // broken edge stones on top
-        for (let i = 0; i < 5; i++) {
-          const r = new THREE.Mesh(jitterGeometry(new THREE.DodecahedronGeometry(0.22 + (i % 3) * 0.08, 0), 0.06), HG.ruinDark);
-          r.position.set((i / 4 - 0.5) * sf.w * 0.8, top + 0.08, (i % 2 ? 1 : -1) * sf.d * 0.38); g.add(r);
-        }
-        break;
-      case 'pillar': {   // a toppled rune pillar lying from ledge to ledge, rubble wedged under it
-        const rub = solid(HG.ruinDark, 0.1); rub.scale.set(0.85, 0.94, 1); g.add(rub);
-        const len = Math.hypot(sf.d, sf.y1 - sf.y0), col = cyl(0.5, 0.5, len, 7, ruinStone, 0, (sf.y0 + sf.y1) / 2 - 0.1, 0);
-        col.rotation.x = Math.PI / 2 - Math.atan2(sf.y1 - sf.y0, sf.d); g.add(col);
-        for (const u of [-0.3, 0.15]) {
-          const band = cyl(0.52, 0.52, 0.14, 7, runeMat, 0, (sf.y0 + sf.y1) / 2 - 0.1 + u * (sf.y1 - sf.y0), u * sf.d);
-          band.rotation.x = col.rotation.x; g.add(band);
-        }
-        break;
-      }
-      case 'rock':
-        g.add(solid(ramp ? HG.rockDark : HG.rock, ramp ? 0.12 : 0.18));
-        break;
-      case 'earth':
-        g.add(solid(HG.earth, 0.05));
-        { // the cart track on top
-          const geo = ramp ? wedgeGeometry(sf.w * 0.6, sf.d, sf.y0 + 0.03, sf.y1 + 0.03) : new THREE.BoxGeometry(sf.w * 0.6, 0.03, sf.d).translate(0, sf.top + 0.015, 0);
-          g.add(new THREE.Mesh(geo, HG.roadTop));
-        }
-        break;
-      default:
-        g.add(solid(HG.rock));
+    const mat = { wood: HG.plank, hay: HG.hay, stone: HG.ruin, rock: HG.rock, earth: HG.earth, rail: HG.post, ladder: HG.post }[sf.style] || HG.rock;
+    if (sf.style === 'rail') {                 // a thin rail at the top edge
+      const len = ramp ? Math.hypot(sf.d, sf.y1 - sf.y0) : Math.max(sf.w, sf.d);
+      const r = box(ramp ? 0.08 : sf.w, 0.08, ramp ? len : sf.d, mat, 0, ramp ? (sf.y0 + sf.y1) / 2 : sf.top - 0.05, 0);
+      if (ramp) r.rotation.x = -Math.atan2(sf.y1 - sf.y0, sf.d);
+      g.add(r);
+    } else if (sf.style === 'ladder') {        // two rails and rungs along the slope
+      const len = Math.hypot(sf.d, sf.y1 - sf.y0), ang = -Math.atan2(sf.y1 - sf.y0, sf.d);
+      for (const k of [-1, 1]) { const r = box(0.08, 0.08, len, mat, k * (sf.w / 2 - 0.04), (sf.y0 + sf.y1) / 2, 0); r.rotation.x = ang; g.add(r); }
+      const n = Math.max(3, Math.round((sf.y1 - sf.y0) / 0.35));
+      for (let i = 1; i < n; i++) { const u = i / n; g.add(box(sf.w, 0.05, 0.05, mat, 0, sf.y0 + (sf.y1 - sf.y0) * u, (u - 0.5) * sf.d)); }
+    } else if (sf.round) {
+      g.add(new THREE.Mesh(new THREE.CylinderGeometry(sf.w / 2, sf.w / 2 + 0.15, top, 16).translate(0, top / 2, 0), mat));
+    } else if (sf.thick) {                     // a deck slab (or a bale on one), on posts if it starts high
+      const geo = ramp ? wedgeGeometry(sf.w, sf.d, sf.y0, sf.y1) : new THREE.BoxGeometry(sf.w, sf.thick, sf.d).translate(0, top - sf.thick / 2, 0);
+      const m = new THREE.Mesh(geo, mat);
+      if (ramp) { m.scale.y = 1; m.geometry = wedgeGeometry(sf.w, sf.d, sf.y0, sf.y1); }
+      g.add(m);
+    } else {
+      g.add(new THREE.Mesh(ramp ? wedgeGeometry(sf.w, sf.d, sf.y0, sf.y1) : new THREE.BoxGeometry(sf.w, top, sf.d).translate(0, top / 2, 0), mat));
     }
-    standin(`surface:${sf.name}`, g, sf, scene);
+    standin(`piece:${sf.piece}`, g, sf, scene);
   }
 }
 
@@ -722,7 +668,7 @@ function makeSilo() {
 // ------------------------------------------------------------ Meshy models
 // Optimised copies of the Meshy exports (see tools/optimize-models.sh). Each is a single textured
 // mesh centred on the origin, about one unit tall, facing +z.
-export const models = { goat: null, potion: null, farmhouse: null };
+export const models = { goat: null, potion: null, farmhouse: null, vases: [null, null] };
 
 // Scale a model to `height` metres with its base on y = 0, centred on x/z, turned by `yaw` so it faces +z.
 function fitModel(gltf, height, yaw = 0) {
@@ -964,6 +910,7 @@ const FARM_MODELS = [
   ['scarecrow', '/models/scarecrow.glb', 2.4],
   ['barn', '/models/barn.glb', C.BARN.height],               // model space as measured for the colliders in map.js
   ['silo', '/models/silo.glb', C.SILO.height],
+  ['well', '/models/well.glb', C.WELL.height, 0, false, [-0.05, 0]],   // its stone ring sits 0.05 of its height off the bbox centre
 ];
 
 export function loadModels(loader, scene) {
@@ -980,9 +927,11 @@ export function loadModels(loader, scene) {
       scene.add(house);
       models.farmhouse = house;
     }),
-    ...FARM_MODELS.map(([name, url, h, yaw, runes]) => load(url).then(g => {
+    ...FARM_MODELS.map(([name, url, h, yaw, runes, shift]) => load(url).then(g => {
       if (runes) purpleRunes(g.scene);
-      models[name] = fitModel(g, h, yaw); swapModel(name, models[name]);
+      models[name] = fitModel(g, h, yaw);
+      if (shift) models[name].position.set(shift[0] * h, 0, shift[1] * h);
+      swapModel(name, models[name]);
     }, () => {})),
     // Trees and rocks repeat dozens of times: one InstancedMesh per model.
     ...Object.entries(SCATTER).map(([name, items]) => load(`/models/${name}.glb`).then(g => {
@@ -990,6 +939,22 @@ export function loadModels(loader, scene) {
       for (const s of SCATTER_STANDINS[name] || []) swapModel(s, new THREE.Group());
       if (name === 'rock_jagged') models.rockProp = fitModel({ scene: g.scene.clone() }, C.PROP_TYPES.rock.h);
     }, () => {})),
+    // The high ground (C.PIECE_MODELS): each model fitted to 1 m, then scaled to the piece's height and stretch.
+    ...[...new Set(C.PIECE_MODELS.map(p => p.model))].map(name => load(`/models/${name}.glb`).then(g => {
+      const unit = fitModel(g, 1);
+      for (const P of C.PIECE_MODELS.filter(p => p.model === name)) {
+        const holder = new THREE.Group();
+        holder.add(unit.clone());
+        holder.position.set(P.x, P.y, P.z);
+        holder.rotation.y = P.yaw;
+        holder.scale.set(P.h * P.sx, P.h, P.h * P.sz);
+        scene.add(holder);
+        swapModel(`piece:${P.id}`, new THREE.Group());   // its surfaces' stand-ins go
+      }
+    }, () => {})),
+    // Ty's two vases stand in for the plain pot prop, alternating.
+    load('/models/vase_terracotta.glb').then(g => { models.vases[0] = fitModel(g, C.PROP_TYPES.pot.h); }, () => {}),
+    load('/models/vase_teal.glb').then(g => { models.vases[1] = fitModel(g, C.PROP_TYPES.pot.h); }, () => {}),
     // Grass: cosmetic clumps, chunked and instanced (see GRASS).
     ...['tall', 'clover'].map(kind => load(`/models/grass_${kind}.glb`).then(g => {
       scene.add(grassMeshes(g, GRASS_ITEMS[kind]));
@@ -1006,6 +971,7 @@ export function loadModels(loader, scene) {
 
 // ------------------------------------------------------------ props
 const propMats = {};
+let potLook = 0;   // alternates the two vase looks
 function mat(color) { return propMats[color] ??= flat(color); }
 
 export function makePropMesh(type) {
@@ -1062,6 +1028,8 @@ export function makePropMesh(type) {
       break;
     }
     case 'pot': {
+      const vase = models.vases[potLook++ % 2] || models.vases[0] || models.vases[1];
+      if (vase) { g.add(vase.clone()); break; }
       const pts = [];
       for (let i = 0; i <= 6; i++) {
         const t = i / 6;

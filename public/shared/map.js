@@ -226,7 +226,9 @@ export const TABLE_ROCKS = [[20, 14.5, 0.9, 0.15], [140, 16, 1.1, 0.18], [192, 1
   .map(([deg, d, h, tilt], i) => { const [x, z] = fromAltar(deg, d); return [x, z, (i * 2.1) % 6.3, h, tilt]; });
 
 // ------------------------------------------------------------ farmyard pieces
-export const WELL = { x: -4.5, z: 12.5, r: 1.25, h: 2.6 };
+// The Meshy well (models/well.glb, 3.4 m): the stone ring is r 0.3 of its height; `h` reaches the roof, so the
+// camera boom pulls in instead of ending up under it.
+export const WELL = { x: -4.5, z: 12.5, r: 1.05, h: 3.4, height: 3.4, yaw: 0 };
 // Horse-drawn cart (models/horse_cart.glb, 2.6 m tall) parked by the house, shafts toward the yard.
 // Model space: the bed is x -0.75..3.75 (wheels at z ±1.5), the shafts run off toward -x.
 export const CART = { x: -9, z: 18, yaw: Math.PI, height: 2.6 };
@@ -277,7 +279,7 @@ export const PROP_SPAWNS = [
 // Team modes: Ember spawns in the farmyard (north), Frost in the south meadow, about equally far from the altar.
 export const TEAM_SPAWNS = {
   ember: [[4.5, 0, 10.5], [-7.5, 0, 12.8], [1.5, 0, 15.5], [-4, 0, 17], [6.5, 0, 9]],
-  frost: [[5.5, 0, -26.5], [-3, 0, -30], [10, 0, -28.5], [-11, 0, -28], [0.5, 0, -31]],
+  frost: [[5.5, 0, -26.5], [-3, 0, -30], [10, 0, -28.5], [-13.5, 0, -31.5], [0.5, 0, -31]],
 };
 // Altar Siege (king of the hill): the zone starts at the altar and hops every 60 s, altar -> barn -> silo -> altar.
 // Each circle is open ground (nothing taller than 1.6 m inside; the altar, slabs and fallen pillars are low),
@@ -308,14 +310,19 @@ export const SPAWN_POINTS = [...TEAM_SPAWNS.ember, ...TEAM_SPAWNS.frost];
 
 // ------------------------------------------------------------ walkable surfaces (platforms and ramps)
 // High ground you can stand on: boxes (a flat top) and ramps (a top sloping along the piece's local +z).
-//   { kind: 'box',  x, z, w, d, yaw, top,    name }   footprint w (local x) by d (local z), solid from the ground to `top`
+//   { kind: 'box',  x, z, w, d, yaw, top,    name }   footprint w (local x) by d (local z)
 //   { kind: 'ramp', x, z, w, d, yaw, y0, y1, name }   the top rises linearly from y0 at local z = -d/2 to y1 at +d/2
-// yaw follows Object3D.rotation.y (local +z points along (sin yaw, cos yaw)). Everything is solid below its top:
-// a piece's sides are walls for anyone whose feet are more than STEP_UP below the top there, and shots and
-// line of sight are blocked below the top (they pass over). Surfaces are not in COLLIDERS (those block at any
-// height); every system asks the helpers below instead. Goats stay on the ground and treat whole footprints as
-// obstacles (surfacePushOut with footY -1).
+// yaw follows Object3D.rotation.y (local +z points along (sin yaw, cos yaw)). Options:
+//   round: true      a circular footprint of diameter w (= d) instead of a rectangle (rock plateaus)
+//   thick: t         only the slab from top - t to top is solid (a deck on posts, a bridge): you walk and shoot
+//                    underneath it. Without it a piece is solid from the ground up.
+//   moveOnly: true   blocks movement only: shots and line of sight pass through (ladders, railings)
+//   ladder: true     a steep ramp standing in front of a ladder (for climbing animations; otherwise a ramp)
+// A piece's sides are walls for anyone whose feet are more than STEP_UP below its top there (and whose body
+// reaches its underside); shots and line of sight are blocked inside its solid part. Surfaces are not in
+// COLLIDERS (those block at any height); every system asks the helpers below. Goats stay on the ground.
 export const STEP_UP = 0.45;      // the highest rise a wizard steps onto without jumping
+export const BODY_HEIGHT = 1.8;   // for walking under decks
 export const SURFACES = [];       // filled in by the pieces further down
 const sLocal = (s, x, z) => {
   const dx = x - s.x, dz = z - s.z, c = Math.cos(s.yaw || 0), n = Math.sin(s.yaw || 0);
@@ -325,15 +332,28 @@ const sWorld = (s, lx, lz) => {
   const c = Math.cos(s.yaw || 0), n = Math.sin(s.yaw || 0);
   return [s.x + lx * c + lz * n, s.z - lx * n + lz * c];
 };
-// The top of `s` at local (lx, lz) (no bounds check).
+// The top of `s` at local z (no bounds check), and the bottom of its solid part.
 const sTop = (s, lz) => s.kind === 'ramp' ? s.y0 + (s.y1 - s.y0) * Math.max(0, Math.min(1, lz / s.d + 0.5)) : s.top;
-const sInside = (s, lx, lz, pad = 0) => Math.abs(lx) <= s.w / 2 + pad && Math.abs(lz) <= s.d / 2 + pad;
+const sBottom = (s, lz) => s.thick ? sTop(s, lz) - s.thick : -1e9;
+const sInside = (s, lx, lz, pad = 0) => s.round ? Math.hypot(lx, lz) <= s.w / 2 + pad : Math.abs(lx) <= s.w / 2 + pad && Math.abs(lz) <= s.d / 2 + pad;
 
-// The solid top under (x, z): the highest surface there, or 0 (the ground).
+// The highest solid top under (x, z) (ground 0), ignoring decks you could walk under at ground level.
 export function surfaceTopAt(x, z) {
   let h = 0;
-  for (const s of SURFACES) { const [lx, lz] = sLocal(s, x, z); if (sInside(s, lx, lz)) h = Math.max(h, sTop(s, lz)); }
+  for (const s of SURFACES) {
+    const [lx, lz] = sLocal(s, x, z);
+    if (sInside(s, lx, lz) && !(s.thick && sBottom(s, lz) > BODY_HEIGHT * 0.6)) h = Math.max(h, sTop(s, lz));
+  }
   return h;
+}
+// Is the point (x, y, z) inside a piece's solid part? (`moveOnly` pieces count unless `shots` is true.)
+export function surfaceSolidAt(x, y, z, shots = false) {
+  for (const s of SURFACES) {
+    if (shots && s.moveOnly) continue;
+    const [lx, lz] = sLocal(s, x, z);
+    if (sInside(s, lx, lz) && y < sTop(s, lz) && y > sBottom(s, lz)) return s;
+  }
+  return null;
 }
 // Where a wizard with feet at footY stands at (x, z): the highest top there that is at most STEP_UP above the
 // feet (so you step up stairs and ramps, stay on what you stand on, and drop off edges), or 0 (the ground).
@@ -347,25 +367,35 @@ export function surfaceHeight(x, z, footY = 0) {
   }
   return h;
 }
-// Walls: push a circle (x, z, r) with feet at footY out of every piece whose top there is more than STEP_UP above
-// the feet. Returns [x, z] (unchanged if nothing is hit). Iterates a few times for corners between pieces.
-export function surfacePushOut(x, z, footY, r) {
+// Walls: push a circle (x, z, r) with feet at footY (and a body `height` tall) out of every piece whose top at
+// the contact point is more than STEP_UP above the feet, unless the body passes wholly under a deck there.
+// Returns [x, z] (unchanged if nothing is hit). Iterates a few times for corners between pieces.
+export function surfacePushOut(x, z, footY, r, height = BODY_HEIGHT) {
   for (let it = 0; it < 3; it++) {
     let moved = false;
     for (const s of SURFACES) {
       const [lx, lz] = sLocal(s, x, z);
       if (!sInside(s, lx, lz, r)) continue;
-      const cx = Math.max(-s.w / 2, Math.min(s.w / 2, lx)), cz = Math.max(-s.d / 2, Math.min(s.d / 2, lz));
-      if (sTop(s, cz) <= footY + STEP_UP) continue;            // low enough to step onto here
       let nx, nz;
-      if (cx === lx && cz === lz) {
-        // centre inside the footprint: out through the nearest side
-        const ex = s.w / 2 - Math.abs(lx), ez = s.d / 2 - Math.abs(lz);
-        if (ex < ez) { nx = Math.sign(lx || 1) * (s.w / 2 + r); nz = lz; } else { nx = lx; nz = Math.sign(lz || 1) * (s.d / 2 + r); }
+      if (s.round) {
+        const R = s.w / 2, d = Math.hypot(lx, lz);
+        if (sTop(s, 0) <= footY + STEP_UP || (s.thick && footY + height <= sBottom(s, 0))) continue;
+        if (d >= R + r) continue;
+        const k = d > 1e-6 ? (R + r) / d : 0;
+        nx = d > 1e-6 ? lx * k : R + r; nz = d > 1e-6 ? lz * k : 0;
       } else {
-        const dx = lx - cx, dz = lz - cz, dd = Math.hypot(dx, dz);
-        if (dd >= r) continue;
-        nx = cx + dx / dd * r; nz = cz + dz / dd * r;
+        const cx = Math.max(-s.w / 2, Math.min(s.w / 2, lx)), cz = Math.max(-s.d / 2, Math.min(s.d / 2, lz));
+        if (sTop(s, cz) <= footY + STEP_UP) continue;            // low enough to step onto here
+        if (s.thick && footY + height <= sBottom(s, cz)) continue; // walking under a deck
+        if (cx === lx && cz === lz) {
+          // centre inside the footprint: out through the nearest side
+          const ex = s.w / 2 - Math.abs(lx), ez = s.d / 2 - Math.abs(lz);
+          if (ex < ez) { nx = Math.sign(lx || 1) * (s.w / 2 + r); nz = lz; } else { nx = lx; nz = Math.sign(lz || 1) * (s.d / 2 + r); }
+        } else {
+          const dx = lx - cx, dz = lz - cz, dd = Math.hypot(dx, dz);
+          if (dd >= r) continue;
+          nx = cx + dx / dd * r; nz = cz + dz / dd * r;
+        }
       }
       [x, z] = sWorld(s, nx, nz); moved = true;
     }
@@ -373,84 +403,173 @@ export function surfacePushOut(x, z, footY, r) {
   }
   return [x, z];
 }
-// The first point where the segment a -> b ([x, y, z] each) enters a piece (side or top), as
-// { t (0..1 along the segment), p: [x, y, z], surface }, or null. For projectiles and line of sight.
+// The first point where the segment a -> b ([x, y, z] each) enters a piece's solid part (side, top, slope or
+// underside), as { t (0..1 along the segment), p: [x, y, z], surface }, or null. For projectiles and line of
+// sight; `moveOnly` pieces (ladders, railings) are ignored.
 export function surfaceSegmentHit(a, b) {
   let best = null;
   for (const s of SURFACES) {
+    if (s.moveOnly) continue;
     const [ax, az] = sLocal(s, a[0], a[2]), [bx, bz] = sLocal(s, b[0], b[2]);
-    const ymax = s.kind === 'ramp' ? Math.max(s.y0, s.y1) : s.top;
-    // clip to the piece's bounding box in local space (slabs)
     let t0 = 0, t1 = 1, ok = true;
-    for (const [p0, d, lo, hi] of [[ax, bx - ax, -s.w / 2, s.w / 2], [az, bz - az, -s.d / 2, s.d / 2], [a[1], b[1] - a[1], -1e9, ymax]]) {
-      if (Math.abs(d) < 1e-9) { if (p0 < lo || p0 > hi) { ok = false; break; } continue; }
-      let u0 = (lo - p0) / d, u1 = (hi - p0) / d;
-      if (u0 > u1) [u0, u1] = [u1, u0];
-      t0 = Math.max(t0, u0); t1 = Math.min(t1, u1);
-      if (t0 > t1) { ok = false; break; }
+    // the footprint in 2D: a slab pair, or a circle
+    if (s.round) {
+      const dx = bx - ax, dz = bz - az, A = dx * dx + dz * dz, B = 2 * (ax * dx + az * dz), Cc = ax * ax + az * az - (s.w / 2) ** 2;
+      if (A < 1e-12) { if (Cc > 0) continue; }
+      else {
+        const disc = B * B - 4 * A * Cc;
+        if (disc < 0) continue;
+        const q = Math.sqrt(disc);
+        t0 = Math.max(t0, (-B - q) / (2 * A)); t1 = Math.min(t1, (-B + q) / (2 * A));
+        if (t0 > t1) continue;
+      }
+    } else {
+      for (const [p0, d, lo, hi] of [[ax, bx - ax, -s.w / 2, s.w / 2], [az, bz - az, -s.d / 2, s.d / 2]]) {
+        if (Math.abs(d) < 1e-12) { if (p0 < lo || p0 > hi) { ok = false; break; } continue; }
+        let u0 = (lo - p0) / d, u1 = (hi - p0) / d;
+        if (u0 > u1) [u0, u1] = [u1, u0];
+        t0 = Math.max(t0, u0); t1 = Math.min(t1, u1);
+        if (t0 > t1) { ok = false; break; }
+      }
+      if (!ok) continue;
     }
-    if (!ok) continue;
-    let t = t0;
-    if (s.kind === 'ramp') {
-      // inside the box, the gap above the ramp's top is linear in t: find where it first reaches 0
-      const gap = (u) => (a[1] + (b[1] - a[1]) * u) - sTop(s, az + (bz - az) * u);
-      const g0 = gap(t0), g1 = gap(t1);
-      if (g0 > 0) { if (g1 > 0) continue; t = t0 + (t1 - t0) * g0 / (g0 - g1); }
+    // inside the footprint, height above the top and above the underside are both linear in t (a ramp's top is
+    // linear in local z): keep the part where bottom < y < top
+    for (const [f, sign] of [[(u) => (a[1] + (b[1] - a[1]) * u) - sTop(s, az + (bz - az) * u), -1],
+                             ...(s.thick ? [[(u) => (a[1] + (b[1] - a[1]) * u) - sBottom(s, az + (bz - az) * u), 1]] : [])]) {
+      // want sign * f(u) >= 0
+      const g0 = sign * f(t0), g1 = sign * f(t1);
+      if (g0 < 0 && g1 < 0) { ok = false; break; }
+      if (g0 < 0) t0 = t0 + (t1 - t0) * (-g0) / (g1 - g0);
+      else if (g1 < 0) t1 = t0 + (t1 - t0) * g0 / (g0 - g1);
     }
-    if (!best || t < best.t) best = { t, surface: s, p: [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t] };
+    if (!ok || t0 > t1) continue;
+    // a ramp's top is only linear within its d span; the clamp at the ends is covered by the slab clip
+    if (!best || t0 < best.t) best = { t: t0, surface: s, p: [a[0] + (b[0] - a[0]) * t0, a[1] + (b[1] - a[1]) * t0, a[2] + (b[2] - a[2]) * t0] };
   }
   return best;
 }
 export const surfaceBlocks = (a, b) => !!surfaceSegmentHit(a, b);
-// Footprint corners in world space (for drawing, overlays and the goats' detour boxes).
+// Footprint corners in world space (for drawing, overlays, bots' ramp waypoints and the goats' routes); a round
+// piece gives the corners of its bounding square.
 export const surfaceCorners = (s) => [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([i, k]) => sWorld(s, i * s.w / 2, k * s.d / 2));
+// The foot of a ramp (its low end's middle) in world space: where a bot heads to get onto the high ground.
+export const rampFoot = (s) => sWorld(s, 0, (s.y1 >= s.y0 ? -1 : 1) * (s.d / 2 + 0.6));
 
-// ------------------------------------------------------------ the high ground (round 9): stand-in pieces
-// Each perch has a way up, a counter (a second route, or cover against it) and overlooks no spawn point from
-// closer than 15 m. `style` tells the client how to draw the stand-in: wood, hay, stone, rock or earth.
-// A piece with a ramp up to it: the ramp's high end meets the box edge at `side` (+z | -z | +x | -x in the box's frame).
-function perch(box, ramp, side = '-z') {
-  SURFACES.push(box);
-  if (!ramp) return;
-  const along = ramp.len, half = { '+z': box.d / 2, '-z': box.d / 2, '+x': box.w / 2, '-x': box.w / 2 }[side] + along / 2;
-  const dir = { '+z': [0, 1], '-z': [0, -1], '+x': [1, 0], '-x': [-1, 0] }[side];
-  const c = Math.cos(box.yaw || 0), n = Math.sin(box.yaw || 0);
-  const lx = dir[0] * half + (ramp.offset || 0) * (dir[1] ? 1 : 0), lz = dir[1] * half + (ramp.offset || 0) * (dir[0] ? 1 : 0);
-  // the ramp rises toward the box: its local +z points from the ramp's foot to the box
-  const rampYaw = (box.yaw || 0) + Math.atan2(-dir[0], -dir[1]);
-  SURFACES.push({ kind: 'ramp', x: box.x + lx * c + lz * n, z: box.z - lx * n + lz * c, w: ramp.w, d: along, yaw: rampYaw,
-    y0: ramp.from ?? 0, y1: box.top, style: ramp.style || box.style, name: box.name + '-ramp' });
+// ------------------------------------------------------------ the high ground (round 9): Ty's Meshy pieces
+// Each piece is a model placed at { x, z, yaw, h (model height in m), sx / sz (horizontal stretch), y (lift) }
+// plus the walkable surfaces fitted to it. Surface shapes are given in the model's own units (fitModel space: the
+// model 1 tall, base at y 0, centred on x/z, before yaw and stretch), measured from top-down heightmaps and
+// horizontal slices of each optimised glb (/tmp/wa-environment/heightmap.mjs, slices.mjs). Each perch has a way
+// up, a counter (a second route, or cover against it) and overlooks no spawn point from closer than 15 m.
+export const PIECE_MODELS = [];   // { model, x, z, yaw, h, sx, sz, y, id } for world.js to draw
+export const PIECE_COLLIDERS = []; // extra circles (tower legs) merged into COLLIDERS below
+function piece(id, model, at, parts) {
+  const P = { model, id, x: at.x, z: at.z, yaw: at.yaw || 0, h: at.h, sx: at.sx || 1, sz: at.sz || 1, y: at.y || 0 };
+  PIECE_MODELS.push({ ...P, yaw: at.modelYaw ?? P.yaw });   // modelYaw: the model turned differently from its surfaces' frame
+  const kx = P.h * P.sx, kz = P.h * P.sz;
+  const toWorld = (lx, lz) => place(P, [lx * kx, lz * kz]);
+  parts.forEach((pt, i) => {
+    const name = `${id}-${pt.name || i}`, extra = { name, piece: id, style: pt.style, ...(pt.opts || {}) };
+    if (pt.box) {
+      const [x0, x1, z0, z1] = pt.box, [cx, cz] = toWorld((x0 + x1) / 2, (z0 + z1) / 2);
+      SURFACES.push({ kind: 'box', x: cx, z: cz, w: (x1 - x0) * kx, d: (z1 - z0) * kz, yaw: P.yaw, top: P.y + pt.top * P.h, ...extra });
+    } else if (pt.disc) {
+      const [cx, cz] = toWorld(0, 0);
+      SURFACES.push({ kind: 'box', round: true, x: cx, z: cz, w: 2 * pt.disc * kx, d: 2 * pt.disc * kz, yaw: P.yaw, top: P.y + pt.top * P.h, ...extra });
+    } else if (pt.ramp) {
+      // ramp: [x0, x1] across, lz [low end, high end], y [low, high]; it may rise toward local -z
+      const [x0, x1] = pt.ramp, [lzLo, lzHi] = pt.lz, [yLo, yHi] = pt.y, up = lzHi > lzLo;
+      const [cx, cz] = toWorld((x0 + x1) / 2, (lzLo + lzHi) / 2);
+      SURFACES.push({ kind: 'ramp', x: cx, z: cz, w: (x1 - x0) * kx, d: Math.abs(lzHi - lzLo) * kz, yaw: P.yaw + (up ? 0 : Math.PI),
+        y0: P.y + yLo * P.h, y1: P.y + yHi * P.h, ...extra });
+    }
+  });
+  return P;
 }
 {
-  // Barn hay loft: fills the dead-end nook north of the side door (model x 3..6.6), 2.3 m up, with a steep
-  // ladder-ramp from the corridor. It looks straight down the corridor and out through the arch toward the Barn
-  // Passage zone; the barn walls hide every spawn. Counter: it can only see along that one line.
-  const [lx, lz] = [14.17, 25.35];
-  perch({ kind: 'box', x: lx, z: lz, w: 1.6, d: 2.5, yaw: 0, top: 2.3, style: 'hay', name: 'loft', allow: ['barn'] }, { len: 2.1, w: 1.0, style: 'wood' }, '-z');
-  // Ruin ledges on the altar's west rim, outside the Altar circle: a low ledge (1.4 m) reached by a ramp from the
-  // silo side, and a higher one (2.3 m) joined to it by a toppled pillar lying from ledge to ledge. They look over
-  // the Altar circle. Counter: the ring's west pillars and the blast stones are cover against them, and the high
-  // ledge's only way up is along the pillar, in full view of the altar.
-  const [ax, az] = fromAltar(245, 10), aYaw = awayYaw(ax, az);
-  perch({ kind: 'box', x: ax, z: az, w: 2.8, d: 2.2, yaw: aYaw, top: 1.4, style: 'stone', name: 'ledge-low' }, { len: 3.0, w: 1.3 }, '+z');
-  const [bx, bz] = fromAltar(287, 11), bYaw = awayYaw(bx, bz);
-  SURFACES.push({ kind: 'box', x: bx, z: bz, w: 2.6, d: 2.4, yaw: bYaw, top: 2.3, style: 'stone', name: 'ledge-high' });
-  const span = Math.hypot(bx - ax, bz - az) - 2.4, bridgeYaw = Math.atan2(bx - ax, bz - az);
-  SURFACES.push({ kind: 'ramp', x: (ax + bx) / 2, z: (az + bz) / 2, w: 1.0, d: span, yaw: bridgeYaw, y0: 1.4, y1: 2.3, style: 'pillar', name: 'ledge-bridge' });
-  // Watchtower by the crop field's south-west corner: 3.4 m, stairs along the field's south edge. Overlooks the
-  // Fallen Silo zone from the north-west. Counter: no cover up there, and the stairs are the only way up.
-  perch({ kind: 'box', x: -33.3, z: -14.6, w: 2.6, d: 2.6, yaw: 0, top: 3.4, style: 'wood', name: 'tower' }, { len: 4.0, w: 1.1, style: 'wood' }, '+x');
-  // Rock plateaus: a 1.5 m table rock in the south-east meadow and a 2.5 m one in the meadow behind the barn,
-  // each with a natural slope. The hay stacks and the oak screen the Frost spawns from the low one; the barn
-  // hides the farmyard from the high one.
-  perch({ kind: 'box', x: 26.5, z: -22.5, w: 3.6, d: 3.0, yaw: 0.4, top: 1.5, style: 'rock', name: 'plateau-low' }, { len: 3.2, w: 2.2, style: 'rock' }, '-x');
-  perch({ kind: 'box', x: 25, z: 16, w: 3.6, d: 3.6, yaw: -0.3, top: 2.5, style: 'rock', name: 'plateau-high' }, { len: 4.4, w: 2.2, style: 'rock' }, '+x');
-  // The raised cart road: a 0.9 m earth embankment along the farmyard's west side, ramps at both ends. The high
-  // route between the farmyard and the field side; the low route runs beside it.
-  const road = { kind: 'box', x: -10.5, z: 4.5, w: 2.6, d: 4.0, yaw: 0, top: 0.9, style: 'earth', name: 'road' };
-  SURFACES.push(road);
-  SURFACES.push({ kind: 'ramp', x: -10.5, z: 7.75, w: 2.6, d: 2.5, yaw: Math.PI, y0: 0, y1: 0.9, style: 'earth', name: 'road-north' });
-  SURFACES.push({ kind: 'ramp', x: -10.5, z: 1.25, w: 2.6, d: 2.5, yaw: 0, y0: 0, y1: 0.9, style: 'earth', name: 'road-south' });
+  // ---- meadow rock plateaus (rock_plateau: a round flat top at 0.94, radius 0.73, near-vertical sides)
+  // The low one (1.5 m) in the south-east meadow, reached by the stone ruin steps (ruin_steps: treads rising
+  // toward -z to a 0.62 landing between two stone side walls). The hay stacks and the oak screen the Frost spawns.
+  piece('plateau-low', 'rock_plateau', { x: 26.5, z: -22.5, yaw: 0.4, h: 1.6, sx: 1.5, sz: 1.5 }, [{ disc: 0.73, top: 0.94, style: 'rock' }]);
+  piece('plateau-low-steps', 'ruin_steps', { x: 23.8, z: -22.5, yaw: -Math.PI / 2, h: 2.42 }, [
+    { name: 'treads', ramp: [-0.18, 0.21], lz: [0.56, -0.3], y: [0.03, 0.62], style: 'stone' },
+    { name: 'landing', box: [-0.18, 0.21, -0.56, -0.3], top: 0.62, style: 'stone' },
+    { name: 'wall-l', ramp: [-0.38, -0.18], lz: [0.5, -0.1], y: [0.5, 0.95], style: 'stone' },
+    { name: 'wall-r', ramp: [0.21, 0.4], lz: [0.5, -0.1], y: [0.36, 0.82], style: 'stone' },
+  ]);
+  // The high one (2.5 m) in the north-east meadow past the pen, up free-standing wooden stairs (wooden_stairs:
+  // treads rising toward -z to a 0.69 landing, rails along both sides). The barn and the pen's hay hide the
+  // farmyard spawns from it; the stairs are its only way up, in view of the pen.
+  piece('plateau-high', 'rock_plateau', { x: 29, z: 18.5, yaw: 1.1, h: 2.66, sx: 1.25, sz: 1.25 }, [{ disc: 0.73, top: 0.94, style: 'rock' }]);
+  piece('plateau-high-stairs', 'wooden_stairs', { x: 29, z: 14.0, yaw: Math.PI, h: 3.62, sx: 0.8 }, [
+    { name: 'treads', ramp: [-0.22, 0.22], lz: [0.76, -0.29], y: [0.06, 0.69], style: 'wood' },
+    { name: 'landing', box: [-0.22, 0.22, -0.75, -0.29], top: 0.69, style: 'wood' },
+    { name: 'rail-l', ramp: [-0.33, -0.22], lz: [0.76, -0.75], y: [0.36, 1.0], opts: { moveOnly: true }, style: 'rail' },
+    { name: 'rail-r', ramp: [0.22, 0.33], lz: [0.76, -0.75], y: [0.36, 1.0], opts: { moveOnly: true }, style: 'rail' },
+  ]);
+  // ---- the hay loft by the barn's east wall (hay_loft: a 0.69 deck on posts, a hay stack on it, a steep ladder
+  // down its +z side). The ladder faces the barn; under the deck is open. It looks south over the pen toward the
+  // Barn Passage circle; the barn hides the farmyard spawns. Counter: one ladder up, nothing but the hay for cover.
+  piece('loft', 'hay_loft', { x: 20.6, z: 21.5, yaw: -Math.PI / 2, h: 3.3 }, [
+    { name: 'deck', box: [-0.43, 0.43, -0.67, 0.39], top: 0.69, opts: { thick: 0.3 }, style: 'wood' },
+    { name: 'hay', box: [0.0, 0.31, -0.27, 0.1], top: 0.99, opts: { thick: 0.3 * 0.99 }, style: 'hay' },
+    { name: 'ladder', ramp: [-0.34, -0.09], lz: [0.68, 0.39], y: [0, 0.69], opts: { moveOnly: true, ladder: true }, style: 'ladder' },
+  ]);
+  // ---- the watchtower by the crop field's south-west corner (wooden_watchtower: a 0.5 deck inside a 0.15-high
+  // parapet, open on the ladder side, a roof from 0.75 on corner posts; a vertical ladder on its +z face). 8.5 m
+  // tall: the deck is 4.25 m up and fits two wizards. The parapet stops you walking off but not spells; the roof
+  // has no collider (nobody can reach it). Overlooks the Fallen Silo circle. Counter: one ladder, no cover.
+  const TW = { x: -32.8, z: -14.8, yaw: Math.PI / 2, h: 8.5 };
+  piece('tower', 'watchtower', TW, [
+    { name: 'deck', box: [-0.186, 0.19, -0.172, 0.172], top: 0.5, opts: { thick: 0.35 }, style: 'wood' },
+    { name: 'wall-n', box: [-0.186, 0.19, -0.172, -0.142], top: 0.65, opts: { thick: 0.15 * 8.5, moveOnly: true }, style: 'rail' },
+    { name: 'wall-w', box: [-0.186, -0.156, -0.142, 0.142], top: 0.65, opts: { thick: 0.15 * 8.5, moveOnly: true }, style: 'rail' },
+    { name: 'wall-e', box: [0.16, 0.19, -0.142, 0.142], top: 0.65, opts: { thick: 0.15 * 8.5, moveOnly: true }, style: 'rail' },
+    { name: 'wall-s1', box: [-0.186, -0.005, 0.142, 0.172], top: 0.65, opts: { thick: 0.15 * 8.5, moveOnly: true }, style: 'rail' },
+    { name: 'wall-s2', box: [0.135, 0.19, 0.142, 0.172], top: 0.65, opts: { thick: 0.15 * 8.5, moveOnly: true }, style: 'rail' },
+    { name: 'ladder', ramp: [0.0, 0.135], lz: [0.29, 0.172], y: [0, 0.5], opts: { moveOnly: true, ladder: true }, style: 'ladder' },
+  ]);
+  for (const [lx, lz] of [[-0.14, -0.13], [0.15, -0.13], [-0.14, 0.11], [0.15, 0.11]]) {
+    const [x, z] = place(TW, [lx * TW.h, lz * TW.h]);
+    PIECE_COLLIDERS.push({ x, z, r: 0.2, h: TW.h * 0.75, kind: 'tower' });
+  }
+  // ---- the ruin ledges on the altar's west rim: two stone platforms (ruin_platform: a 0.90 top, a low lip at
+  // -z, built-in stairs down its +z side) at the same height, joined by the arched plank bridge (plank_bridge: a
+  // deck arching from 0.33 at its ends to 0.58 mid-span, along local x; a rope across one end is visual only).
+  // The stairs face away from the altar. They look over the Altar circle; the ring's west pillars and the blast
+  // stones are cover, and each ledge has its own stairs plus the bridge, so neither is a dead end.
+  const LEDGE_TOP = 1.8, LH = LEDGE_TOP / 0.9, LS = 0.8, BH = 2.6;
+  let [A, B] = [fromAltar(237, 11.6), fromAltar(273.3, 11.6)];
+  let u = [(B[0] - A[0]) / Math.hypot(B[0] - A[0], B[1] - A[1]), (B[1] - A[1]) / Math.hypot(B[0] - A[0], B[1] - A[1])];
+  const mid = [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2];
+  if (-u[1] * (mid[0] - ALTAR.x) + u[0] * (mid[1] - ALTAR.z) < 0) { [A, B] = [B, A]; u = [-u[0], -u[1]]; }   // stairs (+z) outward
+  const LY = Math.atan2(-u[1], u[0]);
+  const ledgeParts = [
+    { name: 'top', box: [-0.88, 0.88, -1.1, 0.73], top: 0.9, style: 'stone' },
+    { name: 'stairs', ramp: [-0.5, 0.5], lz: [1.25, 0.73], y: [0.0, 0.9], style: 'stone' },
+  ];
+  piece('ledge-a', 'ruin_platform', { x: A[0], z: A[1], yaw: LY, h: LH, sx: LS, sz: LS }, ledgeParts);
+  piece('ledge-b', 'ruin_platform', { x: B[0], z: B[1], yaw: LY, h: LH, sx: LS, sz: LS }, ledgeParts);
+  // the bridge's deck ends sit on the ledges (0.33 of its height = the ledge top), its posts just inside their edges
+  const BY = LEDGE_TOP - 0.33 * BH;
+  piece('bridge', 'plank_bridge', { x: mid[0], z: mid[1], yaw: LY + Math.PI / 2, modelYaw: LY, h: BH, y: BY }, [
+    // along the bridge (model x) as two ramps a side, following the arch: ends 0.33, 0.47 at |x| 0.7, crest 0.58
+    // (ramps run along their local z, so the model is turned a quarter: model x -> ramp z)
+    ...[[-1.08, -0.7, 0.33, 0.47], [-0.7, 0.0, 0.47, 0.58], [1.08, 0.7, 0.33, 0.47], [0.7, 0.0, 0.47, 0.58]].map(([a0, a1, y0, y1], i) =>
+      ({ name: `deck${i}`, ramp: [-0.42, 0.42], lz: [a0, a1], y: [y0, y1], opts: { thick: 0.3 }, style: 'wood' })),
+    ...[[-1.08, 0.0, 0.33, 0.58], [1.08, 0.0, 0.33, 0.58]].flatMap(([a0, a1, y0, y1], i) => [-1, 1].map(side =>
+      ({ name: `rope${i}${side}`, ramp: side < 0 ? [-0.52, -0.42] : [0.42, 0.52], lz: [a0, a1], y: [y0 + 0.36, y1 + 0.36], opts: { thick: 0.36 * BH, moveOnly: true }, style: 'rail' }))),
+  ]);
+  // ---- the raised cart road along the farmyard's west side: two earth embankments nose to nose (embankment: a
+  // path rising toward -z from 0.05 to 0.90, flat for its last third, then a steep drop), 0.9 m at the crest.
+  // The high route between the farmyard and the field side; the low route runs beside it.
+  const roadParts = [
+    { name: 'slope', ramp: [-0.8, 0.8], lz: [1.35, -0.85], y: [0.05, 0.9], style: 'earth' },
+    { name: 'crest', box: [-0.8, 0.8, -1.5, -0.85], top: 0.9, style: 'earth' },
+  ];
+  piece('road-s', 'embankment', { x: -10.5, z: 2.62, yaw: Math.PI, h: 1.0, sx: 1.3, sz: 1.3 }, roadParts);
+  piece('road-n', 'embankment', { x: -10.5, z: 6.38, yaw: 0, h: 1.0, sx: 1.3, sz: 1.3 }, roadParts);
 }
 
 // Everything solid, as circles. Movement (players, bots, goats) collides with all of them;
@@ -486,6 +605,7 @@ export const COLLIDERS = [
   ...HAY_STACKS.map(([x, z]) => ({ x, z, r: 0.85, h: 1.7, kind: 'hay' })),
   ...BARN_POSTS.map(([x, z]) => ({ x, z, r: 0.45, h: 4, kind: 'barn' })),
   ...SILO_BLOCKS.map(([x, z]) => ({ x, z, r: 1.8, h: 3.6, kind: 'silo' })),
+  ...PIECE_COLLIDERS,
 ];
 
 // Knee-high shards thrown out between the bigger pieces, thinning with distance (models/rock_jagged.glb).
@@ -526,4 +646,4 @@ const PEN_HAY = (() => {
 })();
 // Each fallen pillar is a low wall a goat can't step round, so it gets a box too.
 // (Platforms and ramps are routed round by their exact footprints in goats.js, not by boxes.)
-export const GOAT_DETOURS = [boxOf('barn'), boxOf('silo'), PEN_HAY, ...FALLEN_PILLARS.map(f => boxOf('ruin', f))];
+export const GOAT_DETOURS = [boxOf('barn'), boxOf('silo'), PEN_HAY, ...FALLEN_PILLARS.map(f => boxOf('ruin', f)), boxOf('crop')];   // a returning goat can't walk through the crops
