@@ -39,6 +39,14 @@ export const WIZARDS = {
     kit: { primary: 'sling', power: 'battering_ram', mobility: 'ram_ride', guard: 'ram_guard', utility: 'telekinesis', ultimate: 'stampede' },
     speed: 3.0,
   },
+  // Round 8. Placeholder kit (existing spells) until the spells agent lands Embibe's; stand-in body until the
+  // characters agent wires her model.
+  embibe: {
+    id: 'embibe', name: 'Embibe', title: 'the Alchemist', role: 'Potion thrower · pools, splashes, a brutal brew',
+    color: 0x7fd34a, tint: 0x6a3a9a, model: null,
+    kit: { primary: 'fireball', power: 'frostfall', mobility: 'blink', guard: 'tempest_veil', utility: 'telekinesis', ultimate: 'eye_of_storm' },
+    speed: 3.0,
+  },
 };
 
 export const DEFAULT_WIZARD = 'cinder';
