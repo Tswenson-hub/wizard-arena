@@ -263,6 +263,18 @@ export class Effects {
   }
 
   // ---------------------------------------------------------------- particles
+  // Healing (Night Cage, Black Death's blocks): small crimson motes drifting up around the body, no flash.
+  healShimmer(center) {
+    for (let i = 0; i < 2; i++) {
+      const m = new THREE.Mesh(this.particleGeo, this.mat(i ? 0xff3355 : 0xff8fa0, { opacity: 0.9 }));
+      const a = Math.random() * Math.PI * 2, r = 0.35 + Math.random() * 0.25;
+      m.position.set(center.x + Math.cos(a) * r, center.y - 0.7 + Math.random() * 1.2, center.z + Math.sin(a) * r);
+      m.scale.setScalar(0.09 + Math.random() * 0.07);
+      this.scene.add(m);
+      this.particles.push({ mesh: m, vel: new THREE.Vector3(0, 0.9 + Math.random() * 0.6, 0), life: 0, maxLife: 0.55 + Math.random() * 0.3, grav: -0.5, shrink: true });
+    }
+  }
+
   burst(pos, color, count, speed, size = 0.5, grav = 6) {
     for (let i = 0; i < count; i++) {
       const m = new THREE.Mesh(this.particleGeo, this.mat(color, { opacity: 1 }));

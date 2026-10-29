@@ -301,6 +301,7 @@ function applySnapshot(w, s) {
   w.team = s.team ?? null;
   w.riding = !!s.ride; w.ramGuard = !!s.ramGuard;
   w.brewing = !!s.brew;
+  w.healing = !!s.heal;   // Night Cage or Black Death healing: the crimson shimmer (per frame)
   if (!s.brew && w.brewFx) { effects.stopAura(w.brewFx); w.brewFx = null; }
   if (w !== me) { w.sprinting = !!s.sprint; w.castRooted = !!s.castRoot; }
   w.ultWinding = !!s.ultWind; w.blizz = s.blizz ?? null;
@@ -1424,7 +1425,7 @@ function updateLocal(dt) {
     if (wantBlock !== local.blocking) { local.blocking = wantBlock; net.send({ t: 'block', on: wantBlock }); }
     if (K.guard === 'tempest_veil' && input.justPressed('Space') && !airborne && !local.spaceHeld && now >= local.cd.guard && !me.veiled) {
       local.cd.guard = now + SPELL.tempest_veil.cooldown;   // tap: the bubble goes up for its duration, no holding
-      net.send({ t: 'veil' }); local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.tapShield);
+      net.send({ t: 'veil' });   // not rooted: she keeps moving
     }
     if (K.guard === 'glacial_bulwark' && input.justPressed('Space') && !airborne && !local.spaceHeld && !busy && now >= local.cd.guard) {
       local.cd.guard = now + BULWARK.cooldown;
@@ -1998,6 +1999,7 @@ function frame(t) {
     updateMusic();
     updateGoatAudio(dt);
     for (const w of players.values()) updateWizardAudio(w, dt);
+    for (const w of players.values()) if (w.healing && !w.dead && (w.healFxT = (w.healFxT || 0) + dt) > 0.05) { w.healFxT = 0; effects.healShimmer(w.group.position.clone().setY(w.group.position.y + 1)); }
   } else {
     // idle camera drift on the join screen
     const a = t * 0.00008;

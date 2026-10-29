@@ -660,10 +660,14 @@ function tryUltimate(me, world, t, act, target) {
     let best = null, bn = 0;
     for (const q of foesNear(me, world, me.p, CAGE.range, t, { ground: true })) {
       const n = foesNear(me, world, q.p, CAGE.radius - 2, t, { ground: true });
-      const score = n.length + (q.hp < 45 || rooted(q, t) || isStunned(q, t) ? 0.6 : 0);
+      // it heals us and our teammates inside: a fight our side is in (and hurt) is worth more
+      const mates = [...world.players.values()].filter(o => !o.dead && o !== me && !foe(me, o) && dist2D(o.p, q.p) < CAGE.radius - 1);
+      const selfIn = dist2D(me.p, q.p) < CAGE.radius - 1;
+      const healValue = mates.reduce((v, o) => v + (o.hp < 70 ? 0.6 : 0.3), 0) + (selfIn && me.hp < 70 ? 0.5 : 0);
+      const score = n.length + (q.hp < 45 || rooted(q, t) || isStunned(q, t) ? 0.6 : 0) + healValue;
       if (score > bn) { bn = score; best = n; }
     }
-    if (!best || !(bn >= 2 || (patient && bn >= 1)) || me.hp < 30) return false;
+    if (!best || !(bn >= 2 || (patient && bn >= 1)) || (me.hp < 30 && bn < 2)) return false;
     let x = 0, z = 0;
     for (const q of best) { x += q.p[0]; z += q.p[2]; }
     x /= best.length; z /= best.length;
@@ -1233,7 +1237,9 @@ function respond(me, world, t, proj, th, act) {
   if (proj.kind === 'skim' && airborne(me, t)) return;
   // Sparks, shards and thrown props: sidestep if there's time to clear the hit sphere, else ward.
   const clearTime = (C.HIT_RADIUS + proj.radius - th.miss + 0.3) / (C.speedOf(me.wizard) * cfg.speed);
-  if (th.tc > clearTime + 0.05 && Math.random() < 0.65) return sidestep();
+  // Black Death heals on every block: when hurt, Vesper would rather soak it than dodge
+  const soak = K.guard === 'black_death' && me.hp < 80 ? 0.3 : 0.65;
+  if (th.tc > clearTime + 0.05 && Math.random() < soak) return sidestep();
   if (canWard) { faceIt(); act({ t: 'block', on: true }); b.blockUntil = t + th.tc + 0.2; return; }
   sidestep();
 }

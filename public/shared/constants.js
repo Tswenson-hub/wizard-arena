@@ -448,13 +448,14 @@ export const SPELLBOOK = {
   },
   black_death: {
     id: 'black_death', slot: 'guard', name: 'Black Death', short: 'Black Death', ward: true, allSides: true,
-    blurb: 'Hold: a black shroud blocks spells from every side, for about 3 s of stamina. Damage it absorbs charges your next Lash.',
+    blurb: 'Hold: a black shroud blocks spells from every side, for about 3 s of stamina. Each block heals you for 30% of the damage it absorbed and charges your next Lash.',
     cooldown: 0,
     drainMul: 2.5,          // stamina drains this much faster than the base ward rate (about 3 s from full)...
     hitCostMul: 2,          // ...and each blocked hit costs this much more (2.5 left Vesper last in the balance match)
     lashCdPerDamage: 0.1,   // each absorbed point cuts Sanguine Lash's cooldown by this (s)...
     bonusPerDamage: 0.5,    // ...and stores this much bonus damage for the next Lash...
     maxBonus: 14,           // ...up to this
+    healPerDamage: 0.3,     // Ty: each blocked hit heals her this share of the damage it absorbed
   },
   tempest_veil: {
     id: 'tempest_veil', slot: 'guard', name: 'Tempest Veil', short: 'Veil',
@@ -578,12 +579,13 @@ export const SPELLBOOK = {
   },
   night_cage: {
     id: 'night_cage', slot: 'ultimate', name: 'Night Cage', short: 'Cage', ult: true,
-    blurb: 'Hold Q to aim, release: a 7 m ring of black spikes for 4 s. Enemies inside can\'t get out, enemies outside can\'t get in.',
+    blurb: 'Hold Q to aim, release: a 7 m ring of black spikes for 4 s. Enemies inside can\'t get out, enemies outside can\'t get in. It heals you and your teammates inside, 10 HP a second.',
     radius: 7,
     range: 24,
     duration: 4,
     flyOver: 3,          // a wizard higher than this (Skyward Flash) passes over the ring
     castPose: 0.6,
+    heal: 10,            // Ty: HP a second for Vesper and her teammates standing inside (to max HP)
   },
 };
 
@@ -630,7 +632,7 @@ export const CAST_ROOT = {
   lashRelease: 0.3,
   frostfall: 0.5,      // Frostfall's cast pose
   toxic: 0.35, ram: 0.35,
-  tapShield: 0.3,      // Firewall, Glacial Bulwark, Tempest Veil, Smoke Flask, Ram Guard
+  tapShield: 0.3,      // Firewall, Glacial Bulwark, Smoke Flask, Ram Guard (not Tempest Veil: Gale keeps moving)
   tk: 0.35,            // a telekinesis lift or throw gesture
   curse: 0.3,
 };

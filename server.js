@@ -109,7 +109,7 @@ function playerPublic(p) {
     ammo: p.ammo, reload: p.reloadUntil > now() ? +(p.reloadUntil - now()).toFixed(2) : 0,
     slow: p.slowUntil > now(), bound: p.silenceUntil > now(), rooted: p.rootUntil > now(), frozen: p.frozenUntil > now(),
     brew: p.brewUntil > now(), flaskWind: !!p.flaskWind,
-    ult: Math.floor(p.ult), eye: !!p.eye, lashBonus: Math.round(p.lashBonus || 0),
+    ult: Math.floor(p.ult), eye: !!p.eye, lashBonus: Math.round(p.lashBonus || 0), heal: now() < (p.healUntil || 0),
     ultWind: p.ultWind ? p.ultWind.U : null,
     blizz: p.blizz ? +p.blizz.yaw.toFixed(3) : null,
     mrain: p.mrain ? p.mrain.phase : null,
@@ -386,7 +386,14 @@ function guardAbsorbed(p, attacker, absorbed, t) {
     const B = C.SPELLBOOK.black_death;
     if (kit(p).power === 'sanguine_lash' && p.cd.power > t) p.cd.power = Math.max(t, p.cd.power - absorbed * B.lashCdPerDamage);
     p.lashBonus = Math.min(B.maxBonus, (p.lashBonus || 0) + absorbed * B.bonusPerDamage);
+    heal(p, absorbed * B.healPerDamage, t, 0.5);
   }
+}
+// Healing (Black Death's blocks, a Night Cage): up to max HP; `shimmer` s of the crimson healing glow on clients.
+function heal(p, amount, t, shimmer = 0.3) {
+  if (p.dead || !(amount > 0) || p.hp >= C.MAX_HP) return;   // nothing to heal: no glow
+  p.hp = Math.min(C.MAX_HP, p.hp + amount);
+  p.healUntil = Math.max(p.healUntil || 0, t + shimmer);
 }
 
 // ---------------------------------------------------------------- casting roots
@@ -1064,6 +1071,12 @@ function cageKeep(q) {
 function updateCages(t) {
   for (const c of [...cages.values()]) {
     if (t >= c.until) { cages.delete(c.id); broadcast({ t: 'cageEnd', id: c.id }); continue; }
+    // Vesper and her teammates inside the ring heal
+    const dt = Math.min(0.1, t - (c.healAt ?? t)); c.healAt = t;
+    for (const q of players.values()) {
+      if (q.dead || enemyOf(c.owner, q) || q.p[1] > CAGE.flyOver || Math.hypot(q.p[0] - c.x, q.p[2] - c.z) >= CAGE.radius) continue;
+      heal(q, CAGE.heal * dt, t, 0.25);
+    }
     for (const q of players.values()) if (q.bot || q.p[1] > CAGE.flyOver) cageKeep(q);   // humans: in their state updates
   }
 }
@@ -1678,8 +1691,7 @@ function handle(p, msg) {
     }
     case 'veil': {
       if (kit(p).guard !== 'tempest_veil' || !canAct(p) || isVeiled(p) || t < p.cd.guard) break;
-      p.cd.guard = t + VEIL.cooldown;
-      castRoot(p, C.CAST_ROOT.tapShield);
+      p.cd.guard = t + VEIL.cooldown;   // no cast root: Gale keeps moving (Ty: Veil and Blink are the exceptions)
       p.veilUntil = t + VEIL.duration;
       broadcast({ t: 'veil', id: p.id, left: VEIL.duration });
       break;
