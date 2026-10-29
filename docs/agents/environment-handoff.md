@@ -1,5 +1,45 @@
 # Environment hand-off: the farmstead
 
+## Altar Siege respawns pushed back (`SIEGE_SPAWNS`, Siege branch of `spawnPointFor`)
+Ty: "it should take a second to get back into the battle once you are killed."
+- **`map.js` `SIEGE_SPAWNS`:** `{ ember, frost }`, 4 points each, as `[x, 0, z, yaw facing the map centre]`.
+  - **Ember:** the north-west corner of the farm, beside the tractor and the field's north-east corner, 26–27.5 m from centre, around (−19.9, 16.7).
+  - **Frost:** the far south meadow edge, 36.6–38 m out, around (3.3, −37.9).
+  - All points are ≥ 3.7 m from colliders and away from props and the pen.
+- **Why Ember is nearer the centre than the 33–36 m asked:**
+  - All three zones lie south of the map centre (altar z −7, barn −4.5, silo −19), and Frost can't go further than the rim.
+  - Ember at 32–34 m behind the farmhouse walked about 2.8 s longer to every zone, and Frost won 3 of 3 siege matches.
+  - At 27 m the gap was about 1 s on paper, but bots still arrived about 2 s later, and Frost won 4 of 4.
+  - So the cluster sits at 26–27.5 m.
+- **`server/match.js` `spawnPointFor`, Siege only:** always one of your team's `SIEGE_SPAWNS` (random, skipping points within 8 m of a living enemy),
+  in every phase. I removed the "fair walk" logic that respawned you about as far from the active zone as the enemy's closest spawn.
+  FFA and TDM are unchanged.
+- **The facing (yaw) needs the spells side.** `respawn()` in server.js ignores `sp[3]`. To face the centre on respawn: `p.yaw = sp[3]` when it is
+  finite, send it in the `respawn` message, and set `local.yaw` from it in main.js. It is filed in requests.md.
+
+**Travel time from spawn to 1 m inside each zone.** Grid shortest path around every collider (`/tmp/wa-environment/walktime.mjs`),
+walk 3.0 m/s; "sprint" is 5.5 m/s for 4 s (100 stamina at 25/s), then walking. Cluster means:
+
+| zone | Ember walk / sprint | Frost walk / sprint |
+|---|---|---|
+| The Altar | 8.2 / 4.9 s | 8.1 / 4.8 s |
+| Barn Passage | 10.8 / 7.5 s | 9.4 / 6.1 s |
+| Fallen Silo | 9.6 / 6.3 s | 9.5 / 6.1 s |
+
+**Verified:**
+- `MATCH_DEBUG=1 node tools/test/modematch-unit.mjs`: **ALL PASS** (43). Three new checks:
+  - every Siege respawn is at the team's `SIEGE_SPAWNS` for each active zone
+  - none is within 20 m of the active zone (the closest is 29.7 m)
+  - TDM still uses `TEAM_SPAWNS`
+- `modematch siege 300 hard` on 4102 with MATCH_DEBUG=1, plus a passive watcher (`siegewatch.mjs`):
+  - every respawn was at the team's own siege spawn
+  - **no bot stalled near a spawn**
+  - 0 friendly fire, every match finished
+  - With the 27 m Ember cluster, the median respawn-to-zone time was Ember 9.7–13.1 s and Frost 8.4–10.7 s, and Frost won 4 of 4. Kills were even (for example 26–18 to Ember in a match Ember lost).
+  - Runs with the current 26 m cluster are in progress. If they still lean Frost, I'll adjust only `SIEGE_SPAWNS` in a follow-up commit.
+- Screenshots: `/tmp/wa-environment/ss_ember.png` (the 27 m cluster) and `ss_frost.png`.
+
+
 ## Altar Siege zone spots (`SIEGE_ZONES` in map.js)
 **Update, after the modes agent's balance runs:** Barn Passage moved from (10, 4), where Ember won every hold, to **(11.3, −4.5)**.
 That is the farmyard-to-pen-gate passage between the altar ring and the pen; mean spawn distance is now 22 / 27 m.
@@ -165,7 +205,8 @@ goat's step-aside can't get round. Before the boxes, goats from south of the arc
   - team spawn views: `r6_v_ember` (from (4.5, 10.5), facing south) and `r6_v_frost` (from (0.5, −31), facing north, through the arch to the house)
 
 **Known issues:**
-- `tools/test/modematch-unit.mjs` fails 14 checks at HEAD before my change too, so the cause is not the map.
+- ~~`tools/test/modematch-unit.mjs` fails 14 checks at HEAD~~ **Correction:** that was my mistake. I ran it without `MATCH_DEBUG=1`; run as
+  `MATCH_DEBUG=1 node tools/test/modematch-unit.mjs`, it passes.
 - Not re-measured for draw calls. The blast site adds roughly 70 small procedural meshes, mostly flagstones and pillar drums. If perf matters,
   instance the flagstones first.
 - The furrow decal can read as a plinth under the obelisk when seen end-on from close by.

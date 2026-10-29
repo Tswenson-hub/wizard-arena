@@ -345,14 +345,12 @@ export function createMatch(ctx) {
       if (!M().teams || !p.team) return null;
       const list = TEAM_SPAWNS[p.team];
       const enemyDist = (sp) => { let d = Infinity; for (const q of players.values()) if (!q.dead && q.team && q.team !== p.team && q !== p) d = Math.min(d, Math.hypot(q.p[0] - sp[0], q.p[2] - sp[2])); return d; };
-      if (S.mode === 'siege' && S.zone && S.phase === 'live') {
-        // fair walks to the zone: spawn about as far from it as the other team's closest spawn (still on our own
-        // side, never within 8 m of a living enemy). Otherwise the zone by a team's spawn is theirs for the taking.
-        const z = zoneAt(S.zone.i), zd = (sp) => Math.hypot(sp[0] - z.x, sp[2] - z.z);
-        const other = TEAM_SPAWNS[p.team === 'ember' ? 'frost' : 'ember'];
-        const goal = Math.max(Math.min(...list.map(zd)), Math.min(...other.map(zd)));
-        const safe = list.filter(sp => enemyDist(sp) > 8);
-        return (safe.length ? safe : list).map(sp => [sp, Math.abs(zd(sp) - goal) + Math.random() * 2]).sort((a, b) => a[1] - b[1])[0][0];
+      // Altar Siege: always at your own team's far edge (map.js SIEGE_SPAWNS), however near the zone is, so a
+      // death costs a walk back into the fight.
+      if (S.mode === 'siege' && C.SIEGE_SPAWNS?.[p.team]) {
+        const pts = C.SIEGE_SPAWNS[p.team], safe = pts.filter(sp => enemyDist(sp) > 8);
+        const pick = safe.length ? safe : pts;
+        return pick[Math.floor(Math.random() * pick.length)];
       }
       // the spawn farthest from any living enemy
       let best = null, bd = -1;

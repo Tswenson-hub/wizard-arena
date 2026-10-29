@@ -290,6 +290,17 @@ export const SIEGE_ZONES = [
   { id: 'silo', name: 'Fallen Silo', x: -22, z: -19, r: 7 },                // north-west of the silo: its body and an oak at the edge
 ];
 
+// Altar Siege respawns: each team at its own far edge, so a death costs a walk back (Ty: "it should take a
+// second to get back into the battle"). [x, 0, z, yaw facing the map centre].
+// Ember: the north-west corner of the farm, beside the tractor and the field's north-east corner (r 26-27.5). Frost: the far south meadow edge
+// (r 36.6-38). Every zone lies south of the map centre, so Ember sits nearer the centre than Frost to make the
+// walks match. Walking (3 m/s) to a metre inside each zone, cluster mean: Ember 8.2 / 10.8 / 9.6 s,
+// Frost 8.1 / 9.4 / 9.5 s (altar / barn / silo).
+export const SIEGE_SPAWNS = {
+  ember: [[-20.8, 0, 15.6, 2.21], [-19.9, 0, 16.7, 2.27], [-19, 0, 17.7, 2.32], [-21.1, 0, 17.7, 2.27]],
+  frost: [[5.3, 0, -37.4, -0.14], [3.3, 0, -37.9, -0.09], [1.3, 0, -37.8, -0.03], [3.2, 0, -36.5, -0.09]],
+};
+
 // Free for all: both sides plus the flanks between the blast site and the field or the pen.
 // Nobody spawns in the pen, the field or the house.
 export const SPAWN_POINTS = [...TEAM_SPAWNS.ember, ...TEAM_SPAWNS.frost, [-13.5, 0, 1.5], [12.5, 0, 1.5]];

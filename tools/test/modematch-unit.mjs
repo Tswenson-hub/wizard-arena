@@ -107,6 +107,25 @@ match.handle(h, { t: 'matchDebug', mode: 'siege' }); run(2.2); away(); sides();
 S.scores[H] = 99.5; into(h); run(1);
 ok(S.phase === 'end' && S.results.reason === 'target' && S.results.winner === H, 'first to 100% wins');
 ok(match.canThrow(h, props.get(1)), 'telekinesis throws normally (no relic special case)');
+// Siege respawns: always at your own team's far edge (C.SIEGE_SPAWNS), whichever zone is active
+{
+  const inList = (sp, list) => !!sp && list.some(q => q[0] === sp[0] && q[2] === sp[2]);
+  match.handle(h, { t: 'matchDebug', mode: 'siege' }); run(2.2); away(); run(1.2);
+  let good = S.phase === 'live', far = Infinity;
+  for (let zi = 0; zi < 3; zi++) {
+    S.zone.i = zi;
+    const z = match.zoneAt(zi);
+    for (const p of players.values()) for (let k = 0; k < 8; k++) {
+      const sp = match.spawnPointFor(p);
+      good &&= inList(sp, C.SIEGE_SPAWNS[p.team]);
+      far = Math.min(far, Math.hypot(sp[0] - z.x, sp[2] - z.z));
+    }
+  }
+  ok(good, 'siege: every respawn is at the team\'s own SIEGE_SPAWNS, for each active zone');
+  ok(far > 20, `siege: no respawn near the active zone (closest ${far.toFixed(1)} m)`);
+  match.handle(h, { t: 'matchDebug', mode: 'tdm' }); run(2.2);
+  ok([...players.values()].every(p => inList(match.spawnPointFor(p), C.TEAM_SPAWNS[p.team])), 'TDM still respawns at TEAM_SPAWNS');
+}
 
 // FFA: fill bots leave, nobody is a teammate
 match.handle(h, { t: 'matchDebug', mode: 'ffa' }); run(2);
