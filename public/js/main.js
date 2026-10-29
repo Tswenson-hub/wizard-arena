@@ -580,7 +580,7 @@ function handleMessage(msg) {
       break;
     }
     case 'skywardCancel':
-      if (msg.id === myId && local.flight) { local.flight = null; local.pos.y = 0; }
+      if (msg.id === myId && local.flight) { local.flight = null; local.pos.y = Math.min(local.pos.y, groundAt(local.pos.x, local.pos.z, local.pos.y) + 0.01); }
       break;
     case 'wizard': {
       const w = players.get(msg.id);
@@ -1517,9 +1517,10 @@ function updateLocal(dt) {
     // real elapsed time, not the frame-clamped dt: the server checks the height against its clock
     local.pos.y -= rate * Math.min(0.25, now - local.flight.last);
     local.flight.last = now;
-    if (local.pos.y <= 0 || me.dead) {
-      local.pos.y = 0; local.flight = null;
-      if (!me.dead) { effects.land([local.pos.x, 0, local.pos.z]); sfx.land([local.pos.x, 0.2, local.pos.z]); }
+    const sfl = groundAt(local.pos.x, local.pos.z, local.pos.y);
+    if (local.pos.y <= sfl || me.dead) {
+      local.pos.y = sfl; local.flight = null;
+      if (!me.dead) { effects.land([local.pos.x, sfl, local.pos.z]); sfx.land([local.pos.x, sfl + 0.2, local.pos.z]); }
     }
   }
   const airborne = !!local.flight;
@@ -1869,19 +1870,39 @@ function updateLocal(dt) {
     local.vel.set(0, 0, 0);
   }
   if (rooted) local.vel.set(0, 0, 0);
-  if (!me.dead) local.pos.addScaledVector(local.vel, dt);
+  if (!me.dead) {
+    // in small slices near platforms, so a steep ladder or stair is climbed even on a slow frame (the step-up is per slice)
+    const mx_ = local.vel.x * dt, mz_ = local.vel.z * dt, ml = Math.hypot(mx_, mz_);
+    const n = C.SURFACES.length && !local.jump && !local.flight && !local.fall && ml > 0.06 ? Math.min(10, Math.ceil(ml / 0.06)) : 1;
+    for (let i = 0; i < n; i++) {
+      local.pos.x += mx_ / n; local.pos.z += mz_ / n;
+      if (n > 1) {
+        const fl = groundAt(local.pos.x, local.pos.z, local.pos.y);
+        if (fl >= local.pos.y - 0.02) local.pos.y = fl;
+        const q = C.surfacePushOut(local.pos.x, local.pos.z, local.pos.y, C.PLAYER_RADIUS); local.pos.x = q[0]; local.pos.z = q[1];
+      }
+    }
+  }
   // dragged toward an enemy Eye of the Storm
   if (local.pull && now < local.pull.until && !rooted && !me.dead) { local.pos.x += local.pull.v[0] * dt; local.pos.z += local.pull.v[1] * dt; }
 
-  // ---- height: a jump's arc on real time (the server checks it against its clock), then the floor under us
+  // ---- height (real time; the server checks it against its clock): a jump's arc, falling off an edge, stepping
+  // up a ramp or stairs. A jump's arc carries on below where it started (off a ledge) until it meets a floor.
+  const landed = () => { effects.dust(local.pos, 3); sfx.play('step_grass', { pos: [local.pos.x, local.pos.y + 0.1, local.pos.z], vol: 0.6, rate: 0.85, jitter: 0.05, bag: 'land' + myId }); };
   if (local.jump) {
     const e = now - local.jump.start;
     const fl = groundAt(local.pos.x, local.pos.z, local.pos.y);
-    local.pos.y = Math.max(fl, local.jump.y0 + C.jumpY(e));
-    if ((e > C.JUMP.airTime * 0.5 && local.pos.y <= fl + 0.001) || me.dead) {
-      local.pos.y = fl; local.jump = null;
-      if (!me.dead) { effects.dust(local.pos, 3); sfx.play('step_grass', { pos: [local.pos.x, 0.1, local.pos.z], vol: 0.6, rate: 0.85, jitter: 0.05, bag: 'land' + myId }); }
-    }
+    local.pos.y = Math.max(fl, local.jump.y0 + C.JUMP.v0 * e - C.JUMP.gravity * e * e / 2);
+    if ((e > C.JUMP.airTime * 0.5 && local.pos.y <= fl + 0.001) || me.dead) { local.pos.y = fl; local.jump = null; local.fall = null; if (!me.dead) landed(); }
+  } else if (!local.flight && !me.dead) {
+    const fl = groundAt(local.pos.x, local.pos.z, local.pos.y);
+    if (local.pos.y > fl + 0.02) {
+      // walked off an edge: fall under the jump's gravity
+      local.fall ??= { start: now, y0: local.pos.y };
+      const e = now - local.fall.start;
+      local.pos.y = Math.max(fl, local.fall.y0 - C.JUMP.gravity * e * e / 2);
+      if (local.pos.y <= fl + 0.001) { local.pos.y = fl; if (local.fall.y0 - fl > 0.6) landed(); local.fall = null; }
+    } else { local.pos.y = fl; local.fall = null; }   // on the floor, or stepped up onto a ramp, stair or low top
   }
 
   // ---- collisions (2D circles)
@@ -1901,6 +1922,8 @@ function updateLocal(dt) {
     }
   }
   for (const c of C.COLLIDERS) if (y < c.h) pushOut(c.x, c.z, c.r);
+  // platforms' sides are walls for anyone whose feet are more than a step below their top
+  if (C.SURFACES.length) { const q = C.surfacePushOut(local.pos.x, local.pos.z, local.pos.y, pr); local.pos.x = q[0]; local.pos.z = q[1]; }
   if (y < 1) for (const e of props.values()) if (e.data.state === 'idle') pushOut(e.data.x, e.data.z, C.PROP_TYPES[e.data.type].r * 0.8);
   for (const w of players.values()) if (w !== me && !w.dead && Math.abs(w.group.position.y - y) < C.PLAYER_HEIGHT) pushOut(w.group.position.x, w.group.position.z, pr);
   // (never the ram we ride: it sits under us a frame behind, and pushing out of it shoved us forward every frame)
@@ -2177,6 +2200,7 @@ function frame(t) {
     sfx.setListener(camera);
     updateMusic();
     updateGoatAudio(dt);
+    for (const w of players.values()) { const gp = w.group.position; w.inAir = gp.y > groundAt(gp.x, gp.z, gp.y) + 0.25; }   // (on a platform isn't "in the air")
     for (const w of players.values()) updateWizardAudio(w, dt);
     updateFloats(dt); updateKilledBy();
     // a full ultimate charge glows in the hero's colour

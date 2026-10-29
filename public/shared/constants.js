@@ -1,6 +1,6 @@
 // Shared between server and client. Keep this file dependency-free.
 // Map layout (arena size, obstacles, props, goats, spawns) lives in map.js and is re-exported here.
-import { COLLIDERS, ARENA_RADIUS, LOS_HEIGHT } from './map.js';
+import { COLLIDERS, ARENA_RADIUS, LOS_HEIGHT, surfaceBlocks, SURFACES } from './map.js';
 import { WIZARDS, DEFAULT_WIZARD } from './wizards.js';
 export * from './map.js';
 export * from './wizards.js';
@@ -711,6 +711,8 @@ export function pillarBlocks(a, b, pad = 0) {
     const k = Math.max(0, Math.min(1, ((c.x - a[0]) * sx + (c.z - a[2]) * sz) / ll));
     if (Math.hypot(a[0] + sx * k - c.x, a[2] + sz * k - c.z) < c.r + pad) return c;
   }
+  // round 9: platforms and ramps, at body height above each end's feet (a ledge hides who's behind or under it)
+  if (SURFACES?.length && surfaceBlocks?.([a[0], (a[1] || 0) + 1.1, a[2]], [b[0], (b[1] || 0) + 1.1, b[2]])) return { kind: 'surface', h: 99 };
   return null;
 }
 export const PROP_RESPAWN_TIME = 18;

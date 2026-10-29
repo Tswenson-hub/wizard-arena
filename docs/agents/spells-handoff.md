@@ -1,5 +1,106 @@
 # Spells hand-off
 
+## Round 9: jump and crouch, shield on R, combat feedback, platforms and ramps (`a14a128`, then section 2)
+
+### 1. Jump (Space), crouch (C toggles, Ctrl holds), shield on R
+- **Constants:**
+  - `C.JUMP` = { height 1.1, airTime 0.55, airControl 0.6, stamina 10, castLock 0.15 }, with v0 = 8 m/s and g = 29.1 m/s².
+  - `C.CROUCH` = { speed 1.6, hitCenter 0.5, hitRadius 0.42 }; the sphere's top is at 0.92 m.
+  - `C.hitCenterOf(q)` / `C.hitRadiusOf(q)` give the hit sphere, and every server hit test, the bots' aim and the client's crosshair
+    test use them.
+- **Server:**
+  - **`jump`:** refused while rooted, stunned, cast-rooted, warding, flying, riding, in an ultimate, short of stamina, or not on the floor.
+    It costs 10 stamina, uncrouches, and broadcasts `jump`.
+  - **Height check:** in a jump, y is clamped between the floor and y0 + 1.2.
+  - **`JUMP_LOCKED`:** nothing for 0.15 s, then only the primary; movement abilities aren't locked.
+  - **Crouch:** `state.crouch`. The server caps a crouched wizard at the crouch speed, and crouching means no sprint.
+  - Bots fly the jump arc in the server tick.
+  - The snapshot carries `crouch` and `jump`.
+- **Client:**
+  - **Controls:** Space jumps. R is the shield (hold to ward, tap for the tap shields). Reload early moved to T. C or Ctrl drops out of
+    a Skyward Flash.
+  - **Jump:** steering at 60% in the air, and a dust puff and step sound on landing.
+  - **Crouch:** the camera dips 0.5 m. wizard.js squashes the model to 70% until crouch clips exist; it uses `actions.jump` / `float`,
+    `crouch` and `crouch_walk` if present (requested from the characters agent).
+  - **Text:** the ability bar, the controls panel, the hints, the goat warnings and the README controls table now say R, Space, C and T.
+  - **Still needed:** `select.js` SLOT_KEYS.guard = 'R' (requested from the characters agent).
+- **Bots:**
+  - They hop Glacial Skim volleys (`cfg.jump`: easy 0.15, normal 0.5, hard 0.85) and hop low obstacles they're stuck on.
+  - When hurt (under 45 HP) they crouch behind low cover between them and the target (`cfg.crouch`).
+- **Verified:**
+  - `t_jump.mjs`: 10 stamina; a 3 m height report is clamped to 1.3; a cast inside the lock is refused and one after it works; a Meteor
+    charge in the air is refused.
+  - `t_fence2.mjs`: across a fence, the Sling hits a standing target and flies over a crouched one. The Fireball (radius 0.45) still
+    clips a crouched target.
+  - Playwright (`t_r9.py`, `t_skydrop.py`): the apex reached 1.075 m; holding R wards; holding Space doesn't ward; C crouches (and the
+    server sees it); C drops Rime out of a Skyward Flash.
+
+### 3. Combat feedback
+- **Server:**
+  - `death` carries `kind`, the spell that killed (`killPlayer(target, attacker, cause, kind)`).
+  - `hit` carries `fin`, `ult`, and `absorbed` for blocks.
+  - Heals collect in `p.healAcc` and go out as `{ t: 'heal', id, amt }` at most every 0.4 s.
+- **Client** (main.js, the "combat feedback" section, styles at the end of style.css):
+  - **Damage numbers:** at the target, for our hits, with BLOCKED in grey. They're small by default, `crit` (gold) for finishers,
+    `big` (orange) for 30+ and heavy hits, and `ult` (violet). They stack and drift.
+  - **Numbers about us:** by the HP bar, red for damage taken, green for heals, grey for BLOCKED.
+  - **Heals:** green numbers on teammates too.
+  - **Hit and kill markers:** the existing hit marker, plus a red ✕ kill marker.
+  - **Kill feed:** `#killfeed`, top right, with the killer in their hero colour, the spell icon and the victim; highlighted when it
+    involves us. The general `#feed` moved down to top: 190px.
+  - **Killed-by card:** in `#deathScreen`: the hero, the spell icon and name, the damage they did us since our last spawn, and their HP
+    (live).
+  - **Damage arcs:** around the crosshair, pointing toward the attacker.
+- **Icons:** 23 of the Raven Fantasy Icons (free version, Clockwork Raven Studios) in `public/textures/icons/`; licence notes are in
+  `CREDITS.md` there.
+  - The free version may be used in games released for free with no microtransactions and no ads.
+  - **If the game is ever monetised, buy the premium version or swap the icons.**
+- **Verified** in Playwright, all seen during a fight: arcs (and heavy ones), red −20 and gold −28 by the HP bar, BLOCKED, our damage
+  numbers, and the kill feed entry with the Fireball icon. The killed-by card showed "Brann (Cinder), Fireball, dealt you 116, HP 78"
+  (more than 100 dealt, because Black Death healed her in between).
+
+### 2. Platforms and ramps (the environment agent's SURFACES)
+- **LOS:** `C.pillarBlocks` also asks `surfaceBlocks`, at 1.1 m above each end, so bots' sight, telekinesis and cover know about ledges.
+  The bots' `lineBlocked` now follows the 3D aim: it used to aim the check at y 0, which made a bot think every perched target was blocked.
+- **Client:**
+  - **Floor:** `groundAt` = `C.surfaceHeight`.
+  - **Falling:** under the jump's gravity off an edge (`local.fall`).
+  - **Jump arc:** it carries on below where it started.
+  - **Stepping:** the walk is cut into ≤6 cm slices near platforms (stepping up, then `surfacePushOut`), so steep stairs work on slow frames.
+  - **Skyward Flash and Meteor Rain** land on the floor under them.
+  - **Animation:** `w.inAir` (above the floor + 0.25) replaces the wizard.js check of y > 0.3.
+- **Server:**
+  - **Height check:** the floor at the reported spot uses feet at the reported height, capped at 1 m above the last report. A fall
+    can't rise, and it drops at least as fast as gravity after 0.25 s.
+  - **Walls:** `surfacePushOut` on every state update.
+  - **Projectiles:** `surfaceSegmentHit` between ticks (surface `'surface'`).
+  - **Bots:** they fall and step in the tick, and bots.js `airborne()` means above the floor.
+  - **Frostfall and the Meteor Rain landing** use the height above the floor.
+- **Siege** (match.js occupancy): it counts a wizard by the floor they stand on (up to `SIEGE.maxY`) and their height above it.
+  No platform currently overlaps a zone circle.
+- **Bots, `rampWaypoint`:**
+  - **When:** for a target, or an objective point, more than a step higher, when the bot has no line, is out of range, or is Gale.
+  - **Route:** the foot of the best ramp whose high end is within 7 m of the destination, then up and over its top. If the ramp starts
+    on another piece, the way up to that piece first (one level).
+  - **Not ways up:** rails, which are ramps narrower than 0.7 m.
+  - **After a climb:** 1.5 s of pressing on toward the target instead of strafing off the stairs.
+- **Verified:**
+  - `t_plat.mjs`: walking up the high plateau's stairs gives the server y = 2.50; a +2 m height report is clamped; a ground shot ends on
+    the box side; a shot from the top flies on over the edge; walking off the edge lands at y = 0 on client and server.
+  - Playwright (`t_platvis.py`): W climbs the stairs to y = 2.5 (screenshot `r9_plateau.png`); walking off the side falls over 27 frames.
+  - `t_botclimb.mjs`: a Hard Gale climbed to the top in 17 s when it had no line. With a line, bots shoot up from below.
+- **Open (environment, filed in requests.md):**
+  - Both ladders and both ruin-ledge stairs are steeper than 1:1 and can't be climbed to the top, because the box walls off a 0.45 m
+    body. I suggested a ladder exception in `surfacePushOut`, or shallower stairs.
+  - The rails and ropes are solid ramps that block sight and shots; they should be `moveOnly`.
+
+### Tests
+- `modematch-unit`: 43 ok. `modematch` siege: PASS, 0 friendly fire, 3v3 throughout. botmatch is clean, and the server log has no errors.
+- **6-hero Hard match** (`t_balance6.mjs`, 2 × 150 s), K/D: Cinder 5/5, Gale 3/6, Rime 2/4, Vesper 6/4, Jeb 8/5, Embibe 5/5.
+  - About 15 kills per 150 s, roughly half the last round's rate (platforms, stricter line of sight, jumps, crouching, heals). Not
+    retuned; Ty's call.
+  - Bots jumped 8–47 times per run, and were seen crouching and standing on platforms.
+
 ## Kenney particles: textured, pooled sprites (Ty: "make use of these particles wherever possible")
 
 - **Textures:** `public/textures/particles/` holds 33 of the pack's 80 transparent PNGs, as grey + alpha PNGs (407 KB).

@@ -135,7 +135,7 @@ function trackVelocities(players, t) {
     tr.v[0] += (vx - tr.v[0]) * 0.45; tr.v[1] += (vz - tr.v[1]) * 0.45;
     // airborne wizards fall at a known rate; a launch or a landing isn't a fall
     let vy = (q.p[1] - tr.p[1]) / dt;
-    if (vy > 0 || vy < -SKY.dropSpeed * 1.5 || q.p[1] < 0.05) vy = 0;
+    if (vy > 0 || vy < -SKY.dropSpeed * 1.5 || !airborne(q, t)) vy = 0;
     tr.vy += (vy - tr.vy) * 0.5;
     tr.p = q.p.slice(); tr.t = t;
   }
@@ -162,10 +162,33 @@ const chest = (q) => [q.p[0], q.p[1] + C.hitCenterOf(q), q.p[2]];   // (lower wh
 const isStunned = (q, t) => q.stunUntil > t;
 const canAct = (q, t) => !q.dead && !isStunned(q, t) && !(q.silenceUntil > t);
 const rooted = (q, t) => q.rootUntil > t;
-const airborne = (q, t) => q.flightUntil > t || q.p[1] > 0.05;
+const airborne = (q, t) => q.flightUntil > t || !!q.jump || q.p[1] > C.surfaceHeight(q.p[0], q.p[2], q.p[1]) + 0.05;   // (standing on a platform isn't)
 // Round 9: a jump the server will take (it checks the same and more)
 const canJump = (q, t) => !q.jump && !airborne(q, t) && q.st >= C.JUMP.stamina + 15 && !q.blocking && !q.charging && !q.cyclone && !q.lash && !q.ride && !q.eye
   && !(q.castRootUntil > t) && !(q.rootUntil > t) && !(q.stunUntil > t);
+// Round 9: the way up to a platform. A ramp whose high end reaches `destY` near `dest` ([x, z]): its foot, then up it.
+// If that ramp starts on another piece (the ruin bridge between ledges), the way up to its foot first (one level).
+const rampHigh = (s) => { const lz = (s.y1 >= s.y0 ? 1 : -1) * s.d / 2, c = Math.cos(s.yaw || 0), n = Math.sin(s.yaw || 0); return [s.x + lz * n, s.z + lz * c]; };
+const onRamp = (me, s) => { const dx = me.p[0] - s.x, dz = me.p[2] - s.z, c = Math.cos(s.yaw || 0), n = Math.sin(s.yaw || 0); const lx = dx * c - dz * n, lz = dx * n + dz * c; return Math.abs(lx) <= s.w / 2 + 0.2 && Math.abs(lz) <= s.d / 2 + 0.2; };
+function rampWaypoint(me, dest, destY, depth = 0) {
+  const myFloor = C.surfaceHeight(me.p[0], me.p[2], me.p[1]);
+  if (destY <= myFloor + C.STEP_UP + 0.1 || depth > 1) return null;
+  let best = null, bc = Infinity;
+  for (const s of C.SURFACES) {
+    if (s.kind !== 'ramp' || s.w < 0.7 || s.moveOnly && !s.ladder) continue;   // (rails and ropes are narrow ramps: not ways up)
+    const hi = Math.max(s.y0, s.y1), lo = Math.min(s.y0, s.y1), top = rampHigh(s), foot = C.rampFoot(s);
+    if (hi < destY - 0.3) continue;                               // doesn't get high enough
+    const toDest = Math.hypot(top[0] - dest[0], top[1] - dest[1]);
+    if (toDest > 7) continue;                                     // not the way to this spot
+    const cost = Math.hypot(foot[0] - me.p[0], foot[1] - me.p[2]) + toDest + (lo > myFloor + C.STEP_UP ? 6 : 0);
+    if (cost < bc) { bc = cost; best = { s, top, foot, lo }; }
+  }
+  if (!best) return null;
+  if (onRamp(me, best.s) || (best.lo <= myFloor + C.STEP_UP && Math.hypot(best.foot[0] - me.p[0], best.foot[1] - me.p[2]) < 1.2)) return [best.top[0] + (best.top[0] - best.foot[0]) * 0.15, best.top[1] + (best.top[1] - best.foot[1]) * 0.15];   // up and over the top
+  if (best.lo > myFloor + C.STEP_UP) return rampWaypoint(me, best.foot, best.lo, depth + 1) || best.foot;   // its foot is up on another piece
+  return best.foot;
+}
+
 // a low collider (fence, crops, hay, a table rock) close by, roughly between us and `toward`
 function lowCoverToward(me, toward) {
   const dx = toward[0] - me.p[0], dz = toward[2] - me.p[2], l = Math.hypot(dx, dz) || 1;
@@ -951,8 +974,9 @@ function aimProp(me, prop, send) {
 // Would a shot along `dir` clip a pillar or tree (or, if given, a goat) within `range` metres?
 function lineBlocked(from, dir, range, radius, goats = null) {
   const l = Math.hypot(dir[0], dir[2]) || 1;
-  const to = [from[0] + dir[0] / l * range, 0, from[2] + dir[2] / l * range];
-  return !!C.pillarBlocks(from, to, radius + 0.15)
+  // along the real aim (it may climb to a target on a platform); pillarBlocks adds body height to the ends, so take it off
+  const to = [from[0] + dir[0] / l * range, from[1] + (dir[1] || 0) / l * range - 1.1, from[2] + dir[2] / l * range];
+  return !!C.pillarBlocks([from[0], from[1] - 1.1, from[2]], to, radius + 0.15)
     || (goats || []).some(g => segDist(from, to, g) < C.GOAT.radius + radius + 0.3);
 }
 // The same for something skimming the ground: anything taller than it is in the way.
@@ -1275,7 +1299,7 @@ function moveBot(me, dt, world, t) {
     if (b.flightStart !== me.flightStart) { b.flightStart = me.flightStart; b.slowFall = Math.random() < (cfg.lead > 0.5 ? 0.6 : 0.3); }
     const e = t - me.flightStart;
     const rate = e >= SKY.floatTime ? SKY.dropSpeed : b.slowFall ? SKY.slowFallSpeed : SKY.fallSpeed;
-    me.p[1] = Math.max(0, me.p[1] - rate * dt);
+    me.p[1] = Math.max(C.surfaceHeight(me.p[0], me.p[2], me.p[1]), me.p[1] - rate * dt);
   }
 
   // Smoke Screen dash: straight back at dash speed, colliding as usual
@@ -1311,7 +1335,9 @@ function moveBot(me, dt, world, t) {
     if (t < b.dodgeUntil && b.dodgeVec) { wx = b.dodgeVec[0]; wz = b.dodgeVec[1]; }
     else if (goal && !me.eye) {
       // a game-mode objective (go there, stay near a teammate, reach a prop); fight from wherever we are once close
-      const gx = goal[0] - me.p[0], gz = goal[1] - me.p[2], gl = Math.hypot(gx, gz) || 1;
+      const gTop = C.surfaceTopAt(goal[0], goal[1]);
+      const wp = gTop > 0.5 ? rampWaypoint(me, goal, gTop) : null;
+      const gx = (wp ? wp[0] : goal[0]) - me.p[0], gz = (wp ? wp[1] : goal[1]) - me.p[2], gl = Math.hypot(gx, gz) || 1;
       wx = gx / gl; wz = gz / gl;
       if (target && !target.dead && hasLOS(me.p, target.p)) me.yaw = yawTo(me.p, target.p);
       else me.yaw = Math.atan2(wx, wz);
@@ -1340,6 +1366,13 @@ function moveBot(me, dt, world, t) {
       if (t >= b.strafeUntil) { if (Math.random() < 0.6) b.strafe *= -1; b.strafeUntil = t + rand(0.5, 1.8) / (cfg.dodge + 0.4); }
       const strafe = diving ? 0.35 : los ? 0.9 : 1;
       if (!(lowHp && los && wx)) { wx = fx * fwd + fz * strafe * b.strafe; wz = fz * fwd - fx * strafe * b.strafe; }
+      // the target is up on a platform: take the ramp (unless we can shoot them from here)
+      if (!me.eye && !airborne(target, t)) {
+        const wp = (!los || kit(me).primary === 'gale_shear' || d > range[1]) ? rampWaypoint(me, [target.p[0], target.p[2]], target.p[1]) : null;
+        if (wp) { const px = wp[0] - me.p[0], pz = wp[1] - me.p[2], pl = Math.hypot(px, pz) || 1; wx = px / pl; wz = pz / pl; b.rampUntil = t + 0.5; }
+        // just came up: keep going onto their platform instead of strafing off the stairs
+        else if (t < (b.rampUntil || 0) + 1.5 && d > 1.8) { wx = fx; wz = fz; }
+      }
       const fg = me.blocking && b.faceGoat ? world.goats.find(g => g.id === b.faceGoat) : null;
       if (fg) me.yaw = Math.atan2(fg.x - me.p[0], fg.z - me.p[2]);
       else if (!me.blocking) me.yaw = Math.atan2(fx, fz);
@@ -1438,6 +1471,7 @@ function moveBot(me, dt, world, t) {
   // airborne, we pass over anything lower than our feet
   const y = me.p[1];
   for (const c of C.COLLIDERS) if (y < c.h) pushOut(c.x, c.z, c.r);
+  if (C.SURFACES.length) { const q = C.surfacePushOut(me.p[0], me.p[2], me.p[1], pr); me.p[0] = q[0]; me.p[2] = q[1]; }
   if (y < 1) for (const prop of world.props.values()) if (prop.state === 'idle') pushOut(prop.x, prop.z, C.PROP_TYPES[prop.type].r * 0.8);
   for (const q of world.players.values()) if (q !== me && !q.dead && Math.abs(q.p[1] - y) < C.PLAYER_HEIGHT) pushOut(q.p[0], q.p[2], pr);
   // (never a mount ram: it sits under its rider, and pushing out of it shoved the rider forward every tick)

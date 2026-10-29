@@ -156,7 +156,10 @@ export function createMatch(ctx) {
   function occupants() {
     const z = zoneAt(S.zone.i), by = { ember: [], frost: [] };
     for (const p of fighters()) {
-      if (p.dead || !p.team || (p.p[1] || 0) > SIEGE.maxY) continue;
+      // a height band: standing on the ground or a platform up to SIEGE.maxY (the barn loft, the ruin ledges), and not
+      // flying more than that above it (a hop doesn't take you out; a Skyward Flash does)
+      const y = p.p[1] || 0, floor = C.surfaceHeight ? C.surfaceHeight(p.p[0], p.p[2], y) : 0;
+      if (p.dead || !p.team || floor > SIEGE.maxY || y - floor > SIEGE.maxY) continue;
       if (Math.hypot(p.p[0] - z.x, p.p[2] - z.z) <= z.r) by[p.team].push(p);
     }
     return by;

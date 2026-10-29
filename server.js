@@ -129,6 +129,7 @@ const isAirborne = (p) => p.flightUntil > now();
 // Round 9: the floor under a point, for a wizard whose feet are at footY (map.js SURFACES once they exist; else 0)
 const groundAt = (x, z, footY = 0) => (C.surfaceHeight ? C.surfaceHeight(x, z, footY) : 0);
 const isJumping = (p) => !!p.jump;
+const aboveFloor = (q) => q.p[1] - groundAt(q.p[0], q.p[2], q.p[1]);   // height over what's under them (a ledge counts as floor)
 // Casting in a jump: nothing for JUMP.castLock s after take-off, then only the primary (and movement abilities)
 const JUMP_LOCKED = new Set(['chargeStart', 'cyclone', 'lashStart', 'frostfall', 'ult', 'veil', 'bulwark', 'smokeFlask', 'ramGuard', 'firewall', 'block', 'toxic', 'curse', 'pickup', 'throw', 'ram', 'ride']);
 const kit = (p) => C.kitOf(p.wizard);
@@ -777,7 +778,7 @@ function frostfallImpact(f) {
   const at = [f.x, 0, f.z];
   const hits = [];
   for (const q of players.values()) {
-    if (q.dead || q.id === f.owner || !enemyOf(f.owner, q) || q.p[1] > FROST.height || dist2D(q.p, at) > FROST.radius) continue;
+    if (q.dead || q.id === f.owner || !enemyOf(f.owner, q) || aboveFloor(q) > FROST.height || dist2D(q.p, at) > FROST.radius) continue;
     const dx = q.p[0] - f.x, dz = q.p[2] - f.z, l = Math.hypot(dx, dz);
     const { dmg } = applyHit(q, { kind: 'frostfall', owner: f.owner, v: l > 0.05 ? [dx / l, 0, dz / l] : [0, 0, 1] });
     hits.push({ id: q.id, dmg });
@@ -1279,8 +1280,9 @@ function mrainKill(p, q, dir) {
 function updateMeteorRain(p, t, dt) {
   if (p.mrainFall) {
     // knocked out of the sky: a plain fall (Skyward's drop speed)
-    p.p[1] = Math.max(0, p.p[1] - C.SPELLBOOK.skyward.dropSpeed * dt);
-    if (p.p[1] <= 0) { p.mrainFall = null; broadcast({ t: 'mrainEnd', id: p.id, p: p.p }); }
+    const fl = groundAt(p.p[0], p.p[2], p.p[1]);
+    p.p[1] = Math.max(fl, p.p[1] - C.SPELLBOOK.skyward.dropSpeed * dt);
+    if (p.p[1] <= fl) { p.mrainFall = null; broadcast({ t: 'mrainEnd', id: p.id, p: p.p }); }
     return;
   }
   const M = p.mrain;
@@ -1314,7 +1316,7 @@ function updateMeteorRain(p, t, dt) {
   // the landing: everyone in the circle
   const hits = [];
   for (const q of players.values()) {
-    if (q === p || !enemies(p, q) || q.dead || q.p[1] > 2.5 || dist2D(q.p, M.diveTo) > MRAIN.radius + C.PLAYER_RADIUS) continue;
+    if (q === p || !enemies(p, q) || q.dead || aboveFloor(q) > 2.5 || dist2D(q.p, M.diveTo) > MRAIN.radius + C.PLAYER_RADIUS) continue;
     mrainKill(p, q, outward(M.diveTo, q));
   }
   for (const id of p.mrain.hit) hits.push(id);
@@ -1381,7 +1383,7 @@ function simulate(dt) {
       else if (t >= p.cyclone.endAt) p.cyclone = null;
     }
     // Skyward Flash: the flight ends when the wizard reports touching down, or when time runs out
-    if (p.flightUntil && (t >= p.flightUntil || (p.p[1] <= 0.01 && t > p.flightStart + 0.3))) { p.flightUntil = 0; p.p[1] = 0; }
+    if (p.flightUntil) { const fl = groundAt(p.p[0], p.p[2], p.p[1]); if (t >= p.flightUntil || (p.p[1] <= fl + 0.01 && t > p.flightStart + 0.3)) { p.flightUntil = 0; p.p[1] = fl; } }
     // a jump: bots fly the arc here (humans report theirs); a lost landing report ends it anyway
     if (p.jump && (isAirborne(p) || p.mrain || p.mrainFall || p.dead)) p.jump = null;
     // heals show as one green number about every 0.4 s, not one per tick
@@ -1390,9 +1392,15 @@ function simulate(dt) {
       const e = t - p.jump.start;
       if (p.bot) {
         const floor = groundAt(p.p[0], p.p[2], p.p[1]);
-        p.p[1] = Math.max(floor, p.jump.y0 + C.jumpY(e));
+        p.p[1] = Math.max(floor, p.jump.y0 + C.JUMP.v0 * e - C.JUMP.gravity * e * e / 2);
         if (e > C.JUMP.airTime * 0.5 && p.p[1] <= floor + 0.001) { p.p[1] = floor; p.jump = null; }
       } else if (e > C.JUMP.airTime + 0.6) p.jump = null;
+    }
+    // bots off an edge fall, and step up ramps and stairs (humans report their own height)
+    if (p.bot && !p.jump && !p.dead && !isAirborne(p) && !p.mrain && !p.mrainFall) {
+      const fl = groundAt(p.p[0], p.p[2], p.p[1]);
+      if (p.p[1] > fl + 0.01) { p.vy = (p.vy || 0) - C.JUMP.gravity * dt; p.p[1] = Math.max(fl, p.p[1] + p.vy * dt); if (p.p[1] <= fl) p.vy = 0; }
+      else { p.p[1] = fl; p.vy = 0; }
     }
     flushPendingWizard(p);
     // goats.js drops a held goat itself (holder dead, stunned or gone); forget it when it's no longer ours
@@ -1432,6 +1440,11 @@ function simulate(dt) {
       proj.p[1] = Math.max(proj.p[1], 0.05);
       endProjectile(proj, true, { surface: 'ground' });
       continue;
+    }
+    // round 9: a platform or ramp in the way (a shot below its top stops; above it, it passes)
+    if (C.SURFACES.length) {
+      const sh = C.surfaceSegmentHit(before, proj.p);
+      if (sh) { proj.p = sh.p; endProjectile(proj, true, { surface: 'surface' }); continue; }
     }
     // pillars, trees, fences (for anything flying low enough), ice walls (which take the damage)
     let done = false;
@@ -1574,7 +1587,9 @@ function handle(p, msg) {
       const dt = Math.max(0.016, t - (p.lastStateAt || t));
       // Feet stay on the ground except inside a Skyward Flash, where the height may only fall
       // (never faster than a drop, never slower than the slowest hover).
-      let y = groundAt(msg.p[0], msg.p[2], p.p[1]);
+      // the floor at the reported spot, for feet at the reported height but at most 1 m above the last (a ladder climbs about
+      // 0.6 m between reports; box sides still wall off anyone below their top, so this can't pop you onto a box)
+      let y = groundAt(msg.p[0], msg.p[2], clamp(msg.p[1], p.p[1], p.p[1] + 1));
       if (p.jump && isAirborne(p)) p.jump = null;   // a Skyward Flash out of a jump: the flight's rules now
       if (p.jump) {
         // a jump: anywhere between the floor and the apex (plus a little); it ends when we report landing
@@ -1584,10 +1599,17 @@ function handle(p, msg) {
       } else if (isAirborne(p)) {
         const e = t - p.flightStart;
         const ceil = clamp(SKY.height + 0.5 - Math.max(0, e - 0.3) * SKY.slowFallSpeed * 0.9, 0, SKY.maxHeight);
-        const floor = clamp(p.p[1] - (SKY.dropSpeed * dt * 1.5 + 0.4), 0, ceil);
-        y = clamp(msg.p[1], floor, ceil);
-      }
+        const floor = clamp(p.p[1] - (SKY.dropSpeed * dt * 1.5 + 0.4), y, Math.max(y, ceil));
+        y = clamp(msg.p[1], floor, Math.max(y, ceil));
+      } else if (msg.p[1] > y + 0.02 && p.p[1] > y + 0.02) {
+        // off an edge: falling. No higher than where the fall began, and at least gravity's pull after a moment's slack.
+        p.fall ??= { start: t, y0: p.p[1] };
+        const e = Math.max(0, t - p.fall.start - 0.25);
+        y = clamp(msg.p[1], y, Math.max(y, Math.min(p.fall.y0 + 0.05, p.fall.y0 - C.JUMP.gravity * e * e / 2 + 0.1)));
+      } else p.fall = null;   // standing (or stepped up a ramp or stair: the floor under the new spot)
       const np = [clamp(msg.p[0], -C.ARENA_RADIUS, C.ARENA_RADIUS), y, clamp(msg.p[2], -C.ARENA_RADIUS, C.ARENA_RADIUS)];
+      // platforms' sides are walls (the client pushes itself out the same way; this is the check)
+      if (C.SURFACES.length) { const q = C.surfacePushOut(np[0], np[2], np[1], C.PLAYER_RADIUS); np[0] = q[0]; np[2] = q[1]; }
       // bound or recovering from a missed lash: the wizard stays put (a slowed one is just slower,
       // which the speed check below already allows)
       if (isRooted(p)) { np[0] = p.p[0]; np[2] = p.p[2]; }
