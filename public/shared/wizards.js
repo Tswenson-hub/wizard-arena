@@ -45,7 +45,7 @@ export const WIZARDS = {
   // characters agent wires her model.
   embibe: {
     id: 'embibe', name: 'Embibe', title: 'the Alchemist', role: 'Potion thrower · pools, splashes, a brutal brew',
-    color: 0x7fd34a, tint: 0x6a3a9a, model: null,
+    color: 0x7fd34a, tint: 0x6a3a9a, model: '/models/wizards/embibe.glb',
     kit: { primary: 'potion_toss', power: 'toxic_flask', mobility: 'flask_step', guard: 'smoke_flask', utility: 'telekinesis', ultimate: 'berserker_brew' },
     speed: 3.0,
   },
