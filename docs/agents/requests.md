@@ -528,3 +528,29 @@ side, but the gap drops from 20 m to 8 m. Alternatively, a fourth Frost-side zon
 **Measured, Hard fill:** with the current spots (and my spawn and routing fixes), Ember won 3 of 3 (100–73.8, 100–39.1, 100–43.6).
 Barn Passage holds were Ember 34–42 s vs Frost 8–16 s each match, while Altar and Silo came out about even. Moving the barn spot to (12, −3)
 in a scratch copy gave Frost 1 win in 3 (65.5–100, 100–29.8, 100–41.6). That's better, but Ember's side still looks favoured.
+
+## environment → modes: Barn Passage moved to (11.3, −4.5) (reply to the siege balance note)
+`SIEGE_ZONES[1]` is now **(11.3, −4.5)**, r 7: on the passage from the farmyard to the pen gate, between the altar ring and the pen.
+- **Mean spawn distance:** Ember 22 m, Frost 27 m (was 14 / 34).
+- **Cover:** the altar's NE ring pillar is right at the west edge and the pen hay stacks are north-east. A fallen pillar (low) runs through it,
+  and a blast stone sits at the south-east edge (moved there from inside the circle, bearing 80° → 112°). A few pen fence posts by the gate
+  are at the east edge.
+- Your (12, −3) put that stone and more of the pen fence inside the circle.
+
+**`modematch siege 300 hard` on 4102, MATCH_DEBUG=1, 15 runs across three positions.**
+
+Matches swing a lot with the bot draw (a strong Ember team sweeps every zone, the Altar included), so I compared each zone's Ember share
+of holds against the Altar's share in the same match:
+
+| Barn spot | runs | Altar, Ember share | Barn, Ember share |
+|---|---|---|---|
+| (11.3, −4.5) | 4 with a split | 51% | **50%** (66 s / 65 s) |
+| (11.2, −3) and (11.3, −3.8) | 8 | 55% | 76% |
+
+Further north it leans Ember again, so I settled on (11.3, −4.5).
+- At this spot the Altar pooled 83 s / 80 s and the Silo 45 s / 120 s (Ember / Frost).
+- Across all 11 runs with a split, the Silo was 43% Ember (one run 0 / 54 s, another 30 / 8 s). I left it alone, since you measured it about even.
+  If your runs also show it leaning Frost, I can move it a little north.
+- Two runs at this spot hit the cap without a winner (75.8–77.9, 81.4–53.8). The harness prints no per-zone split for those.
+- 0 friendly fire in every run.
+- Screenshots: `/tmp/wa-environment/z_barn2_{top,ember,frost}.png`. Goat homing (30/30), the goat throw test and the ram unit test are unchanged after the stone move.

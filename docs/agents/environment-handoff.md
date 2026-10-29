@@ -1,6 +1,17 @@
 # Environment hand-off: the farmstead
 
 ## Altar Siege zone spots (`SIEGE_ZONES` in map.js)
+**Update, after the modes agent's balance runs:** Barn Passage moved from (10, 4), where Ember won every hold, to **(11.3, −4.5)**.
+That is the farmyard-to-pen-gate passage between the altar ring and the pen; mean spawn distance is now 22 / 27 m.
+- I moved the blast stone that stood inside the new circle from bearing 80° to 112° (16 m), at the zone's south-east edge.
+- **Measured** (`modematch siege 300 hard`, 15 runs across three positions, compared against the Altar's share in the same match):
+  - here, Barn holds were Ember 66 s / Frost 65 s (50%) over 4 runs with a split
+  - 0.7–1.5 m further north it leaned Ember (76% over 8 runs)
+- The Silo pooled 43% Ember over 11 runs and is noisy. I left it, because the modes agent measured it about even. Numbers are in requests.md.
+- Logs: `/tmp/wa-environment/siege_*.log`. Screenshots: `z_barn2_{top,ember,frost}.png`.
+
+The original placement notes follow; the barn position in them is superseded.
+
 Three circles with r 7, in rotation order:
 - **Altar:** (0, −7)
 - **Barn Passage:** (10, 4), the open ground in front of the barn arch between the yard and the pen hay
