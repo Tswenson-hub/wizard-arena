@@ -1,8 +1,9 @@
-// usage: node tools/test/modematch.mjs <port> <mode: ffa|tdm|relic> <seconds> [difficulty] [--target N] [--cap S] [--rotate S] [--bots N (FFA)]
+// usage: node tools/test/modematch.mjs <port> <mode: ffa|tdm|siege> <seconds> [difficulty] [--target N] [--cap S] [--hop S] [--bots N (FFA)]
 // Headless game-mode match. The server must run with MATCH_DEBUG=1 (e.g. MATCH_DEBUG=1 PORT=4104 node server.js).
 // Joins as a spectator (no team, can't be hurt, bots ignore it), switches to the mode with a 2 s warm-up and
 // lets bot fill run the match. Reports scores, team sizes over time, friendly-fire hits (should be 0),
-// relic events (lifts, drops, rotations, resets on holder death) and whether points only accrue while held.
+// Altar Siege: bars, hop intervals, contested/empty/held time per zone (the hold split), overtime, and whether a
+// bar ever filled while the zone was contested or held by the other team.
 // Exits with code 1 if a check fails.
 import WebSocket from 'ws';
 
@@ -14,8 +15,7 @@ const names = {}, teamOf = {};
 let myId = null, live = false, liveAt = 0, ended = null, lastMatch = null, prevSnap = null;
 const ff = { hits: 0, dmg: 0, examples: [] };
 const teamSizes = { min: { ember: 99, frost: 99 }, max: { ember: 0, frost: 0 }, samples: 0, unequal: 0 };
-const relic = { events: [], rotates: [], resets: 0, deaths: 0, lifts: 0, drops: 0, knocked: 0, heldSnaps: 0, freeSnaps: 0, gainWhileFree: 0, gainWhileHeld: 0 };
-let lastRotateAt = null;
+const siege = { hops: [], lastHop: null, wrongGain: 0, contestedSnaps: 0, snaps: 0, overtime: false };
 const kills = { total: 0 };
 
 ws.on('open', () => ws.send(JSON.stringify({ t: 'join', name: 'Observer' })));
@@ -23,7 +23,7 @@ ws.on('message', (raw) => {
   const m = JSON.parse(raw);
   if (m.t === 'welcome') {
     myId = m.id;
-    ws.send(JSON.stringify({ t: 'matchDebug', spectate: true, botDiff: diff, warmup: 2, target: flag('--target'), cap: flag('--cap'), rotate: flag('--rotate'), mode }));
+    ws.send(JSON.stringify({ t: 'matchDebug', spectate: true, botDiff: diff, warmup: 2, target: flag('--target'), cap: flag('--cap'), hop: flag('--hop'), mode }));
     // FFA has no fill: add practice bots as the join screen would (--bots N, default 4)
     if (mode === 'ffa') for (let i = 0; i < (flag('--bots') ?? 4); i++) ws.send(JSON.stringify({ t: 'addBot', difficulty: diff }));
     return;
@@ -40,16 +40,12 @@ ws.on('message', (raw) => {
     const a = teamOf[m.attacker], b = teamOf[m.target];
     if (a && a === b) { ff.hits++; ff.dmg += m.dmg; if (ff.examples.length < 5) ff.examples.push(`${names[m.attacker]}→${names[m.target]} ${m.kind} ${m.dmg}`); }
   }
-  if (m.t === 'matchRelic' && live) {
-    relic.events.push(m.type);
-    if (m.type === 'rotate') { if (lastRotateAt !== null) relic.rotates.push(+(m.at - lastRotateAt).toFixed(1)); lastRotateAt = m.at; }
-    if (m.type === 'reset' || m.type === 'spawn') lastRotateAt = m.at;
-    if (m.type === 'reset') relic.resets++;
-    if (m.type === 'holderDied') relic.deaths++;
-    if (m.type === 'lift') relic.lifts++;
-    if (m.type === 'drop') relic.drops++;
-    if (m.type === 'knocked' || m.type === 'hit') relic.knocked++;
+  if (m.t === 'matchZone' && live && m.type === 'hop') {
+    const now = Date.now();
+    siege.hops.push(+((now - (siege.lastHop ?? liveAt)) / 1000).toFixed(1));
+    siege.lastHop = now;
   }
+  if (m.t === 'matchOvertime' && live) siege.overtime = true;
   if (m.t === 'snap') {
     for (const p of m.players) { teamOf[p.id] = p.team; names[p.id] ??= `${p.name}(${p.bot || 'human'})`; }
     if (!live) { prevSnap = null; return; }
@@ -62,13 +58,16 @@ ws.on('message', (raw) => {
       if (n.ember !== n.frost) teamSizes.unequal++;
       for (const k of ['ember', 'frost']) { teamSizes.min[k] = Math.min(teamSizes.min[k], n[k]); teamSizes.max[k] = Math.max(teamSizes.max[k], n[k]); }
     }
-    if (mode === 'relic' && prevSnap) {
-      const gain = (m.match.scores.ember + m.match.scores.frost) - (prevSnap.scores.ember + prevSnap.scores.frost);
-      // points accrue only while held: a gain needs a holder now or in the previous snapshot (scores are floored)
-      const held = m.match.relic?.holder || prevSnap.relic?.holder;
-      if (m.match.relic?.holder) relic.heldSnaps++; else relic.freeSnaps++;
-      if (gain > 0 && !held) relic.gainWhileFree += gain;
-      if (gain > 0 && held) relic.gainWhileHeld += gain;
+    if (mode === 'siege' && prevSnap && m.match.zone && prevSnap.zone) {
+      // a bar may only fill while its own team holds the zone alone (in this snapshot or the last)
+      siege.snaps++;
+      if (m.match.zone.contested) siege.contestedSnaps++;
+      for (const k of ['ember', 'frost']) {
+        const gain = m.match.scores[k] - prevSnap.scores[k];
+        const ok = [m.match.zone, prevSnap.zone].some(z => z.owner === k && !z.contested);
+        // (a hold shorter than a snapshot interval can fall between two snapshots: allow up to two intervals at 1.5%/s)
+        if (gain > 0.16 && !ok) siege.wrongGain += gain;
+      }
     }
     prevSnap = m.match;
   }
@@ -90,13 +89,20 @@ function finish() {
     console.log('team sizes', JSON.stringify(teamSizes));
     if (teamSizes.min.ember < 3 || teamSizes.min.frost < 3 || teamSizes.unequal > teamSizes.samples * 0.02) fails.push('teams not 3v3');
   }
-  if (mode === 'relic') {
-    console.log('relic: lifts', relic.lifts, 'drops', relic.drops, 'knocked/hit', relic.knocked, 'holder deaths', relic.deaths, 'resets', relic.resets);
-    console.log('relic: rotation intervals (s)', JSON.stringify(relic.rotates));
-    console.log('relic: snapshots held', relic.heldSnaps, 'free', relic.freeSnaps, '| points gained while held', relic.gainWhileHeld, 'while free', relic.gainWhileFree);
-    if (relic.gainWhileFree > 0) fails.push('points while free');
-    if (relic.deaths !== relic.resets) fails.push('holder death without reset');
-    if (relic.rotates.some(r => Math.abs(r - (flag('--rotate') || 30)) > 1)) fails.push('rotation interval');
+  if (mode === 'siege') {
+    const sg = ended?.siege;
+    const hop = flag('--hop') || 60;
+    console.log('siege: hop intervals (s)', JSON.stringify(siege.hops), '| overtime', siege.overtime, sg?.overtime ? JSON.stringify(sg.overtime) : '');
+    if (sg) {
+      const live = sg.hold.reduce((a, h) => a + h.ember + h.frost, 0) + sg.contested + sg.empty;
+      console.log(`siege: held ${(live - sg.contested - sg.empty).toFixed(0)}s, contested ${sg.contested}s (${(sg.contested / live * 100).toFixed(0)}%), empty ${sg.empty}s (${(sg.empty / live * 100).toFixed(0)}%)`);
+      for (const h of sg.hold) console.log(`  ${h.name.padEnd(14)} ember ${String(h.ember).padStart(6)}s  frost ${String(h.frost).padStart(6)}s`);
+      const sweep = ['ember', 'frost'].find(k => sg.hold.every(h => h[k] + h[k === 'ember' ? 'frost' : 'ember'] < 5 || h[k] > 0.85 * (h.ember + h.frost)));
+      if (sweep) console.log(`  note: ${sweep} held 85%+ of every zone`);
+    }
+    console.log('siege: bar gain while not held alone', siege.wrongGain.toFixed(2));
+    if (siege.wrongGain > 0.05) fails.push('bar filled while contested or not held');
+    if (siege.hops.some(h => Math.abs(h - hop) > 1.5)) fails.push('hop interval');
   }
   if (!ended) fails.push('no winner within the time');
   console.log(fails.length ? `FAIL: ${fails.join(', ')}` : 'PASS');

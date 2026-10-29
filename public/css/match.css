@@ -1,4 +1,4 @@
-/* Match UI (modes agent): top bar, relic line, banner, off-screen relic arrow, end screen, vote. */
+/* Match UI (modes agent): top bar, siege zone line, banner, off-screen zone arrows, end screen, vote. */
 #matchUI { position: fixed; inset: 0; pointer-events: none; z-index: 15; font-family: "Trebuchet MS", "Segoe UI", system-ui, sans-serif; color: #f4ecd8; }
 #matchUI .tag { display: inline-block; padding: 0 6px; border-radius: 4px; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; vertical-align: 1px; }
 #matchUI .tag.ember { background: rgba(255,106,42,0.25); color: #ff8a52; }
@@ -23,13 +23,31 @@
 #mTop .mFill { position: absolute; left: 0; bottom: 0; height: 4px; width: 0; transition: width 0.3s; }
 #mTop .ember .mFill { background: #ff6a2a; } #mTop .frost .mFill { background: #3aa8ff; right: 0; left: auto; }
 
-/* relic line under the bar */
-#mRelic { position: absolute; top: 92px; left: 50%; transform: translateX(-50%); padding: 5px 14px; border-radius: 10px; background: rgba(18,14,28,0.72); border: 1px solid rgba(255,200,87,0.45); font-size: 13px; white-space: nowrap; display: flex; align-items: center; gap: 8px; }
-#mRelic b { color: #ffc857; }
-#mRelic .relicIcon { width: 10px; height: 10px; border-radius: 50%; background: #ffc857; box-shadow: 0 0 10px 3px rgba(255,200,87,0.7); }
-#mRelic .relicTime { color: rgba(244,236,216,0.6); font-variant-numeric: tabular-nums; }
+/* siege: the zone line under the bar */
+#mZone { position: absolute; top: 92px; left: 50%; transform: translateX(-50%); padding: 5px 14px; border-radius: 10px; background: rgba(18,14,28,0.72); border: 1px solid rgba(255,226,160,0.45); font-size: 13px; white-space: nowrap; display: flex; align-items: center; gap: 8px; }
+#mZone b { color: #ffe2a0; }
+#mZone .zIcon { width: 12px; height: 12px; border-radius: 50%; border: 2px solid #ffe2a0; box-shadow: 0 0 10px 2px rgba(255,226,160,0.6); }
+#mZone .zTime { color: rgba(244,236,216,0.6); font-variant-numeric: tabular-nums; }
+#mZone .zTime.warn { color: #fff; animation: mBlink 0.5s infinite alternate; }
+#mZone .zTime.ot { color: #ff7a6a; }
+#mZone .zIn { padding: 0 6px; border-radius: 4px; font-size: 11px; background: rgba(255,226,160,0.18); color: #ffe2a0; }
+#mZone.contested { border-color: #fff; animation: mContest 0.4s infinite alternate; }
+#mZone .cont { color: #fff; letter-spacing: 1px; }
+@keyframes mContest { from { box-shadow: 0 0 14px rgba(255,106,42,0.75); } to { box-shadow: 0 0 14px rgba(58,168,255,0.75); } }
+@keyframes mBlink { from { opacity: 1; } to { opacity: 0.45; } }
+#mTop.contested .mTeam { animation: mContest 0.4s infinite alternate; }
+#mTop .mTeam.holding { box-shadow: 0 0 16px rgba(255,255,255,0.25); }
+#mTop .mTeam.ember.holding { box-shadow: 0 0 18px rgba(255,106,42,0.7); }
+#mTop .mTeam.frost.holding { box-shadow: 0 0 18px rgba(58,168,255,0.7); }
+#mTop .mClock.ot { color: #ff7a6a; }
+#mTop .mTicks { position: absolute; inset: 0; pointer-events: none; }
+#mTop .mTick { position: absolute; left: 50%; top: 100%; transform: translateX(-50%); font-size: 14px; font-weight: 700; color: #fff; text-shadow: 0 1px 4px #000; animation: mRise 1.2s ease-out forwards; }
+#mTop .ember .mTick { color: #ffb38a; } #mTop .frost .mTick { color: #a8dcff; }
+#mTop .mTeam { overflow: visible; }
+#mTop .mFill { border-radius: 0 0 12px 12px; }
+@keyframes mRise { from { opacity: 1; transform: translate(-50%, 0); } to { opacity: 0; transform: translate(-50%, 26px); } }
 
-/* relic and mode events */
+/* mode events */
 #mTicker { position: absolute; top: 128px; left: 50%; transform: translateX(-50%); display: grid; gap: 3px; justify-items: center; }
 #mTicker div { padding: 3px 10px; border-radius: 6px; background: rgba(0,0,0,0.5); font-size: 12px; animation: mFade 5s forwards; white-space: nowrap; }
 #mTicker b { color: #ffc857; }
@@ -40,11 +58,13 @@
 #mBanner .big { font-size: 54px; font-weight: 700; letter-spacing: 2px; color: #ffc857; }
 #mBanner .small { font-size: 16px; color: rgba(244,236,216,0.85); }
 
-/* off-screen relic arrow */
-#mArrow { position: absolute; left: 0; top: 0; --c: #ffc857; display: grid; place-items: center; }
-#mArrow .tip { width: 34px; height: 34px; display: grid; place-items: center; }
-#mArrow .tip::before { content: ''; width: 0; height: 0; border-top: 11px solid transparent; border-bottom: 11px solid transparent; border-left: 22px solid var(--c); filter: drop-shadow(0 0 6px var(--c)); }
-#mArrow span { font-size: 9px; font-weight: 700; letter-spacing: 1.5px; color: var(--c); text-shadow: 0 1px 3px #000; }
+/* off-screen arrows: the zone, and the next spot during a hop warning */
+
+.mArrow { position: absolute; left: 0; top: 0; --c: #ffe2a0; display: grid; place-items: center; }
+.mArrow .tip { width: 34px; height: 34px; display: grid; place-items: center; }
+.mArrow.next { animation: mBlink 0.4s infinite alternate; }
+.mArrow .tip::before { content: ''; width: 0; height: 0; border-top: 11px solid transparent; border-bottom: 11px solid transparent; border-left: 22px solid var(--c); filter: drop-shadow(0 0 6px var(--c)); }
+.mArrow span { font-size: 9px; font-weight: 700; letter-spacing: 1.5px; color: var(--c); text-shadow: 0 1px 3px #000; }
 
 /* end screen and vote */
 #mEnd, #mVote { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: radial-gradient(ellipse at center, rgba(30,16,46,0.55), rgba(8,6,14,0.85)); }
@@ -55,6 +75,8 @@
 .mKicker { font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: rgba(244,236,216,0.6); }
 .mFinal { font-size: 30px; font-weight: 700; margin: 2px 0 6px; }
 .mFinal .ember { color: #ff8a52; } .mFinal .frost { color: #6cc0ff; }
+.mSplit { margin: 0 0 4px; font-size: 12px; color: rgba(244,236,216,0.65); }
+.mSplit .ember { color: #ff8a52; } .mSplit .frost { color: #6cc0ff; }
 .mMvp { margin: 4px 0 12px; font-size: 14px; color: rgba(244,236,216,0.8); }
 .mMvp b { color: #ffc857; }
 .mPanel table { width: 100%; border-collapse: collapse; font-size: 14px; }

@@ -11,6 +11,40 @@ const flat = (p) => [p.p[0], p.p[2]];
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 const sees = (a, b) => !C.pillarBlocks(a.p, b.p, 0.1);
 
+// Bots walk straight at moveTo and have no pathfinding, so a long wall (the felled silo, the barn, the archway legs)
+// can pin them. route() returns moveTo itself when the way is clear, else one waypoint both legs of which are clear.
+const BODY = 0.5;
+function blocked(a, b) {
+  const sx = b[0] - a[0], sz = b[1] - a[1], ll = sx * sx + sz * sz || 1;
+  for (const c of C.COLLIDERS) {
+    if (c.h < 0.5) continue;
+    const k = Math.max(0, Math.min(1, ((c.x - a[0]) * sx + (c.z - a[1]) * sz) / ll));
+    if (Math.hypot(a[0] + sx * k - c.x, a[1] + sz * k - c.z) < c.r + BODY) return true;
+  }
+  return false;
+}
+const RING = Array.from({ length: 16 }, (_, i) => [Math.cos(i * Math.PI / 8), Math.sin(i * Math.PI / 8)]);
+function route(bot, to, now) {
+  const from = flat(bot), r = bot.routeCache;
+  if (r && now < r.until && dist(r.to, to) < 0.5) return r.wp;
+  let wp = to;
+  if (dist(from, to) > 2 && blocked(from, to)) {
+    let best = null, bl = Infinity, fallback = null, fd = Infinity;
+    for (const [base, radii] of [[to, [5, 9, 14]], [from, [4, 8]]]) {
+      for (const d of radii) for (const [cx, cz] of RING) {
+        const w = [base[0] + cx * d, base[1] + cz * d];
+        if (Math.hypot(w[0], w[1]) > C.ARENA_RADIUS - 1 || blocked(from, w)) continue;
+        const l = dist(from, w) + dist(w, to);
+        if (!blocked(w, to)) { if (l < bl) { bl = l; best = w; } }
+        else if (dist(w, to) < fd) { fd = dist(w, to); fallback = w; }
+      }
+    }
+    wp = best || fallback || to;
+  }
+  bot.routeCache = { to, wp, until: now + 0.4 };
+  return wp;
+}
+
 export function objectiveFor(bot, world) {
   const match = world?.match;
   if (!match?.state || bot.dead) return null;
@@ -45,7 +79,7 @@ export function objectiveFor(bot, world) {
     const mates = players.filter(p => p.bot && p.team === bot.team && !p.dummy);
     const scout = mates.length >= 2 && mates.sort((a, b) => dist(flat(a), [N.x, N.z]) - dist(flat(b), [N.x, N.z]))[0];
     if (scout === bot) {
-      hint.moveTo = spot(N);
+      hint.moveTo = route(bot, spot(N), world.now());
       hint.area = [N.x, N.z, N.r];
       return hint;
     }
@@ -56,6 +90,6 @@ export function objectiveFor(bot, world) {
   if (intruders.length) hint.focus = intruders[0].id;
   // stand in the circle: walk to our spot, and once inside, stay inside (strafe within it, don't kite out)
   hint.area = [Z.x, Z.z, Z.r];
-  if (dist(me, c) > Z.r * 0.8 || !intruders.length) hint.moveTo = spot(Z);
+  if (dist(me, c) > Z.r * 0.8 || !intruders.length) hint.moveTo = route(bot, spot(Z), world.now());
   return hint;
 }
