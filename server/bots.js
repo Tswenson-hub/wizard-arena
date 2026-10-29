@@ -467,11 +467,7 @@ function think(me, world, t) {
     if (K.mobility === 'smoke_screen' && mobilityReady(me, t) && Math.random() < 0.35 * Math.max(cfg.dodge, 0.5)) return smokeAway(me, away, act);
     if (wallReady(me, t) && d > 3.5 && Math.random() < 0.4 * cfg.dodge) return raiseWall(me, target.p, act);
     if (K.mobility === 'ram_ride' && mobilityReady(me, t) && Math.random() < 0.35 * Math.max(cfg.dodge, 0.5)) return rideAway(me, away, act);
-    if (K.mobility === 'flask_step' && mobilityReady(me, t) && Math.random() < 0.35 * Math.max(cfg.dodge, 0.5)) {
-      const dd = inward(me, away), to = [me.p[0] + dd[0] * 14, 0, me.p[2] + dd[2] * 14];
-      me.yaw = Math.atan2(dd[0], dd[2]);
-      return act({ t: 'flaskStep', target: to, dir: dd });
-    }
+    if (K.mobility === 'flask_step' && mobilityReady(me, t) && Math.random() < 0.35 * Math.max(cfg.dodge, 0.5)) return flaskEscape(me, target, away, act);
   }
 
   if (Math.random() > cfg.aggression) return;
@@ -800,6 +796,36 @@ function reactToStampedes(me, world, t, act) {
     if (rooted(me, t) || isStunned(me, t)) continue;
     b.dodgeVec = [out[0], out[2]]; b.dodgeUntil = t + 0.25;
   }
+}
+
+// Flask Step out of trouble: lob high over the nearest big cover (so it lands behind it, out of the enemy's sight),
+// else a plain lob straight away. The landing is checked with the same path the server will fly.
+function flaskEscape(me, threat, away, act) {
+  const F = C.SPELLS.flaskstep, origin = [me.p[0], me.p[1] + 1.3, me.p[2]];
+  let dir = null;
+  // the nearest few spots behind big cover (as seen from the threat), 5 m to the throw's range away
+  const spots = [];
+  for (const pil of C.COLLIDERS) {
+    if (pil.h < 2.5 || pil.r < 0.8) continue;
+    const ax = pil.x - threat.p[0], az = pil.z - threat.p[2], al = Math.hypot(ax, az) || 1;
+    const pt = [pil.x + ax / al * (pil.r + 1.3), pil.z + az / al * (pil.r + 1.3)];
+    const dc = Math.hypot(pt[0] - me.p[0], pt[1] - me.p[2]);
+    if (dc > 5 && dc < F.range - 2 && Math.hypot(pt[0], pt[1]) < C.ARENA_RADIUS - 2) spots.push({ pt, dc });
+  }
+  spots.sort((a, b) => a.dc - b.dc);
+  for (const { pt } of spots.slice(0, 5)) {
+    const d = C.lobAt(origin, [pt[0], 0, pt[1]], F.speed, F.gravity, true);
+    if (!d) continue;
+    const { at } = C.flaskPath(origin, d);
+    // it has to come down where the threat can't see us
+    if (Math.hypot(at[0] - pt[0], at[2] - pt[1]) < 2.5 && C.pillarBlocks(threat.p, at, 0)) { dir = d; break; }
+  }
+  if (!dir) {
+    const dd = inward(me, away);
+    dir = C.lobAt(origin, [me.p[0] + dd[0] * 14, 0, me.p[2] + dd[2] * 14], F.speed, F.gravity, false) || C.flaskLaunch([dd[0], 0, dd[2]]);
+  }
+  me.yaw = Math.atan2(dir[0], dir[2]);
+  act({ t: 'flaskStep', dir });
 }
 
 // Ram Ride away from a threat (the ride goes where we face).

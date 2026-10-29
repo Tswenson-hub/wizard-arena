@@ -230,7 +230,7 @@ function onWelcome(msg) {
   for (const f of msg.frostfalls || []) frosts.set(f.id, effects.frostfall(f.p, f.left));
   for (const c of msg.smokes || []) effects.smoke(c.p, c.left);
   for (const f of msg.firewalls || []) firewalls.set(f.id, { data: f, fx: effects.firewall(f) });
-  for (const pl of msg.pools || []) pools.set(pl.id, { ...pl, fx: effects.toxicPool(pl.p, pl.left) });
+  for (const pl of msg.pools || []) pools.set(pl.id, { ...pl, fx: effects.toxicPool(pl.p, pl.left), snd: sfx.loop('fizz_loop', { pos: [pl.p[0], 0.3, pl.p[2]], vol: 0.6, fadeIn: 0.4 }) });
   for (const c of msg.smokeFlasks || []) effects.smokeFlask(c.p, c.left);
   for (const c of msg.cages || []) cages.set(c.id, { ...c, x: c.p[0], z: c.p[2], fx: effects.nightCage(c.p, c.left) });
   me = players.get(myId);
@@ -458,7 +458,8 @@ function handleMessage(msg) {
         else if (msg.surface !== 'player' && pr.kind === 'fast') sfx.impact(msg.p);
         else if (pr.kind === 'skim') sfx.shardHit(msg.p);
         if (msg.surface === 'smokeflask') effects.burst(new THREE.Vector3(msg.p[0], msg.p[1], msg.p[2]), 0xa050e0, 10, 2, 0.35, -1);
-        if (pr.kind === 'potion') { effects.potionShatter(msg.p, C.SPELLS.potion.splash); sfx.play('ward_break', { pos: msg.p, vol: 0.5, rate: 1.9, jitter: 0.1 }); }
+        // Potion Toss: Ty's glass hit, pitched a little differently each throw (the stun throw lower)
+        if (pr.kind === 'potion') { effects.potionShatter(msg.p, C.SPELLS.potion.splash); sfx.play('potion_shatter', { pos: msg.p, vol: 0.9, rate: (pr.fin ? 0.86 : 1) * (0.92 + Math.random() * 0.16), jitter: 0 }); }
         if (msg.surface === 'firewall') { effects.burnUp(msg.p); sfx.play('meteor_cast', { pos: msg.p, vol: 0.5, rate: 1.6, jitter: 0.1 }); }
       }
       break;
@@ -831,14 +832,17 @@ function handleMessage(msg) {
       if (w.blizzFx) effects.stopBlizzard(w.blizzFx);
       w.blizzFx = effects.blizzard(w, msg.left);
       w.oneShot('cast_heavy', msg.left, 0.4, 1.2);
-      sfx.play('skim_cast', { pos: wpos(w), vol: 1, rate: 0.5 });
-      sfx.frostCast(wpos(w));
+      // Ty's Rime ULT: a punchy start, then its strongest stretch looped under the cone (faded out at the end)
+      sfx.play('blizzard_cast', { pos: wpos(w), vol: 1, jitter: 0 });
+      w.blizzSnd?.stop(0.1);
+      w.blizzSnd = sfx.loop('blizzard_loop', { pos: wpos(w), vol: 0.85, fadeIn: 0.35 });
       if (w === me) { local.blizzUntil = now + msg.left; local.rootUntil = Math.max(local.rootUntil, now + msg.left); local.vel.set(0, 0, 0); }
       break;
     }
     case 'blizzardEnd': {
       const w = players.get(msg.id);
       if (w?.blizzFx) { effects.stopBlizzard(w.blizzFx); w.blizzFx = null; }
+      if (w?.blizzSnd) { w.blizzSnd.stop(0.5); w.blizzSnd = null; }
       if (msg.id === myId) local.blizzUntil = 0;
       break;
     }
@@ -957,14 +961,14 @@ function handleMessage(msg) {
       break;   // the last ram is out; its lane (and the warning) lasts until the rams have passed (effects endAt)
     // ---- Embibe
     case 'pool': {
-      pools.set(msg.id, { ...msg, fx: effects.toxicPool(msg.p, msg.left) });
-      sfx.play('ward_break', { pos: [msg.p[0], 0.5, msg.p[2]], vol: 0.7, rate: 1.6 });
-      sfx.play('prop_shatter_stone', { pos: [msg.p[0], 0.5, msg.p[2]], vol: 0.5, rate: 1.8, delay: 0.02 });
+      // the flask breaking open, then the pool fizzing where it lies until it dries up
+      sfx.play('toxic_smash', { pos: [msg.p[0], 0.5, msg.p[2]], vol: 1, jitter: 0.05 });
+      pools.set(msg.id, { ...msg, fx: effects.toxicPool(msg.p, msg.left), snd: sfx.loop('fizz_loop', { pos: [msg.p[0], 0.3, msg.p[2]], vol: 0.6, fadeIn: 0.4 }) });
       break;
     }
     case 'poolEnd': {
       const pl = pools.get(msg.id);
-      if (pl) { effects.endPool(pl.fx); pools.delete(msg.id); }
+      if (pl) { effects.endPool(pl.fx); pl.snd?.stop(0.6); pools.delete(msg.id); }
       break;
     }
     case 'toxicThrow': break;   // the throw pose plays from the projectile
@@ -979,7 +983,8 @@ function handleMessage(msg) {
     case 'flaskArrive': {
       const w = players.get(msg.id);
       effects.flaskSmoke(msg.from); effects.flaskSmoke(msg.to);
-      sfx.play('blink', { pos: msg.to, vol: 0.8, rate: 0.8 });
+      sfx.play('flask_land', { pos: msg.to, vol: 0.9, jitter: 0.06 });
+      sfx.play('blink', { pos: msg.from, vol: 0.35, rate: 0.8 });
       if (w) {
         const arr = w.actions.arrival;
         if (arr) w.oneShot('arrival', Math.min(1, arr.getClip().duration), 1, 0); else w.oneShot('dash', 0.4, 2.5, 2.2);
@@ -990,8 +995,7 @@ function handleMessage(msg) {
     }
     case 'smokeFlask': {
       effects.smokeFlask(msg.p, msg.left);
-      sfx.smoke([msg.p[0], 1, msg.p[2]]);
-      sfx.play('ward_break', { pos: [msg.p[0], 0.5, msg.p[2]], vol: 0.5, rate: 1.7 });
+      sfx.play('smoke_flask', { pos: [msg.p[0], 0.5, msg.p[2]], vol: 1, jitter: 0.04 });   // the flask smashed at her feet
       break;
     }
     case 'smokeFlaskEnd': break;   // it fades on its own clock
@@ -1002,7 +1006,7 @@ function handleMessage(msg) {
       if (drink) w.oneShot('ult', SPELL.berserker_brew.drink, drink.getClip().duration / SPELL.berserker_brew.drink, 0); else w.oneShot('cast_heavy', SPELL.berserker_brew.drink, 1.2, 1.5);
       if (w.brewFx) effects.stopAura(w.brewFx);
       w.brewFx = effects.brewAura(w, msg.left);
-      sfx.play('tk_lift', { pos: wpos(w), vol: 0.9, rate: 0.6 }); sfx.play('meteor_cast', { pos: wpos(w), vol: 0.5, rate: 0.5, delay: 0.4 });
+      sfx.play('brew_drink', { pos: wpos(w), vol: 1, jitter: 0.03 });
       feed(`<b>${esc(w.name)}</b> drinks a <b>Berserker Brew</b>!`);
       break;
     }
@@ -1078,6 +1082,7 @@ const frosts = new Map();    // id -> effects entry
 // Cataclysm meteors on their way down, and our Cataclysm targeting circle.
 // Meteor Rain: our aim circle up there, and the cleanup when anyone's ends.
 const mrainMark = effects.cataAim(MRAIN.radius, 0xff5a1e, 0xffc080);
+const flaskMark = effects.flaskPreview();   // Flask Step's dotted arc and landing ring
 function endMrain(w) {
   if (!w) return;
   if (w.mrainMark) w.mrainMark.visible = false;
@@ -1103,7 +1108,10 @@ function rideTimes(msg) {
 }
 // Gale's tornado spin, every frame.
 function updateUltimates() {
-  for (const w of players.values()) if (w.eyeOn && !w.dead && (w.spinT < 0 || !w.inOneShot())) w.eyeSpin();
+  for (const w of players.values()) {
+    if (w.eyeOn && !w.dead && (w.spinT < 0 || !w.inOneShot())) w.eyeSpin();
+    if (w.blizzSnd) { if (w.dead) { w.blizzSnd.stop(0.3); w.blizzSnd = null; } else w.blizzSnd.setPos(wpos(w)); }   // the Blizzard's roar follows Rime
+  }
 }
 let lastDashDir = [0, 0];
 const frostMark = effects.frostAim();
@@ -1276,7 +1284,7 @@ function updateLocal(dt) {
   // mouse look
   if (input.locked) {
     local.yaw -= input.mouseDX * 0.0022;
-    local.pitch = THREE.MathUtils.clamp(local.pitch + input.mouseDY * 0.0022, -0.6, 1.1);
+    local.pitch = THREE.MathUtils.clamp(local.pitch + input.mouseDY * 0.0022, -0.95, 1.1);   // (well above the horizon: Flask Step lobs high)
   }
 
   const K = kit();
@@ -1458,8 +1466,8 @@ function updateLocal(dt) {
         // a 0.6 s wind-up, then the potion flies along our aim and we arrive where it lands
         computeAim();
         local.cd.mobility = now + SPELL.flask_step.cooldown * cdMul();
-        local.flaskWind = { start: now };
-        net.send({ t: 'flaskStep', dir: aimDir.toArray(), target: groundTarget(C.SPELLS.flaskstep.range) });
+        local.flaskWind = { start: now, sentAt: now };
+        net.send({ t: 'flaskStep', dir: C.flaskLaunch(aimDir.toArray()) });
       } else if (K.mobility === 'ram_ride') {
         // mount up and gallop where we face (steer with the mouse, or A/D)
         if (!me.carrying && !me.carryingGoat) {
@@ -1520,6 +1528,17 @@ function updateLocal(dt) {
   // the targeting circle follows the crosshair while aiming
   frostMark.visible = local.frostAim;
   if (local.frostAim) { const at = frostTarget(); frostMark.position.set(at[0], 0, at[2]); }
+
+  // ---- Flask Step's wind-up: the throw follows the crosshair until it leaves the hand; preview where it comes down
+  flaskMark.visible = false;
+  if (local.flaskWind) {
+    computeAim();
+    const dir = C.flaskLaunch(aimDir.toArray());
+    if (now - local.flaskWind.sentAt > 0.08) { local.flaskWind.sentAt = now; net.send({ t: 'flaskAim', dir }); }
+    const { path, at } = C.flaskPath([local.pos.x, local.pos.y + 1.3, local.pos.z], dir);
+    effects.setFlaskPreview(flaskMark, path, at);
+    flaskMark.visible = true;
+  }
 
   // ---- Meteor Rain: the server flies us (it ignores our position meanwhile); mirror its path, aim, and dive
   mrainMark.visible = false;
@@ -1919,4 +1938,4 @@ function frame(t) {
 requestAnimationFrame(frame);
 
 // Debug handle (used by the automated smoke test; harmless in production).
-window.__wa = { input, net, local, players, props, goats, effects, scene, camera, sfx, decoys, walls, frosts, frostMark, mrainMark, cageMark, laneMark, cages, firewalls, stampedeFx, C, get cursedProp() { return cursedProp; } };
+window.__wa = { input, net, local, players, props, goats, effects, scene, camera, sfx, decoys, walls, frosts, frostMark, mrainMark, flaskMark, cageMark, laneMark, cages, firewalls, stampedeFx, C, get cursedProp() { return cursedProp; } };

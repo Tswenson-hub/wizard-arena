@@ -564,12 +564,18 @@ function cancelFlaskStep(p) {
   p.flaskWind = null;
   broadcast({ t: 'flaskCancel', id: p.id });
 }
+// A sane launch direction: a unit vector, no steeper than C.SPELLS.flaskstep.maxElev.
+function flaskDir(d, p) {
+  const v = sanitizeDir(d, p), F = C.SPELLS.flaskstep;
+  const flat = Math.hypot(v[0], v[2]) || 1e-6, elev = Math.min(F.maxElev, Math.atan2(v[1], flat));
+  return [v[0] / flat * Math.cos(elev), Math.sin(elev), v[2] / flat * Math.cos(elev)];
+}
+// The wind-up is over: a true arc along the launch direction (C.flaskPath predicts the same landing)
 function throwFlaskStep(p) {
   const W = p.flaskWind;
   p.flaskWind = null;
   const origin = [p.p[0], p.p[1] + 1.3, p.p[2]];
-  const target = W.target || [origin[0] + W.dir[0] * C.SPELLS.flaskstep.range, 0, origin[2] + W.dir[2] * C.SPELLS.flaskstep.range];
-  const proj = spawnProjectile(p, 'flaskstep', origin, lobDir(p, origin, [target[0], 0, target[2]], W.dir, C.SPELLS.flaskstep));
+  const proj = spawnProjectile(p, 'flaskstep', origin, W.dir);
   proj.from = p.p.slice();
 }
 function flaskArrive(proj, surface) {
@@ -578,14 +584,7 @@ function flaskArrive(proj, surface) {
   // back off a little from whatever stopped it, then out of anything solid, inside the arena
   const v = proj.v, l = Math.hypot(v[0], v[2]) || 1;
   const back = surface && surface !== 'ground' ? 0.8 : 0;
-  const to = [proj.p[0] - v[0] / l * back, 0, proj.p[2] - v[2] / l * back];
-  for (let k = 0; k < 3; k++) for (const c of C.COLLIDERS) {
-    if (c.h < 0.5) continue;
-    const dx = to[0] - c.x, dz = to[2] - c.z, d = Math.hypot(dx, dz);
-    if (d < c.r + C.PLAYER_RADIUS && d > 1e-4) { const kk = (c.r + C.PLAYER_RADIUS - d) / d; to[0] += dx * kk; to[2] += dz * kk; }
-  }
-  const r = Math.hypot(to[0], to[2]);
-  if (r > C.ARENA_RADIUS - 0.5) { to[0] *= (C.ARENA_RADIUS - 0.5) / r; to[2] *= (C.ARENA_RADIUS - 0.5) / r; }
+  const to = C.flaskSettle([proj.p[0] - v[0] / l * back, 0, proj.p[2] - v[2] / l * back]);   // (the preview settles the same way)
   const from = p.p.slice();
   p.p = to; p.justTeleported = true;
   cageKeep(p);
@@ -1692,8 +1691,13 @@ function handle(p, msg) {
     case 'flaskStep': {
       if (kit(p).mobility !== 'flask_step' || !canAct(p) || isRooted(p) || p.blocking || p.charging || holding(p) || isAirborne(p) || t < p.cd.mobility) break;
       p.cd.mobility = t + C.SPELLBOOK.flask_step.cooldown * cdMul(p);
-      p.flaskWind = { until: t + C.SPELLBOOK.flask_step.windup, target: validVec(msg.target) ? msg.target.slice() : null, dir: sanitizeDir(msg.dir, p) };
+      // the launch direction (the client lifts its aim into a lob, C.flaskLaunch); it keeps coming in during the wind-up
+      p.flaskWind = { until: t + C.SPELLBOOK.flask_step.windup, dir: flaskDir(msg.dir, p) };
       broadcast({ t: 'flaskWind', id: p.id, left: C.SPELLBOOK.flask_step.windup });
+      break;
+    }
+    case 'flaskAim': {
+      if (p.flaskWind) p.flaskWind.dir = flaskDir(msg.dir, p);
       break;
     }
     case 'smokeFlask': {

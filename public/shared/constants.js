@@ -142,8 +142,10 @@ export const SPELLS = {
   },
   flaskstep: {           // Flask Step's potion: harmless, she teleports to where it lands
     damage: 0, stun: 0, knockback: 0, staminaCost: 0,
-    speed: 18, gravity: 10, radius: 0.25, life: 3,
-    range: 16,
+    speed: 16.3, gravity: 10, radius: 0.25, life: 4,   // about 26 m at best (a 45-degree lob); a true arc from her aim
+    range: 26,
+    lob: 0.2,            // rad added to her aim's elevation, so a level aim still lobs
+    maxElev: 1.3,        // rad: steepest throw (high onto or over cover)
   },
   hex: {                 // Vesper's primary: a crimson glyph flying a curved path to the aim point
     damage: 11,
@@ -159,6 +161,59 @@ export const SPELLS = {
     lob: 0.4,            // ...shot 3: this fraction above
   },
 };
+
+// Flask Step's throw: the launch direction from an aim direction (its elevation lifted by `lob`, capped at `maxElev`).
+export function flaskLaunch(aim) {
+  const F = SPELLS.flaskstep;
+  const flat = Math.hypot(aim[0], aim[2]) || 1e-6;
+  const elev = Math.max(-0.3, Math.min(F.maxElev, Math.atan2(aim[1], flat) + F.lob));
+  return [aim[0] / flat * Math.cos(elev), Math.sin(elev), aim[2] / flat * Math.cos(elev)];
+}
+// The exact launch direction at `speed` that reaches `target` under `gravity`: the high arc if `high`, else the low
+// one. Null when it's out of reach.
+export function lobAt(origin, target, speed, gravity, high = false) {
+  const dx = target[0] - origin[0], dz = target[2] - origin[2], x = Math.hypot(dx, dz) || 1e-6, y = target[1] - origin[1];
+  const v2 = speed * speed, disc = v2 * v2 - gravity * (gravity * x * x + 2 * y * v2);
+  if (disc < 0) return null;
+  const th = Math.atan((v2 + (high ? 1 : -1) * Math.sqrt(disc)) / (gravity * x));
+  return [dx / x * Math.cos(th), Math.sin(th), dz / x * Math.cos(th)];
+}
+// Where a Flask Step thrown from `origin` along `dir` comes down: it flies over fences and crops, and anything taller
+// stops it (she then arrives just short of it). Returns { path: [[x,y,z]...], at: [x, 0, z], blocked }.
+export function flaskPath(origin, dir) {
+  const r = flaskFlight(origin, dir);
+  r.at = flaskSettle(r.at);
+  return r;
+}
+// Where she can stand near `at`: out of anything solid (fences and crops included), inside the arena. The server's
+// arrival uses this too.
+export function flaskSettle(at) {
+  const to = at.slice();
+  for (let k = 0; k < 3; k++) for (const c of COLLIDERS) {
+    if (c.h < 0.5) continue;
+    const dx = to[0] - c.x, dz = to[2] - c.z, d = Math.hypot(dx, dz);
+    if (d < c.r + PLAYER_RADIUS && d > 1e-4) { const kk = (c.r + PLAYER_RADIUS - d) / d; to[0] += dx * kk; to[2] += dz * kk; }
+  }
+  const r = Math.hypot(to[0], to[2]);
+  if (r > ARENA_RADIUS - 0.5) { to[0] *= (ARENA_RADIUS - 0.5) / r; to[2] *= (ARENA_RADIUS - 0.5) / r; }
+  return to;
+}
+function flaskFlight(origin, dir) {
+  const F = SPELLS.flaskstep, dt = 1 / 60;
+  const p = origin.slice(), v = dir.map(c => c * F.speed), path = [p.slice()];
+  for (let t = 0; t < F.life; t += dt) {
+    v[1] -= F.gravity * dt;
+    p[0] += v[0] * dt; p[1] += v[1] * dt; p[2] += v[2] * dt;
+    if (path.length < 400 && Math.round(t / dt) % 3 === 0) path.push(p.slice());
+    if (p[1] <= F.radius * 0.5 || Math.hypot(p[0], p[2]) > ARENA_RADIUS + 6) return { path, at: [p[0], 0, p[2]], blocked: false };
+    for (const c of COLLIDERS) {
+      if (c.h < LOS_HEIGHT || p[1] >= c.h || Math.hypot(p[0] - c.x, p[2] - c.z) >= c.r + F.radius) continue;
+      const l = Math.hypot(v[0], v[2]) || 1;
+      return { path, at: [p[0] - v[0] / l * 0.8, 0, p[2] - v[2] / l * 0.8], blocked: true };
+    }
+  }
+  return { path, at: [p[0], 0, p[2]], blocked: false };
+}
 
 // Vesper's Hex Shards: shot `i` (0, 1, 2 = the finisher) from `from` to the aim point `to` flies a quadratic Bézier
 // whose control point is pulled left, right or up. The server and clients both use this, so the curve matches.

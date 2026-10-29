@@ -955,6 +955,31 @@ export class Effects {
   }
 
   // ---------------------------------------------------------------- Embibe
+  // Flask Step's preview: a dotted arc along the throw and a ring where she'll arrive (main.js updates it each frame).
+  flaskPreview() {
+    const g = new THREE.Group();
+    const dots = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ color: 0xd0a0ff, size: 0.18, transparent: true, opacity: 0.9, depthWrite: false }));
+    dots.geometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(400 * 3), 3));
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.7, 32).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xc080ff, transparent: true, opacity: 0.9, depthWrite: false }));
+    const fill = new THREE.Mesh(new THREE.CircleGeometry(0.55, 24).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x6a3a9a, transparent: true, opacity: 0.35, depthWrite: false }));
+    ring.position.y = fill.position.y = 0.16;
+    const marker = new THREE.Group(); marker.add(ring, fill);
+    g.add(dots, marker);
+    g.visible = false; g.frustumCulled = false; dots.frustumCulled = false;
+    this.scene.add(g);
+    g.userData = { dots, marker };
+    return g;
+  }
+  setFlaskPreview(g, path, at) {
+    const { dots, marker } = g.userData, arr = dots.geometry.attributes.position.array;
+    const n = Math.min(path.length, 400);
+    for (let i = 0; i < n; i++) { arr[i * 3] = path[i][0]; arr[i * 3 + 1] = path[i][1]; arr[i * 3 + 2] = path[i][2]; }
+    dots.geometry.setDrawRange(0, n);
+    dots.geometry.attributes.position.needsUpdate = true;
+    marker.position.set(at[0], 0, at[2]);
+    marker.rotation.y += 0.05;
+  }
+
   // Potion Toss shattering: glass shards and a purple splash ring the size of the splash.
   potionShatter(p, radius) {
     const pos = new THREE.Vector3(p[0], Math.max(0.2, p[1]), p[2]);
