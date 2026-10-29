@@ -36,7 +36,7 @@ export const WIZARDS = {
   jeb: {
     id: 'jeb', name: 'Jeb', title: 'the Shepherd', role: 'Herder · rams do his fighting',
     color: 0xe8dcc0, tint: 0xc9b07a, model: '/models/wizards/jeb.glb',
-    kit: { primary: 'fireball', power: 'meteor', mobility: 'blink', guard: 'tempest_veil', utility: 'telekinesis', ultimate: 'cataclysm' },
+    kit: { primary: 'sling', power: 'battering_ram', mobility: 'ram_ride', guard: 'ram_guard', utility: 'telekinesis', ultimate: 'stampede' },
     speed: 5.3,
   },
 };
