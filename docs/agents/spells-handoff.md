@@ -1,5 +1,54 @@
 # Spells hand-off
 
+## Cast roots (Ty: "players should be stopped while casting a spell, unless it is a movement-based ability"), `9aabd9e`
+
+- **The rule** (`castRooted` in server.js; the same rule in main.js and `castRootedBot` in bots.js): no translation;
+  turning and aiming still work.
+  - **Short cast poses** (`C.CAST_ROOT`, in seconds): primary shots 0.22–0.32 (Shear 0.22, Fireball 0.30, Hex 0.30,
+    Potion 0.32), the Meteor and Lash releases 0.3, Frostfall 0.5 (not from the air), Toxic Flask and Battering Ram
+    0.35, tap shields 0.3 (Firewall, Bulwark, Veil, Smoke Flask, Ram Guard), telekinesis lift and throw 0.35, curse 0.3.
+  - **While they last:** the Meteor charge, the Lash and Cyclone wind-ups, Flask Step's wind-up, every ultimate's wind-up,
+    Blizzard's channel, a held Ward or Black Death, and the Relic curse hold.
+  - **Not rooted:** Blink, Skyward and its float, Smoke Screen, Mirror Step, Flask Step's teleport, Ram Ride, Meteor Rain,
+    and Eye of the Storm.
+- **Effects:**
+  - A cast ends a sprint, and sprint can't start while rooted.
+  - Keys held during the root move you again the moment it ends.
+  - Velocity is zeroed as a root starts; a knockback landing later still carries.
+  - **Server:** the speed check allows 0 while rooted (the movement budget's small burst covers latency). Snapshot
+    `castRoot`; remote bodies use it too.
+  - **Animation:** locomotion returns no walk while rooted (`Wizard.castRooted`), so it shows the cast or idle pose.
+  - **Bots:** the same rule in their movement. They finish a dodge before casting (stopping to punish a wind-up is the
+    exception), so they cast from where they mean to stand.
+- **Verified in the browser** (`t_castroot.py`, holding W throughout; walking |vel| 2.9–3.6 before each):
+
+  | Action | While rooted | |
+  |---|---|---|
+  | Primary (Fireball) | \|vel\| 0, ground 0 | pose `cast_fast` / `idle` |
+  | Meteor wind-up | 0 / 0 | `cast_heavy` |
+  | Held Black Death | 0 / 0 | `block` |
+  | Telekinesis lift | 0 / 0 | `idle` |
+  | Blink | not rooted | teleports |
+  | Ram Ride | not rooted | gallop, 7.1–9.6 m/s on screen |
+  | Eye of the Storm | rooted only for its 1.3 s wind-up | then \|vel\| 4.0–4.65 (the 1.3× tornado) |
+
+  The sampled ground-speed spikes (Blink 569, Eye 52 m/s) are the teleport and one 4 ms frame carrying a clamped 50 ms step.
+- **Balance** (6 Hard bots, one per hero, FFA, 3 × 120 s), K/D, round 8 → with cast roots:
+
+  | Hero | Round 8 | With cast roots |
+  |---|---|---|
+  | Cinder | 0.67 | 13/15 (0.87) |
+  | Gale | 0.57 | **4/12 (0.33)** |
+  | Rime | 1.0 | 13/12 (1.08) |
+  | Vesper | 1.63 | 10/11 (0.91) |
+  | Jeb | 1.18 | **23/14 (1.64)** |
+  | Embibe | 1.07 | 12/12 (1.0) |
+
+  - **The short-range hero pays most.** Gale must stop to fire Shear at 8 m, so her dives stall.
+  - **Jeb gains:** his rams do the moving for him.
+  - Kill counts per run are small, so this is noisy. A Gale retune (a longer Shear, a shorter Shear root, or more
+    speed) is Ty's call.
+
 ## Round 8b: Flask Step's lob, Ty's sounds (`1216b32`, `4f9f89d`)
 
 ### Flask Step
