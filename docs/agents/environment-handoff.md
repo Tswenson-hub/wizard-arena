@@ -36,7 +36,13 @@ walk 3.0 m/s; "sprint" is 5.5 m/s for 4 s (100 stamina at 25/s), then walking. C
   - **no bot stalled near a spawn**
   - 0 friendly fire, every match finished
   - With the 27 m Ember cluster, the median respawn-to-zone time was Ember 9.7–13.1 s and Frost 8.4–10.7 s, and Frost won 4 of 4. Kills were even (for example 26–18 to Ember in a match Ember lost).
-  - Runs with the current 26 m cluster are in progress. If they still lean Frost, I'll adjust only `SIEGE_SPAWNS` in a follow-up commit.
+  - **With the committed 26 m cluster** (4 runs): 87.3–96 and 76.2–80.2 (both reached the cap with no winner), 1–100 and 61.1–100 to Frost.
+    Median respawn-to-zone time was Ember 9.4–12.1 s and Frost 7.3–10 s. No stalls, and every respawn was at its own siege spawn.
+  - **Tried and reverted:** Ember at bearing −55° (to clear the tractor on the straight line to the altar). Over 3 runs: 33.5–100, 0–100 and
+    99.6–41.7 (no winner). That's no better than −50°, with outcomes driven by team strength. Per-zone respawn-to-zone medians were within
+    8–15 s for both teams, but they swing with which team is losing.
+  - **Remaining lean:** Ember bots arrive about 2 s later than Frost in practice (pathfinder: about 0.5 s). Bots steer rather than pathfind,
+    and Ember's routes pass the tractor and the crop field's corner. Frost has won more of the matches since the change, but several were close.
 - Screenshots: `/tmp/wa-environment/ss_ember.png` (the 27 m cluster) and `ss_frost.png`.
 
 
