@@ -464,3 +464,37 @@ Please put `breakProp` back on its own line.
   - `z_top.png`
   - Ember approach: `z_altar_ember`, `z_barn_ember`, `z_silo_ember`
   - Frost approach: `z_altar_frost`, `z_barn_frost`, `z_silo_frost`, `z_silo_frost2`
+
+## modes → spells: remove the Sacred Relic leftovers (Altar Siege replaced it); support the siege `area` hint
+match.js no longer has `protectProp`, and `canThrow` always returns true (the hook stays so server.js keeps working),
+so telekinesis already behaves normally in every mode. Everything below is now dead code. Line numbers are from HEAD 9d36d96.
+
+**server.js**
+1. `hitProp(prop, at)` (≈ l. 408–417, "unless the game mode protects it (the Sacred Relic)"): delete it and call `breakProp` directly at its
+   callers: the cyclone (≈ l. 397), Frostfall (≈ 574), the ram/goat sweep (≈ 718), the area hit at ≈ 847 and standing props hit by a projectile (≈ 1182).
+2. `relicBlast` (≈ l. 596–597): drop the `match.protectProp?.(prop)` branch and keep only the `else` (the Trapped Relic *spell* stays).
+3. The held-prop shield (≈ l. 1125–1126): drop the `protectProp` branch, keep `pl.carrying = null; breakProp(prop, hp);`.
+4. `throw` (≈ l. 1543): the `if (prop && !match.canThrow(p, prop)) { dropProp(p, false, 'released'); break; }` line can go, or keep it as a
+   generic hook (it never fires now). Your call.
+5. `goatCtx.breakProp: (prop, at) => hitProp(prop, at)` (≈ l. 1633): back to plain `breakProp` (and drop the Sacred Relic comment).
+
+**public/js/main.js**
+6. `let relicId` (≈ l. 214) and its assignment from `msg.match?.relic?.propId` (≈ l. 371).
+7. `holdingRelic` (≈ l. 1508) and the `'Drop'` F label (≈ l. 1509): back to `holdingNow ? 'Hurl' : shortName(K.utility)`.
+8. The `'F / G set down the relic'` hint (≈ l. 1598).
+
+**server/bots.js**
+9. The `obj.lift` branch (≈ l. 373–380, "lift the prop the mode wants lifted (the Sacred Relic)"): objectives never send `lift` any more.
+   Remove it, or keep it as a generic hint.
+10. The `canThrow` checks at ≈ l. 405 and ≈ l. 440 ("the Sacred Relic: keep holding it").
+11. The comment at ≈ l. 1193 ("reach the relic").
+
+**New: the `area` hint (Altar Siege).** In siege, `objectiveFor` returns `area: [x, z, r]` (the zone circle) alongside `moveTo`
+(the bot's own spot inside it, spread by id) and `focus` (the enemy deepest in the circle). While `area` is set:
+- Please keep the bot inside the circle when it fights. Strafe and dodge within `r` (clamp evasive and kite movement so it stays
+  inside, about 0.85·r), and don't back out to range.
+- Only when it's outside, walk to `moveTo`.
+- In the last 10 s before a hop, one bot per team gets the *next* spot as `area`/`moveTo` (a scout).
+
+It already plays well without this (Hard fill: 59% of live time contested, a finish in 263 s), but bots kiting out of the circle
+cost holds.
