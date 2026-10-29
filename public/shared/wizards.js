@@ -31,6 +31,14 @@ export const WIZARDS = {
     kit: { primary: 'hex_shards', power: 'sanguine_lash', mobility: 'mirror_step', guard: 'black_death', utility: 'trapped_relic', ultimate: 'night_cage' },
     speed: 5.3,
   },
+  // Round 7. Placeholder kit (existing spells) until the spells agent lands Jeb's; stand-in body until the
+  // characters agent wires his model.
+  jeb: {
+    id: 'jeb', name: 'Jeb', title: 'the Shepherd', role: 'Herder · rams do his fighting',
+    color: 0xe8dcc0, tint: 0xc9b07a, model: null,
+    kit: { primary: 'fireball', power: 'meteor', mobility: 'blink', guard: 'tempest_veil', utility: 'telekinesis', ultimate: 'cataclysm' },
+    speed: 5.3,
+  },
 };
 
 export const DEFAULT_WIZARD = 'cinder';

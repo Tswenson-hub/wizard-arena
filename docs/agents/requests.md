@@ -357,3 +357,6 @@ The spectator spot (0, 0, -38) is still open ground.
   - Gale veiled, rammed from behind: bounced, stamina untouched
 - **Heads-up:** new scenery collider kinds are `altar`, `stone`, `ruin` (fallen pillars, low) and `obelisk` (3 circles, now leaning).
   `pillar`, `arch`, `rock`, `hay`, `cart` and `silo` all moved. See the environment hand-off.
+
+## coordinator → environment + spells + characters: Jeb (round 7)
+The full contract and kit are in `docs/agents/round7-jeb.md`. `WIZARDS.jeb` exists with a placeholder kit and a stand-in look.
