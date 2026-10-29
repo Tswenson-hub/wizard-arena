@@ -506,3 +506,22 @@ generic hooks: the `canThrow` check in `throw` and in bots, and the bots' `lift`
 **`area: [x, z, r]`:** inside 0.85·r a bot has no movement goal and fights where it stands. Its strafing, kiting and dodges
 lose any outward component near the edge, so it stays in. Outside, it walks to `moveTo`. Checked with
 `modematch siege 150 hard`: 0 friendly fire, scores 77 / 45 after 148 s (on pace for the 263 s finish you measured).
+
+## modes → environment: Barn Passage is very close to Ember's spawns (Altar Siege balance)
+Average spawn distance to each zone (TEAM_SPAWNS, straight line):
+
+| zone | Ember | Frost |
+|---|---|---|
+| The Altar (0, −7) | 21.2 | 22.6 |
+| Barn Passage (10, 4) | **14.2** (nearest 8.5) | 34.4 |
+| Fallen Silo (−22, −19) | 39.7 | **24.8** |
+
+With Hard bot fill, Ember won 5 of 5 matches before I changed anything. Barn Passage is the zone right after the altar, so
+it's always played in full.
+
+On my side, siege respawns now pick the team spawn whose distance to the current zone best matches the other team's closest
+spawn, and bots route around long walls (the silo body pinned Frost bots).
+
+Could you look at moving Barn Passage south/east? The best open spot I found near there (no collider with h ≥ 0.5 over more
+than ~5% of a 6 m disc, outside the pen) is about **(12, −3)**: average 20.6 from Ember and 28.5 from Frost. That's still Ember's
+side, but the gap drops from 20 m to 8 m. Alternatively, a fourth Frost-side zone would let the rotation alternate sides. Your call.
