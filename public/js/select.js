@@ -1,5 +1,5 @@
 // Wizard picker (characters track). API (see docs/agents/characters.md):
-//   mountWizardPicker(container, { selected, onChange(id) }) -> { set(id), destroy() }
+//   mountWizardPicker(container, { selected, onChange(id) }) -> { set(id), setTaken(ids | { id: name }), destroy() }
 // One card per wizard: a live 3D preview (idle, slowly turning), name, title, role and the five
 // spells of its kit. Click or Enter/Space picks; arrow keys move between cards.
 // Previews only run while a picker is on screen.
@@ -40,7 +40,8 @@ function makePreview(id, el) {
   const camera = new THREE.PerspectiveCamera(28, 1, 0.1, 20);
   camera.position.set(0, 1.2, 4.7);
   camera.lookAt(0, 0.98, 0);
-  const pv = { id, el, scene, camera, body: null, mixer: null, actions: null, gone: false };
+  const pv = { id, el, scene, camera, body: null, mixer: null, actions: null, gone: false, taken: false };
+  pv.lights = [...scene.children].filter(o => o.isLight).map(l => [l, l.intensity]);
   looksReady().then(() => {
     if (pv.gone) return;
     const { model, clips } = makeWizardBody(id);
@@ -69,6 +70,11 @@ function celebrate(pv) {
   idle.crossFadeTo(cast, 0.2, false);
 }
 
+// Drawn over a taken hero's preview (the cards' CSS grey-out can't reach the shared WebGL canvas).
+const veil = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial({ color: 0x0c0810, transparent: true, opacity: 0.6, depthTest: false }));
+const veilScene = new THREE.Scene(); veilScene.add(veil);
+const veilCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
 function renderStage(st, dt) {
   const { renderer, root } = st;
   const W = root.clientWidth, H = root.clientHeight;
@@ -83,8 +89,9 @@ function renderStage(st, dt) {
   const box = root.getBoundingClientRect();
   for (const pv of st.pvs) {
     if (!pv.body) continue;
-    pv.mixer.update(dt);
-    pv.body.rotation.y += dt * 0.55;
+    // a hero a teammate plays (setTaken): frozen and dimmed, like its greyed card
+    if (!pv.taken) { pv.mixer.update(dt); pv.body.rotation.y += dt * 0.55; }
+    for (const [l, k] of pv.lights) l.intensity = pv.taken ? k * 0.25 : k;
     const r = pv.el.getBoundingClientRect();
     const x = r.left - box.left, y = H - (r.bottom - box.top);
     if (!r.width || !r.height) continue;
@@ -92,6 +99,7 @@ function renderStage(st, dt) {
     renderer.setScissor(x, y, r.width, r.height);
     pv.camera.aspect = r.width / r.height; pv.camera.updateProjectionMatrix();
     renderer.render(pv.scene, pv.camera);
+    if (pv.taken) { renderer.autoClear = false; renderer.render(veilScene, veilCam); renderer.autoClear = true; }
   }
 }
 
@@ -123,6 +131,7 @@ function cardHTML(w) {
         <div class="wp-role">${esc(w.role)}</div>
       </div>
       <span class="wp-check" aria-hidden="true">✓</span>
+      <span class="wp-taken">Taken</span>
     </div>
     <ul class="wp-kit">${spells}</ul>`;
 }
@@ -152,18 +161,24 @@ export function mountWizardPicker(container, { selected, onChange } = {}) {
   }
   container.appendChild(root);
 
+  // Team modes: heroes a teammate already plays (setTaken). They stay visible, greyed, with a badge, and can't be picked.
+  let taken = new Map();   // wizard id -> teammate name ('' when unknown)
   const paint = () => {
     for (const [id, card] of Object.entries(cards)) {
-      const on = id === current;
+      const on = id === current, off = taken.has(id) && !on;
       card.classList.toggle('selected', on);
+      card.classList.toggle('taken', off);
       card.setAttribute('aria-checked', on);
+      card.setAttribute('aria-disabled', off);
+      card.title = off ? (taken.get(id) ? `Taken by ${taken.get(id)}` : 'Taken by a teammate') : '';
+      pvs[id].taken = off;
       card.tabIndex = on ? 0 : -1;
     }
   };
   paint();
 
   const pick = (id) => {
-    if (!isWizard(id)) return;
+    if (!isWizard(id) || (taken.has(id) && id !== current)) return;
     const changed = id !== current;
     current = id;
     paint();
@@ -202,6 +217,15 @@ export function mountWizardPicker(container, { selected, onChange } = {}) {
 
   return {
     set(id) { if (isWizard(id)) { current = id; paint(); } },
+    // Heroes your teammates already play: an array of wizard ids, or { wizardId: teammateName }. Empty, null or
+    // undefined (free-for-all) shows every hero. Your own current pick is never marked.
+    setTaken(list) {
+      const next = new Map(Array.isArray(list) ? list.filter(isWizard).map(id => [id, ''])
+        : Object.entries(list || {}).filter(([id]) => isWizard(id)).map(([id, who]) => [id, typeof who === 'string' ? who : '']));
+      if (next.size === taken.size && [...next].every(([k, v]) => taken.get(k) === v)) return;   // unchanged (called every snapshot)
+      taken = next;
+      paint();
+    },
     destroy() {
       io.disconnect();
       setVisible(false);

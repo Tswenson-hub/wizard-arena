@@ -40,6 +40,16 @@
 }
 .wp-card.selected .wp-check { transform: scale(1); }
 
+/* Team modes: a hero a teammate already plays. Visible, greyed out, not selectable. */
+.wp-card.taken { cursor: not-allowed; filter: grayscale(0.85) brightness(0.7); opacity: 0.6; }
+.wp-card.taken:hover { border-color: rgba(255,255,255,0.13); }
+.wp-taken {
+  display: none; position: absolute; top: 8px; right: 8px; padding: 2px 8px; border-radius: 999px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase;
+  color: #f4ecd8; background: rgba(20, 14, 10, 0.85); border: 1px solid rgba(244, 236, 216, 0.45);
+}
+.wp-card.taken .wp-taken { display: block; }
+
 .wp-kit { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
 .wp-kit li {
   display: grid; grid-template-columns: 42px 1fr; column-gap: 6px; align-items: baseline;
