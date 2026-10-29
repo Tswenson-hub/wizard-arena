@@ -371,6 +371,8 @@ function handleMessage(msg) {
       }
       updateDecoys(msg.decoys || []);
       for (const g of msg.goats || []) { const v = goats.get(g.id) || addGoat(g); v.apply(g); }
+      // a summoned ram no longer in the snapshot is gone, even if we missed its goatGone
+      if (msg.goats) { const ids = new Set(msg.goats.map(g => g.id)); for (const [id, v] of goats) if (v.summoned && !ids.has(id)) { v.dispose(scene); goats.delete(id); } }
       matchUI.onSnapshot(msg);
       // team modes keep bots at 3v3 themselves: the practice-bot buttons don't apply
       if (!!msg.match?.teams !== teamBots) {
@@ -1396,7 +1398,14 @@ function updateLocal(dt) {
   // Ram Ride: still while getting on and off; at the gallop, straight ahead at full tilt (A/D steer too)
   const galloping = local.ride && now >= local.ride.rideAt && now < local.ride.dismountAt;
   if (local.ride && !galloping) { mx = 0; mz = 0; }
-  if (galloping) { local.yaw -= (mx || 0) * 2.4 * dt; mx = 0; mz = 1; fwd.set(Math.sin(local.yaw), 0, Math.cos(local.yaw)); }
+  if (galloping) {
+    // the ram runs along its own heading, which turns toward where we look (A/D nudge it) at RIDE.turnRate, on real time
+    const R = local.ride, rt = Math.min(0.25, now - (R.turnAt ?? now)); R.turnAt = now;
+    R.heading ??= local.yaw;
+    const want = local.yaw - (mx || 0) * 0.6;
+    R.heading += THREE.MathUtils.clamp(Math.atan2(Math.sin(want - R.heading), Math.cos(want - R.heading)), -RIDE.turnRate * rt, RIDE.turnRate * rt);
+    mx = 0; mz = 1; fwd.set(Math.sin(R.heading), 0, Math.cos(R.heading));
+  }
   const moving = (mx || mz) && !me.dead && !stunned && !rooted;
   let speed = C.speedOf(me.wizard);   // per wizard (wizards.js speed)
   if (local.charging || local.cyclone || local.lash || local.ultWind) speed = C.chargeSpeedOf(me.wizard);   // (an ultimate's wind-up too)
@@ -1430,7 +1439,7 @@ function updateLocal(dt) {
     const t0 = Math.max(local.ride.rideAt, local.ride.last ?? local.ride.rideAt), t1 = Math.min(now, local.ride.dismountAt);
     if (!stunned && !me.dead) dashMove = Math.max(0, t1 - t0) * RIDE.speed;
     local.ride.last = t1;
-    lastDashDir = [Math.sin(local.yaw), Math.cos(local.yaw)];
+    lastDashDir = [Math.sin(local.ride.heading ?? local.yaw), Math.cos(local.ride.heading ?? local.yaw)];
     local.vel.set(0, 0, 0);
   }
   if (rooted) local.vel.set(0, 0, 0);
@@ -1457,7 +1466,8 @@ function updateLocal(dt) {
   for (const c of C.COLLIDERS) if (y < c.h) pushOut(c.x, c.z, c.r);
   if (y < 1) for (const e of props.values()) if (e.data.state === 'idle') pushOut(e.data.x, e.data.z, C.PROP_TYPES[e.data.type].r * 0.8);
   for (const w of players.values()) if (w !== me && !w.dead && Math.abs(w.group.position.y - y) < C.PLAYER_HEIGHT) pushOut(w.group.position.x, w.group.position.z, pr);
-  if (y < 1) for (const g of goats.values()) if (g.state !== 'charge' && g.group.position.y < 0.5) pushOut(g.group.position.x, g.group.position.z, C.GOAT.radius);
+  // (never the ram we ride: it sits under us a frame behind, and pushing out of it shoved us forward every frame)
+  if (y < 1) for (const g of goats.values()) if (g.state !== 'charge' && g.state !== 'mount' && g.group.position.y < 0.5) pushOut(g.group.position.x, g.group.position.z, C.GOAT.radius);
   if (y < 1) for (const d of decoys.values()) if (d.owner !== myId) pushOut(d.wiz.group.position.x, d.wiz.group.position.z, pr);
   const r = Math.hypot(local.pos.x, local.pos.z);
   if (r > C.ARENA_RADIUS) { local.pos.x *= C.ARENA_RADIUS / r; local.pos.z *= C.ARENA_RADIUS / r; }

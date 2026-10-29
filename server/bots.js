@@ -61,6 +61,7 @@ const kit = (q) => C.kitOf(q.wizard);
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const rand = (a, b) => a + Math.random() * (b - a);
 const dist2D = (a, b) => Math.hypot(a[0] - b[0], a[2] - b[2]);
+const clampAbs = (v, m) => Math.max(-m, Math.min(m, v));
 const gauss = () => (Math.random() + Math.random() + Math.random() - 1.5) / 0.75;   // ~N(0,1), cheap
 
 export function createBot(difficulty) {
@@ -1191,7 +1192,10 @@ function moveBot(me, dt, world, t) {
   // Ram Ride: galloping straight along our facing (the server times the mount, the ride and the dismount)
   if (me.mrain || me.mrainFall) { b.vel = [0, 0]; me.anim = 'idle'; return; }   // Meteor Rain: the server flies her
   if (me.ride && t >= me.ride.rideAt && t < me.ride.dismountAt && !stunned) {
-    b.vel = [Math.sin(me.yaw) * RIDE.speed, Math.cos(me.yaw) * RIDE.speed];
+    // the heading turns toward the bot's facing at RIDE.turnRate, like a player's
+    me.ride.heading ??= me.ride.yaw;
+    me.ride.heading += clampAbs(Math.atan2(Math.sin(me.yaw - me.ride.heading), Math.cos(me.yaw - me.ride.heading)), RIDE.turnRate * dt);
+    b.vel = [Math.sin(me.ride.heading) * RIDE.speed, Math.cos(me.ride.heading) * RIDE.speed];
     me.p[0] += b.vel[0] * dt; me.p[2] += b.vel[1] * dt;
     for (const c of C.COLLIDERS) { const dx = me.p[0] - c.x, dz = me.p[2] - c.z, dd = Math.hypot(dx, dz); if (dd < c.r + C.PLAYER_RADIUS && dd > 1e-4) { const kk = (c.r + C.PLAYER_RADIUS - dd) / dd; me.p[0] += dx * kk; me.p[2] += dz * kk; } }
     const rr = Math.hypot(me.p[0], me.p[2]);
@@ -1301,7 +1305,8 @@ function moveBot(me, dt, world, t) {
   for (const c of C.COLLIDERS) if (y < c.h) pushOut(c.x, c.z, c.r);
   if (y < 1) for (const prop of world.props.values()) if (prop.state === 'idle') pushOut(prop.x, prop.z, C.PROP_TYPES[prop.type].r * 0.8);
   for (const q of world.players.values()) if (q !== me && !q.dead && Math.abs(q.p[1] - y) < C.PLAYER_HEIGHT) pushOut(q.p[0], q.p[2], pr);
-  if (y < 1) for (const g of goatsOf(world)) if ((g.y || 0) < 0.5 && g.state !== 'charge' && !(g.mode === 'mount')) pushOut(g.x, g.z, C.GOAT.radius);
+  // (never a mount ram: it sits under its rider, and pushing out of it shoved the rider forward every tick)
+  if (y < 1) for (const g of goatsOf(world)) if ((g.y || 0) < 0.5 && g.state !== 'charge' && g.state !== 'mount' && g.mode !== 'mount') pushOut(g.x, g.z, C.GOAT.radius);
   const r = Math.hypot(me.p[0], me.p[2]);
   if (r > C.ARENA_RADIUS) { me.p[0] *= C.ARENA_RADIUS / r; me.p[2] *= C.ARENA_RADIUS / r; }
 

@@ -300,6 +300,7 @@ function applyHit(target, proj) {
     if (attacker && attacker !== target && !spec.ult) addUltCharge(attacker, dmg * C.ULT_CHARGE.perDamage * (spec.ultCharge ?? 1));
   }
   const kb = isRooted(target) || steady ? 0 : blocked ? spec.knockback * 0.3 : spec.knockback;
+  if (kb) { target.kbSpeed = target.kbUntil > t ? Math.max(kb, target.kbSpeed || 0) : kb; target.kbUntil = t + 0.8; }   // the speed check allows it for a moment
   if (target.bot && kb) botKnockback(target, norm3([proj.v[0], 0, proj.v[2]]), kb);
 
   broadcast({
@@ -1339,7 +1340,10 @@ function handle(p, msg) {
       // the fastest this wizard can go this way: its run speed, the backpedal cap against its facing, or a dash
       const run = C.backpedalSpeed(C.speedOf(p.wizard) * (p.eye ? EYE.speedMul : 1), np[0] - p.p[0], np[2] - p.p[2], Number.isFinite(msg.yaw) ? msg.yaw : p.yaw)
         + (p.pulledUntil > t ? Math.max(EYE.pull, BLIZ.push) : 0);   // dragged by an Eye of the Storm, pushed by a Blizzard
-      const maxStep = ((dashing ? SMOKE.distance / SMOKE.dashTime : galloping(p, t) ? RIDE.speed + 1 : run) + C.SPELLS.heavy.knockback + 2) * dt + 0.6;
+      // (knockback only counts for a moment after one actually landed; it used to be allowed all the time, which with
+      // 0.6 m of slack per update let a client run about 20 m/s faster than its walk)
+      const own = dashing ? SMOKE.distance / SMOKE.dashTime : galloping(p, t) ? RIDE.speed * 1.1 : isAirborne(p) ? Math.max(run, SKY.airSpeed) : run;
+      const maxStep = (own + (p.kbUntil > t ? p.kbSpeed + 1 : 0) + 1) * dt + 0.3;
       if (p.lastStateAt && d > maxStep && !p.justTeleported) {
         // Moving faster than any legitimate wizard can: let the server's copy catch up at the
         // maximum plausible speed instead of snapping (so a laggy-but-honest client converges).
@@ -1729,7 +1733,7 @@ const goatCtx = {
   // a Tempest Veil survives a ram (goats.js treats the veil as a ward once that request is in; this is the fallback)
   killPlayer: (p, attacker, cause) => { if (cause === 'goat' && isVeiled(p)) return; killPlayer(p, attacker, cause); },
   // humans apply goat knockback themselves from the goatRam message
-  knockback: (p, dir, kb) => { if (p.bot) botKnockback(p, dir, kb); },
+  knockback: (p, dir, kb) => { if (p.bot) botKnockback(p, dir, kb); else { p.kbUntil = now() + 0.8; p.kbSpeed = kb; } },
   // a hurled goat hits a wizard exactly like a thrown prop (kind 'goat'), credited to the thrower
   goatHitPlayer: (g, target, throwerId) => {
     if (target.dead) return;

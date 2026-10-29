@@ -276,9 +276,10 @@ export const SPELLBOOK = {
   },
   ram_ride: {
     id: 'ram_ride', slot: 'mobility', name: 'Ram Ride', short: 'Ride',
-    blurb: 'Mount a ram and ride 14 m at a gallop (steer with the mouse). Riding into an enemy shoves them for 15.',
+    blurb: 'Mount a ram and gallop 10 m (it turns slowly toward where you look). Riding into an enemy shoves them for 15.',
     mount: 0.4, dismount: 0.4,   // he can't act while getting on and off
-    speed: 11, distance: 14,
+    speed: 7, distance: 10,      // a 1.4 s burst (was 11 m/s for 14 m: far too fast at the walking pace)
+    turnRate: 1.5,               // rad/s: the ram's heading follows where you look, this fast at most
     height: 0.55,        // he sits this high on the ram (visual)
     cooldown: 8,
   },
