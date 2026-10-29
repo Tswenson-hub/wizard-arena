@@ -146,6 +146,7 @@ const enemyOf = (ownerId, q) => enemies(players.get(ownerId), q);
 const midCast = (p) => p.charging || !!p.cyclone || !!p.lash || isAirborne(p) || inUltimate(p) || !!p.ride;
 function requestWizard(p, id) {
   if (!C.isWizard(id)) return;
+  id = claimHero(p, id);
   p.pendingWizard = id === p.wizard ? null : id;
   flushPendingWizard(p);
 }
@@ -162,6 +163,66 @@ function applyWizard(p, id) {
   if (kit(p).utility !== 'trapped_relic') clearCurse(p);
   p.ammo = C.primaryMag(kit(p).primary).magazine; p.reloadUntil = 0;   // a fresh pouch or magazine for the new primary
   broadcast({ t: 'wizard', id: p.id, wizard: id, color: p.color });
+}
+
+// Team games (TDM, Altar Siege): one of each hero per team. FFA (no teams) allows duplicates.
+// A hero a wizard holds or is switching to; the heroes `p`'s teammates hold.
+const heroOf = (q) => q.pendingWizard || q.wizard;
+const teammates = (p) => p.team ? [...players.values()].filter(q => q !== p && q.team === p.team && !q.spectator && !q.dummy) : [];
+function teamTaken(p) { return new Set(teammates(p).map(heroOf)); }
+// The free hero nearest `id` in the roster (the next one along first), or null if the team has them all.
+function nearestFreeHero(id, taken) {
+  const ids = Object.keys(C.WIZARDS), i = Math.max(0, ids.indexOf(id));
+  for (let k = 1; k < ids.length; k++) for (const j of [i + k, i - k]) { const c = ids[(j + ids.length * 2) % ids.length]; if (!taken.has(c)) return c; }
+  return null;
+}
+// `p` wants hero `id`: what it gets. A human takes a bot teammate's hero (the bot switches); a hero a human
+// teammate already has sends `p` to the nearest free one, with a note.
+function claimHero(p, id) {
+  if (!p.team || !C.isWizard(id)) return id;
+  const holders = teammates(p).filter(q => heroOf(q) === id);
+  if (!holders.length) return id;
+  if (!p.bot && holders.every(q => q.bot)) {
+    for (const q of holders) { const free = nearestFreeHero(id, new Set([...teamTaken(q), id])); if (free) requestWizard(q, free); }
+    return id;
+  }
+  const free = nearestFreeHero(id, teamTaken(p));
+  if (!free) return id;   // more players than heroes: a duplicate is unavoidable
+  if (!p.bot) {
+    const text = `${C.WIZARDS[id].name} is already on your team: you're ${C.WIZARDS[free].name} instead`;
+    if (p.joining) p.joinNotice = text; else send(p.id, { t: 'notice', text });   // a joining player hears it after its welcome
+  }
+  return free;
+}
+// After team changes (a new mode's balance, a team switch): two of a hero on one team. The human who has it keeps
+// it (the earliest to join, if two do); bots give way first.
+function resolveTeamHeroes() {
+  const byTeam = new Map();
+  for (const q of players.values()) if (q.team && !q.spectator && !q.dummy) { if (!byTeam.has(q.team)) byTeam.set(q.team, []); byTeam.get(q.team).push(q); }
+  for (const list of byTeam.values()) {
+    list.sort((a, b) => (!!a.bot - !!b.bot) || a.id - b.id);   // humans first, then by join order
+    const seen = new Set();
+    for (const q of list) {
+      const h = heroOf(q);
+      if (!seen.has(h)) { seen.add(h); continue; }
+      const free = nearestFreeHero(h, new Set(list.filter(o => o !== q).map(heroOf)));
+      if (!free) continue;
+      if (!q.bot) send(q.id, { t: 'notice', text: `Your team already has ${C.WIZARDS[h].name}: you're ${C.WIZARDS[free].name} now` });
+      requestWizard(q, free);
+      seen.add(free);
+    }
+  }
+}
+// For the hero picker: the heroes each team has (by team id), or null outside team games.
+function teamHeroesPublic() {
+  const out = {};
+  for (const q of players.values()) if (q.team && !q.spectator && !q.dummy) (out[q.team] ??= []).push(heroOf(q));
+  return Object.keys(out).length ? out : null;
+}
+// Set a wizard before the player is announced (no broadcast).
+function setWizardQuiet(p, id) {
+  if (!C.isWizard(id) || id === p.wizard) return;
+  p.wizard = id; p.color = C.WIZARDS[id].color; p.ammo = C.primaryMag(kit(p).primary).magazine;
 }
 
 function send(id, msg) {
@@ -1251,11 +1312,13 @@ function updateMeteorRain(p, t, dt) {
 }
 
 // ---------------------------------------------------------------- simulation
+let resolveHeroesAt = 0;
 function simulate(dt) {
   const t = now();
   updateBots(dt, world);
   updateGoats(goats, dt, goatCtx);
   match.tick(dt);
+  if (t >= (resolveHeroesAt || 0)) { resolveHeroesAt = t + 1; resolveTeamHeroes(); }
   updateDecoys(dt, t);
   for (const w of [...walls.values()]) if (t >= w.until) wallDown(w, true);
   for (const f of [...frostfalls.values()]) if (t >= f.at) frostfallImpact(f);
@@ -1929,6 +1992,13 @@ function addBot(difficulty, wizard = null) {
   p.bot = createBot(difficulty);
   players.set(id, p);
   match.onJoin(p);
+  if (p.team) {   // team games: a hero the team doesn't have (pinned ones too, if it does)
+    const taken = teamTaken(p);
+    if (taken.has(p.wizard)) {
+      const free = ids.filter(w => !taken.has(w));
+      if (free.length) setWizardQuiet(p, C.isWizard(wizard) ? nearestFreeHero(wizard, taken) : free[Math.floor(Math.random() * free.length)]);
+    }
+  }
   { const msp = match.spawnPointFor(p); if (msp) p.p = [msp[0], 0, msp[2]]; }
   broadcast({ t: 'joined', player: playerPublic(p) });
   console.log(`[+] bot ${name} (${difficulty}, ${p.wizard}) joined. ${players.size} online`);
@@ -2052,6 +2122,7 @@ wss.on('connection', (ws) => {
       players.set(id, p);
       sockets.set(id, ws);
       match.onJoin(p);
+      p.joining = true; setWizardQuiet(p, claimHero(p, p.wizard)); p.joining = false;   // team games: one of each hero per team
       { const sp = match.spawnPointFor(p); if (sp) p.p = [sp[0], 0, sp[2]]; }
       ws.send(JSON.stringify({
         t: 'welcome', id,
@@ -2071,6 +2142,7 @@ wss.on('connection', (ws) => {
         ...match.welcomeExtras(p),
       }));
       broadcast({ t: 'joined', player: playerPublic(p) });
+      if (p.joinNotice) { send(id, { t: 'notice', text: p.joinNotice }); p.joinNotice = null; }
       console.log(`[+] ${name} (#${id}) joined. ${players.size} online`);
       return;
     }
@@ -2105,7 +2177,7 @@ setInterval(() => {
 
 setInterval(() => {
   if (players.size === 0) return;
-  broadcast({ t: 'snap', time: now(), players: [...players.values()].map(playerPublic), goats: rams.length ? [...goats.map(goatPublic), ...rams.map(ramPublic)] : goats.map(goatPublic), decoys: [...decoys.values()].map(decoyPublic), ...match.snapshotExtras() });
+  broadcast({ t: 'snap', time: now(), players: [...players.values()].map(playerPublic), goats: rams.length ? [...goats.map(goatPublic), ...rams.map(ramPublic)] : goats.map(goatPublic), decoys: [...decoys.values()].map(decoyPublic), teamHeroes: teamHeroesPublic(), ...match.snapshotExtras() });
 }, 1000 / C.SNAPSHOT_RATE);
 
 httpServer.listen(PORT, () => console.log(`Wizard Arena listening on http://localhost:${PORT}`));

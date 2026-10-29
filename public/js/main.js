@@ -778,6 +778,7 @@ function handleMessage(msg) {
       feed(`<b>${esc(w.name)}</b> unleashes <b>${esc(SPELL[msg.ult]?.name || 'an ultimate')}</b>!`);
       break;
     }
+    case 'notice': feed(esc(msg.text)); break;   // a server note for us (e.g. our hero was already on the team)
     case 'ultRefused':
       local.cataAim = false;
       break;

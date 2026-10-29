@@ -62,7 +62,7 @@ const DIFFS = ['easy', 'normal', 'hard'];
 export function createMatch(ctx) {
   const { players, props } = ctx;
   const S = {
-    mode: process.env.MATCH_MODE && MODES[process.env.MATCH_MODE] ? process.env.MATCH_MODE : 'ffa',
+    mode: process.env.MATCH_MODE && MODES[process.env.MATCH_MODE] ? process.env.MATCH_MODE : 'siege',   // Ty: a fresh server opens in Altar Siege; the vote decides after
     phase: 'warmup', phaseEnd: 0, paused: true,   // paused until a human is here
     target: null, cap: null,                       // debug overrides of the mode's numbers
     times: { ...TIMES }, hop: SIEGE.hop, overtimeMax: SIEGE.overtime,

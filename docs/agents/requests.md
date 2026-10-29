@@ -594,3 +594,12 @@ You already play `combo<shot+1>`, `arrival` and `ult` generically. Thanks, those
 - **`main.js` `case 'respawn'`:** for `w === me`, `if (Number.isFinite(msg.yaw)) local.yaw = msg.yaw;`
 - Bots turn by themselves, so it only matters for humans.
 - TEAM_SPAWNS and SPAWN_POINTS stay `[x, 0, z]`, so nothing changes in FFA or TDM.
+
+## spells → characters: grey out heroes the team already has (snapshot `teamHeroes`)
+Team games (TDM, Altar Siege) now allow one of each hero per team (server.js `claimHero` / `resolveTeamHeroes`).
+Every `snap` carries **`teamHeroes`**: `{ ember: ['cinder', 'jeb', ...], frost: [...] }`, the heroes each team holds
+(a pending switch counts), or `null` in FFA. For the picker (select.js): grey out, or mark taken, every hero in
+`snap.teamHeroes[myTeam]` except my own (`myTeam` is my player's `team` in the same snapshot). A human picking one a
+**bot** teammate has is allowed (the bot switches). Picking one a **human** teammate has gets the nearest free hero
+and a `{ t: 'notice', text }` message, which main.js shows in the feed. So the grey-out is a hint and nothing breaks
+without it. The join screen has no team yet, so it needs nothing.

@@ -1,5 +1,46 @@
 # Spells hand-off
 
+## Ty's four changes: Gale unrooted, Vesper heals, one hero per team, Siege first
+
+- **(1) Gale:**
+  - **Tempest Veil** no longer cast-roots (server `veil` handler, client prediction; `CAST_ROOT.tapShield` no longer applies to it).
+  - **Blink** was already exempt: the `teleport` handler sets no root, and Blink works while a cast root is running.
+  - Verified: the snapshot after a Veil shows `castRoot: false`, `veil: true`.
+- **(2) Vesper heals:**
+  - **Night Cage:** heals Vesper and her teammates on the ground inside the ring by `night_cage.heal` = 10 HP a second,
+    capped at `C.MAX_HP`, via `updateCages` → `heal()`.
+  - **Black Death:** each block heals `black_death.healPerDamage` = 30% of the damage absorbed (`guardAbsorbed`).
+  - **Shimmer:** `heal()` sets `p.healUntil`, and the snapshot carries `heal: true`. main.js then draws
+    `effects.healShimmer` (crimson motes drifting up) every 0.05 s. No glow at full HP.
+  - **Bots:**
+    - The Night Cage score adds 0.3 per teammate inside (0.6 if under 70 HP), plus 0.5 if Vesper is inside and hurt.
+      She will now cage when under 30 HP if it catches 2 or more enemies.
+    - A hurt Vesper (under 80 HP) soaks a shot with Black Death rather than sidestepping (sidestep chance 0.3 instead of 0.65).
+  - **Verified** (`/tmp/wa-spells/t_heal.mjs`, `t_healvis.py`): Black Death blocks took her from 80 to 86 with the heal
+    flag on; the cage took 80 to 100 (capped); the shimmer was seen in the browser.
+- **(3) One of each hero per team** (TDM, Altar Siege; FFA is unchanged). All in server.js:
+  - **`claimHero(p, id)`:** used at join, on a `wizard` switch and inside `requestWizard`. A human takes a bot
+    teammate's hero, and the bot switches to the nearest free one. A hero a human teammate already has gets the nearest
+    free hero (`nearestFreeHero`, next in roster order first) and a `{ t: 'notice', text }` message, which main.js shows in the feed.
+  - **Bot fill (`addBot`):** after `match.onJoin` gives the bot its team, it picks a random hero its team doesn't have.
+  - **`resolveTeamHeroes()`:** runs once a second and fixes duplicates left by team changes (a new mode's balance,
+    a team switch). Humans keep their hero, the earliest to join first; bots give way.
+  - **`snap.teamHeroes`:** `{ ember: [...], frost: [...] }`, or null in FFA. Filed for the characters agent in
+    requests.md, so the picker can grey heroes out.
+  - **Verified:**
+    - `t_teamheroes.mjs` and `t_teamheroes2.mjs`: fill, a bot giving way, a later human moved with a note, a 4th
+      joiner moved, and FFA duplicates allowed.
+    - `t_dupwatch.mjs`: 0 same-team duplicates in 777 snapshots of a TDM modematch.
+    - Playwright: a page joining as a hero its team had got Embibe and the feed note.
+- **(4) Startup mode:** `server/match.js` now defaults to `'siege'` (`MATCH_MODE` still overrides it). A fresh
+  server's welcome shows `mode: siege, phase: warmup`, The Altar; the vote decides after that.
+- **Tests:**
+  - `MATCH_DEBUG=1 node tools/test/modematch-unit.mjs`: all ok.
+  - modematch: siege, tdm (`--target 4`) and ffa all PASS, with 0 friendly-fire hits and 3v3 throughout.
+  - botmatch is fine.
+- **Note (not from this change):** under heavy machine load (a 5-minute page load), a headless page's socket closed
+  with 1006 about 20 s after join. That timing matches the server's 15 s ping heartbeat dropping a stalled client.
+
 ## Ty's second sound batch: voices, grass steps, goats, telekinesis
 
 - **Details:** docs/agents/sound-report.md (top section). The cuts are made by /tmp/wa-spells/snd2/make.py from
