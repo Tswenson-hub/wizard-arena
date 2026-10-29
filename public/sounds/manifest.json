@@ -87,5 +87,29 @@
   ],
   "kill_sting": [
     "kill_sting.m4a"
+  ],
+  "potion_shatter": [
+    "potion_shatter.m4a"
+  ],
+  "toxic_smash": [
+    "toxic_smash.m4a"
+  ],
+  "smoke_flask": [
+    "smoke_flask.m4a"
+  ],
+  "flask_land": [
+    "flask_land.m4a"
+  ],
+  "brew_drink": [
+    "brew_drink.m4a"
+  ],
+  "fizz_loop": [
+    "fizz_loop.m4a"
+  ],
+  "blizzard_cast": [
+    "blizzard_cast.m4a"
+  ],
+  "blizzard_loop": [
+    "blizzard_loop.m4a"
   ]
 }

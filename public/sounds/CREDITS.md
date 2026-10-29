@@ -55,3 +55,20 @@ short fades, peak-normalized to -1 dB (the ward loop to about -7 dB so it sits u
 | `wall_up.m4a` | `Ice wall.mp3` | Glacial Bulwark rising (its break keeps the ward_break + stone shatter layers) |
 | `ward_loop.m4a` | `ward shield.mp3` | Ward hum while Space is held: a 4.0 s loop (from 2.0 s) with a 0.5 s equal-power crossfade seam |
 | `kill_sting.m4a` | `win_duel_kill_enemy.mp3` | Played flat, for the killer only, on a kill; the original's sound is all in its first ~1 s, so it's trimmed to 1.45 s with a 0.35 s fade |
+| `blizzard_cast.m4a` | `Rime ULT.mp3` | Blizzard's start: its loudest onset (6.0-7.2 s of the original) |
+| `blizzard_loop.m4a` | `Rime ULT.mp3` | Under the 2.5 s Blizzard cone, following Rime: 6.8-9.2 s looped with a 0.4 s crossfade seam, faded out at the end |
+
+## Provided by Ty (Pixabay)
+Files Ty downloaded from Pixabay (Pixabay Content License: free to use, no attribution required), credited here by their
+original filename and author. Processing as for Ty's other files: decoded, downmixed to mono, leading silence trimmed (not
+the loops), short fades, peak-normalized to -1 dB, AAC .m4a at 44.1 kHz via `afconvert`. Loops are cut with a
+0.4-0.5 s equal-power crossfade seam.
+
+| File | Source (Ty's file, author) | Used for |
+|---|---|---|
+| `potion_shatter.m4a` | `universfield-glass-hit-192119.mp3`, Universfield, provided by Ty (Pixabay) | Potion Toss shattering on impact (pitch varied per throw; the stun throw lower) |
+| `toxic_smash.m4a` | `universfield-glass-bottle-smash-277554.mp3`, Universfield, provided by Ty (Pixabay) | Toxic Flask breaking open |
+| `smoke_flask.m4a` | `freesound_community-breaking-glass-83809.mp3` (first 2.2 s), freesound_community, provided by Ty (Pixabay) | Smoke Flask smashed at her feet |
+| `flask_land.m4a` | `freesound_community-breaking-glass-83809.mp3` (first 0.75 s), freesound_community, provided by Ty (Pixabay) | Flask Step landing |
+| `fizz_loop.m4a` | `freesound_community-soda-fizzing-80464.mp3` (1.0-4.5 s, looped), freesound_community, provided by Ty (Pixabay) | The Toxic Flask pool while it lasts (3D at the pool, fading out at the end) |
+| `brew_drink.m4a` | `freesound_community-soda-fizzing-80464.mp3` (0.4-1.9 s), freesound_community, provided by Ty (Pixabay) | Berserker Brew, the drink |
