@@ -394,7 +394,7 @@ function cyclonePulse(p) {
   if (p.p[1] < 1) {
     for (const prop of props.values()) {
       if (prop.state !== 'idle') continue;
-      if (dist2D(p.p, [prop.x, 0, prop.z]) < CYCLONE.radius + C.PROP_TYPES[prop.type].r) hitProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z]);
+      if (dist2D(p.p, [prop.x, 0, prop.z]) < CYCLONE.radius + C.PROP_TYPES[prop.type].r) breakProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z]);
     }
     for (const g of allGoats()) {
       if (g.holder === p.id || g.owner === p.id || Math.hypot(g.x - p.p[0], g.z - p.p[2]) > CYCLONE.radius + C.GOAT.radius) continue;
@@ -403,17 +403,6 @@ function cyclonePulse(p) {
     }
   }
   broadcast({ t: 'cyclonePulse', id: p.id, p: p.p, hits });
-}
-
-// A spell or a hit shatters a prop, unless the game mode protects it (the Sacred Relic): then it is knocked
-// loose instead, landing idle where it was hit. Breaking for any other reason (holder death) uses breakProp.
-function hitProp(prop, at) {
-  if (!match.protectProp?.(prop)) return breakProp(prop, at);
-  const holder = prop.carrier != null && players.get(prop.carrier);
-  if (holder && holder.carrying === prop.id) { holder.carrying = null; match.onDrop(holder, prop, 'dropped'); }
-  prop.state = 'idle'; prop.carrier = null; prop.trap = null;
-  prop.x = clamp(at[0], -C.ARENA_RADIUS, C.ARENA_RADIUS); prop.z = clamp(at[2], -C.ARENA_RADIUS, C.ARENA_RADIUS);
-  broadcast({ t: 'prop', prop: propPublic(prop) });
 }
 
 function breakProp(prop, at) {
@@ -571,7 +560,7 @@ function frostfallImpact(f) {
   for (const d of [...decoys.values()]) if (d.owner !== f.owner && enemyOf(f.owner, players.get(d.owner)) && dist2D(d.p, at) < FROST.radius) endDecoy(d, true);
   for (const prop of props.values()) {
     if (prop.state !== 'idle') continue;
-    if (dist2D(at, [prop.x, 0, prop.z]) < FROST.radius + C.PROP_TYPES[prop.type].r * 0.5) hitProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z]);
+    if (dist2D(at, [prop.x, 0, prop.z]) < FROST.radius + C.PROP_TYPES[prop.type].r * 0.5) breakProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z]);
   }
   for (const g of allGoats()) {
     if (g.holder === f.owner || g.owner === f.owner || Math.hypot(g.x - f.x, g.z - f.z) > FROST.radius + C.GOAT.radius * 0.5) continue;
@@ -593,8 +582,8 @@ function relicBlast(prop, victim) {
   const curserId = prop.cursedBy;
   const at = C.holdPoint(victim.p, victim.yaw);
   broadcast({ t: 'relicBlast', p: at, by: curserId, victim: victim.id });
-  if (match.protectProp?.(prop)) { prop.cursedBy = null; send(curserId, { t: 'curse', id: null }); hitProp(prop, at); }
-  else { if (victim.carrying === prop.id) victim.carrying = null; breakProp(prop, at); }
+  if (victim.carrying === prop.id) victim.carrying = null;
+  breakProp(prop, at);
   if (victim.bot) botNoteRelic(victim, prop.id, now());
   const hits = [];
   const wallsHit = new Set();
@@ -715,7 +704,7 @@ function updateRams(dt, t) {
     const tg = r.target != null && players.get(r.target);
     if (tg && !tg.dead) { const want = Math.atan2(tg.p[0] - r.x, tg.p[2] - r.z); let d = Math.atan2(Math.sin(want - r.yaw), Math.cos(want - r.yaw)); d = clamp(d, -G_.turnRate * dt, G_.turnRate * dt); r.yaw += d; }
     r.x += Math.sin(r.yaw) * r.speed * dt; r.z += Math.cos(r.yaw) * r.speed * dt;
-    for (const prop of props.values()) if (prop.state === 'idle' && Math.hypot(prop.x - r.x, prop.z - r.z) < C.PROP_TYPES[prop.type].r + G_.radius) hitProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z]);
+    for (const prop of props.values()) if (prop.state === 'idle' && Math.hypot(prop.x - r.x, prop.z - r.z) < C.PROP_TYPES[prop.type].r + G_.radius) breakProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z]);
     let done = false;
     for (const q of players.values()) {
       if (q.dead || q.p[1] >= G_.rammableBelow || !enemies(owner, q) || q.id === r.owner) continue;
@@ -844,7 +833,7 @@ function crushArea(ownerId, x, z, r) {
   for (const d of [...decoys.values()]) if (d.owner !== ownerId && enemies(owner, players.get(d.owner)) && Math.hypot(d.p[0] - x, d.p[2] - z) < r) endDecoy(d, true);
   for (const prop of props.values()) {
     if (prop.state !== 'idle') continue;
-    if (Math.hypot(prop.x - x, prop.z - z) < r + C.PROP_TYPES[prop.type].r * 0.5) hitProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z]);
+    if (Math.hypot(prop.x - x, prop.z - z) < r + C.PROP_TYPES[prop.type].r * 0.5) breakProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z]);
   }
   for (const g of allGoats()) {
     if (g.holder === ownerId || g.owner === ownerId || Math.hypot(g.x - x, g.z - z) > r + C.GOAT.radius * 0.5) continue;
@@ -1122,8 +1111,8 @@ function simulate(dt) {
       if (!prop || prop.state !== 'carried') continue;
       const hp = C.holdPoint(pl.p, pl.yaw);
       if (Math.hypot(proj.p[0] - hp[0], proj.p[1] - hp[1], proj.p[2] - hp[2]) < C.PROP_TYPES[prop.type].r + proj.radius) {
-        if (match.protectProp?.(prop)) hitProp(prop, hp);
-        else { pl.carrying = null; breakProp(prop, hp); }
+        pl.carrying = null;
+        breakProp(prop, hp);
         endProjectile(proj, true, { surface: 'prop' });
         done = true; break;
       }
@@ -1179,7 +1168,7 @@ function simulate(dt) {
       const pt = C.PROP_TYPES[prop.type];
       const d = Math.hypot(proj.p[0] - prop.x, proj.p[1] - pt.h * 0.5, proj.p[2] - prop.z);
       if (d < pt.r + proj.radius) {
-        hitProp(prop, [prop.x, pt.h * 0.5, prop.z]);
+        breakProp(prop, [prop.x, pt.h * 0.5, prop.z]);
         endProjectile(proj, true, { surface: 'prop' });
         done = true; break;
       }
@@ -1540,7 +1529,7 @@ function handle(p, msg) {
       if (!p.carrying) break;
       const prop = props.get(p.carrying);
       if (prop && prop.state !== 'carried') break;   // still rising
-      if (prop && !match.canThrow(p, prop)) { dropProp(p, false, 'released'); break; }   // e.g. the Sacred Relic is set down, not hurled
+      if (prop && !match.canThrow(p, prop)) { dropProp(p, false, 'released'); break; }   // a game mode may forbid hurling something (none does now)
       p.carrying = null;
       if (prop) match.onDrop(p, prop, 'thrown');
       p.cd.throw = t + C.THROW_COOLDOWN;
@@ -1630,7 +1619,7 @@ world.match = match;
 const goatCtx = {
   players, props, now, broadcast, goats,
   isEnemy: (a, b) => enemies(a, b),   // Jeb's rams pass their owner and his team
-  breakProp: (prop, at) => hitProp(prop, at),   // a charging goat knocks the Sacred Relic loose rather than shattering it
+  breakProp,
   // a Tempest Veil survives a ram (goats.js treats the veil as a ward once that request is in; this is the fallback)
   killPlayer: (p, attacker, cause) => { if (cause === 'goat' && isVeiled(p)) return; killPlayer(p, attacker, cause); },
   // humans apply goat knockback themselves from the goatRam message

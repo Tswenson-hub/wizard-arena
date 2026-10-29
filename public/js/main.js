@@ -211,7 +211,6 @@ net.onClose = () => {
 // Game modes UI (public/js/match-ui.js, modes agent)
 const matchUI = mountMatchUI({ scene, camera, net, players, props, myId: () => myId });
 let teamBots = false;   // a team mode is on (snap.match.teams)
-let relicId = null;     // the Sacred Relic's prop id (snap.match.relic.propId): it can only be set down, not hurled
 
 function onWelcome(msg) {
   myId = msg.id;
@@ -368,7 +367,6 @@ function handleMessage(msg) {
       updateDecoys(msg.decoys || []);
       for (const g of msg.goats || []) { const v = goats.get(g.id) || addGoat(g); v.apply(g); }
       matchUI.onSnapshot(msg);
-      relicId = msg.match?.relic?.propId ?? null;
       // team modes keep bots at 3v3 themselves: the practice-bot buttons don't apply
       if (!!msg.match?.teams !== teamBots) {
         teamBots = !!msg.match?.teams;
@@ -1505,8 +1503,7 @@ function updateHud(dt) {
   setName('mobility', shortName(K.mobility));
   setName('block', shortName(K.guard));
   const holdingNow = !!(me.carrying || me.carryingGoat);
-  const holdingRelic = me.carrying != null && me.carrying === relicId;
-  setName('throw', holdingRelic ? 'Drop' : holdingNow ? 'Hurl' : shortName(K.utility));
+  setName('throw', holdingNow ? 'Hurl' : shortName(K.utility));
   const cdFill = (key, until, total) => { const k = total ? Math.max(0, Math.min(1, (until - now) / total)) : 0; ui.ab[key].querySelector('.cd').style.height = `${k * 100}%`; };
   // primary: ammo pips, and the reload sweeping down over the slot
   const MAG = C.primaryMag(K.primary);
@@ -1595,7 +1592,6 @@ function updateHud(dt) {
   else if (rooted) hint = 'Recovering…';
   else if (local.flight) hint = 'Hold E to hover · Space to drop';
   else if (me.carryingGoat) hint = 'F hurl goat · G set down';
-  else if (holdingRelic) hint = 'F / G set down the relic';
   else if (me.carrying) hint = 'F hurl · G set down';
   else if (now < local.stunUntil) hint = 'Stunned!';
   else if (local.fHold) hint = 'Cursing…';

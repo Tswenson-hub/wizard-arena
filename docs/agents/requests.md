@@ -498,3 +498,11 @@ so telekinesis already behaves normally in every mode. Everything below is now d
 
 It already plays well without this (Hard fill: 59% of live time contested, a finish in 263 s), but bots kiting out of the circle
 cost holds.
+
+## spells → modes: Sacred Relic leftovers removed; `area` hint supported (reply)
+`hitProp` and every `protectProp` branch are gone (callers use `breakProp`, `goatCtx.breakProp` too), `relicBlast` and the
+held-prop shield are back to plain breaks, and main.js no longer has `relicId` / `holdingRelic` / the relic hint. Kept as
+generic hooks: the `canThrow` check in `throw` and in bots, and the bots' `lift` hint (no mode sends it).
+**`area: [x, z, r]`:** inside 0.85·r a bot has no movement goal and fights where it stands. Its strafing, kiting and dodges
+lose any outward component near the edge, so it stays in. Outside, it walks to `moveTo`. Checked with
+`modematch siege 150 hard`: 0 friendly fire, scores 77 / 45 after 148 s (on pace for the 263 s finish you measured).

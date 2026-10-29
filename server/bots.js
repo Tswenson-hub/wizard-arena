@@ -371,7 +371,7 @@ function think(me, world, t) {
   }
   if (me.eye || me.zero || me.ride) return;   // our tornado, flare or ram ride: nothing else can be cast (moveBot steers)
 
-  // ---- objective: lift the prop the mode wants lifted (the Sacred Relic)
+  // ---- objective: lift the prop the mode wants lifted (a generic hint; no mode sends it now)
   if (obj?.lift != null && free && !me.carrying && !me.carryingGoat && !me.blocking && !busyCasting(me) && t >= me.cd.lift) {
     const prop = world.props.get(obj.lift);
     if (prop && prop.state === 'idle' && dist2D(me.p, [prop.x, 0, prop.z]) < C.TK.range - 1.5 && hasLOS(me.p, [prop.x, 0, prop.z])) {
@@ -438,7 +438,7 @@ function think(me, world, t) {
   // ---- holding a prop: throw when they're busy, or after a moment
   if (carried) {
     if (carried.state !== 'carried' || t < me.cd.throw) return;
-    if (match && match.canThrow(me, carried) === false) return;   // the Sacred Relic: keep holding it
+    if (match && match.canThrow(me, carried) === false) return;   // a mode that forbids hurling it: keep holding it
     if (!b.holdSince) b.holdSince = t;
     const busy = busyCasting(target) || target.blocking || isStunned(target, t) || rooted(target, t);
     if (d < 22 && throwLOS(me, target) && (busy || t - b.holdSince > rand(0.4, 1.4))) { b.holdSince = 0; return throwProp(me, target, act, cfg, world); }
@@ -1191,7 +1191,7 @@ function moveBot(me, dt, world, t) {
   else if (!stunned) {
     if (t < b.dodgeUntil && b.dodgeVec) { wx = b.dodgeVec[0]; wz = b.dodgeVec[1]; }
     else if (goal && !me.eye) {
-      // a game-mode objective (go there, stay near a teammate, reach the relic); fight from wherever we are once close
+      // a game-mode objective (go there, stay near a teammate, reach a prop); fight from wherever we are once close
       const gx = goal[0] - me.p[0], gz = goal[1] - me.p[2], gl = Math.hypot(gx, gz) || 1;
       wx = gx / gl; wz = gz / gl;
       if (target && !target.dead && hasLOS(me.p, target.p)) me.yaw = yawTo(me.p, target.p);
@@ -1231,6 +1231,12 @@ function moveBot(me, dt, world, t) {
       // nobody to fight: drift toward the middle
       wx = -me.p[0]; wz = -me.p[2];
       if (Math.hypot(wx, wz) < 6) { wx = 0; wz = 0; }
+    }
+    // Altar Siege: strafe, kite and dodge inside the zone (about 0.85 r), never back out of it to range
+    const area = b.obj?.area;
+    if (Array.isArray(area) && Math.hypot(me.p[0] - area[0], me.p[2] - area[1]) < area[2]) {
+      const dx = me.p[0] - area[0], dz = me.p[2] - area[1], dd = Math.hypot(dx, dz) || 1;
+      if (dd > area[2] * 0.85 && wx * dx + wz * dz > 0) { const k = (wx * dx + wz * dz) / dd; wx -= dx / dd * k * 1.5; wz -= dz / dd * k * 1.5; }
     }
     // keep out of enemy Firewalls: walking through one burns
     for (const w of world.firewalls?.values() || []) {
@@ -1305,6 +1311,8 @@ function objectiveGoal(me, world) {
     const g = world.players.get(o.guard);
     if (g && !g.dead) return dist2D(me.p, g.p) > 7 ? [g.p[0], g.p[2]] : null;
   }
+  // Altar Siege: inside the zone we fight where we stand (moveBot keeps us in); outside, walk to our spot in it
+  if (Array.isArray(o.area) && Math.hypot(me.p[0] - o.area[0], me.p[2] - o.area[1]) < o.area[2] * 0.85) return null;
   if (Array.isArray(o.moveTo) && Number.isFinite(o.moveTo[0]) && Number.isFinite(o.moveTo[1])) {
     return Math.hypot(me.p[0] - o.moveTo[0], me.p[2] - o.moveTo[1]) > 2 ? o.moveTo : null;
   }
