@@ -72,7 +72,10 @@ function newPlayer(id, name, loadout = C.DEFAULT_LOADOUT, voice = 'male') {
     loadout, pendingLoadout: null, voice: C.sanitizeVoice(voice),
     color: C.loadoutColor(loadout),
     p: [sp[0], 0, sp[2]], yaw: 0, anim: 'idle',
-    jump: null, crouch: false,    // round 9: { start, y0 } while a jump is in the air; crouched (C / Ctrl)
+    jump: null, crouch: false,    // round 9: { start, y0, n } while a jump is in the air (n 2: the air jump); crouched (C / Ctrl)
+    airJumped: false, jumpSpeed: 0,   // round 13: the air jump is spent (until landing); the speed carried into the air
+    hover: null,                  // round 13: { y, cap, until } while a rooting wind-up started in mid-air holds the height
+    castSlowUntil: 0,             // round 13: a cast slows (C.CAST_SLOW) instead of rooting
     hp: C.MAX_HP, st: C.MAX_STAMINA,
     blocking: false, blockReleasedAt: -10,
     stunUntil: 0, stunImmuneUntil: 0, dead: false, respawnAt: 0,
@@ -116,7 +119,7 @@ function playerPublic(p) {
     ultWind: p.ultWind ? p.ultWind.U : null,
     blizz: p.blizz ? +p.blizz.yaw.toFixed(3) : null,
     mrain: p.mrain ? p.mrain.phase : null,
-    sprint: !!p.sprinting, castRoot: castRooted(p), crouch: !!p.crouch, jump: !!p.jump, grab: !!p.grab, ramWind: !!p.ramWind, regen: !!p.regen, knocked: p.knockUntil > now(),
+    sprint: !!p.sprinting, castRoot: castRooted(p), crouch: !!p.crouch, jump: !!p.jump, hover: p.hover ? +p.hover.y.toFixed(2) : null, grab: !!p.grab, ramWind: !!p.ramWind, regen: !!p.regen, knocked: p.knockUntil > now(),
     ride: p.ride ? (now() < p.ride.rideAt ? 'mount' : now() < p.ride.dismountAt ? 'ride' : 'dismount') : null,
     ramGuard: p.ramGuardUntil > now(),
     bot: p.bot ? p.bot.difficulty : undefined,
@@ -132,8 +135,11 @@ const isAirborne = (p) => p.flightUntil > now();
 const groundAt = (x, z, footY = 0) => (C.surfaceHeight ? C.surfaceHeight(x, z, footY) : 0);
 const isJumping = (p) => !!p.jump;
 const aboveFloor = (q) => q.p[1] - groundAt(q.p[0], q.p[2], q.p[1]);   // height over what's under them (a ledge counts as floor)
-// Casting in a jump: nothing for JUMP.castLock s after take-off, then only the primary (and movement abilities)
-const JUMP_LOCKED = new Set(['chargeStart', 'cyclone', 'lashStart', 'frostfall', 'ult', 'veil', 'bulwark', 'smokeFlask', 'ramGuard', 'firewall', 'block', 'toxic', 'curse', 'pickup', 'throw', 'ram', 'ride']);
+// Round 13: everything casts in the air (a jump, a fall, an air jump). Up there means any of these:
+const inAir = (p) => !!(p.jump || p.fall || p.hover) || isAirborne(p) || aboveFloor(p) > 0.05;
+// Winding up the Battering Ram: nothing else
+const RAMWIND_LOCKED = new Set(['chargeStart', 'cyclone', 'lashStart', 'frostfall', 'ult', 'veil', 'bulwark', 'smokeFlask', 'ramGuard', 'firewall', 'block', 'toxic', 'curse', 'pickup', 'throw', 'ram', 'ride',
+  'cast', 'jump', 'teleport', 'skyward', 'smoke', 'mirror', 'flaskStep', 'roll']);
 const kit = (p) => p.loadout;
 const CYCLONE = C.SPELLBOOK.cyclone, SKY = C.SPELLBOOK.skyward, LASH = C.SPELLBOOK.sanguine_lash;
 const MIRROR = C.SPELLBOOK.mirror_step, BULWARK = C.SPELLBOOK.glacial_bulwark, RELIC = C.SPELLBOOK.trapped_relic;
@@ -384,6 +390,7 @@ function respawn(p) {
   p.p = [sp[0] + rand(-1, 1), 0, sp[2] + rand(-1, 1)];
   p.hp = C.MAX_HP; p.st = C.MAX_STAMINA;
   p.dead = false; p.stunUntil = 0; p.blocking = false; p.charging = false; p.cyclone = null; p.lash = null; p.flightUntil = 0; p.jump = null; p.crouch = false; p.grab = null; p.knockUntil = 0;
+  p.fall = null; p.hover = null; p.airJumped = false; p.jumpSpeed = 0; p.castSlowUntil = 0; p.rideQueued = null;
   p.slowUntil = p.rootUntil = p.silenceUntil = p.frozenUntil = 0;
   p.ammo = C.primaryMag(kit(p).primary).magazine; p.reloadUntil = 0;
   p.rollImmuneUntil = 0;
@@ -429,25 +436,59 @@ function heal(p, amount, t, shimmer = 0.3) {
   p.healAcc = (p.healAcc || 0) + (p.hp - before);   // shown as green numbers, batched (healFlush)
 }
 
-// ---------------------------------------------------------------- casting roots
-// Casting stops the caster (turning and aiming still allowed): a short cast pose, any wind-up or channel, a held
-// ward. Movement abilities don't: Blink, Skyward, Smoke Screen, Mirror Step, Flask Step's teleport, Ram Ride, Meteor
-// Rain, and Eye of the Storm (Gale is the tornado).
-function castRoot(p, secs) {
-  p.castRootUntil = Math.max(p.castRootUntil || 0, now() + secs);
-  if (p.sprinting) setSprint(p, false, now());   // a cast ends a sprint
+// ---------------------------------------------------------------- casting: slows, and the few roots
+// Round 13: a cast slows the caster to C.CAST_SLOW.mult of their speed for C.CAST_SLOW.time (a sprint carries on after
+// it); Cyclone's and Flask Step's short wind-ups slow the same way while they last. Only the big wind-ups root (turning
+// and aiming still work): Meteor's charge, Sanguine Lash's and Battering Ram's wind-ups, an ultimate's wind-up, the
+// Blizzard channel, and a ledge pull-up. The client (main.js) applies the same rules to itself.
+function castSlow(p) {
+  p.castSlowUntil = Math.max(p.castSlowUntil || 0, now() + C.CAST_SLOW.time);
 }
+const castSlowed = (p, t = now()) => t < (p.castSlowUntil || 0) || (!!p.cyclone && !p.cyclone.pulsed) || !!p.flaskWind;
+const windingUp = (p) => !!(p.charging || p.lash || p.ramWind || p.ultWind);   // the rooting wind-ups (they hang you in the air)
 function castRooted(p, t = now()) {
-  if (p.eye || p.ride || p.mrain || p.mrainFall || isAirborne(p)) return false;
-  return t < (p.castRootUntil || 0) || p.charging || !!p.lash || (!!p.cyclone && !p.cyclone.pulsed) || !!p.flaskWind
-    || !!p.ultWind || !!p.blizz || !!p.ramWind || !!p.grab || (p.blocking && C.isWard(kit(p).guard));
+  if (p.eye || p.ride || p.mrain || p.mrainFall) return false;
+  return windingUp(p) || !!p.blizz || !!p.grab;
 }
+// Round 13: a rooting wind-up started in mid-air holds the caster at that height for as long as the wind-up (`secs` at
+// most), then they fall (their air jump still there if unused). The client hangs itself the same way.
+function startHover(p, secs) {
+  if (!inAir(p) || isAirborne(p) || p.mrain || p.mrainFall || p.grab) return;   // (a Skyward Flash already floats)
+  const t = now();
+  // the client is maybe a little higher than our last report (a jump rises about 0.45 m in 50 ms): allow up to the apex
+  const cap = p.jump ? Math.max(p.p[1], C.jumpApex(p.jump)) + 0.2 : p.p[1] + 0.1;
+  p.hover = { y: p.p[1], cap, until: t + secs };
+  p.jump = null; p.fall = null; p.flightUntil = 0;
+  if (p.bot) p.vy = 0;
+}
+function updateHover(p, t) {
+  if (!p.dead && !p.mrain && !p.mrainFall && t < p.hover.until && windingUp(p)) { if (p.bot) p.p[1] = p.hover.y; return; }
+  p.hover = null;
+  if (!p.dead && !p.mrain && !p.mrainFall) { p.fall = { start: t, y0: p.p[1], air: true }; if (p.bot) p.vy = 0; }
+}
+// Round 13: a dash in the air (Roll, Smoke Screen, Blink, Mirror Step) keeps its height, then falls. `y` is the height the
+// client reports for the dash's start (bounded by what it could have reached), `secs` how long the height holds.
+function airDash(p, t, y, secs = 0) {
+  if (!inAir(p) || isAirborne(p)) return false;
+  const top = p.jump ? Math.max(p.p[1], C.jumpApex(p.jump)) + 0.2 : p.hover ? p.hover.cap : p.p[1] + 0.1;
+  const y0 = clamp(Number.isFinite(y) ? y : p.p[1], groundAt(p.p[0], p.p[2], p.p[1]), top);
+  p.jump = null; p.hover = null;
+  p.fall = { start: t + secs, y0, air: true };
+  if (p.bot) { p.p[1] = y0; p.vy = 0; p.airDashUntil = t + secs; }
+  return y0;
+}
+// The ground under someone, and everything that resets on touching it (the air jump, carried speed, a queued ram ride)
+function touchedDown(p) {
+  p.airJumped = false; p.jumpSpeed = 0; p.fall = null;
+  if (p.rideQueued) { const q = p.rideQueued; p.rideQueued = null; if (now() < q.until && kit(p).mobility === 'ram_ride' && canAct(p) && !p.ride && !isRooted(p) && !windingUp(p)) startRide(p, q.yaw); }
+}
+const takeoffSpeed = (p, t) => (p.sprinting || p.sprintEndedAt > t - 0.3 ? C.sprintOf() : C.speedOf());
 
 // Sprint on or off. It needs stamina (and STAMINA SPRINT.restart of it to start again after running dry), and
 // none of: a wind-up, a ward, telekinesis, a root, the air, a ram ride, an ultimate in progress.
 function canSprint(p, t) {
-  return !p.dead && !p.crouch && !p.blocking && !p.charging && !p.cyclone && !p.lash && !holding(p) && !isRooted(p) && !isStunned(p)
-    && !isAirborne(p) && !p.ride && !inUltimate(p) && !p.flaskWind && !castRooted(p, t);   // round 10: no stamina needed
+  return !p.dead && !p.crouch && !p.blocking && !holding(p) && !isRooted(p) && !isStunned(p)
+    && !isAirborne(p) && !p.ride && !inUltimate(p) && !castRooted(p, t);   // round 10: no stamina needed; round 13: casting doesn't end it
 }
 function setSprint(p, want, t) {
   const on = want && canSprint(p, t);
@@ -537,7 +578,7 @@ function startGrab(p, dir, t) {
   // the jump in progress, or one that just ended (a slow client's grab can arrive after its landing report)
   const J = p.jump || (p.lastJump && t - p.lastJump.start < C.JUMP.airTime + 1 && !p.lastJump.grabbed ? p.lastJump : null);
   if (!J) return false;
-  const to = C.ledgeTarget(p.p, dir, J.y0 + C.JUMP.height);
+  const to = C.ledgeTarget(p.p, dir, C.jumpApex(J));
   if (!to) return false;
   p.grab = { start: t, from: p.p.slice(), to };
   p.jump = null; J.grabbed = true;
@@ -556,7 +597,7 @@ function grabAt(G, t) {
 function launchRam(p, t) {
   const W = p.ramWind; p.ramWind = null;
   p.cd.power = t + BRAM.cooldown;
-  castRoot(p, C.CAST_ROOT.ram);
+  castSlow(p);
   p.yaw = W.yaw;
   summonRam({ x: p.p[0] + W.dir[0] * BRAM.spawnDist, z: p.p[2] + W.dir[2] * BRAM.spawnDist, yaw: W.yaw, ownerId: p.id, mode: 'charge', maxTime: BRAM.maxTime });
   broadcast({ t: 'batteringRam', id: p.id, yaw: W.yaw });
@@ -1195,13 +1236,14 @@ function castUltimate(p, msg) {
   const U = kit(p).ultimate;
   const free = canAct(p) && !p.charging && !p.cyclone && !p.lash && !holding(p) && !inUltimate(p) && !p.ride;
   const refuse = () => send(p.id, { t: 'ultRefused' });
-  if (!U || p.ult < C.ULT_CHARGE.max || !free || isAirborne(p)) return refuse();
+  if (!U || p.ult < C.ULT_CHARGE.max || !free) return refuse();
   let at = null;
   if (AIMED.has(U)) {
     if (!Array.isArray(msg.at) || msg.at.length < 2 || !Number.isFinite(msg.at[0]) || !Number.isFinite(msg.at[msg.at.length - 1])) return refuse();
     at = [msg.at[0], msg.at[msg.at.length - 1]];
   }
   p.ultWind = { U, at, until: t + C.ULT_CHARGE.windup };
+  startHover(p, C.ULT_CHARGE.windup);   // round 13: from the air, hanging there through the wind-up
   if (p.blocking) { p.blocking = false; p.blockReleasedAt = t; }
   broadcast({ t: 'ultWindup', id: p.id, ult: U, left: C.ULT_CHARGE.windup });
 }
@@ -1231,9 +1273,10 @@ function updateUltWindup(p, t) {
     p.rootUntil = Math.max(p.rootUntil, p.blizz.until);   // he plants his feet and points his staff
     broadcast({ t: 'blizzard', id: p.id, yaw: p.yaw, left: BLIZ.duration });
   } else if (U === 'meteor_rain') {
-    p.mrain = { phase: 'rise', from: [p.p[0], p.p[2]], start: t, hoverAt: t + MRAIN.rise, hoverUntil: t + MRAIN.rise + MRAIN.hover, at: null, aimSentAt: 0 };
-    p.flightUntil = 0;
-    broadcast({ t: 'mrainLeap', id: p.id, p: [p.p[0], 0, p.p[2]], top: MRAIN.height, rise: MRAIN.rise, hover: MRAIN.hover });
+    // (round 13: she rises from where she is, which may be a roof or a hang in mid-air, not from y 0)
+    p.mrain = { phase: 'rise', from: [p.p[0], p.p[2]], y0: Math.min(p.p[1], MRAIN.height), start: t, hoverAt: t + MRAIN.rise, hoverUntil: t + MRAIN.rise + MRAIN.hover, at: null, aimSentAt: 0 };
+    p.flightUntil = 0; p.jump = null; p.fall = null; p.hover = null;
+    broadcast({ t: 'mrainLeap', id: p.id, p: [p.p[0], p.mrain.y0, p.p[2]], top: MRAIN.height, rise: MRAIN.rise, hover: MRAIN.hover });
   }
   broadcast({ t: 'ult', id: p.id, ult: U });
 }
@@ -1318,7 +1361,7 @@ function updateMeteorRain(p, t, dt) {
   const M = p.mrain;
   if (M.phase === 'rise' || M.phase === 'hover') {
     const k = Math.min(1, (t - M.start) / MRAIN.rise);
-    p.p = [M.from[0], MRAIN.height * (1 - (1 - k) * (1 - k)), M.from[1]];
+    p.p = [M.from[0], M.y0 + (MRAIN.height - M.y0) * (1 - (1 - k) * (1 - k)), M.from[1]];
     if (M.phase === 'rise' && t >= M.hoverAt) M.phase = 'hover';
     if (t >= M.hoverUntil) mrainDive(p);
     return;
@@ -1414,6 +1457,7 @@ function simulate(dt) {
     if (p.flightUntil) { const fl = groundAt(p.p[0], p.p[2], p.p[1]); if (t >= p.flightUntil || (p.p[1] <= fl + 0.01 && t > p.flightStart + 0.3)) { p.flightUntil = 0; p.p[1] = fl; } }
     // a jump: bots fly the arc here (humans report theirs); a lost landing report ends it anyway
     if (p.jump && (isAirborne(p) || p.mrain || p.mrainFall || p.dead)) p.jump = null;
+    if (p.hover) updateHover(p, t);
     // ledge grab: bots try it mid-jump, toward where they're heading; the server moves them along the pull-up
     if (p.bot && p.jump && t - p.jump.start > 0.08 && !p.dead) {
       const v = p.bot.vel, vl = Math.hypot(v[0], v[1]);
@@ -1433,15 +1477,15 @@ function simulate(dt) {
       const e = t - p.jump.start;
       if (p.bot) {
         const floor = groundAt(p.p[0], p.p[2], p.p[1]);
-        p.p[1] = Math.max(floor, p.jump.y0 + C.JUMP.v0 * e - C.JUMP.gravity * e * e / 2);
-        if (e > C.JUMP.airTime * 0.5 && p.p[1] <= floor + 0.001) { p.p[1] = floor; p.jump = null; }
+        p.p[1] = Math.max(floor, C.jumpAt(p.jump, e));
+        if (e > 0.1 && p.p[1] <= floor + 0.001) { p.p[1] = floor; p.jump = null; touchedDown(p); }
       } else if (e > C.JUMP.airTime + 0.6) p.jump = null;
     }
-    // bots off an edge fall, and step up ramps and stairs (humans report their own height)
-    if (p.bot && !p.jump && !p.grab && !p.dead && !isAirborne(p) && !p.mrain && !p.mrainFall) {
+    // bots off an edge fall, and step up ramps and stairs (humans report their own height); an air dash holds the height
+    if (p.bot && !p.jump && !p.grab && !p.hover && !p.dead && !isAirborne(p) && !p.mrain && !p.mrainFall && !(p.airDashUntil > t)) {
       const fl = groundAt(p.p[0], p.p[2], p.p[1]);
-      if (p.p[1] > fl + 0.01) { p.vy = (p.vy || 0) - C.JUMP.gravity * dt; p.p[1] = Math.max(fl, p.p[1] + p.vy * dt); if (p.p[1] <= fl) p.vy = 0; }
-      else { p.p[1] = fl; p.vy = 0; }
+      if (p.p[1] > fl + 0.01) { if (!p.vy && !p.jumpSpeed) p.jumpSpeed = takeoffSpeed(p, t); p.vy = (p.vy || 0) - C.JUMP.gravity * dt; p.p[1] = Math.max(fl, p.p[1] + p.vy * dt); if (p.p[1] <= fl) { p.vy = 0; touchedDown(p); } }
+      else { p.p[1] = fl; p.vy = 0; if (p.airJumped || p.rideQueued || p.jumpSpeed) touchedDown(p); }
     }
     // goats.js drops a held goat itself (holder dead, stunned or gone); forget it when it's no longer ours
     if (p.carryingGoat) { const g = goatById(p.carryingGoat); if (!g || g.state !== 'held' || g.holder !== p.id) p.carryingGoat = null; }
@@ -1612,8 +1656,7 @@ const ULT_LOCKED = new Set(['toxic', 'flaskStep', 'smokeFlask', 'ult', 'ram', 'r
 function handle(p, msg) {
   const t = now();
   if ((inUltimate(p) || p.ride || p.flaskWind) && ULT_LOCKED.has(msg.t)) return;   // a tornado, a rune flare or a ram ride: nothing else
-  if (p.ramWind && (JUMP_LOCKED.has(msg.t) || ['cast', 'jump', 'teleport', 'skyward', 'smoke', 'mirror', 'flaskStep'].includes(msg.t)) && !(msg.t === 'block' && !msg.on)) return;   // winding up the ram: nothing else
-  if (p.jump && (JUMP_LOCKED.has(msg.t) || (msg.t === 'cast' && t < p.jump.start + C.JUMP.castLock)) && !(msg.t === 'block' && !msg.on)) return;
+  if (p.ramWind && RAMWIND_LOCKED.has(msg.t) && !(msg.t === 'block' && !msg.on)) return;   // winding up the ram: nothing else
   switch (msg.t) {
     case 'ult': {
       castUltimate(p, msg);
@@ -1666,11 +1709,19 @@ function handle(p, msg) {
         // pulling up onto a ledge: up to its top (and no wall push meanwhile; the pull-up passes the edge)
         y = clamp(msg.p[1], Math.min(p.grab.from[1], y), p.grab.to[1] + 0.1);
         if (t > p.grab.start + C.LEDGE.time + 0.3) p.grab = null;
+      } else if (p.hover) {
+        // hanging in mid-air through a rooting wind-up: no higher than where it began (the first report after it began
+        // says where that was, within what the client could have reached; from then on it holds there)
+        y = clamp(msg.p[1], y, Math.max(y, p.hover.cap));
+        if (!p.hover.locked) { p.hover.locked = true; p.hover.y = y; p.hover.cap = y + 0.05; }
       } else if (p.jump) {
         // a jump: anywhere between the floor and the apex (plus a little); it ends when we report landing
-        const e = t - p.jump.start;
-        y = clamp(msg.p[1], y, p.jump.y0 + C.JUMP.height + 0.2);
-        if ((e > 0.15 && msg.p[1] <= y + 0.02) || e > C.JUMP.airTime + 0.6) p.jump = null;
+        // (round 13: landing is a report at the floor; it used to compare with the clamped height, which ended every jump
+        // 0.15 s after take-off and capped the rest of the rise at the fall rule's)
+        const e = t - p.jump.start, fl = y;
+        y = clamp(msg.p[1], y, Math.max(y, C.jumpApex(p.jump) + 0.2));
+        if (e > 0.1 && msg.p[1] <= fl + 0.02) { p.jump = null; touchedDown(p); }
+        else if (e > C.JUMP.airTime + 0.6) p.jump = null;
       } else if (isAirborne(p)) {
         const e = t - p.flightStart;
         const ceil = clamp(SKY.height + 0.5 - Math.max(0, e - 0.3) * SKY.slowFallSpeed * 0.9, 0, SKY.maxHeight);
@@ -1678,10 +1729,10 @@ function handle(p, msg) {
         y = clamp(msg.p[1], floor, Math.max(y, ceil));
       } else if (msg.p[1] > y + 0.02 && p.p[1] > y + 0.02) {
         // off an edge: falling. No higher than where the fall began, and at least gravity's pull after a moment's slack.
-        p.fall ??= { start: t, y0: p.p[1] };
+        if (!p.fall) { p.fall = { start: t, y0: p.p[1] }; p.jumpSpeed = Math.max(p.jumpSpeed || 0, takeoffSpeed(p, t)); }
         const e = Math.max(0, t - p.fall.start - 0.25);
         y = clamp(msg.p[1], y, Math.max(y, Math.min(p.fall.y0 + 0.05, p.fall.y0 - C.JUMP.gravity * e * e / 2 + 0.1)));
-      } else p.fall = null;   // standing (or stepped up a ramp or stair: the floor under the new spot)
+      } else if (p.fall || p.airJumped || p.jumpSpeed || p.rideQueued) touchedDown(p);   // standing (or stepped up a ramp or stair: the floor under the new spot)
       const np = [clamp(msg.p[0], -C.ARENA_RADIUS, C.ARENA_RADIUS), y, clamp(msg.p[2], -C.ARENA_RADIUS, C.ARENA_RADIUS)];
       // platforms' sides are walls (the client pushes itself out the same way; this is the check)
       if (C.SURFACES.length && !p.grab) { const q = C.surfacePushOut(np[0], np[2], np[1], C.PLAYER_RADIUS); np[0] = q[0]; np[2] = q[1]; }
@@ -1691,7 +1742,7 @@ function handle(p, msg) {
       const dashing = p.dashUntil > t;   // Smoke Screen's or Roll's dash is much faster than running
       // Sprint: granted while Shift is held (msg.sprint), there's stamina, and nothing forbids it
       const fwdOk = (() => { const mx = msg.p[0] - p.p[0], mz = msg.p[2] - p.p[2], ml = Math.hypot(mx, mz); const y = Number.isFinite(msg.yaw) ? msg.yaw : p.yaw; return ml < 0.02 || (mx * Math.sin(y) + mz * Math.cos(y)) / ml > 0.2; })();
-      p.crouch = !!msg.crouch && !p.jump && !isAirborne(p) && !p.ride && !p.eye && !p.mrain;
+      p.crouch = !!msg.crouch && !p.jump && !p.fall && !p.hover && !isAirborne(p) && !p.ride && !p.eye && !p.mrain;
       setSprint(p, !!msg.sprint && fwdOk && !p.crouch, t);
       const d = dist2D(np, p.p);
       // the fastest this wizard can go this way: its run speed, the backpedal cap against its facing, or a dash
@@ -1699,10 +1750,17 @@ function handle(p, msg) {
         + (p.pulledUntil > t ? Math.max(EYE.pull, BLIZ.push) : 0);   // dragged by an Eye of the Storm, pushed by a Blizzard
       // (knockback only counts for a moment after one actually landed; it used to be allowed all the time, which with
       // 0.6 m of slack per update let a client run about 20 m/s faster than its walk)
-      const own = dashing ? p.dashSpeed || SMOKE.distance / SMOKE.dashTime : galloping(p, t) ? RIDE.speed * 1.1 : isAirborne(p) ? Math.max(run, SKY.airSpeed)
-        : castRooted(p, t) ? 0   // casting: no translation (the budget's small burst covers latency)
+      let own = dashing ? p.dashSpeed || SMOKE.distance / SMOKE.dashTime : galloping(p, t) ? RIDE.speed * 1.1 : isAirborne(p) ? Math.max(run, SKY.airSpeed)
+        : castRooted(p, t) ? 0   // a rooting wind-up: no translation (the budget's small burst covers latency)
         : p.crouch && !(p.sprintEndedAt > t - 0.3) ? Math.min(run, C.CROUCH.speed)
-        : p.sprinting || p.sprintEndedAt > t - 0.3 ? Math.max(run, C.sprintOf() * (p.slowUntil > t ? 1 - C.SPELLS.skim.slow : 1)) : run;
+        : p.sprinting || p.sprintEndedAt > t - 0.3 ? Math.max(run, C.sprintOf() * (p.slowUntil > t ? 1 - C.SPELLS.skim.slow : 1))
+        : p.blocking && !(p.blockReleasedAt > t - 0.3) ? Math.min(run, C.BLOCK_MOVE_SPEED)   // a held shield
+        : run;
+      // round 13: in the air, the speed taken off with (a sprint-jump carries 5.5 m/s); a cast slows to CAST_SLOW.mult
+      if (!dashing && !galloping(p, t) && !isAirborne(p) && own > 0) {
+        if (p.jump || p.fall) own = Math.max(own, p.jumpSpeed || 0);
+        if (castSlowed(p, t)) own *= C.CAST_SLOW.mult;
+      }
       // A movement budget: it refills at the fastest this wizard may go right now, and holds at most a short burst
       // (about 0.25 s of it, plus 0.25 m), so bunched-up updates from an honest client pass but a steady overspeed
       // doesn't. (A fixed allowance per update used to be worth about 6 m/s on top of the walk.)
@@ -1736,18 +1794,31 @@ function handle(p, msg) {
       break;
     }
     case 'jump': {
-      // Space: a hop. Not while rooted, casting, warding, flying, riding or already up; costs stamina.
-      if (p.dead || p.jump || isAirborne(p) || isRooted(p) || isStunned(p) || castRooted(p, t) || p.blocking || p.ride || p.mrain || p.mrainFall || p.eye
-        || p.flaskWind || p.st < C.JUMP.stamina || p.p[1] > groundAt(p.p[0], p.p[2], p.p[1]) + 0.05) { send(p.id, { t: 'jumpRefused' }); break; }
-      p.st -= C.JUMP.stamina; p.blockReleasedAt = t;   // stamina regen waits, as after a ward
+      // Space: a hop from the ground (or within JUMP.coyote of walking off an edge), or (round 13) once per airtime the
+      // air jump (n 2): a fresh, lower arc from the height it's at. Not while rooted, winding up, warding, flying or
+      // riding; each costs stamina. The client says which (msg.n) and from what height (msg.y0, bounded here).
+      const fl = groundAt(p.p[0], p.p[2], p.p[1]);
+      const coyote = p.fall && !p.fall.air && t - p.fall.start < C.JUMP.coyote + 0.15;   // (+ latency: our fall began on its report)
+      const grounded = !p.jump && !p.hover && (coyote || (!p.fall && p.p[1] <= fl + 0.05));
+      const air = msg.n === 2 && !grounded;
+      const cost = air ? C.AIR_JUMP.stamina : C.JUMP.stamina;
+      if (p.dead || isAirborne(p) || isRooted(p) || isStunned(p) || castRooted(p, t) || p.blocking || p.ride || p.mrain || p.mrainFall || p.eye || p.hover || p.grab
+        || p.flaskWind || p.st < cost || (air ? p.airJumped || !(inAir(p) || msg.y0 > fl + 0.05) : !grounded)) { send(p.id, { t: 'jumpRefused', n: msg.n === 2 ? 2 : 1 }); break; }
+      // the height it starts from: the client's, within what it could have reached since its last report
+      const top = p.jump ? Math.max(p.p[1], C.jumpApex(p.jump)) + 0.2 : p.fall ? Math.max(p.p[1], p.fall.y0) + 0.05 : p.p[1] + 0.1;
+      const y0 = clamp(Number.isFinite(msg.y0) ? msg.y0 : p.p[1], fl, Math.max(fl, Math.min(top, p.p[1] + 0.8)));
+      p.st -= cost; p.blockReleasedAt = t;   // stamina regen waits, as after a ward
       p.crouch = false;
-      p.jump = p.lastJump = { start: t, y0: p.p[1] };
-      broadcast({ t: 'jump', id: p.id });
+      p.jumpSpeed = Math.max(air ? p.jumpSpeed || 0 : 0, takeoffSpeed(p, t));
+      if (air) p.airJumped = true;
+      p.fall = null;
+      p.jump = p.lastJump = { start: t, y0, n: air ? 2 : 1 };
+      broadcast(air ? { t: 'jump', id: p.id, n: 2, y0 } : { t: 'jump', id: p.id });
       break;
     }
     case 'block': {
       const on = !!msg.on;
-      if (on && (!C.isWard(kit(p).guard) || p.ultWind || !canAct(p) || p.st <= 2 || p.charging || p.cyclone || p.lash || isAirborne(p))) break;
+      if (on && (!C.isWard(kit(p).guard) || p.ultWind || !canAct(p) || p.st <= 2 || p.charging || p.cyclone || p.lash)) break;
       if (p.blocking && !on) p.blockReleasedAt = t;
       p.blocking = on;
       break;
@@ -1764,7 +1835,7 @@ function handle(p, msg) {
       if (p.ammo === 0) p.reloadUntil = t + C.primaryMag(primary).reload * cdMul(p);
       p.cd.fast = t + C.SPELLBOOK[primary].cooldown * cdMul(p);
       pendingShot = shot;
-      castRoot(p, C.CAST_ROOT.primary[kind] ?? 0.28);
+      castSlow(p);
       if (kind === 'skim') {
         // three shards in a tight fan, skimming the ground just ahead of the caster's feet
         const d = sanitizeDir([msg.dir?.[0] ?? 0, 0, msg.dir?.[2] ?? 0], p);
@@ -1798,9 +1869,10 @@ function handle(p, msg) {
     }
     case 'chargeStart': {
       if (kit(p).power !== 'meteor') break;
-      if (!canAct(p) || p.blocking || p.charging || p.cyclone || p.lash || holding(p) || isAirborne(p)) break;
+      if (!canAct(p) || p.blocking || p.charging || p.cyclone || p.lash || holding(p)) break;
       if (t < p.cd.power) break;
       p.charging = true; p.chargeStart = t;
+      startHover(p, C.SPELLS.heavy.chargeTime);
       broadcast({ t: 'chargeStart', id: p.id });
       break;
     }
@@ -1813,14 +1885,14 @@ function handle(p, msg) {
         break;
       }
       p.cd.power = t + C.SPELLS.heavy.cooldown;
-      castRoot(p, C.CAST_ROOT.heavyRelease);
+      castSlow(p);
       const origin = sanitizeOrigin(p, msg.origin);
       spawnProjectile(p, 'heavy', origin, sanitizeDir(msg.dir, p));
       break;
     }
     case 'cyclone': {
       const ok = kit(p).power === 'cyclone' && canAct(p) && !p.blocking && !p.charging && !p.cyclone && !p.lash
-        && !holding(p) && !isAirborne(p) && t >= p.cd.power;
+        && !holding(p) && t >= p.cd.power;
       // tell a refused caster, so its client drops the wind-up it predicted
       if (!ok) { if (!p.cyclone) send(p.id, { t: 'cycloneCancel', id: p.id }); break; }
       p.cyclone = { start: t, pulseAt: t + CYCLONE.windup, endAt: t + CYCLONE.windup + CYCLONE.spin, pulsed: false };
@@ -1829,9 +1901,10 @@ function handle(p, msg) {
     }
     case 'lashStart': {
       const ok = kit(p).power === 'sanguine_lash' && canAct(p) && !p.blocking && !p.charging && !p.cyclone && !p.lash
-        && !holding(p) && !isAirborne(p) && t >= p.cd.power;
+        && !holding(p) && t >= p.cd.power;
       if (!ok) { if (!p.lash) send(p.id, { t: 'lashCancel', id: p.id }); break; }
       p.lash = { start: t };
+      startHover(p, LASH.windup);
       broadcast({ t: 'lashStart', id: p.id });
       break;
     }
@@ -1841,14 +1914,14 @@ function handle(p, msg) {
       if (early || !canAct(p)) { cancelLash(p); break; }
       p.lash = null;
       p.cd.power = t + LASH.cooldown;
-      castRoot(p, C.CAST_ROOT.lashRelease);
+      castSlow(p);
       const whip = spawnProjectile(p, 'lash', sanitizeOrigin(p, msg.origin), sanitizeDir(msg.dir, p));
       // what Black Death absorbed rides on this whip
       if (p.lashBonus) { whip.dmg = C.SPELLS.lash.damage + Math.round(p.lashBonus); p.lashBonus = 0; }
       break;
     }
     case 'frostfall': {
-      // the one power spell allowed during a Skyward Flash; range is measured flat from the caster
+      // range is measured flat from the caster (cast from the air too: it falls on the ground under the aim)
       if (kit(p).power !== 'frostfall' || !canAct(p) || p.blocking || p.charging || p.cyclone || p.lash || holding(p) || t < p.cd.power) break;
       if (!Array.isArray(msg.at) || msg.at.length < 2 || !Number.isFinite(msg.at[0]) || !Number.isFinite(msg.at[msg.at.length - 1])) break;
       let x = msg.at[0], z = msg.at[msg.at.length - 1];
@@ -1858,7 +1931,7 @@ function handle(p, msg) {
       const r = Math.hypot(x, z);
       if (r > C.ARENA_RADIUS) { x *= C.ARENA_RADIUS / r; z *= C.ARENA_RADIUS / r; }
       p.cd.power = t + FROST.cooldown;
-      if (!isAirborne(p)) castRoot(p, C.CAST_ROOT.frostfall);   // (from the air she keeps drifting)
+      castSlow(p);
       const f = { id: nextFxId++, owner: p.id, x, z, at: t + FROST.delay };
       frostfalls.set(f.id, f);
       broadcast({ t: 'frostfall', ...frostPublic(f) });
@@ -1867,9 +1940,10 @@ function handle(p, msg) {
     case 'smoke': {
       // Smoke Screen: a fast dash backwards (the client moves itself; the server lets it go that fast),
       // leaving a cloud where it started
-      if (kit(p).mobility !== 'smoke_screen' || !canAct(p) || isRooted(p) || p.charging || p.cyclone || p.lash || isAirborne(p) || t < p.cd.mobility) break;
+      if (kit(p).mobility !== 'smoke_screen' || !canAct(p) || isRooted(p) || p.charging || p.cyclone || p.lash || t < p.cd.mobility) break;
       const yaw = Number.isFinite(msg.yaw) ? msg.yaw : p.yaw;
       const from = validVec(msg.from) && dist2D(msg.from, p.p) < 3 ? [msg.from[0], 0, msg.from[2]] : p.p.slice();
+      airDash(p, t, msg.from?.[1], SMOKE.dashTime);   // round 13: in the air, a level dash, then a fall
       const dir = [-Math.sin(yaw), 0, -Math.cos(yaw)];
       p.cd.mobility = t + SMOKE.cooldown;
       p.dashUntil = t + SMOKE.dashTime + 0.35; p.dashSpeed = SMOKE.distance / SMOKE.dashTime;
@@ -1884,7 +1958,7 @@ function handle(p, msg) {
       // Roll (round 12): a quick dash along the movement keys (backwards with none). The client moves itself, colliding and
       // stepping up like walking; the server lets it go that fast. For the first ROLL.immune s projectiles pass through
       // (areas still land). Two charges, each back ROLL.cooldown after it was spent. It doesn't root or end crouch or sprint.
-      if (kit(p).mobility !== 'roll' || !canAct(p) || isRooted(p) || p.charging || p.cyclone || p.lash || isAirborne(p) || t < p.cd.mobility || t < (p.rollUntil || 0)) break;
+      if (kit(p).mobility !== 'roll' || !canAct(p) || isRooted(p) || p.charging || p.cyclone || p.lash || t < p.cd.mobility || t < (p.rollUntil || 0)) break;
       const dl = validVec(msg.dir) ? Math.hypot(msg.dir[0], msg.dir[2]) : 0;
       const yaw = Number.isFinite(msg.yaw) ? msg.yaw : p.yaw;
       const dir = dl > 0.01 ? [msg.dir[0] / dl, 0, msg.dir[2] / dl] : [-Math.sin(yaw), 0, -Math.cos(yaw)];
@@ -1893,20 +1967,24 @@ function handle(p, msg) {
       p.rollCharges[i] = t + ROLL.cooldown;
       p.cd.mobility = Math.min(...p.rollCharges);
       p.rollUntil = t + ROLL.dashTime; p.rollImmuneUntil = t + ROLL.immune;
+      const airY = airDash(p, t, msg.from?.[1], ROLL.dashTime);   // round 13: in the air, a flipping air-dodge at that height
       p.dashUntil = t + ROLL.dashTime + 0.35; p.dashSpeed = ROLL.distance / ROLL.dashTime;
       if (p.blocking) { p.blocking = false; p.blockReleasedAt = t; }
       if (p.bot) botDash(p, dir, p.rollUntil, p.dashSpeed);
       const from = validVec(msg.from) && dist2D(msg.from, p.p) < 3 ? [msg.from[0], p.p[1], msg.from[2]] : p.p.slice();
-      broadcast({ t: 'roll', id: p.id, from, dir, time: ROLL.dashTime, immune: ROLL.immune, charges: p.rollCharges.filter(c => c <= t).length });
+      if (airY !== false) from[1] = airY;
+      broadcast({ t: 'roll', id: p.id, from, dir, time: ROLL.dashTime, immune: ROLL.immune, charges: p.rollCharges.filter(c => c <= t).length, air: airY !== false || undefined });
       break;
     }
     case 'mirror': {
-      if (kit(p).mobility !== 'mirror_step' || !canAct(p) || isRooted(p) || p.charging || p.cyclone || p.lash || isAirborne(p) || t < p.cd.mobility) break;
+      if (kit(p).mobility !== 'mirror_step' || !canAct(p) || isRooted(p) || p.charging || p.cyclone || p.lash || t < p.cd.mobility) break;
       const dir = sanitizeDir([msg.dir?.[0] ?? 0, 0, msg.dir?.[2] ?? 1], p);
       const from = Array.isArray(msg.from) && msg.from.length === 3 && msg.from.every(Number.isFinite) && dist2D(msg.from, p.p) < 3 ? [msg.from[0], 0, msg.from[2]] : p.p.slice();
       const paths = C.mirrorPaths(from, dir);
       const mine = Math.floor(Math.random() * paths.length);
       p.cd.mobility = t + MIRROR.cooldown;
+      const airY = airDash(p, t, msg.from?.[1]);   // round 13: from the air, out at that height, then a fall
+      if (airY !== false || isAirborne(p)) { const y = airY !== false ? airY : p.p[1]; paths[mine].to[1] = Math.max(y, groundAt(paths[mine].to[0], paths[mine].to[2], y)); }
       p.p = paths[mine].to; p.justTeleported = true;
       cageKeep(p);
       if (p.blocking) { p.blocking = false; p.blockReleasedAt = t; }
@@ -1924,19 +2002,20 @@ function handle(p, msg) {
     case 'veil': {
       if (kit(p).guard !== 'tempest_veil' || !canAct(p) || isVeiled(p) || t < p.cd.guard) break;
       p.cd.guard = t + VEIL.cooldown;
-      if (!VEIL.noRoot) castRoot(p, C.CAST_ROOT.tapShield);   // the Veil's own property: you keep moving
+      if (!VEIL.noRoot) castSlow(p);   // the Veil's own property: no slow at all
       p.veilUntil = t + VEIL.duration;
       broadcast({ t: 'veil', id: p.id, left: VEIL.duration });
       break;
     }
     case 'ram': {
       // Battering Ram: straight along the aim from just in front of Jeb
-      if (kit(p).power !== 'battering_ram' || !canAct(p) || p.blocking || p.charging || p.cyclone || p.lash || p.ramWind || holding(p) || isAirborne(p) || p.jump || t < p.cd.power) break;
+      if (kit(p).power !== 'battering_ram' || !canAct(p) || p.blocking || p.charging || p.cyclone || p.lash || p.ramWind || holding(p) || t < p.cd.power) break;
       const d = sanitizeDir([msg.dir?.[0] ?? 0, 0, msg.dir?.[2] ?? 0], p);
       const yaw = Math.atan2(d[0], d[2]);
       p.yaw = yaw;
       // round 10: a 0.8 s wind-up first (cast-rooted; an interrupting hit cancels it), then the ram launches (launchRam)
       p.ramWind = { start: t, at: t + BRAM.windup, dir: d, yaw };
+      startHover(p, BRAM.windup);   // (from the air the ram still runs along the ground, from under him)
       broadcast({ t: 'ramWind', id: p.id, yaw, left: BRAM.windup });
       break;
     }
@@ -1946,16 +2025,16 @@ function handle(p, msg) {
       break;
     }
     case 'toxic': {
-      if (kit(p).power !== 'toxic_flask' || !canAct(p) || p.blocking || p.charging || holding(p) || isAirborne(p) || t < p.cd.power) break;
+      if (kit(p).power !== 'toxic_flask' || !canAct(p) || p.blocking || p.charging || holding(p) || t < p.cd.power) break;
       p.cd.power = t + C.SPELLBOOK.toxic_flask.cooldown * cdMul(p);
-      castRoot(p, C.CAST_ROOT.toxic);
+      castSlow(p);
       const origin = sanitizeOrigin(p, msg.origin);
       spawnProjectile(p, 'toxic', origin, lobDir(p, origin, msg.target, msg.dir, C.SPELLS.toxic));
       broadcast({ t: 'toxicThrow', id: p.id });
       break;
     }
     case 'flaskStep': {
-      if (kit(p).mobility !== 'flask_step' || !canAct(p) || isRooted(p) || p.blocking || p.charging || holding(p) || isAirborne(p) || t < p.cd.mobility) break;
+      if (kit(p).mobility !== 'flask_step' || !canAct(p) || isRooted(p) || p.blocking || p.charging || holding(p) || t < p.cd.mobility) break;
       p.cd.mobility = t + C.SPELLBOOK.flask_step.cooldown * cdMul(p);
       // the launch direction (the client lifts its aim into a lob, C.flaskLaunch); it keeps coming in during the wind-up
       p.flaskWind = { until: t + C.SPELLBOOK.flask_step.windup, dir: flaskDir(msg.dir, p) };
@@ -1969,7 +2048,7 @@ function handle(p, msg) {
     case 'smokeFlask': {
       if (kit(p).guard !== 'smoke_flask' || !canAct(p) || t < p.cd.guard) break;
       p.cd.guard = t + C.SPELLBOOK.smoke_flask.cooldown * cdMul(p);
-      castRoot(p, C.CAST_ROOT.tapShield);
+      castSlow(p);
       const c = { id: nextFxId++, owner: p.id, x: p.p[0], z: p.p[2], until: t + C.SPELLBOOK.smoke_flask.life };
       smokeFlasks.set(c.id, c);
       broadcast({ t: 'smokeFlask', id: c.id, owner: p.id, p: [c.x, 0, c.z], left: C.SPELLBOOK.smoke_flask.life });
@@ -1986,7 +2065,7 @@ function handle(p, msg) {
     case 'ramGuard': {
       if (kit(p).guard !== 'ram_guard' || !canAct(p) || t < p.cd.guard) break;
       p.cd.guard = t + RGUARD.cooldown;
-      castRoot(p, C.CAST_ROOT.tapShield);
+      castSlow(p);
       p.ramGuardUntil = t + RGUARD.life;
       for (let i = 0; i < RGUARD.count; i++) {
         const a = i / RGUARD.count * Math.PI * 2;
@@ -1998,22 +2077,24 @@ function handle(p, msg) {
       break;
     }
     case 'ride': {
-      if (kit(p).mobility !== 'ram_ride' || !canAct(p) || isRooted(p) || p.charging || p.cyclone || p.lash || holding(p) || isAirborne(p) || t < p.cd.mobility) break;
+      if (kit(p).mobility !== 'ram_ride' || !canAct(p) || isRooted(p) || p.charging || p.cyclone || p.lash || holding(p) || p.ride || t < p.cd.mobility) break;
+      // round 13: from the air, the ram comes up under him as he lands (touchedDown)
+      if (inAir(p)) { p.rideQueued = { yaw: Number.isFinite(msg.yaw) ? msg.yaw : p.yaw, until: t + 3 }; send(p.id, { t: 'rideQueued' }); break; }
       p.cd.mobility = Infinity;   // the cooldown starts when he gets off (endRide)
       startRide(p, Number.isFinite(msg.yaw) ? msg.yaw : p.yaw);
       break;
     }
     case 'firewall': {
-      if (kit(p).guard !== 'firewall' || !canAct(p) || p.charging || p.cyclone || p.lash || isAirborne(p) || t < p.cd.guard) break;
+      if (kit(p).guard !== 'firewall' || !canAct(p) || p.charging || p.cyclone || p.lash || t < p.cd.guard) break;
       p.cd.guard = t + FIREWALL.cooldown;
-      castRoot(p, C.CAST_ROOT.tapShield);
+      castSlow(p);
       raiseFirewall(p, Number.isFinite(msg.yaw) ? msg.yaw : p.yaw);
       break;
     }
     case 'bulwark': {
-      if (kit(p).guard !== 'glacial_bulwark' || !canAct(p) || p.charging || p.cyclone || p.lash || isAirborne(p) || t < p.cd.guard) break;
+      if (kit(p).guard !== 'glacial_bulwark' || !canAct(p) || p.charging || p.cyclone || p.lash || t < p.cd.guard) break;
       p.cd.guard = t + BULWARK.cooldown;
-      castRoot(p, C.CAST_ROOT.tapShield);
+      castSlow(p);
       raiseWall(p, Number.isFinite(msg.yaw) ? msg.yaw : p.yaw);
       break;
     }
@@ -2027,7 +2108,7 @@ function handle(p, msg) {
       // a trap is set off by an enemy *coming* close: one already standing there when it's laid has to step out first
       prop.near = new Set([...players.values()].filter(q => !q.dead && enemyOf(p.id, q) && dist2D(q.p, [prop.x, 0, prop.z]) <= RELIC.trigger).map(q => q.id));
       p.cd.lift = t + RELIC.liftCooldown;
-      castRoot(p, C.CAST_ROOT.curse);
+      castSlow(p);
       sendCurses(p.id);   // enemies only see its glyph up close (sendGlyphs)
       break;
     }
@@ -2065,6 +2146,9 @@ function handle(p, msg) {
       const from = Array.isArray(msg.from) && msg.from.length === 3 && msg.from.every(Number.isFinite) && dist2D(msg.from, p.p) < 3 ? msg.from : p.p;
       const to = C.computeTeleport(from, dir);
       p.cd.mobility = t + C.TELEPORT.cooldown;
+      const airY = airDash(p, t, from[1]);   // round 13: from the air, out at that height, then a fall
+      if (airY !== false) { to[1] = Math.max(airY, groundAt(to[0], to[2], airY)); p.fall.y0 = to[1]; }
+      else if (isAirborne(p)) to[1] = Math.max(p.p[1], groundAt(to[0], to[2], p.p[1]));   // (a Skyward Flash carries on)
       p.p = to; p.justTeleported = true;
       cageKeep(p);   // a blink can't cross a Night Cage (the client clamps its landing the same way)
       if (p.blocking) { p.blocking = false; p.blockReleasedAt = t; }
@@ -2076,7 +2160,7 @@ function handle(p, msg) {
       if (!canAct(p) || holding(p) || p.charging || p.cyclone || p.lash || p.blocking || t < p.cd.lift) break;
       const best = tkTarget(p, msg.aimOrigin, msg.aimDir, goatTK);
       if (!best) break;
-      castRoot(p, C.CAST_ROOT.tk);
+      castSlow(p);
       if (best.goat) {
         // a goat: it floats at our hold point (goats.js places it each tick); lifting doesn't anger it
         if (Goats.liftGoat(best.goat, p.id, goatCtx) === false) break;
@@ -2100,7 +2184,7 @@ function handle(p, msg) {
         p.carryingGoat = null;
         if (!g || g.state !== 'held' || g.holder !== p.id) break;
         p.cd.throw = t + C.THROW_COOLDOWN;
-        castRoot(p, C.CAST_ROOT.tk);
+        castSlow(p);
         const origin = C.holdPoint(p.p, p.yaw);
         const target = validVec(msg.target) && dist2D(msg.target, p.p) < 80 ? msg.target : null;
         const dir = target ? C.ballisticDir(origin, target, C.GOAT.throwSpeed, C.GOAT.throwGravity) : sanitizeDir(msg.dir, p);
@@ -2115,7 +2199,7 @@ function handle(p, msg) {
       if (prop) match.onDrop(p, prop, 'thrown');
       p.cd.throw = t + C.THROW_COOLDOWN;
       if (!prop) break;
-      castRoot(p, C.CAST_ROOT.tk);
+      castSlow(p);
       // The prop leaves the world as a standing object and becomes a projectile.
       prop.state = 'thrown'; prop.carrier = null;
       broadcast({ t: 'prop', prop: propPublic(prop) });
