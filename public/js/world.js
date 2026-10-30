@@ -183,19 +183,12 @@ export function buildWorld(scene) {
 
 export const spinners = [];
 
-// Paths: [from, to, width]. Drawn as ground strips; the grass keeps off them.
-const PATHS = [
-  [[0, 8], [0, C.FARMHOUSE.z - 4], 3.2],                        // the door
-  [[8, 7.5], [C.PEN.x0 + 0.4, C.PEN.gateOut[1]], 2.6],          // the pen gate
-  [[-10, 10], [C.FIELD.x1 + 0.3, 8.5], 2.4],                     // the field
-  [[0, 8], [0, -C.ARENA_RADIUS + 2], 2.6],                       // south past the altar, through the arch
-  [[9, 9.5], [14.6, 13.4], 2.6],                                 // the barn arch
-  [[12.6, 22], [1.6, 20.6], 2.4],                                // the barn's side door to the house path
-];
+// Paths: [from, to, width] (layout entries of kind 'path'). Drawn as ground strips; the grass keeps off them.
+const PATHS = C.PATHS;
 
-// Fence panels the blast tore out of the farmyard and laid flat at the farm's edge: [x, z, yaw]. Cosmetic (a wizard
-// walks over them, spells pass over them).
-const FENCE_DEBRIS = [[9.4, -1.6, 0.6], [21.6, -0.2, -0.25], [-14.6, -0.9, 1.2], [-7.2, 3.6, 2.2]];
+// Fence panels the blast tore out of the farmyard and laid flat at the farm's edge: [x, z, yaw] (layout entries of kind
+// 'fenceDebris'). Cosmetic (a wizard walks over them, spells pass over them).
+const FENCE_DEBRIS = C.FENCE_DEBRIS;
 function buildFarmDebris(scene) {
   FENCE_DEBRIS.forEach(([x, z, yaw], n) => {
     const g = new THREE.Group(), L = 2.4;
@@ -791,23 +784,23 @@ for (const sf of C.SURFACES) if (sf.style === 'parapet') for (const k of [-1, 1]
 for (const cl of C.COVER_CLUSTERS) if (cl.type === 'rock') cl.pts.forEach(([x, z, h], i) => SCATTER.rock_jagged.push([x, z, x * 1.7 + z + i, h, 0.05, 0, 0.1]));
 {
   // the rim: jagged rocks and table rocks in turn (round 12: every other one, was three in four jagged)
-  const rnd = seeded(7);
-  for (let i = 0; i < 52; i++) {
-    const a = (i / 52) * Math.PI * 2, r = C.ARENA_RADIUS + 1.2 + rnd() * 0.6;
+  const rnd = seeded(C.SCATTER_SETTINGS.rim?.seed ?? 7), RIM_N = C.SCATTER_SETTINGS.rim?.count ?? 52;
+  for (let i = 0; i < RIM_N; i++) {
+    const a = (i / RIM_N) * Math.PI * 2, r = C.ARENA_RADIUS + 1.2 + rnd() * 0.6;
     if (i % 2) SCATTER.rock_table.push([Math.cos(a) * r, Math.sin(a) * r, rnd() * 6.3, 0.7 + rnd() * 0.5]);
     else SCATTER.rock_jagged.push([Math.cos(a) * r, Math.sin(a) * r, rnd() * 6.3, 1.0 + rnd() * 1.1]);
   }
   // outside the arena: oaks, birches and pines near the rim on the farm side, birches beyond the magic land,
   // pines thickening toward the hills
-  const out = seeded(42);
-  for (let i = 0; i < 90; i++) {
+  const FT = C.SCATTER_SETTINGS.farTrees || {}, out = seeded(FT.seed ?? 42);
+  for (let i = 0; i < (FT.count ?? 90); i++) {
     const a = out() * Math.PI * 2, r = C.ARENA_RADIUS + 5 + Math.pow(out(), 0.7) * 45;
     const near = r < C.ARENA_RADIUS + 16, pick = out();
     const x = Math.cos(a) * r, z = Math.sin(a) * r, magic = z < -12;
     const kind = magic ? (pick < (near ? 0.85 : 0.5) ? 'birch' : 'pine') : near ? (pick < 0.5 ? 'oak' : 'pine') : 'pine';
     SCATTER[kind + '_far'].push([x, z, out() * 6.3, C.TREE_KINDS[kind].h * (0.8 + out() * 0.5)]);
   }
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < (FT.rocks ?? 12); i++) {
     const a = out() * Math.PI * 2, r = C.ARENA_RADIUS + 4 + out() * 30;
     out(); SCATTER.rock_table.push([Math.cos(a) * r, Math.sin(a) * r, out() * 6.3, 0.8 + out() * 1.6]);
   }
@@ -822,14 +815,14 @@ for (const cl of C.COVER_CLUSTERS) if (cl.type === 'rock') cl.pts.forEach(([x, z
 // ?low (main.js's weak-GPU flag) keeps about a third of them and fades them nearer.
 const LOW = typeof location !== 'undefined' && new URLSearchParams(location.search).has('low');
 export const GRASS = {
-  tall:   { count: LOW ? 250 : 760, h: [0.5, 0.95] },
-  clover: { count: LOW ? 320 : 950, h: [0.18, 0.32] },
+  tall:   { count: LOW ? 250 : C.SCATTER_SETTINGS.grass?.tall ?? 760, h: [0.5, 0.95] },
+  clover: { count: LOW ? 320 : C.SCATTER_SETTINGS.grass?.clover ?? 950, h: [0.18, 0.32] },
   fade: LOW ? [14, 22] : [20, 30],
   chunk: 12,
 };
 export const GRASS_ITEMS = { tall: [], clover: [] };   // [x, z, yaw, height, tint r, g, b]
 {
-  const rnd = seeded(91);
+  const rnd = seeded(C.SCATTER_SETTINGS.grass?.seed ?? 91);
   const segDist = (x, z, [ax, az], [bx, bz]) => {
     const sx = bx - ax, sz = bz - az, k = Math.max(0, Math.min(1, ((x - ax) * sx + (z - az) * sz) / (sx * sx + sz * sz)));
     return Math.hypot(ax + sx * k - x, az + sz * k - z);
