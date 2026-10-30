@@ -336,6 +336,9 @@ export const POOL_URL = '/models/wizards/clip-pool.glb';
 export const POOL_SOURCES = {
   cinder: '/models/wizards/cinder.glb', embibe: '/models/wizards/embibe.glb', jeb: '/models/wizards/jeb.glb',
   vesper: '/models/wizards/vesper.glb', rime: '/models/wizards/rime.glb', gale: '/models/wizards/gale.glb',
+  // round 13: Ty's second Jeb export (flips, jumps, landings, the crouch walk, the air punch); its clips only, its
+  // Running and Walking are skipped as duplicates. jeb.glb keeps the older export's clips.
+  jeb2: '/models/wizards/jeb2.glb',
 };
 // base bone -> Mixamo bone (the inverse of MIXAMO_TO_BASE)
 const BASE_FROM_MIXAMO = Object.fromEntries(Object.entries(MIXAMO_TO_BASE).map(([m, b]) => [b, m]));
@@ -400,6 +403,7 @@ function pickClip(id, animations, key, pick, scene) {
     : from != null ? stripRootMotion(subclipByTime(clip, key, from, to, duration)) : asKey(clip, key);
   if (pick.reverse === true) out = reverseClip(out, key);     // a forward roll becomes a backward one
   if (pick.flatY != null) flatHips(out, scene, pick.flatY);
+  else if (pick.pinXZ) pinHipsXZ(out, scene);
   return pick.yaw ? yawClip(out, scene, pick.yaw) : out;
 }
 
@@ -414,6 +418,22 @@ function flatHips(clip, scene, dy) {
   const up = new THREE.Vector3(0, dy, 0).applyMatrix3(new THREE.Matrix3().setFromMatrix4(hips.parent.matrixWorld.clone().invert()));
   const p = hips.position.clone().add(up);
   for (const t of clip.tracks) if (t.name === 'Hips.position') for (let i = 0; i < t.values.length; i += 3) p.toArray(t.values, i);
+  return clip;
+}
+
+// Hold the Hips over their rest place but keep their rise and fall: for a landing crouch or a take-off cut from a clip
+// that travels (the jump arc moves the body; the clip's drift would slide it off its feet).
+function pinHipsXZ(clip, scene) {
+  const hips = scene?.getObjectByName('Hips');
+  if (!hips) return clip;
+  scene.updateMatrixWorld(true);
+  const u = new THREE.Vector3(0, 1, 0).applyMatrix3(new THREE.Matrix3().setFromMatrix4(hips.parent.matrixWorld.clone().invert()));
+  const rest = hips.position, v = new THREE.Vector3(), uu = u.lengthSq();
+  for (const t of clip.tracks) if (t.name === 'Hips.position') for (let i = 0; i < t.values.length; i += 3) {
+    v.fromArray(t.values, i).sub(rest);
+    const k = v.dot(u) / uu;
+    v.copy(u).multiplyScalar(k).add(rest).toArray(t.values, i);
+  }
   return clip;
 }
 
