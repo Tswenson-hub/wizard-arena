@@ -3,7 +3,7 @@ services:
   - type: web
     name: wizard-arena
     runtime: node
-    plan: free            # sleeps after ~15 min idle; "starter" stays awake
+    plan: standard        # what the live service runs on (set by Ty); "free" would sleep after ~15 min idle
     buildCommand: npm ci --omit=dev
     startCommand: npm start
     healthCheckPath: /healthz

@@ -1,4 +1,5 @@
-# Deploy smoke test: health check, page load, join with bots, WebSocket traffic, no console errors.
+# Deploy smoke test: health check, page load, the spell builder renders, join the 4-player FFA (bots fill
+# the empty seats), WebSocket traffic, no console errors.
 # usage: python3 deploy/smoke.py <base url> [screenshot path]
 #   python3 deploy/smoke.py http://localhost:3000
 #   python3 deploy/smoke.py https://wizard-arena.onrender.com /tmp/wa-deploy/live.png
@@ -32,15 +33,23 @@ async def main():
         await pg.goto(BASE + '/', timeout=120000)
         await pg.wait_for_function("!document.querySelector('#joinBtn').disabled", timeout=120000)
         print(f'page ready (assets loaded) in {time.time() - t:.1f}s')
+        b_ = await pg.evaluate("""() => { const q = s => document.querySelectorAll('#joinPicker ' + s).length;
+          const r = document.querySelector('#joinPicker .sb-main')?.getBoundingClientRect();
+          return { rows: q('.sb-row'), cards: q('.sb-card'), presets: q('.sb-presets .sb-chip'), visible: !!r && r.width > 0 && r.height > 0 }; }""")
+        builder_ok = b_['rows'] >= 4 and b_['cards'] >= 8 and b_['visible']
+        print('spell builder:', b_, 'ok' if builder_ok else 'FAIL')
+        ok = ok and builder_ok
+        if SHOT:
+            await pg.screenshot(path=SHOT.replace('.png', '-builder.png'), timeout=120000)
         await pg.fill('#nameInput', 'smoketest')
-        await pg.select_option('#botCount', '2')
         await pg.click('#joinBtn')
-        await pg.wait_for_function("window.__wa && window.__wa.local && [...window.__wa.players.values()].filter(p => p.bot).length >= 2", timeout=30000)
+        await pg.wait_for_function("window.__wa && window.__wa.local && window.__wa.players.size >= 4", timeout=30000)
         await pg.wait_for_timeout(3000)
         st = await pg.evaluate("""() => { const w = window.__wa; const ps = [...w.players.values()];
           return { players: ps.length, bots: ps.filter(p => p.bot).map(p => p.name + ' (' + p.bot + ')'),
                    status: document.querySelector('#status')?.textContent || '' }; }""")
         print('joined:', st)
+        ok = ok and st['players'] >= 4 and len(st['bots']) >= 3
         if SHOT:
             await pg.screenshot(path=SHOT, timeout=120000); print('screenshot:', SHOT)
         await pg.wait_for_timeout(2000)

@@ -147,18 +147,26 @@ second doubles as the idle stance), `Two_Handed_Parry` (ward), `Charged_Spell_Ca
 
 ## Deploying
 
+**Live:** <https://wizard-arena-76od.onrender.com>. Send that link to friends: it runs in any desktop
+browser, no install, and up to four people share one free-for-all (bots fill the empty seats).
+
 **Not on Vercel.** The game needs a long-running Node process that holds WebSocket connections open;
 Vercel's serverless functions can't do that. Any host that runs a normal Node server works.
 
-### Render (recommended, free tier)
+### Render (how the live site runs)
 
-1. Push this folder to a GitHub repo.
-2. In the [Render dashboard](https://dashboard.render.com): **New → Blueprint**, pick the repo. It reads
-   `render.yaml` (Node, `npm ci`, `npm start`, health check at `/healthz`).
-3. Share the `https://wizard-arena-xxxx.onrender.com` URL. The client uses `wss://` automatically.
+- Source: <https://github.com/Tswenson-hub/wizard-arena> (public), branch `main`.
+- `render.yaml` describes the service: Node 22, `npm ci --omit=dev`, `npm start`, health check at
+  `/healthz`, plan **Standard** (always on, no sleep).
+- **Auto-deploy:** every push to `main` builds and goes live in about a minute, with zero downtime (Render
+  switches over once `/healthz` answers). So push only commits you've verified.
+- On the **free** plan instead, the service sleeps after ~15 minutes with nobody connected and the first visit
+  afterwards takes ~30 s to wake it.
+- Check a deploy: `python3 deploy/smoke.py https://wizard-arena-76od.onrender.com /tmp/live.png`
+  (health check, spell builder, join the 4-player FFA, `wss://` traffic, no console errors).
 
-The free plan sleeps after ~15 minutes with nobody connected; the first visit afterwards takes ~30 s
-to wake it. The paid Starter plan stays awake. Railway and Fly.io work the same way (Fly can use the
+To host your own copy: fork the repo, then in the [Render dashboard](https://dashboard.render.com)
+**New → Blueprint**, pick the fork, **Apply**. Railway and Fly.io work the same way (Fly can use the
 included `Dockerfile`).
 
 ```bash
