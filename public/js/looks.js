@@ -398,7 +398,23 @@ function pickClip(id, animations, key, pick, scene) {
     out = stripRootMotion(warpClip(part, key, pick.warp.map(([a, b]) => [a - pick.from, b])));
   } else out = pick.warp ? stripRootMotion(warpClip(clip, key, pick.warp))
     : from != null ? stripRootMotion(subclipByTime(clip, key, from, to, duration)) : asKey(clip, key);
+  if (pick.reverse === true) out = reverseClip(out, key);     // a forward roll becomes a backward one
+  if (pick.flatY != null) flatHips(out, scene, pick.flatY);
   return pick.yaw ? yawClip(out, scene, pick.yaw) : out;
+}
+
+// Hold the Hips at their rest place, `dy` m above standing height, all through a clip, dropping its root motion
+// (vertical too, and a cut's horizontal offset, which stripRootMotion keeps): for clips performed in the air
+// (Cinder's dive) on a body the server already flies.
+function flatHips(clip, scene, dy) {
+  const hips = scene?.getObjectByName('Hips');
+  if (!hips) return clip;
+  scene.updateMatrixWorld(true);
+  // dy m up in the world, in the hips' parent space (Meshy rigs' armatures are Z-up and scaled)
+  const up = new THREE.Vector3(0, dy, 0).applyMatrix3(new THREE.Matrix3().setFromMatrix4(hips.parent.matrixWorld.clone().invert()));
+  const p = hips.position.clone().add(up);
+  for (const t of clip.tracks) if (t.name === 'Hips.position') for (let i = 0; i < t.values.length; i += 3) p.toArray(t.values, i);
+  return clip;
 }
 
 // Turn a whole clip `deg` degrees about the vertical (positive: to the body's left), through its Hips tracks.

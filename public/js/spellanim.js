@@ -7,7 +7,9 @@
 //   'hero.Clip'                          a whole pool clip ('base.<key>' for the base wizard's own clips)
 //   ['hero.Clip', from, to, duration?]   the part between two clip times (s), optionally stretched to `duration`
 //   { clip, from, to, warp, yaw }        that part retimed through warp [[clipTime, newTime], ...] (piecewise
-//                                        linear, in clip times); `yaw` turns it (deg) for moves from a bladed stance
+//                                        linear, in clip times); `yaw` turns it (deg) for moves from a bladed stance;
+//                                        `reverse: true` plays it backwards; `flatY: dy` pins the Hips dy m above
+//                                        standing height (no root motion at all: for airborne clips)
 // Root motion is stripped. Release times below were measured on the pool (the right hand's speed peak,
 // /tmp/wa-characters/r11/trace.py) and checked on contact sheets.
 //
@@ -34,6 +36,7 @@ const strike = (clip, peak, lead = 0.25, follow = 0.45, yaw) =>
 const windup = (clip, from, peak, windupS, follow = 0.5) =>
   ({ clip, from, to: peak + follow, warp: [[from, 0], [peak, windupS], [peak + follow, windupS + follow]] });
 const shot = (n = 0.7) => ['#', n, 1, 0];
+const ROLL = { clip: 'cinder.Roll_Dodge', from: 0.55, to: 1.8, warp: [[0.55, 0], [0.86, 0.08], [1.47, 0.32], [1.8, 0.45]] };
 
 // Shared by every generic body (not tied to a spell).
 export const COMMON_ANIMS = {
@@ -175,6 +178,20 @@ export const SPELL_ANIMS = {
     play: { cast: ['smoke_screen', 0.35, 1, 0] },
     need: 'a backflip or a backward leap (it is a 6.5 m leap; now it is a quick backpedal)',
   },
+  roll: {
+    grade: 'good', release: 0,
+    // Cinder's Roll_Dodge (the cleanest of the three: one tight forward roll that ends standing; Roll_Dodge_2 spends
+    // 0.7 s shuffling before it goes, Roll_Dodge_4 is a sideways tumble that ends in a low crouch). Cut from the dip
+    // (0.55 s) to standing (1.8 s): tucked by 0.08 s, over by 0.32 s (the 0.35 s dash), up by 0.45 s.
+    // One key per direction relative to facing (rollKey below): forward, back (the same roll reversed), left, right.
+    keys: {
+      roll: ROLL,
+      roll_back: { ...ROLL, reverse: true },
+      roll_left: { ...ROLL, yaw: 90 },
+      roll_right: { ...ROLL, yaw: -90 },
+    },
+    play: { cast: ['roll', 0.45, 1, 0] },
+  },
   ram_ride: {
     grade: 'ok', release: 0, legacy: ['ride'],
     keys: { ride: ['jeb.Cautious_Crouch_Walk_Left_inplace', 0.3, 0.42, 1.0] },   // a held wide-legged crouch, straddling the ram
@@ -249,11 +266,20 @@ export const SPELL_ANIMS = {
 
   // ---------------------------------------------------------------- ultimates (Q): every one has a 1.3 s wind-up
   meteor_rain: {
-    grade: 'ok', release: 1.3, legacy: ['ult'],
-    // Jeb's arm-up leap: crouch, then the leap lands on the release
-    keys: { meteor_rain: windup('jeb.Sword_Judgment', 0.2, 0.83, 1.3, 0.2) },
-    play: { windup: ['meteor_rain', 1.5, 1, 0], loop: ['float', 4, 1, 0] },
-    need: 'a crouch-and-leap straight up, a hovering pose and a diving fall',
+    grade: 'good', release: 1.3, legacy: ['ult'],
+    // Wind-up: Jeb's arm-up leap (crouch, then the leap on the release). Cinder's Dive_Down_and_Land is airborne from its
+    // first frame (no crouch or take-off in it), so it takes over in the air: its opening tuck, slowed, is the rise and
+    // hover; its somersault into a head-first plunge is the 0.6 s dive, the plunge landing on the impact. Its vertical
+    // root motion is dropped (flatY): the server flies her. Then she comes up from a crouch out of the blast.
+    keys: {
+      meteor_rain: windup('jeb.Sword_Judgment', 0.2, 0.83, 1.3, 0.2),
+      mrain_hover: { clip: 'cinder.Dive_Down_and_Land', from: 0, to: 0.6, warp: [[0, 0], [0.6, 4.5]], flatY: 0 },
+      mrain_dive: { clip: 'cinder.Dive_Down_and_Land', from: 0.6, to: 1.6, warp: [[0.6, 0], [1.0, 0.18], [1.6, 0.6]], flatY: -0.45 },   // head 10 cm off the ground at the impact
+      mrain_land: { clip: 'embibe.Female_Crouch_Pick_Throw_Forward', from: 3.45, to: 4.6, warp: [[3.45, 0], [4.6, 0.8]] },   // up from the crouch
+    },
+    // windup: on ultWindup; hover: on mrainLeap (rise + hover, at most 4.5 s; mrainDive cuts it); dive: on mrainDive
+    // (msg.left = 0.6 s, so the plunge lands with mrainLand); land: on mrainLand
+    play: { windup: ['meteor_rain', 1.5, 1, 0], hover: ['mrain_hover', 4.5, 1, 0], dive: ['mrain_dive', 0.6, 1, 0], land: ['mrain_land', 0.8, 1, 0] },
   },
   eye_of_storm: {
     grade: 'ok', release: 1.3, legacy: ['ult', 'spin'],
@@ -311,4 +337,13 @@ export function spellPlay(spellId, phase, n = 1) {
   const shots = Object.keys(SPELL_ANIMS[spellId].keys).filter(k => /\d$/.test(k)).length;
   const key = p[0] === '#' ? `${spellId}${Math.max(1, Math.min(n, shots))}` : p[0];
   return [key, p[1], p[2], p[3]];
+}
+
+// Roll: the key for a roll along world direction `dir` ([x, z]) by a wizard facing `yaw` (a body faces +z at yaw 0;
+// wizard.js turns it by yaw about +y). Pass it to Wizard.oneShot with the rest of spellPlay('roll', 'cast').
+export function rollKey(dir, yaw) {
+  const fx = Math.sin(yaw), fz = Math.cos(yaw);
+  const fwd = dir[0] * fx + dir[1] * fz, side = dir[0] * fz - dir[1] * fx;    // side > 0: to the body's left
+  if (Math.abs(fwd) >= Math.abs(side)) return fwd >= 0 ? 'roll' : 'roll_back';
+  return side > 0 ? 'roll_left' : 'roll_right';
 }
