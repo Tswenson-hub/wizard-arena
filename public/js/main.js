@@ -87,7 +87,11 @@ const local = {
   mrain: null,                 // Meteor Rain: { phase, start, from, hoverUntil, diveFrom, diveTo, diveStart, lastAim } (the server flies us)
   pull: null,                  // { v: [x, z], until } dragged by an enemy Eye of the Storm
   flaskWind: null,             // Embibe's Flask Step wind-up: { start }
-  castRootUntil: 0,            // a short cast pose roots us until then (C.CAST_ROOT); wind-ups and held wards root while they last
+  castSlowUntil: 0,            // round 13: a cast slows us until then (C.CAST_SLOW); only the big wind-ups root
+  airJumped: false, jumpSpeed: 0,   // round 13: the air jump is spent (until we land); the speed we took off with
+  hover: null,                 // round 13: { y, until } hanging in mid-air through a rooting wind-up started up there
+  airDash: null,               // round 13: { y, until } a dash in the air holds the height, then we fall
+  edgeAt: -1, rideQueued: 0,   // round 13: when we last stood on a floor (coyote time); a Ram Ride asked for in the air
   sprinting: false,            // Shift: running (predicted from our stamina; the server grants it)
   ride: null,                  // Jeb's Ram Ride: { start, rideAt, dismountAt, endAt } (predicted; the server's 'ride' confirms)
   fHold: null,                 // { start } while F is held with nothing carried (Trapped Relic: hold to curse)
@@ -353,7 +357,7 @@ function applySnapshot(w, s) {
   w.regen = !!s.regen;   // out-of-combat regen: our HP bar pulses green
   w.healing = !!s.heal;   // Night Cage or Black Death healing: the crimson shimmer (per frame)
   if (!s.brew && w.brewFx) { effects.stopAura(w.brewFx); w.brewFx = null; }
-  if (w !== me) { w.sprinting = !!s.sprint; w.castRooted = !!s.castRoot; w.crouch = !!s.crouch; w.jumping = !!s.jump; }
+  if (w !== me) { w.sprinting = !!s.sprint; w.castRooted = !!s.castRoot; w.crouch = !!s.crouch; w.jumping = !!s.jump || s.hover != null; hoverFx(w, s.hover != null); }
   w.ultWinding = !!s.ultWind; w.blizz = s.blizz ?? null;
   if (w === me) {
     if (!s.ultWind && local.ultWind && now - local.ultWind.start > 0.5) local.ultWind = null;   // refused, fizzled or fired
@@ -417,9 +421,10 @@ function tkGesture(w, clip) {
 }
 
 // Roll (round 12): the roll clip for its direction against the body's facing (spellanim.rollKey), else a dash.
-function playRoll(w, dir) {
+// Round 13: `air` (a roll off the ground) picks the air-dodge flips (rollKey's third argument).
+function playRoll(w, dir, air = false) {
   const a = spellPlay('roll', 'cast');
-  if (a && spellanim.rollKey) a[0] = spellanim.rollKey(dir, w.group.rotation.y);
+  if (a && spellanim.rollKey) a[0] = spellanim.rollKey(dir, w.group.rotation.y, !!air);
   if (a && w.actions?.[a[0]]) w.oneShot(...a); else w.oneShot('dash', 0.4, 2.5, 2.2);
 }
 
@@ -684,8 +689,12 @@ function handleMessage(msg) {
       effects.mirror(msg.from, [msg.to, ...msg.decoys.map(d => d.p)]);
       sfx.mirror([msg.from[0], 1, msg.from[2]]);
       w.oneShot('dash', 0.4, 2.5, 2.2);
-      if (w === me) { local.pos.set(msg.to[0], 0, msg.to[2]); local.vel.multiplyScalar(0.5); }
-      else { w.targetPos.set(msg.to[0], 0, msg.to[2]); w.group.position.copy(w.targetPos); w.targetYaw = msg.yaw; w.group.rotation.y = msg.yaw; }
+      // (round 13: from the air it comes out at that height, then falls)
+      if (w === me) {
+        local.pos.set(msg.to[0], msg.to[1] || 0, msg.to[2]); local.vel.multiplyScalar(0.5);
+        if ((msg.to[1] || 0) > groundAt(msg.to[0], msg.to[2], msg.to[1] || 0) + 0.05) { local.jump = null; local.hover = null; local.airDash = null; local.fall = { start: now, y0: msg.to[1], air: true }; }
+      }
+      else { w.targetPos.set(msg.to[0], msg.to[1] || 0, msg.to[2]); w.group.position.copy(w.targetPos); w.targetYaw = msg.yaw; w.group.rotation.y = msg.yaw; }
       for (const d of msg.decoys) spawnDecoy({ ...d, owner: msg.id });
       break;
     }
@@ -803,8 +812,8 @@ function handleMessage(msg) {
     case 'roll': {
       // Roll: our own was played when we pressed E; others tumble here (their position comes in the snapshots)
       const w = players.get(msg.id);
-      if (w && w !== me) playRoll(w, [msg.dir[0], msg.dir[2]]);
-      effects.dust([msg.from[0], msg.from[1] || 0, msg.from[2]], 3);
+      if (w && w !== me) playRoll(w, [msg.dir[0], msg.dir[2]], msg.air);
+      if (!msg.air) effects.dust([msg.from[0], msg.from[1] || 0, msg.from[2]], 3);
       break;
     }
     case 'tp': {
@@ -813,8 +822,8 @@ function handleMessage(msg) {
       if (w) {
         sfx.teleport(msg.to);
         w.oneShot('dash', 0.5, 2.5, 2.2);
-        if (w !== me) { w.targetPos.set(msg.to[0], 0, msg.to[2]); w.group.position.copy(w.targetPos); }
-        else if (local.pos.distanceTo(new THREE.Vector3(msg.to[0], 0, msg.to[2])) > 1.5) local.pos.set(msg.to[0], 0, msg.to[2]);
+        if (w !== me) { w.targetPos.set(msg.to[0], msg.to[1] || 0, msg.to[2]); w.group.position.copy(w.targetPos); }
+        else if (local.pos.distanceTo(new THREE.Vector3(msg.to[0], msg.to[1] || 0, msg.to[2])) > 1.5) local.pos.set(msg.to[0], msg.to[1] || 0, msg.to[2]);
       }
       break;
     }
@@ -845,6 +854,7 @@ function handleMessage(msg) {
         local.cyclone = null; local.flight = null; local.pos.y = 0; local.lash = null; local.fHold = null;
         local.slowUntil = local.rootUntil = local.silenceUntil = local.frozenUntil = 0; local.frostAim = false;
         local.cataAim = false; local.eyeUntil = local.blizzUntil = 0; local.pull = null; local.ride = null; local.ultWind = null; local.mrain = null;
+        local.hover = null; local.airDash = null; local.jump = null; local.fall = null; local.airJumped = false; local.jumpSpeed = 0; local.castSlowUntil = 0;
       }
       if (msg.killer === myId && msg.id !== myId) sfx.killSting();   // our kill (goat kills credited to us too)
       killFeed(k && k !== w ? k : null, w, msg.kind || msg.cause);
@@ -898,14 +908,22 @@ function handleMessage(msg) {
       if (w) sfx.play('step_grass', { pos: wpos(w), vol: 0.6, rate: 0.8 });
       break;
     }
-    case 'jumpRefused':   // (stamina, or a state we predicted wrong): back down
-      if (local.jump) { local.jump = null; local.pos.y = groundAt(local.pos.x, local.pos.z, local.pos.y); }
+    case 'jumpRefused':   // (stamina, or a state we predicted wrong): a refused hop goes back down; a refused air jump falls from here
+      if (local.jump) {
+        local.jump = null;
+        const fl = groundAt(local.pos.x, local.pos.z, local.pos.y);
+        if (msg.n === 2 || local.pos.y > fl + 0.3) local.fall = { start: now, y0: local.pos.y, air: true }; else local.pos.y = fl;
+      }
       break;
     case 'jump': {
       const w = players.get(msg.id);
-      if (w && w !== me) sfx.play('step_grass', { pos: wpos(w), vol: 0.5, rate: 1.15, jitter: 0.05 });
+      if (!w || w === me) break;
+      if (msg.n === 2) { w.airJump?.(); airJumpFx(w); }   // round 13: the air jump's flip (wizard.js) and burst
+      else sfx.play('step_grass', { pos: wpos(w), vol: 0.5, rate: 1.15, jitter: 0.05 });
       break;
     }
+    case 'rideQueued':   // round 13: a Ram Ride asked for in the air comes when we land (the server's 'ride' starts it)
+      break;
     case 'ultRefused':
       local.cataAim = false;
       break;
@@ -994,7 +1012,7 @@ function handleMessage(msg) {
       sfx.play('meteor_rain_launch', { pos: [msg.p[0], 1, msg.p[2]], vol: 1.1, jitter: 0 });
       w.mrainAura = effects.flameAura(w.group);
       playSpell(w, 'meteor_rain', 'hover');   // Dive_Down_and_Land's opening tuck, held through the hover
-      if (w === me) { local.ultWind = null; local.mrain = { phase: 'rise', start: now, from: [msg.p[0], msg.p[2]], top: msg.top, rise: msg.rise, hoverUntil: now + msg.rise + msg.hover, lastAim: 0 }; }
+      if (w === me) { local.ultWind = null; local.hover = null; local.jump = null; local.fall = null; local.airDash = null; local.mrain = { phase: 'rise', start: now, from: [msg.p[0], msg.p[2]], y0: msg.p[1] || 0, top: msg.top, rise: msg.rise, hoverUntil: now + msg.rise + msg.hover, lastAim: 0 }; }
       break;
     }
     case 'mrainAim': {
@@ -1080,7 +1098,7 @@ function handleMessage(msg) {
     }
     case 'batteringRam': {
       ghostRams.get(msg.id)?.dispose(scene); ghostRams.delete(msg.id);
-      if (msg.id === myId) { local.ramWind = null; local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.ram); }
+      if (msg.id === myId) { local.ramWind = null; castSlow(); }
       const w = players.get(msg.id);
       if (w) { w.oneShot('cast_heavy', 0.55, 1.5, 1.9); sfx.play('battering_ram', { pos: wpos(w), vol: 1, jitter: 0.04 }); }
       break;
@@ -1635,8 +1653,55 @@ function groundTarget(range) {
   return [x, 0, z];
 }
 
+// Round 13: a cast slows us (C.CAST_SLOW) instead of rooting; the server applies the same slow to its speed check
+function castSlow() { local.castSlowUntil = Math.max(local.castSlowUntil, now + C.CAST_SLOW.time); }
+// Up in the air (a jump, a fall, a hang, an air dash, a flight, or just above the floor)
+function inAirLocal() {
+  return !!(local.jump || local.fall || local.hover || local.airDash || local.flight) || local.pos.y > groundAt(local.pos.x, local.pos.z, local.pos.y) + 0.05;
+}
+// Round 13: a rooting wind-up started in mid-air hangs us at this height for its length at most (server.js startHover)
+function startHover(secs) {
+  if (!inAirLocal() || local.flight || local.mrain || local.grab) return;
+  local.hover = { y: local.pos.y, until: now + secs };
+  local.jump = null; local.fall = null; local.airDash = null;
+}
+// Round 13 effects. The air jump: a burst ring in the wizard's colour under the feet, a short trail through the flip,
+// a high, quiet whoosh and launch. The hover: a rune circle under the feet and a soft hum while it lasts.
+function airJumpFx(w) {
+  const p = w.group.position, color = w.color ?? 0xffffff;
+  // (a flat ring at the feet' height, wherever that is: groundRing sits on the ground)
+  effects.S('smoke_10', { p: [p.x, p.y + 0.05, p.z], mode: 'flat', size: [0.4, 2.4], life: 0.45, spin: 0.9, color, alpha: 0.7, add: true, fadeIn: 0.02 });
+  effects.burst(new THREE.Vector3(p.x, p.y + 0.15, p.z), color, 10, 2.6, 0.35, 2);
+  w.flipTrailUntil = now + 0.4;
+  sfx.play('whoosh', { pos: [p.x, p.y + 1, p.z], vol: w === me ? 0.55 : 0.45, rate: 1.5, jitter: 0.05 });
+  sfx.play('skyward_launch', { pos: [p.x, p.y + 0.5, p.z], vol: 0.3, rate: 1.6, jitter: 0.05 });
+}
+function hoverFx(w, on) {
+  if (on && !w.hoverMark) {
+    w.hoverMark = effects.cataAim(0.9, w.color ?? 0x9fc3ff, 0xd8c8ff); w.hoverMark.visible = true;
+    w.hoverSnd = sfx.loop?.('ult_windup', { pos: wpos(w), vol: 0.18, fadeIn: 0.2 });
+  } else if (!on && w.hoverMark) {
+    w.hoverMark.visible = false; w.hoverMark.parent?.remove(w.hoverMark); w.hoverMark = null;
+    w.hoverSnd?.stop(0.15); w.hoverSnd = null;
+  }
+  if (w.hoverMark) { const p = w.group.position; w.hoverMark.position.set(p.x, p.y - 0.12, p.z); w.hoverMark.rotation.y += 0.03; }
+  w.hovering = on;
+}
+// The land pose's dust after an airtime with an air jump in it
+function doubleLandFx(p) {
+  effects.S('smoke_10', { p: [p.x, p.y + 0.08, p.z], mode: 'flat', size: [0.5, 2.6], life: 0.5, spin: 0.6, color: 0x9a8a70, alpha: 0.45, add: false, fadeIn: 0.03 });
+  sfx.play('skyward_land', { pos: [p.x, p.y + 0.2, p.z], vol: 0.35, rate: 1.2, jitter: 0.05 });
+}
+// Round 13: a dash in the air keeps its height for `secs`, then we fall
+function startAirDash(secs) {
+  if (!inAirLocal() || local.flight) return false;
+  local.airDash = { y: local.pos.y, until: now + secs };
+  local.jump = null; local.fall = null; local.hover = null;
+  return true;
+}
+
 function sendPickup() {
-  if (tkHover) local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.tk);   // the lift gesture
+  if (tkHover) castSlow();   // the lift gesture
   camera.getWorldDirection(camDir);
   net.send({ t: 'pickup', aimOrigin: camera.position.toArray(), aimDir: camDir.toArray() });
 }
@@ -1679,8 +1744,7 @@ function updateLocal(dt) {
     }
   }
   const airborne = !!local.flight;
-  // Round 9: a jump is up for JUMP.airTime; nothing is cast in its first JUMP.castLock s, then only the primary
-  const jumping = !!local.jump, jumpLock = jumping && now - local.jump.start < C.JUMP.castLock;
+  // Round 13: everything casts in the air (no jump lock); the big wind-ups hang us there (startHover)
 
   // ---- Arcane Cyclone timing (the server pulses; this keeps our controls honest meanwhile)
   if (local.cyclone && now - local.cyclone.start > CYC.windup + CYC.spin + 0.3) local.cyclone = null;
@@ -1712,43 +1776,43 @@ function updateLocal(dt) {
   if (canAct) {
     // ultimate (Q): Cataclysm aims a circle (hold, release); the others go off at once
     const U = K.ultimate, ultReady = local.ult >= C.ULT_CHARGE.max, holdingQ = !!(me.carrying || me.carryingGoat);
-    if (input.justPressed('KeyQ') && ultReady && !ultLock && !busy && !holdingQ && !local.cataAim && !jumping) {
+    if (input.justPressed('KeyQ') && ultReady && !ultLock && !busy && !holdingQ && !local.cataAim) {
       if (AIMED_ULTS[U]) local.cataAim = true;
-      else if (!airborne) { local.ultWind = { start: now }; net.send({ t: 'ult' }); }
+      else { local.ultWind = { start: now }; startHover(C.ULT_CHARGE.windup); net.send({ t: 'ult' }); }
     }
     if (local.cataAim) {
       if (busy || holdingQ || !ultReady || !AIMED_ULTS[U]) local.cataAim = false;
       else if (!input.down('KeyQ')) {
         local.cataAim = false;
         const at = groundTarget(AIMED_ULTS[U].range);
-        local.ultWind = { start: now };
+        local.ultWind = { start: now }; startHover(C.ULT_CHARGE.windup);
         net.send({ t: 'ult', at: [at[0], at[2]] });
       }
     }
   }
   if (canAct && !ultLock) {
-    // guard (R): hold to ward, or tap for the tap shields; not in the air, not mid-jump
-    const wantBlock = C.isWard(K.guard) && input.down('KeyR') && me.st > 2 && !busy && !airborne && !jumping;
+    // guard (R): hold to ward, or tap for the tap shields (round 13: in the air too; ground shields go down under us)
+    const wantBlock = C.isWard(K.guard) && input.down('KeyR') && me.st > 2 && !busy;
     if (wantBlock !== local.blocking) { local.blocking = wantBlock; net.send({ t: 'block', on: wantBlock }); }
-    if (K.guard === 'tempest_veil' && input.justPressed('KeyR') && !airborne && !jumping && now >= local.cd.guard && !me.veiled) {
+    if (K.guard === 'tempest_veil' && input.justPressed('KeyR') && now >= local.cd.guard && !me.veiled) {
       local.cd.guard = now + SPELL.tempest_veil.cooldown;   // tap: the bubble goes up for its duration, no holding
       net.send({ t: 'veil' });   // not rooted: she keeps moving
     }
-    if (K.guard === 'glacial_bulwark' && input.justPressed('KeyR') && !airborne && !jumping && !busy && now >= local.cd.guard) {
+    if (K.guard === 'glacial_bulwark' && input.justPressed('KeyR') && !busy && now >= local.cd.guard) {
       local.cd.guard = now + BULWARK.cooldown;
-      net.send({ t: 'bulwark', yaw: local.yaw }); local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.tapShield);
+      net.send({ t: 'bulwark', yaw: local.yaw }); castSlow();
     }
-    if (K.guard === 'smoke_flask' && input.justPressed('KeyR') && !airborne && !jumping && now >= local.cd.guard) {
+    if (K.guard === 'smoke_flask' && input.justPressed('KeyR') && now >= local.cd.guard) {
       local.cd.guard = now + SPELL.smoke_flask.cooldown * cdMul();
-      net.send({ t: 'smokeFlask' }); local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.tapShield);
+      net.send({ t: 'smokeFlask' }); castSlow();
     }
-    if (K.guard === 'ram_guard' && input.justPressed('KeyR') && !airborne && !jumping && now >= local.cd.guard) {
+    if (K.guard === 'ram_guard' && input.justPressed('KeyR') && now >= local.cd.guard) {
       local.cd.guard = now + RGUARD.cooldown;
-      net.send({ t: 'ramGuard' }); local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.tapShield);
+      net.send({ t: 'ramGuard' }); castSlow();
     }
-    if (K.guard === 'firewall' && input.justPressed('KeyR') && !airborne && !jumping && !busy && now >= local.cd.guard) {
+    if (K.guard === 'firewall' && input.justPressed('KeyR') && !busy && now >= local.cd.guard) {
       local.cd.guard = now + SPELL.firewall.cooldown;   // tap: the flame stands for its life, no holding
-      net.send({ t: 'firewall', yaw: local.yaw }); local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.tapShield);
+      net.send({ t: 'firewall', yaw: local.yaw }); castSlow();
     }
 
     // primary
@@ -1760,22 +1824,23 @@ function updateLocal(dt) {
     const holding = !!(me.carrying || me.carryingGoat);
     if (local.wasHolding && !holding) local.liftCdUntil = now + SPELL[K.utility].liftCooldown;
     local.wasHolding = holding;
-    if (input.lmbPressed && !local.blocking && !busy && !holding && !jumpLock && now >= local.cd.fast && !local.reloadUntil && local.ammo > 0) {
+    if (input.lmbPressed && !local.blocking && !busy && !holding && now >= local.cd.fast && !local.reloadUntil && local.ammo > 0) {
       computeAim();
       local.ammo--; local.lastShot = now;
       if (!local.ammo) { local.reloadUntil = now + MAG.reload; sfx.reload(); }
       const kind = C.PRIMARY_KIND[K.primary];
       local.cd.fast = now + SPELL[K.primary].cooldown * cdMul();
-      local.castRootUntil = Math.max(local.castRootUntil, now + (C.CAST_ROOT.primary[C.PRIMARY_KIND[K.primary]] ?? 0.28));
+      castSlow();
       if (kind === 'skim') net.send({ t: 'cast', kind, dir: [aimDir.x, 0, aimDir.z] });
       else if (kind === 'hex' || kind === 'potion') net.send({ t: 'cast', kind, origin: aimOrigin.toArray(), dir: aimDir.toArray(), target: aimPoint() });   // curves (or arcs) onto what the crosshair is on
       else net.send({ t: 'cast', kind, origin: aimOrigin.toArray(), dir: aimDir.toArray() });
     }
     // power slot
-    if (input.rmbPressed && !local.blocking && !busy && !jumping && (!airborne || SPELL[K.power].airCast) && !holding && now >= local.cd.power) {
+    if (input.rmbPressed && !local.blocking && !busy && !holding && now >= local.cd.power) {
       if (K.power === 'meteor') {
         // wind-up: press to start, fires automatically when fully charged
         local.charging = true; local.chargeStart = now; local.chargeSent = false;
+        startHover(C.SPELLS.heavy.chargeTime);
         net.send({ t: 'chargeStart' });
       } else if (K.power === 'cyclone') {
         local.cyclone = { start: now, pulsed: false };
@@ -1783,16 +1848,18 @@ function updateLocal(dt) {
         net.send({ t: 'cyclone' });
       } else if (K.power === 'sanguine_lash') {
         local.lash = { start: now, sent: false };
+        startHover(LASH.windup);
         me.startLash();
         net.send({ t: 'lashStart' });
       } else if (K.power === 'toxic_flask') {
         computeAim();
         local.cd.power = now + SPELL.toxic_flask.cooldown * cdMul();
-        net.send({ t: 'toxic', origin: aimOrigin.toArray(), dir: aimDir.toArray(), target: aimPoint() }); local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.toxic);
+        net.send({ t: 'toxic', origin: aimOrigin.toArray(), dir: aimDir.toArray(), target: aimPoint() }); castSlow();
       } else if (K.power === 'battering_ram') {
         computeAim();
         local.cd.power = now + SPELL.battering_ram.cooldown;
         net.send({ t: 'ram', dir: [aimDir.x, 0, aimDir.z] }); local.ramWind = { start: now };   // round 10: a 0.8 s wind-up (the server launches it)
+        startHover(SPELL.battering_ram.windup);
       } else if (K.power === 'frostfall') {
         local.frostAim = true;   // hold to aim, release to cast
       }
@@ -1804,35 +1871,38 @@ function updateLocal(dt) {
         local.cd.power = now + FROST.cooldown;
         const at = frostTarget();
         net.send({ t: 'frostfall', at: [at[0], at[2]] });
-        if (!airborne) local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.frostfall);
+        castSlow();
       }
     }
     if (local.charging && !local.chargeSent && now - local.chargeStart >= C.SPELLS.heavy.chargeTime) {
       computeAim();
       local.chargeSent = true;
       local.cd.power = now + C.SPELLS.heavy.cooldown;
-      net.send({ t: 'chargeRelease', origin: aimOrigin.toArray(), dir: aimDir.toArray() }); local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.heavyRelease);
+      net.send({ t: 'chargeRelease', origin: aimOrigin.toArray(), dir: aimDir.toArray() }); castSlow();
       setTimeout(() => { local.charging = false; }, 150);
     }
     if (local.lash && !local.lash.sent && now - local.lash.start >= LASH.windup) {
       computeAim();
       local.lash.sent = true;
       local.cd.power = now + LASH.cooldown;
-      net.send({ t: 'lashRelease', origin: aimOrigin.toArray(), dir: aimDir.toArray() }); local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.lashRelease);
+      net.send({ t: 'lashRelease', origin: aimOrigin.toArray(), dir: aimDir.toArray() }); castSlow();
     }
     // mobility slot
     if (input.justPressed('KeyE') && !busy && !airborne && now >= local.cd.mobility && !(rooted && K.mobility !== 'skyward')) {
       if (K.mobility === 'blink') {
         const dir = [Math.sin(local.yaw), 0, Math.cos(local.yaw)];
-        const from = [local.pos.x, 0, local.pos.z];
+        const from = [local.pos.x, local.pos.y, local.pos.z];
         const to = C.computeTeleport(from, dir);
         cageKeep(to);   // a blink can't cross a Night Cage
         local.cd.mobility = now + C.TELEPORT.cooldown;
         net.send({ t: 'teleport', dir, from });
-        local.pos.set(to[0], 0, to[2]); local.vel.set(0, 0, 0);
+        // round 13: from the air, out at the same height, then a fall (the server does the same)
+        if (startAirDash(0)) { local.airDash = null; to[1] = Math.max(local.pos.y, groundAt(to[0], to[2], local.pos.y)); local.fall = { start: now, y0: to[1], air: true }; }
+        local.pos.set(to[0], to[1] || 0, to[2]); local.vel.set(0, 0, 0);
       } else if (K.mobility === 'skyward') {
         local.cd.mobility = now + SKY.cooldown;
         local.flight = { start: now, last: now, drop: false };
+        local.jump = null; local.fall = null; local.airDash = null;
         local.pos.y = SKY.height;
         net.send({ t: 'skyward' });
       } else if (K.mobility === 'smoke_screen') {
@@ -1840,7 +1910,8 @@ function updateLocal(dt) {
         local.cd.mobility = now + SMOKE.cooldown;
         local.dash = { start: now, time: SMOKE.dashTime, dist: SMOKE.distance };
         lastDashDir = [-Math.sin(local.yaw), -Math.cos(local.yaw)];
-        net.send({ t: 'smoke', yaw: local.yaw, from: [local.pos.x, 0, local.pos.z] });
+        net.send({ t: 'smoke', yaw: local.yaw, from: [local.pos.x, local.pos.y, local.pos.z] });
+        startAirDash(SMOKE.dashTime);   // round 13: in the air, a level dash, then a fall
       } else if (K.mobility === 'flask_step') {
         // a 0.6 s wind-up, then the potion flies along our aim and we arrive where it lands
         computeAim();
@@ -1849,7 +1920,9 @@ function updateLocal(dt) {
         net.send({ t: 'flaskStep', dir: C.flaskLaunch(aimDir.toArray()) });
       } else if (K.mobility === 'ram_ride') {
         // mount up and gallop where we face (steer with the mouse, or A/D)
-        if (!me.carrying && !me.carryingGoat) {
+        if (me.carrying || me.carryingGoat) { /* not with something in hand */ }
+        else if (inAirLocal()) { local.rideQueued = now; net.send({ t: 'ride', yaw: local.yaw }); }   // round 13: the ram comes up under us as we land
+        else {
           local.cd.mobility = Infinity;   // runs from the dismount (rideEnd)
           local.ride = rideTimes();
           net.send({ t: 'ride', yaw: local.yaw });
@@ -1865,32 +1938,33 @@ function updateLocal(dt) {
           local.dash = { start: now, time: ROLL.dashTime, dist: ROLL.distance };
           lastDashDir = [d.x, d.z];
           net.send({ t: 'roll', dir: [d.x, 0, d.z], yaw: local.yaw, from: [local.pos.x, local.pos.y, local.pos.z] });
-          playRoll(me, [d.x, d.z]);
-          effects.dust([local.pos.x, local.pos.y, local.pos.z], 3);
+          const air = startAirDash(ROLL.dashTime);   // round 13: in the air, a flipping air-dodge at this height
+          playRoll(me, [d.x, d.z], air);
+          if (!air) effects.dust([local.pos.x, local.pos.y, local.pos.z], 3);
         }
       } else if (K.mobility === 'mirror_step') {
         // along the movement keys, forward if none; the server picks which of the three paths is us
         const d = (mx || mz) ? tmp.v3.set(0, 0, 0).addScaledVector(fwd, mz).addScaledVector(right, mx).normalize() : fwd;
         local.cd.mobility = now + MIRROR.cooldown;
-        net.send({ t: 'mirror', dir: [d.x, 0, d.z], from: [local.pos.x, 0, local.pos.z] });
+        net.send({ t: 'mirror', dir: [d.x, 0, d.z], from: [local.pos.x, local.pos.y, local.pos.z] });
       }
       if (local.blocking) { local.blocking = false; }
     }
     // utility: Telekinesis lifts, hurls and sets down (props and goats); Trapped Relic only curses (F on an object, RELIC.hold)
     const relic = K.utility === 'trapped_relic';
-    if (input.justPressed('KeyF') && !jumping) {
+    if (input.justPressed('KeyF')) {
       if (me.carryingGoat) {
         // hurl the goat: like a prop, toward what the crosshair is on
         if (now >= local.cd.throw) {
           computeAim();
           local.cd.throw = now + C.THROW_COOLDOWN;
-          net.send({ t: 'throw', dir: aimDir.toArray(), target: aimPoint() }); local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.tk);
+          net.send({ t: 'throw', dir: aimDir.toArray(), target: aimPoint() }); castSlow();
         }
       } else if (me.carrying) {
         if (now >= local.cd.throw && props.get(me.carrying)?.data.state === 'carried') {
           computeAim();
           local.cd.throw = now + C.THROW_COOLDOWN;
-          net.send({ t: 'throw', dir: aimDir.toArray(), target: aimPoint() }); local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.tk);
+          net.send({ t: 'throw', dir: aimDir.toArray(), target: aimPoint() }); castSlow();
         }
       } else if (!busy && !local.blocking && tkHover && now >= local.liftCdUntil) {
         if (relic) { if (curseable(tkHover)) local.fHold = { start: now }; }   // a tap or a hold: the curse takes RELIC.hold
@@ -1899,7 +1973,7 @@ function updateLocal(dt) {
     }
     if (local.fHold) {
       if (holding || busy || local.blocking || !curseable(tkHover)) local.fHold = null;
-      else if (now - local.fHold.start >= RELIC.hold) { local.fHold = null; local.liftCdUntil = now + RELIC.liftCooldown; camera.getWorldDirection(camDir); net.send({ t: 'curse', aimOrigin: camera.position.toArray(), aimDir: camDir.toArray() }); local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.curse); }
+      else if (now - local.fHold.start >= RELIC.hold) { local.fHold = null; local.liftCdUntil = now + RELIC.liftCooldown; camera.getWorldDirection(camDir); net.send({ t: 'curse', aimOrigin: camera.position.toArray(), aimDir: camDir.toArray() }); castSlow(); }
     }
     if (input.justPressed('KeyG') && holding) net.send({ t: 'drop' });
   } else {
@@ -1941,7 +2015,7 @@ function updateLocal(dt) {
       for (const [i, key] of [[0, 'x'], [1, 'y'], [2, 'z']]) local.pos[key] = M.diveFrom[i] + (M.diveTo[i] - M.diveFrom[i]) * k * k;
     } else {
       const k = Math.min(1, (now - M.start) / M.rise);
-      local.pos.set(M.from[0], M.top * (1 - (1 - k) * (1 - k)), M.from[1]);
+      local.pos.set(M.from[0], M.y0 + (M.top - M.y0) * (1 - (1 - k) * (1 - k)), M.from[1]);   // (round 13: from where she was)
       if (now >= M.start + M.rise) M.phase = 'hover';
       // aim: where the crosshair meets the ground, at most MRAIN.range from where we leapt
       let at = groundTarget(60);
@@ -1964,14 +2038,35 @@ function updateLocal(dt) {
   if ((input.justPressed('KeyC')) && !local.cHeld && !local.flight) local.crouchToggle = !local.crouchToggle;
   const ctrl = (input.down('ControlLeft') || input.down('ControlRight')) && !local.cHeld;
   const floor = groundAt(local.pos.x, local.pos.z, local.pos.y);
-  if (input.justPressed('Space') && canAct && !rooted && !local.jump && !local.flight && !local.ride && !local.mrain && now >= local.eyeUntil && !local.blocking
-    && !local.charging && !local.cyclone && !local.lash && !local.flaskWind && !local.ultWind && now >= local.blizzUntil && !local.fHold && now >= local.castRootUntil
-    && me.st >= C.JUMP.stamina && local.pos.y <= floor + 0.05) {
-    local.jump = { start: now, y0: local.pos.y };
-    local.crouchToggle = false;
-    net.send({ t: 'jump' });
+  // Round 13: from the floor (or within JUMP.coyote of walking off an edge) the jump; in the air, once, the air jump: a
+  // fresh, lower arc from this height (AIR_JUMP), steered at once toward the movement keys. The server checks the same.
+  const onFloor = !local.jump && !local.hover && !local.airDash && !local.flight && local.pos.y <= floor + 0.05;
+  if (onFloor) local.edgeAt = now;
+  const coyote = !onFloor && local.fall && !local.fall.air && now - local.edgeAt < C.JUMP.coyote;
+  if (input.justPressed('Space') && canAct && !rooted && !local.flight && !local.ride && !local.mrain && now >= local.eyeUntil && !local.blocking
+    && !local.charging && !local.lash && !local.flaskWind && !local.ultWind && !local.ramWind && now >= local.blizzUntil && !local.hover && !local.grab && !me.dead) {
+    const air = !onFloor && !coyote;
+    if (air ? !local.airJumped && me.st >= C.AIR_JUMP.stamina && !(local.jump && now - local.jump.start < 0.06) : me.st >= C.JUMP.stamina) {
+      const y0 = local.pos.y;
+      const hv = Math.hypot(local.vel.x, local.vel.z);
+      local.jumpSpeed = Math.max(air ? local.jumpSpeed : 0, local.sprinting ? C.sprintOf() : C.speedOf(), Math.min(hv, C.sprintOf()));
+      local.jump = { start: now, y0, n: air ? 2 : 1 };
+      local.fall = null; local.airDash = null;
+      local.crouchToggle = false;
+      if (air) {
+        local.airJumped = true;
+        // the air jump snaps the drift toward the keys (a change of direction), at the speed we carry
+        if (mx || mz) {
+          const d = tmp.v3.set(0, 0, 0).addScaledVector(fwd, mz).addScaledVector(right, mx).normalize();
+          const sp = Math.max(hv, C.backpedalSpeed(local.jumpSpeed, d.x, d.z, local.yaw));
+          local.vel.set(d.x * sp, 0, d.z * sp);
+        }
+        me.airJump?.(); airJumpFx(me);
+      }
+      net.send(air ? { t: 'jump', n: 2, y0 } : { t: 'jump', y0 });
+    }
   }
-  local.crouch = (local.crouchToggle || ctrl) && !local.jump && !local.flight && !local.ride && !local.mrain && now >= local.eyeUntil && !me.dead;
+  local.crouch = (local.crouchToggle || ctrl) && !local.jump && !local.fall && !local.hover && !local.airDash && !local.flight && !local.ride && !local.mrain && now >= local.eyeUntil && !me.dead;
   if (local.crouch) local.sprinting = false;
 
   // ---- movement (camera-relative); a bound wizard can't move, a silenced one still can
@@ -1986,26 +2081,30 @@ function updateLocal(dt) {
     R.heading += THREE.MathUtils.clamp(Math.atan2(Math.sin(want - R.heading), Math.cos(want - R.heading)), -RIDE.turnRate * rt, RIDE.turnRate * rt);
     mx = 0; mz = 1; fwd.set(Math.sin(R.heading), 0, Math.cos(R.heading));
   }
-  // casting roots us (turning and aiming still work); movement abilities don't
-  const castRooted = !local.flight && !local.ride && !local.mrain && now >= local.eyeUntil && (now < local.castRootUntil || local.charging || !!local.lash
-    || (!!local.cyclone && !local.cyclone.pulsed) || !!local.flaskWind || !!local.ultWind || now < local.blizzUntil || !!local.fHold
-    || !!local.ramWind || !!local.grab || (local.blocking && C.isWard(K.guard)));
+  // round 13: only the big wind-ups root us (turning and aiming still work): Meteor's charge, the Lash's and the Ram's
+  // wind-ups, an ultimate's wind-up, the Blizzard channel, a ledge pull-up (server.js castRooted, the same rule).
+  // Other casts slow us (C.CAST_SLOW), as do Cyclone's and Flask Step's short wind-ups.
+  const castRooted = !local.ride && !local.mrain && now >= local.eyeUntil && (local.charging || !!local.lash || !!local.ultWind
+    || now < local.blizzUntil || !!local.ramWind || !!local.grab);
+  const castSlowed = now < local.castSlowUntil || (!!local.cyclone && !local.cyclone.pulsed) || !!local.flaskWind;
   if (castRooted && !local.wasCastRooted) local.vel.set(0, 0, 0);   // stop dead as the cast starts (a later knockback still lands)
   local.wasCastRooted = castRooted;
   local.castRooted = castRooted;
   const moving = (mx || mz) && !me.dead && !stunned && !rooted && !castRooted;
   // Sprint: Shift while moving forward (or diagonally forward); stamina from the server's copy, with the same
   // stop-at-0 / restart-above-15 rule, and nothing that forbids it
-  const sprintAllowed = moving && mz > 0 && !local.crouch && !castRooted && !local.ride && !local.flight && !local.blocking && !local.charging && !local.cyclone && !local.lash
-    && !local.ultWind && !local.flaskWind && !(me.carrying || me.carryingGoat) && now >= local.blizzUntil && now >= local.eyeUntil;
+  const sprintAllowed = moving && mz > 0 && !local.crouch && !castRooted && !local.ride && !local.flight && !local.blocking
+    && !(me.carrying || me.carryingGoat) && now >= local.blizzUntil && now >= local.eyeUntil;
   const wantSprint = (input.down('ShiftLeft') || input.down('ShiftRight')) && sprintAllowed;
-  local.sprinting = wantSprint;   // round 10: unlimited (no stamina); still not while casting, crouching or carrying
+  local.sprinting = wantSprint;   // round 10: unlimited (no stamina); round 13: a cast only slows it; not crouching or carrying
+  const inAirNow = !!(local.jump || local.fall || local.airDash);
   let speed = C.speedOf();
-  if (local.charging || local.cyclone || local.lash || local.ultWind || local.flaskWind) speed = C.chargeSpeedOf();   // (an ultimate's wind-up too)
-  else if (local.blocking) speed = C.blockSpeedOf();
+  if (local.blocking) speed = C.blockSpeedOf();   // a held shield
   else if (local.flight) speed = SKY.airSpeed;
   if (local.sprinting) speed = C.sprintOf();
+  if (inAirNow && !local.flight) speed = Math.max(speed, local.jumpSpeed);   // a sprint-jump carries its speed
   if (local.crouch) speed = Math.min(speed, C.CROUCH.speed);   // crouched: a slow creep
+  if (castSlowed && !local.flight) speed *= C.CAST_SLOW.mult;   // a cast (the server allows the same)
   if (now < local.slowUntil) speed *= 1 - C.SPELLS.skim.slow;     // Glacial Skim
   if (now < local.eyeUntil) speed = C.speedOf() * EYE.speedMul;   // the tornado: fast, and nothing slows it
   if (galloping) speed = RIDE.speed;
@@ -2014,8 +2113,11 @@ function updateLocal(dt) {
     wish.addScaledVector(fwd, mz).addScaledVector(right, mx).normalize();
     wish.multiplyScalar(C.backpedalSpeed(speed, wish.x, wish.z, local.yaw));   // backpedalling is slower
   }
-  // accelerate toward wish velocity; knockback lives in local.vel too
-  const accel = Math.min(1, dt * 12 * (local.jump ? C.JUMP.airControl : 1));   // in a jump: 60% steering
+  // accelerate toward wish velocity; knockback lives in local.vel too. Round 13: about twice as quick (MOVE_ACCEL), crisp
+  // stops; in the air full steering, and with no key held only a little drag, so momentum carries
+  const A = C.MOVE_ACCEL;
+  const rate = inAirNow ? (moving ? A.accel * C.JUMP.airControl : A.airDrag) : moving ? A.accel : A.stop;
+  const accel = Math.min(1, dt * rate);
   local.vel.x += (wish.x - local.vel.x) * accel;
   local.vel.z += (wish.z - local.vel.z) * accel;
   // Smoke Screen / Roll dash: along lastDashDir, covering the distance over its time in real time (so a slow
@@ -2041,7 +2143,7 @@ function updateLocal(dt) {
   if (!me.dead) {
     // in small slices near platforms, so a steep ladder or stair is climbed even on a slow frame (the step-up is per slice)
     const mx_ = local.vel.x * dt, mz_ = local.vel.z * dt, ml = Math.hypot(mx_, mz_);
-    const n = C.SURFACES.length && !local.jump && !local.flight && !local.fall && ml > 0.06 ? Math.min(10, Math.ceil(ml / 0.06)) : 1;
+    const n = C.SURFACES.length && !local.jump && !local.flight && !local.fall && !local.hover && !local.airDash && ml > 0.06 ? Math.min(10, Math.ceil(ml / 0.06)) : 1;
     for (let i = 0; i < n; i++) {
       local.pos.x += mx_ / n; local.pos.z += mz_ / n;
       if (n > 1) {
@@ -2056,11 +2158,15 @@ function updateLocal(dt) {
 
   // ---- height (real time; the server checks it against its clock): a jump's arc, falling off an edge, stepping
   // up a ramp or stairs. A jump's arc carries on below where it started (off a ledge) until it meets a floor.
-  const landed = () => { effects.dust(local.pos, 3); sfx.play('step_grass', { pos: [local.pos.x, local.pos.y + 0.1, local.pos.z], vol: 0.6, rate: 0.85, jitter: 0.05, bag: 'land' + myId }); };
+  const landed = () => {
+    effects.dust(local.pos, 3); sfx.play('step_grass', { pos: [local.pos.x, local.pos.y + 0.1, local.pos.z], vol: 0.6, rate: 0.85, jitter: 0.05, bag: 'land' + myId });
+    if (local.airJumped) doubleLandFx(local.pos);
+    local.airJumped = false; local.jumpSpeed = 0;   // the air jump comes back
+  };
   if (local.jump && !me.dead && now - local.jump.start > 0.08 && (mx || mz)) {
     // round 10: ledge grab, jumping at an edge out of the jump's reach (the server checks it the same way)
     const hv = Math.hypot(local.vel.x, local.vel.z), dir = hv > 0.5 ? [local.vel.x / hv, local.vel.z / hv] : [Math.sin(local.yaw), Math.cos(local.yaw)];
-    const to = C.ledgeTarget([local.pos.x, local.pos.y, local.pos.z], dir, local.jump.y0 + C.JUMP.height);
+    const to = C.ledgeTarget([local.pos.x, local.pos.y, local.pos.z], dir, C.jumpApex(local.jump));
     if (to) {
       local.grab = { start: now, from: [local.pos.x, local.pos.y, local.pos.z], to };
       local.jump = null; local.vel.set(0, 0, 0); local.sprinting = false;
@@ -2075,20 +2181,31 @@ function updateLocal(dt) {
     local.pos.set(G.from[0] + (G.to[0] - G.from[0]) * ki, G.from[1] + (G.to[1] - G.from[1]) * (1 - (1 - kr) * (1 - kr)), G.from[2] + (G.to[2] - G.from[2]) * ki);
     local.vel.set(0, 0, 0);
     if (k >= 1 || me.dead) { local.grab = null; if (!me.dead) landed(); }
+  } else if (local.hover) {
+    // round 13: hanging through a rooting wind-up started in the air; at its end (or the wind-up's) we fall
+    local.pos.y = Math.max(groundAt(local.pos.x, local.pos.z, local.hover.y), local.hover.y);
+    if (now >= local.hover.until || me.dead || !(local.charging || local.lash || local.ultWind || local.ramWind) || local.mrain) {
+      local.hover = null;
+      if (!local.mrain) local.fall = { start: now, y0: local.pos.y, air: true };
+    }
+  } else if (local.airDash) {
+    // round 13: a dash in the air holds its height, then we fall
+    local.pos.y = Math.max(groundAt(local.pos.x, local.pos.z, local.airDash.y), local.airDash.y);
+    if (now >= local.airDash.until || me.dead) { local.airDash = null; local.fall = { start: now, y0: local.pos.y, air: true }; }
   } else if (local.jump) {
     const e = now - local.jump.start;
     const fl = groundAt(local.pos.x, local.pos.z, local.pos.y);
-    local.pos.y = Math.max(fl, local.jump.y0 + C.JUMP.v0 * e - C.JUMP.gravity * e * e / 2);
-    if ((e > C.JUMP.airTime * 0.5 && local.pos.y <= fl + 0.001) || me.dead) { local.pos.y = fl; local.jump = null; local.fall = null; if (!me.dead) landed(); }
+    local.pos.y = Math.max(fl, C.jumpAt(local.jump, e));
+    if ((e > 0.1 && local.pos.y <= fl + 0.001) || me.dead) { local.pos.y = fl; local.jump = null; local.fall = null; if (!me.dead) landed(); }
   } else if (!local.flight && !me.dead) {
     const fl = groundAt(local.pos.x, local.pos.z, local.pos.y);
     if (local.pos.y > fl + 0.02) {
-      // walked off an edge: fall under the jump's gravity
-      local.fall ??= { start: now, y0: local.pos.y };
+      // walked off an edge: fall under the jump's gravity (carrying the speed we walked off with)
+      if (!local.fall) { local.fall = { start: now, y0: local.pos.y }; local.jumpSpeed = Math.max(local.jumpSpeed, Math.min(C.sprintOf(), Math.hypot(local.vel.x, local.vel.z))); }
       const e = now - local.fall.start;
       local.pos.y = Math.max(fl, local.fall.y0 - C.JUMP.gravity * e * e / 2);
-      if (local.pos.y <= fl + 0.001) { local.pos.y = fl; if (local.fall.y0 - fl > 0.6) landed(); local.fall = null; }
-    } else { local.pos.y = fl; local.fall = null; }   // on the floor, or stepped up onto a ramp, stair or low top
+      if (local.pos.y <= fl + 0.001) { local.pos.y = fl; if (local.fall.y0 - fl > 0.6 || local.airJumped) landed(); else { local.airJumped = false; local.jumpSpeed = 0; } local.fall = null; }
+    } else { local.pos.y = fl; local.fall = null; if (local.airJumped || local.jumpSpeed) { local.airJumped = false; local.jumpSpeed = 0; } }   // on the floor, or stepped up onto a ramp, stair or low top
   }
 
   // ---- collisions (2D circles)
@@ -2105,7 +2222,7 @@ function updateLocal(dt) {
     for (let i = 0; i < n; i++) {
       local.pos.x += lastDashDir[0] * step; local.pos.z += lastDashDir[1] * step;
       for (const c of C.COLLIDERS) if (y < c.h) pushOut(c.x, c.z, c.r);
-      if (C.SURFACES.length && !local.jump && !local.flight) {
+      if (C.SURFACES.length && !local.jump && !local.flight && !local.airDash) {
         // ramps and stairs: step up (STEP_UP at most) like walking; a platform's side stops us
         const fl = groundAt(local.pos.x, local.pos.z, local.pos.y);
         if (fl >= local.pos.y - 0.02) local.pos.y = fl;
@@ -2133,7 +2250,9 @@ function updateLocal(dt) {
   me.riding = !!local.ride;   // predicted: seated on the ram from the moment we mount
   me.sprinting = local.sprinting;
   me.castRooted = local.castRooted;
-  me.crouch = local.crouch; me.jumping = !!local.jump;
+  me.crouch = local.crouch; me.jumping = !!(local.jump || local.hover || local.airDash || (local.fall && local.airJumped));
+  hoverFx(me, !!local.hover);
+  for (const w of players.values()) if (w.flipTrailUntil > now && !LOW_FX && !w.dead) effects.burst(w.group.position.clone().setY(w.group.position.y + 0.7), w.color ?? 0xffffff, 1, 0.5, 0.22, 0);   // the flip's short trail
   me.charging = local.charging;
   me.slowed = now < local.slowUntil; me.bound = bound && !me.dead; me.frozen = now < local.frozenUntil || (me.frozen && me.bound);
   me.updateAnimation(!!moving, dt);
