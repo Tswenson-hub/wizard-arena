@@ -976,6 +976,56 @@ Please add them to the table in `icons/CREDITS.md` (yours); they're also listed 
   wizard's yaw is on `w.group.rotation.y`. Tell me if you'd like a `side` phase (`roll_left`/`roll_right`/`roll_back`), and I'll pick the phase
   from the direction.
 
+## characters → spells: round 12 Roll and Meteor Rain animation hooks (spellanim.js), four calls for main.js
+**Roll (answering your `side` question: yes, by direction).** `SPELL_ANIMS.roll` has four keys, all 0.45 s (tucked by 0.08 s, over by
+0.32 s, standing by 0.45 s), cut from Cinder's `Roll_Dodge`: `roll` (forward), `roll_back` (the same roll reversed), `roll_left`,
+`roll_right` (turned ±90°). `spellanim.js` exports `rollKey(dir, yaw)`: `dir` is the roll's world `[x, z]`, `yaw` the body's facing
+(`w.group.rotation.y`). So, for us on E and for others on the `roll` message:
+```js
+const a = spellPlay('roll', 'cast');            // ['roll', 0.45, 1, 0]
+if (a && w.actions[a[0] = rollKey(dir, w.group.rotation.y)]) w.oneShot(...a); else w.oneShot('dash', 0.4, 2.5, 2.2);
+```
+**Meteor Rain: the dive is Cinder's `Dive_Down_and_Land`, in four phases.** That clip is airborne from its first frame (no crouch or
+take-off in it), so the 1.3 s wind-up keeps the crouch-and-leap; the new clip covers the hover, the dive and the plunge. The keys are
+on any body with Meteor Rain equipped:
+- `ultWindup`: today it plays `'ult'` squeezed into `msg.left` (timeScale = clip length / 1.3). The ult keys run on past their release
+  (Meteor Rain's is 1.5 s with the leap at 1.3 s), so the squeeze fires every ultimate's release about 15% early. Please try
+  `playSpell(w, msg.ult, 'windup')` first (it plays at 1x, so the release lands on 1.3 s) and keep the current line as the fallback.
+  `msg.ult` is already on it.
+- `mrainLeap`: `playSpell(w, 'meteor_rain', 'hover')`. That's Dive_Down_and_Land's opening tuck slowed to 4.5 s (the 0.5 s rise plus a 4 s
+  hover at most). It replaces the shared float while she's up.
+- `mrainDive`: `playSpell(w, 'meteor_rain', 'dive')`. 0.6 s (= `MRAIN.dive` = `msg.left`): she somersaults, then plunges head first;
+  the head reaches the ground at 0.44 s and holds there until the impact at 0.6 s, so the plunge lands with `mrainLand`.
+- `mrainLand`: `playSpell(w, 'meteor_rain', 'land')`. 0.8 s, she comes up out of a crouch in the blast (only if she isn't dead).
+These keys hold the hips at body height (`flatY` in looks.js), so they play on a body the server is already flying.
+
+**done** (spells, `ed85e1c`): all four are wired in `main.js`.
+- **Roll:** `playRoll(w, dir)` uses `spellPlay('roll', 'cast')` with its key replaced by `rollKey(dir, w.group.rotation.y)`, for us on E and
+  for others on the `roll` message. It falls back to `dash` when the key isn't on the body. `rollKey` is read through a namespace import,
+  so main.js still loads before your spellanim.js commit lands.
+- **Meteor Rain:** `ultWindup` tries `playSpell(w, msg.ult, 'windup')` first, with the old squeeze as the fallback. `mrainLeap` plays
+  `hover`, `mrainDive` plays `dive`, and `mrainLand` plays `land` (only if she's alive).
+
+## spells → everyone: round 12 sections 1 and 2 landed (server, bots, client)
+- **Only Telekinesis lifts and throws.** The server ignores `pickup` and `throw` from anyone else, and so do the bots and the client's F.
+  Goats work the same way.
+- **Trapped Relic is traps only.** F on a prop (a tap or a hold) curses it after 0.5 s, and each curse costs the 3 s `liftCooldown`.
+  - **Limit:** two armed traps per caster; a third clears the oldest.
+  - **Triggers:** an enemy coming within 1.8 m (a 0.25 s fuse with a flare), an enemy lifting it, or an enemy's spell breaking it. When
+    the curser breaks their own trap, it only disarms.
+  - **Already standing there:** an enemy within 1.8 m when the curse lands has to step out and come back before it fires, so it's a trap
+    rather than a remote bomb.
+  - **Where it blows:** at the prop, or at the lifter's hold point when an enemy lifts it.
+  - **Glyphs:** enemies see a faint glyph within 6 m.
+  - **Net:** `{ t: 'curse', ids }` goes to the curser only, and `{ t: 'glyphs', ids }` goes to each human when the set of enemy traps they
+    can see changes. `{ t: 'relicFuse', id, p, by, fuse }` and `{ t: 'relicBlast', p, by, victim (null when it blew where it stood), prop }`
+    go to everyone.
+- **Roll (E):** `{ t: 'roll', dir, yaw, from }` goes up and `{ t: 'roll', id, from, dir, time, immune, charges }` comes back to everyone.
+- **Environment:** the server still spawns props from `C.PROP_SPAWNS` by index. If pumpkins leave `PROP_TYPES`, nothing of mine names
+  them, so no change is needed on my side.
+- **Tests:** `tools/test/modematch-unit.mjs` now starts the real server on port 4191 with `WA_DEBUG` (`debugPlace`, `debugProp`) for these
+  rules. It needs 9 open 4.6 m spots on the map and finds 11 today.
+
 ## environment → spells (and coordinator): round 12 map is in (`cd12afb`): prop ids, heal spot id, spawns, collider kinds
 - **`pumpkin` is gone** from `C.PROP_TYPES` and `C.PROP_SPAWNS`. The server's generic spawn needs no change; anything that names
   `'pumpkin'` (bots' prop picks, effects, sounds) can drop it. Nothing in your files did when I grepped.
@@ -1010,26 +1060,3 @@ Please add them to the table in `icons/CREDITS.md` (yours); they're also listed 
     their style is `parapet`.
   - New: `ledge-c-*` (the south-east ledge) and the pen rock's `pen-rock-steps-*` (now wooden stairs, with `rail-l`/`rail-r` move-only rails).
   - The `fort-*` surfaces are gone.
-
-## characters → spells: round 12 Roll and Meteor Rain animation hooks (spellanim.js), four calls for main.js
-**Roll (answering your `side` question: yes, by direction).** `SPELL_ANIMS.roll` has four keys, all 0.45 s (tucked by 0.08 s, over by
-0.32 s, standing by 0.45 s), cut from Cinder's `Roll_Dodge`: `roll` (forward), `roll_back` (the same roll reversed), `roll_left`,
-`roll_right` (turned ±90°). `spellanim.js` exports `rollKey(dir, yaw)`: `dir` is the roll's world `[x, z]`, `yaw` the body's facing
-(`w.group.rotation.y`). So, for us on E and for others on the `roll` message:
-```js
-const a = spellPlay('roll', 'cast');            // ['roll', 0.45, 1, 0]
-if (a && w.actions[a[0] = rollKey(dir, w.group.rotation.y)]) w.oneShot(...a); else w.oneShot('dash', 0.4, 2.5, 2.2);
-```
-**Meteor Rain: the dive is Cinder's `Dive_Down_and_Land`, in four phases.** That clip is airborne from its first frame (no crouch or
-take-off in it), so the 1.3 s wind-up keeps the crouch-and-leap; the new clip covers the hover, the dive and the plunge. The keys are
-on any body with Meteor Rain equipped:
-- `ultWindup`: today it plays `'ult'` squeezed into `msg.left` (timeScale = clip length / 1.3). The ult keys run on past their release
-  (Meteor Rain's is 1.5 s with the leap at 1.3 s), so the squeeze fires every ultimate's release about 15% early. Please try
-  `playSpell(w, msg.ult, 'windup')` first (it plays at 1x, so the release lands on 1.3 s) and keep the current line as the fallback.
-  `msg.ult` is already on it.
-- `mrainLeap`: `playSpell(w, 'meteor_rain', 'hover')`. That's Dive_Down_and_Land's opening tuck slowed to 4.5 s (the 0.5 s rise plus a 4 s
-  hover at most). It replaces the shared float while she's up.
-- `mrainDive`: `playSpell(w, 'meteor_rain', 'dive')`. 0.6 s (= `MRAIN.dive` = `msg.left`): she somersaults, then plunges head first;
-  the head reaches the ground at 0.44 s and holds there until the impact at 0.6 s, so the plunge lands with `mrainLand`.
-- `mrainLand`: `playSpell(w, 'meteor_rain', 'land')`. 0.8 s, she comes up out of a crouch in the blast (only if she isn't dead).
-These keys hold the hips at body height (`flatY` in looks.js), so they play on a body the server is already flying.

@@ -1,5 +1,100 @@
 # Spells hand-off
 
+## Round 12: Telekinesis is the only lift, Trapped Relic is traps only, and the Roll spell
+Commits: `b4ac6af` (data, icon, Roll API), `085fd8f` (server), `3c72a3d` (bots), `ed85e1c` (client), `0fad7ca` (tests),
+`67182e0` (the step-out rule), `6dc6aaf` (test port), plus this hand-off and the requests reply.
+
+### 1. The utility split
+- **Telekinesis is the only spell that lifts and throws.** The server's `pickup` and `throw` return early unless
+  `kit(p).utility === 'telekinesis'`. The client's F, its hover marker and its hint follow the same rule. Goats can only be lifted
+  with Telekinesis. Nothing else about Telekinesis changed.
+- **Trapped Relic is traps only** (`constants.js`: `traps: 2, trigger: 1.8, fuse: 0.25, seen: 6`; the blurb is the brief's).
+  - **F on a prop** curses it after `hold` (0.5 s), whether F is tapped or held. There is no lift fallback, and goats can't be cursed.
+    Each curse costs `liftCooldown` (3 s).
+  - **Two armed traps per caster.** A third clears the oldest (`cursedAt`). An object that is already a trap, yours or anyone's,
+    can't be cursed again.
+  - **Triggers** (server tick, at most once per prop per tick):
+    - An enemy coming within 1.8 m of a resting trap, centre to centre and below 1.6 m high, so flying over it is safe. It lights a
+      0.25 s fuse with a flare and a hiss (`relicFuse`), then blows whatever they do.
+    - An enemy with Telekinesis lifting it: it blows at their hold point, as before.
+    - An enemy's spell breaking it. `breakProp(prop, at, by)` now takes the breaker, and the cyclone, Frostfall, rams, crushes and
+      projectiles pass their owner. When the curser breaks their own trap, or a goat breaks it, it only disarms.
+  - **One addition beyond the brief: the step-out rule.** An enemy already within 1.8 m when the curse lands has to step out and
+    come back before it fires (`prop.near`). Without it, cursing a prop next to an enemy 16 m away was a 0.75 s, 59-damage remote
+    bomb every 3 s. The brief's word was *comes* within 1.8 m. It's a single `Set` in `case 'curse'`, easy to drop if Ty prefers it.
+  - **`relicBlast(prop, victim = null)`** uses the prop's centre when nobody holds it. Damage, the 3.5 m radius, the ward block and the
+    credit to the curser are unchanged.
+  - **Who sees a trap:** its curser always sees their glyphs (`{ t: 'curse', ids }`). Each human gets `{ t: 'glyphs', ids }` with the enemy
+    traps within 6 m, sent with the snapshots whenever that set changes. Enemy glyphs are drawn fainter.
+  - **HUD:** two red pips under F show the armed traps. The hint reads "F curse", "Your trap" or "A trap! Keep clear".
+- **Bots:**
+  - They lift and throw only with Telekinesis (the goat grab and `pickProp`).
+  - Relic bots keep up to two traps on likely paths. `curseCandidate` scores props by distance to the line between the target and
+    the bot, plus bonuses near tall cover, spawns and heal spots. It skips props within 2.8 m of the target (they would see the flare)
+    and props within 5 m of the bot's other trap.
+  - Every bot keeps more than about 2.4 m from an enemy trap it has noticed, within 6 m. Hard bots always notice one. Others notice
+    with a chance of `max(0.4, dodge)` per trap, and Hard bots also stay off a prop that blew up on them (`burned`).
+
+### 2. Roll (`SPELLBOOK.roll`, mobility, E)
+- **The dash:** 4.5 m over 0.35 s along the movement keys, or backwards with none. The client moves itself: the shared dash path now
+  takes `{ time, dist }`, and each 0.25 m step collides, steps up (`STEP_UP`) and stops at platform sides like walking. The server lets
+  it go that fast through `p.dashSpeed`. Bots go through `botDash(p, dir, until, speed)`.
+- **The dodge window:** projectiles pass through the roller for 0.25 s (`rollImmuneUntil`, in the projectile vs player loop). Areas
+  still land, as do beams, rams and cyclones.
+- **Charges:** two, each refilling 3.5 s after it was spent (`p.rollCharges`). `cd.mobility` is the earliest charge, so every
+  `mobilityReady` check works unchanged. Two pips under E count the charges, and the sweep shows once both are spent.
+- **It doesn't root and doesn't end crouch or sprint.** A ward drops, as with every mobility spell.
+- **Card:** arcane element, tags Mobility and Dodge, icon Raven fc1079 (`roll.png`, credited).
+- **Animation:** the characters agent's `rollKey(dir, yaw)` picks `roll`, `roll_back`, `roll_left` or `roll_right`, with `dash` as the
+  fallback. Their Meteor Rain phases (windup, hover, dive, land) are wired too.
+- **Bots** roll inside the dodge window when a projectile is about to hit (`th.tc < 0.25`, chance `0.6 × dodge`). They also roll in
+  the hurt escape, against goats, out of stampede lanes and away from enemy ultimates.
+
+### Verification
+- **Unit:** `MATCH_DEBUG=1 node tools/test/modematch-unit.mjs` prints ALL PASS (9 runs in a row, the last 6 with the port fix). It now
+  starts `server.js` on port 4191 with `WA_DEBUG`. `debugPlace` puts a test client anywhere and can reset its cooldowns; `debugProp` moves
+  a resting prop onto open ground (the map is too dense to find open props). The new checks:
+  - A Trapped Relic pickup is ignored, and Telekinesis lifts.
+  - Relic curses an object.
+  - The curser walking past their trap is safe.
+  - The glyph shows to an enemy at 5 m but not at 9 m.
+  - An enemy walking up lights the fuse, and the trap blows where it stands: 59 damage, credited to the curser.
+  - An enemy's Spark breaking a trap blasts the enemy beside it, and the curser breaking their own only disarms it.
+  - The step-out rule holds.
+  - Two traps at most, the oldest cleared.
+  - Roll goes, a Spark fired into it passes through, the next one after the window hits, and two charges then wait.
+- **Playwright** on port 4115 (`/tmp/wa-spells/r12_e2e.py`, screenshots in `/tmp/wa-spells/r12/`), no console errors:
+  - A tap of F on a crate curses it (`cursedProps [5]`, nothing carried), and a hand-sent `pickup` is refused.
+  - A trap moved next to a pinned bot blew (100 → 41), and a second one killed it. The kill feed shows Relic with the Trapped Relic
+    icon (`relic_cursed.png`, `roll_cd.png`).
+  - Roll moved 4.3 m back with no keys and about 4.6 m right with D. A third press inside the cooldown was refused, the pips emptied
+    and the E sweep showed 66 %.
+  - Telekinesis lifted a crate, threw it (`thrown`) and lifted a goat (`tk_goat.png`).
+  - **Use the Metal flags** (`--use-angle=metal --enable-gpu --ignore-gpu-blocklist`). SwiftShader ran at 0.5–1 fps here, which broke
+    every timing check.
+- **Balance**, `loadoutbalance.mjs <port> 12 75 hard`, with fully random loadouts (`/tmp/wa-spells/r12/balance_final.txt`, `balance.txt`):
+
+  | Run | Kills | Trapped Relic kill share | Relic K/D | Telekinesis K/D | Roll K/D | Roll runs |
+  |---|---|---|---|---|---|---|
+  | **Final code** (4117) | 57 | **19.3%** (11), the top spell overall | 1.27 | 0.71 | **1.86**, 1st of 7 mobility | 7 |
+  | Before the step-out rule (4116) | 60 | 8.3% (5) | 0.81 | 1.17 | 1.11 | 8 |
+
+  - Roll's kill share is 0 in both runs: it deals no damage.
+  - The script flags nothing in utility or mobility. Its bar for a 2-spell slot is 100% of the slot's kills, so it can't flag a
+    utility; in the final run Relic had 11 of the 16 utility kills.
+  - The two runs swing a lot (5 → 11 Relic kills on 22–26 carried runs). With about 60 kills per run, that's within noise.
+  - **Worth watching:** Relic topped the final run's kill share, and Roll had the best mobility K/D on 7 runs. If a longer run confirms
+    it, the levers are `RELIC.damage` (45, so 59 after scaling) or `liftCooldown`, and Roll's `immune` or `cooldown`. I haven't tuned
+    on two noisy runs.
+  - The only DOMINANT flag was Fireball in the primary slot (29.4%). It was 10% in the other run.
+
+### Left over / for the coordinator
+- **Ports:** a stale server from an earlier session still holds 4101. I wasn't allowed to stop it, so I used 4111, 4115, 4116 and 4117.
+  Stop them whenever you like.
+- **Not checked in a browser:** "a Spark passes through during the immunity window". The unit test covers it on the real server.
+- **Kill share for Roll is 0 by construction** (it deals no damage). Its equipped K/D is the meaningful number below.
+
+
 ## Round 11: loadouts replace heroes, a 4-player FFA is the only mode, the mute indicator, and the builder wiring
 Commits: `4eac039` (data model and API), `a0bc469` (wizards.js speeds), `84f2f99` (server, bots, match, client, tests),
 `1dfd823` (full-screen builder wiring, spell animations, icon credits), `8f2cf1a` (requests).
