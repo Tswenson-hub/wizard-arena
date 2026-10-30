@@ -1,5 +1,142 @@
 # Spells hand-off
 
+## Round 11: loadouts replace heroes, a 4-player FFA is the only mode, the mute indicator, and the builder wiring
+Commits: `4eac039` (data model and API), `a0bc469` (wizards.js speeds), `84f2f99` (server, bots, match, client, tests),
+`1dfd823` (full-screen builder wiring, spell animations, icon credits), `8f2cf1a` (requests).
+
+### 1. The loadout data model (`constants.js`, end of file; the API is in `requests.md`)
+- **A loadout** is `{ primary, power, guard, mobility, utility, ultimate }`, one `SPELLBOOK` id per slot, drawn from
+  `C.SPELL_POOL[slot]`. The pool holds 7 primaries, 6 powers, 7 shields, 6 mobility spells, 2 utilities and 6 ultimates,
+  so every hero signature is in, plus Spark and Ward.
+- **Helpers:**
+  - `sanitizeLoadout` returns a clean copy, or null when any slot is wrong. Nothing gets repaired.
+  - `randomLoadout`.
+  - `botLoadout`: half the time a preset, half the time random.
+  - `PRESETS`: the old kits, "Cinder's" and so on, taken from `wizards.js` `kit`.
+  - `DEFAULT_LOADOUT`: Cinder's kit.
+- **Card data:** `SPELL_INFO` and `spellInfo(id)` give the element, tags and display stats (damage through `C.D`, cooldown,
+  range, wind-up, duration).
+- **Elements:** `ELEMENTS` covers fire, wind, ice, dark ("Blood"), earth, acid ("Alchemy") and arcane.
+  - `loadoutElements` returns the mix, `dominantElement` the leading element.
+  - `loadoutColor` sets the ring and nameplate. `loadoutBolt` is the primary's glow; Spark takes the dominant element's.
+- **Combos:** `COMBOS`, `hasCombo`, `combosOf` and `combosWith`.
+  - Blood Lash: Black Death + Lash.
+  - Hot Brew: Brew + Potion Toss. Strong Brew: Brew + Toxic Flask.
+  - Hail from Above: Skyward + Frostfall, cast mid-air.
+  - **Herd Call** (Sling + Ram Guard) is the one new mechanic. When no calm goat answers a Sling hit, one of your circling
+    guard rams charges the target.
+  - The other four were already keyed on equipped spells, so they need both spells by construction.
+- **Voice:** `VOICES` and `sanitizeVoice`.
+- **Movement:** `MOVE_SPEED` 3.0, so `WALK_SPEED` is 3.0, and sprint is `SPRINT.speed` 5.5. Gale's 3.6 and 6.2 are gone.
+  `speedOf()`, `sprintOf()`, `chargeSpeedOf()` and `blockSpeedOf()` ignore their argument now.
+- **Removed:** `kitOf`, `BOLT_COLORS` and `boltColor`. `SLOT_INFO.guard` is now R, Shield.
+- **Tempest Veil:** `noRoot: true` is now a property of the spell itself.
+- **Client storage** is in `public/js/loadout-store.js`: localStorage `wizardLoadout`, `wizardVoice`, and `wizardLoadouts`
+  (3 saved custom loadouts).
+
+### Server (`server.js`, `server/bots.js`)
+- **Player state:** `p.loadout`, `p.pendingLoadout` and `p.voice` replace `p.wizard`. `kit(p)` is `p.loadout`.
+- **Hero logic gone:** the hero switching and team-hero code is deleted (`requestWizard`, `claimHero`, `resolveTeamHeroes`,
+  `teamHeroesPublic`).
+- **Join:** `join` takes `{ loadout, voice }`. A bad loadout falls back to the default, with `loadoutRejected`.
+- **Changing a loadout in game:** send `{ t: 'loadout', loadout?, voice? }`.
+  - A valid one waits in `pendingLoadout`; the snapshot shows `pendingLoadout: true`. It applies in `respawn`, or at once
+    if dead. Then `broadcast { t: 'loadout', id, loadout, voice, color }` goes out.
+  - A bad one gets `loadoutRejected`.
+  - A voice-only change applies at once.
+- **Snapshots:** each player carries `loadout`, `voice` and `pendingLoadout`, and no longer `wizard`. The color is the
+  loadout's.
+- **Respawn:** players face the map centre, or the spawn's yaw.
+- **addBot:** takes an optional preset id or a full loadout; otherwise `botLoadout()`, with a random voice. It logs the loadout.
+- **Bots:** they keyed their spells off `kit()` already, so only the speeds and the objective hooks changed.
+  `objectiveFor`, `objectiveGoal` and the Siege area-strafe are gone.
+
+### 3. One mode: a 4-player free-for-all (`server/match.js`, rewritten; `objectives.js` deleted)
+- **The match:** 4 fighters, first to 10, or the most kills at 8 minutes (a tie has no winner). Then 8 s of results, then
+  an immediate rematch (warm-up 10 s). There's no vote.
+- **Seats:**
+  - Bots fill up to 4 at the most recent human's difficulty.
+  - A human joining a full match takes a bot's place. With no bot to replace, they spectate (off the field, can't hurt
+    or be hurt) and get a notice. They take the next free place, earliest first.
+  - A bot someone asks for in a full match replaces a fill bot. It never takes a human's place.
+- **Spawns:** `spawnPointFor` picks the spawn farthest from every living enemy (± 2 m of randomness) from the environment
+  agent's seven rim spawns (`C.SPAWN_POINTS`; `C.FFA_SPAWNS` if it ever exists).
+- **Intermission:** no fighting on the results screen (`isEnemy` is false).
+- **Snapshot match state:** `{ mode: 'ffa', name, phase, left, target, size, leader }`. Results carry each player's loadout.
+- **Debug** (`MATCH_DEBUG=1`): `matchDebug` takes `target`, `cap`, `warmup`, `endTime`, `size`, `skip`, `spectate` (a test
+  observer, never seated), `pinBots` and `botDiff`. `matchStats` is unchanged.
+- **Client match UI:** `match-ui.js` and `match.css` are rewritten as a slim FFA HUD.
+  - The top bar shows the clock, "You N · leader X".
+  - Warm-up and Fight banners, with a countdown.
+  - The results table shows each wizard's loadout as element-coloured chips, and the rematch countdown.
+- **Gone:** team colours, Siege sounds, the vote screen and the team-hero greying.
+
+### 6. Sound
+- **The HUD speaker** (`#soundInd`, top left under the status line): it shows the volume, and turns red and crossed out
+  with "muted". Click it to toggle mute, like M.
+- **On join with a saved mute:** an orange "Sound is muted (press M)" line in the feed.
+- **Under the Esc menu**, the speaker, the ability bar, the HP bars and the banners are hidden.
+
+### Client wiring (`main.js`, `wizard.js`, `audio.js`, `net.js`, `index.html`, `style.css`)
+- **The builder:** `Select.mountSpellBuilder` (characters) on the join screen and in the Esc menu, with a six-`<select>`
+  fallback (presets, Randomize, mix, combos, voice) if it's missing.
+- **Join screen:** full screen. The header and "?" (controls and credits) sit on top. `#joinFooter` (name, bots
+  difficulty, Enter) goes into the builder's footer.
+- **Esc menu:** Resume, the pending note, bot swap buttons and sound sit in one top row. The builder fills the rest, and
+  scrolls under 560 px.
+- **Bodies:** a Wizard is built from `info.loadout` and `info.voice` (`makeWizardBody(loadout)`), and rebuilt when the
+  loadout changes.
+- **Colours:** the finisher accent sound is chosen by the primary's element (`sfx.finisher(pos, element)`). Grunts follow
+  the chosen voice, pitched by player id.
+- **Animations:** Battering Ram's wind-up and Toxic Flask play their `spellanim.js` clips (`playSpell`, with the old clip
+  as the fallback).
+- **Bots on join:** the old "practice bots" count is gone, since fill handles it.
+
+### Verification
+- **`MATCH_DEBUG=1 node tools/test/modematch-unit.mjs`: ALL PASS, 48 checks.** They cover:
+  - the loadout rules: rejections, presets, random coverage of every spell, card data, combos and the dominant element
+  - fill to 4; a human replacing a bot; the 5th spectating and being seated when a place opens
+  - an extra bot never displacing a human
+  - the 10th kill ending the match; the results; no damage on the results screen; the rematch with no vote and reset stats
+  - the 8-minute cap and its tie
+  - the farthest-from-enemies spawn, 30/30 against brute force
+  - pause and restart
+- **`node tools/test/modematch.mjs 4101 200 hard --target 5 --rematch`: PASS.** The match ended at the target after 196 s,
+  with 14 deaths, 4 fighters throughout, no damage on the results screen, and the rematch warm-up followed.
+- **Browser** (`/tmp/wa-spells/r11_e2e.py`, Playwright with swiftshader, about 1 fps under this machine's load):
+  - The saved loadout loaded, and the ability bar read Hex, Lash, Black Death, Blink, Lift, Blizzard.
+  - A bad loadout was refused ("Every slot needs a spell of that slot.").
+  - A valid one showed as pending, then applied at the rematch respawn: "New loadout: Fireball · Meteor · …", with the
+    colour going from dark red `d8203c` to fire `ff5c3c`.
+  - A saved mute showed the red speaker and the notice; a click unmuted it (80%).
+  - Screenshots are in `/tmp/wa-spells/`: `r11_join_1280.png`, `r11_join_1920.png`, `r11_join_help.png`, `r11_pause.png`,
+    `r11_sound_1280.png` (muted), `r11_sound_960.png` (60%), `r11_hud.png`, `r11_after.png`.
+- **Balance** (`node tools/test/loadoutbalance.mjs 4101 16 90 hard`, 4 Hard bots with fully random loadouts, 16 runs × 90 s,
+  output in `/tmp/wa-spells/balance_r11_final.txt`): 96 kills, plus 7 deaths to goats.
+  - **Top by killing-blow share:** Frostfall 15.6%, Telekinesis 13.5% (thrown props), Battering Ram 10.4%, Toxic Flask 7.3%,
+    Gale Shear 7.3%.
+  - **Bottom:** Sanguine Lash 1.0% (equipped K/D 0.36), Spark 1.0%, Sling 2.1%, Meteor Rain 2.1%, Meteor 3.1%. Eye of the
+    Storm, Stampede and Night Cage landed no killing blows.
+  - **Equipped K/D:** Mirror Step 2.22 and Potion Toss 1.88 are the best to carry. Lash 0.36, Ram Ride 0.57, Smoke Flask
+    0.67, Night Cage 0.68 and Sling 0.68 are the worst.
+  - **Flagged:** Frostfall is the only spell over twice its slot's even share, at 34.9% of power-slot kills against 16.7%.
+    Its 65 unblockable damage plus a 1.5 s freeze decides a 1v1. **I haven't tuned it**, since the sample is small (15
+    kills). The first lever I'd try is damage 50 → 40 base (52 after scale), or a 1.0 s freeze.
+  - **Caveat:** ram kills count as Battering Ram whenever the killer has it (power first), so Stampede may be undercounted.
+    Only 1–2 ultimates fire per 90 s run, so their numbers are noise.
+
+### Known issues and notes
+- **Spectator:** a spectator is a hidden wizard parked at (0, 0, −38). They can still move and cast harmlessly. There's
+  no proper spectator camera yet.
+- **The legacy pose path:** Meteor's wind-up, Frostfall's hold and release, Blizzard's channel, the tap shields and the
+  mobility casts still play wizard.js's legacy poses. The characters agent's `spellPlay` table is ready for them (see their
+  requests entry).
+- **Bot preferences:** bots don't yet prefer combos or avoid odd loadouts (for example a Spark with Ward and Telekinesis).
+  The AI handles any spell in any slot.
+- **Don't share the test server:** the balance harness and browser tests must not use the same server at the same time.
+  A human joining reshuffles the bots, and the last human leaving clears them all.
+- **`docs/agents/requests.md`** has an uncommitted deletion of an old round-10 section that isn't mine. I left it alone.
+
 ## Round 10: combat (+30% damage, Jeb's wind-up, regen, potions, ledge grab), plus Ty's add-ons: free sprint, higher jump, knockdowns, the Firewall rebuilt
 
 - **Damage:**
