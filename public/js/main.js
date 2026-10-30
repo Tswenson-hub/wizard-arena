@@ -52,6 +52,7 @@ const ui = {
   pickNote: $('#pickNote'),
   ammo: [...document.querySelectorAll('#abilities [data-ab="fast"] .ammo i')],
   fPips: [...document.querySelectorAll('#abilities [data-ab="throw"] .ammo i')],   // Roll's charges, or Trapped Relic's armed traps
+  ePips: [...document.querySelectorAll('#abilities [data-ab="mobility"] .ammo i')],   // (unused since Roll moved to F: kept hidden)
   ab: Object.fromEntries([...document.querySelectorAll('.ab')].map(el => [el.dataset.ab, el])),
   ultFg: $('#abilities .ult .fg'), ultPct: $('#abilities .ult .pct'),
 };
@@ -2336,6 +2337,7 @@ function updateHud(dt) {
   const rolls = K.utility === 'roll' ? (local.rollCharges || [0, 0]).filter(c => c <= now).length : -1;
   const traps = K.utility === 'trapped_relic' ? [...cursedProps].filter(id => props.get(id)?.data.state === 'idle').length : -1;
   const pips = rolls >= 0 ? [rolls, ROLL.charges] : traps >= 0 ? [traps, RELIC.traps] : [-1, 0];
+  ui.ePips.forEach(el => { if (el.style.display !== 'none') el.style.display = 'none'; });
   ui.fPips.forEach((el, i) => { el.style.display = pips[0] >= 0 && i < pips[1] ? '' : 'none'; el.classList.toggle('full', i < pips[0]); el.classList.toggle('trap', traps >= 0); });
   cdFill('block', local.cd.guard, SPELL[K.guard].cooldown);
   if (!me.carrying && !me.carryingGoat && now < local.liftCdUntil) cdFill('throw', local.liftCdUntil, SPELL[K.utility].liftCooldown);   // lift cooldown
