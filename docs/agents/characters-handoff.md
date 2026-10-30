@@ -1,5 +1,78 @@
 # Characters hand-off
 
+## Round 13: the jump, the double-jump flip, landing, air rolls, the hover and casting on the move
+
+### What I did
+- **`spellanim.js` (`COMMON_ANIMS`, on every body):**
+  - **`jump`:** the push-off for the first jump. It's Jeb's `Sword_Judgment` leap (0.6–0.9 s, the legs driving straight and
+    the staff arm going up), squeezed into 0.2 s with `flatY: 0`. Then the shared `float`.
+  - **`double_jump`:** the air jump's flip. It's Cinder's `Roll_Dodge` (0.55–1.8 s) with the hips pinned (`flatY: 0.1`), so
+    the tuck-and-roll becomes a tucked front somersault in the air. The head is lowest at 0.1 s and the body is upright
+    again by 0.3 s; the whole key is 0.45 s, then `float`.
+  - **`land`:** after an airtime with an air jump in it. It's Jeb's landing kneel with the staff driven down
+    (`Sword_Judgment` 1.16–2.5 s): crouched by 0.04 s, held to 0.12 s, standing by 0.3 s.
+- **Air rolls:** `roll_air`, `roll_air_back`, `roll_air_left` and `roll_air_right`. They're the roll keys with the hips pinned:
+  a front flip, a backflip and a sideways tumble each way. `rollKey(dir, yaw, air)` takes a third argument to pick them.
+- **`wizard.js`** (§4 gave me these hooks):
+  - **`airJump()`:** plays the flip. main.js calls it for us and on `jump` with `n: 2`.
+  - **The push-off** plays on `jumping`'s rising edge.
+  - **The land kneel** plays when an airtime with an air jump in it ends. It lasts 0.28 s, or 0.15 s when landing on the run
+    so the feet don't slide.
+  - **`hovering`** keeps the wind-up's pose instead of the float and adds a bob of 0–11 cm.
+  - `jump`, `double_jump` and `land` play once and hold their last frame.
+- **Casting on the move** (the spells agent asked for it in `requests.md`, now that only the big wind-ups root). A cast
+  that doesn't root plays on the upper body while the legs walk, run, backpedal or stand.
+  - Each clip gets an upper-body copy and a legs copy (the hips and legs). Each copy holds only its own bones' tracks, so
+    every bone has one driver, and the copies are made on first use.
+  - The split starts the moment you move during a cast and rejoins when you stop or leave the ground.
+  - A primary's next shot keeps the legs in stride.
+  - Whole-body moves never split: jumps, the flip, rolls, hits, deaths, rides, the Meteor Rain dive and Lash.
+- **The spells agent wired all of it** in main.js: `w.airJump()`, `playRoll(w, dir, air)`, `w.hovering` and `me.jumping`
+  through a hover or air dash.
+
+**Why the roll and not `Dive_Down_and_Land`, which the brief suggested.**
+- In the dive, 0.2–0.5 s is a static tuck with no rotation. Its somersault (0.6–1.2 s) ends head-down, because it's a dive.
+- The roll with its hips pinned is a full 360° that ends upright. It reads as a front flip from the side and from behind.
+- The roll was enough, so no procedural rotation was needed and `model.rotation.x` stays as it was.
+- Sheets: `/tmp/wa-characters/r13/raw1.png` (raw clips), `cand1.png` and `cand2.png` (the candidates), and `keys.png` (the final
+  keys: push-off, flip side-on and from behind, land, air rolls).
+
+### How I verified it (port 4103, headless Chromium with the Metal flags)
+- **Contact sheets** of the final keys: `/tmp/wa-characters/r13/keys.png`.
+- **In game** (`ingame.py`), with real Space presses through the spells agent's main.js:
+  - A single jump plays `jump`, then `float`, then `idle`, with a peak of **1.45 m**.
+  - A double jump plays `jump`, `float`, `double_jump` (at 0.28 s), `float`, `land`, then `idle`, with a peak of **2.59 m**.
+  - Frames are in `dj-sheet.png`: the push-off, the tuck, the turn over the top and the land kneel with its dust. The burst
+    ring is the spells agent's.
+- **Air rolls** (`airroll.py`): E in a jump with W, S, A or no key played `roll_air`, `roll_air_back`, `roll_air_left` and
+  `roll_air_back`, then `float`.
+- **Hover** (`hover2.py`): a Meteor charge (right mouse) started mid-jump played `cast_heavy` with `hovering` set, at a
+  steady 1.31 m for about 1.45 s, with a bob of 0–0.108 m. Then `float`, the throw and `idle`. The frame is
+  `hover-meteor.png`.
+- **The cast split** (`split.py`):
+  - Walking forward and casting puts `fireball3^up` at weight 1 and `walk_fight^legs` at 1, and nothing else.
+  - Starting to walk mid-cast splits it. Stopping mid-cast swaps the legs to `idle^legs`.
+  - After the cast it's `walk_fight` alone. The frame is `split-walkcast.png`.
+- No page errors in any run. `node --check` passes on both files. The server loads neither file, so no botmatch was needed.
+
+### Known issues and notes
+- The **hover** holds the ground wind-up pose (standing) in mid-air, as the brief asked. A nicer look would be the split:
+  the float's tucked legs under the wind-up's arms. That's a small follow-up if Ty wants it.
+- A **cast started right as you stop** (while the measured speed is still above 0.4 m/s) splits with standing legs. That's
+  fine, but it's slightly less expressive than the whole-body cast.
+- The **split's hips come from the walk**, so a cast's forward lean through the hips is lost while walking. The spine and arms
+  are kept.
+- **`roll_air_back`** is the forward roll reversed. It ends in the tuck, then cross-fades to `float`.
+
+### Meshy exports for Ty (to replace stand-ins)
+- **A true front flip** in the air (a tucked somersault, about 0.5 s, ending upright). It would replace the pinned roll for the
+  double jump.
+- **A backflip** (a standing back tuck). It's for `roll_air_back`, Smoke Screen's leap and a backward air jump.
+- **A jump takeoff:** a crouch, an explosive push-off and the knees coming up (about 0.3 s). The push-off is now a cut from
+  a sword leap.
+- **A landing:** a short absorb-and-rise crouch, without the sword-kneel flourish.
+- Optional: an **airborne cast pose** (legs tucked, both arms forward) for casting in the air and the hover.
+
 ## Round 12: the Cinder re-import, Roll, and Meteor Rain's dive
 
 ### What I did
