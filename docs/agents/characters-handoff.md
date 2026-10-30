@@ -1,5 +1,72 @@
 # Characters hand-off
 
+## Round 13b: Ty's second Jeb export (flips, jumps, landings, the air cast, the crouch)
+
+### What I did
+- **Import:** Ty's export (`Meshy_AI_shepherd_wizard_3d_All_Animations (1).glb`, 10.4 MB, same 66-joint rig) is a
+  new pool source.
+  - It went through `tools/prepare-wizard-model.sh … jeb2 64` and became `public/models/wizards/jeb2.glb` (1.4 MB). It's
+    only read by the bake; no page loads it.
+  - `jeb.glb` and its older clips (Sword_Judgment and the rest) are untouched.
+  - Its Running and Walking are skipped as duplicates, so the pool gains 7 clips. Pool: **47 clips, 848 KB** (was 40,
+    719 KB).
+- **`looks.js`:** `POOL_SOURCES.jeb2`, and a new pick option `pinXZ`. It keeps the hips' rise and fall but drops their
+  drift; this is for landings and the crouch walk, whose clips travel up to 1.2 m.
+- **`spellanim.js`:** each key below replaces round 13's version, after a side-by-side on the sheets:
+  - **`jump`** (the takeoff): `Basic_Jump` 1.72–2.25 s in 0.25 s. The legs drive straight and the arms rise. It reads
+    as a real jump, where the old cut read as a sword leap.
+  - **`double_jump`:** a layout **front flip**. It's `Backflip` 0.6–1.4 s played backwards: tucked, over the top at 0.2 s,
+    then opening out arms-up.
+  - **`double_jump_back`:** the backflip itself. Both are 0.45 s with the hips pinned.
+    - `airJump()` picks the backflip when the measured velocity runs backwards against the facing, so no hook is needed.
+    - Both beat the round 13 roll somersault: they're extended and acrobatic rather than a ball.
+    - `Backflip_Jump`'s flip is a tighter tuck; its in-air part is about 0.8 s, so it would need a 1.8× squeeze. `Backflip`
+      read better.
+  - **`land`** (the hard landing, after an air jump or a drop of 3 m or more): `Dive_Down_and_Land_2`'s three-point
+    crouch, one hand down and the staff out. Crouched by 0.05 s, standing by 0.4 s, or 0.22 s when landing on the run.
+  - **`land_soft`** (after a plain jump): `Basic_Jump`'s dip and rise, 0.25 s, or 0.15 s on the run. Stepping off a ledge
+    plays nothing.
+  - **`air_cast`:** `Jumping_Punch`'s in-air strike, knees tucked, with the strike at 0.1 s. `wizard.js` plays it in place
+    of any cast `oneShot` while airborne. It doesn't for rooting wind-ups (those hang in their own pose), whole-body moves,
+    or mobility casts.
+  - **`crouch_walk` / `crouch`:** `Crouch_Walk_with_Torch`, the walk and a held frame. The existing crouch branch in
+    wizard.js picks them up, so the squash stand-in is off. The walk is speed-scaled (natural 1.3 m/s).
+    - The torch arm is the staff hand, so the staff is carried low and forward like a spear. It reads fine, so nothing is
+      hidden.
+  - **`smoke_screen`:** `Backflip` from takeoff to landing (over by 0.3 s, up by 0.5 s). Graded `good` now.
+  - **`mrain_land`:** Meteor Rain's landing is now the three-point superhero crouch (0.8 s). It was Embibe's crouch-rise.
+- **`wizard.js`:** landings are decided per airtime from `jumping`, `inAir` and the peak height, for every wizard. Flips,
+  air casts and air rolls may be cut short by a landing; anything else playing at touchdown goes on.
+
+**Not used:**
+- **`Leap_Right_and_Catch`:** a small upright side hop. The pinned side roll tumble reads better as an air dodge.
+- **`Dive_Down_and_Land_2`'s dive half:** it starts head-down. After Meteor Rain's hover tuck it would snap, so the Cinder
+  dive stays.
+- **`Backflip_Jump`:** see above.
+
+### Verification (port 4103, `WA_DEBUG`, headless Chromium with the Metal flags)
+- **Clip sheets** in `/tmp/wa-characters/r13/`: `jeb2-a.png` and `jeb2-b.png` (raw), `c1.png` to `c3.png` (candidates),
+  and `final1.png` and `final2.png` (every final key).
+- **In game** (`jeb2game.py`, real keys):
+  - **Single jump:** `jump`, `float`, `land_soft`, `idle`, peak 1.45 m.
+  - **Double jump with W:** `jump`, `double_jump`, `float`, `land`, `walk_fight`, peak 2.59 m.
+  - **Double jump with S:** the same with `double_jump_back`.
+  - **Air cast:** LMB mid-jump played `air_cast` at 1.31 m, then `land_soft`.
+  - **Crouch (C):** `crouch` standing, `crouch_walk` with W.
+  - **Meteor Rain:** `mrain_land` on the impact.
+  - **Screenshots:** `g-sheet.png` (takeoff, air cast, hard and soft landings, crouch walk, crouch, Meteor Rain landing)
+    and `g-flips.png` (front flip and backflip mid-turn).
+  - No page errors.
+- **Smoke Screen in game is pending.** main.js's `case 'smoke'` plays the `back` walk directly. I asked the spells agent to
+  try `playSpell(w, 'smoke_screen', 'cast')` first (`requests.md`). The key itself is on `final2.png`.
+
+### Notes
+- An occasional `stun` shows in the traces. It's main.js's hit or block flinch from the bots, not these clips.
+- **Still wanted from Meshy:**
+  - an airborne cast with both arms forward (the punch is one-armed)
+  - a hunched shroud for Black Death
+  - a whistle for Ram Guard
+
 ## Round 13: the jump, the double-jump flip, landing, air rolls, the hover and casting on the move
 
 ### What I did
