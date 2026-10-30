@@ -2,7 +2,8 @@
 // Rule checks for server/match.js (round 11: a 4-player free-for-all only) against a fake server ctx (no network,
 // simulated clock): bot fill to 4, a human replacing a bot, a 5th human spectating until a place opens, first to 10,
 // the 8-minute cap, the results and the rematch with no vote, spawns farthest from enemies; plus the loadout rules
-// (constants.js sanitizeLoadout, presets, random loadouts, combos).
+// (constants.js sanitizeLoadout, presets, random loadouts, combos). Round 12 adds checks against the real server on port 4191
+// (WA_DEBUG debugPlace/debugProp): only Telekinesis lifts, Trapped Relic traps (triggers, 2 per caster, glyphs), Roll.
 import { createMatch } from '../../server/match.js';
 import * as C from '../../public/shared/constants.js';
 
@@ -136,6 +137,137 @@ const h6 = join(mk(false)); run(2);
 ok(!S.paused && S.phase === 'warmup' && fighters().length === 4, 'the next arrival starts a fresh warm-up with 3 bots');
 ok(match.canThrow(h6, props.get(1)), 'telekinesis throws normally');
 ok(!('vote' in match.matchPublic()) && !('zone' in match.matchPublic()) && !('scores' in match.matchPublic()), 'no vote, zone or team scores in the match state');
+
+// ---- round 12, against the real server (WA_DEBUG + MATCH_DEBUG, on a private port): only Telekinesis lifts, Trapped Relic
+// is traps only (2 per caster; an enemy close by, lifting it or breaking it sets it off), and Roll's charges and dodge window
+await serverChecks();
+
+async function serverChecks() {
+  const { spawn } = await import('node:child_process');
+  const { default: WebSocket } = await import('ws');
+  const port = 4191, root = new URL('../../', import.meta.url).pathname;
+  const srv = spawn(process.execPath, ['server.js'], { cwd: root, env: { ...process.env, PORT: String(port), WA_DEBUG: '1', MATCH_DEBUG: '1' }, stdio: ['ignore', 'pipe', 'inherit'] });
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  try {
+    await new Promise((res, rej) => { srv.stdout.on('data', d => { if (/listening/.test(d)) res(); }); srv.on('exit', () => rej(new Error('server exited'))); });
+    const RELIC = C.SPELLBOOK.trapped_relic, ROLL = C.SPELLBOOK.roll;
+    const join = async (name, lo) => {
+      const ws = new WebSocket(`ws://localhost:${port}`);
+      const c = { ws, name, msgs: [], id: null, props: null, send: (m) => ws.send(JSON.stringify(m)) };
+      ws.on('message', raw => { const m = JSON.parse(raw); if (m.t === 'welcome') { c.id = m.id; c.props = m.props; } c.msgs.push(m); });
+      await new Promise(r => ws.on('open', r));
+      c.send({ t: 'join', name, loadout: { ...C.DEFAULT_LOADOUT, primary: 'spark', ...lo } });
+      while (c.id == null) await wait(10);
+      return c;
+    };
+    const since = (c, n, pred) => c.msgs.slice(n).filter(pred);
+    const A = await join('Relic', { utility: 'trapped_relic' }), B = await join('Tk', { utility: 'telekinesis' });
+    const V = await join('Victim', { utility: 'telekinesis' }), R = await join('Roller', { mobility: 'roll', utility: 'telekinesis' });
+    A.send({ t: 'matchDebug', size: 4, warmup: 1 }); A.send({ t: 'removeBots' });
+    await wait(1500);
+    const place = (c, p, yaw = 0) => c.send({ t: 'debugPlace', p: [p[0], 0, p[1]], yaw });
+    const park = (c, i) => place(c, [-30 + i * 3, -33 + i]);   // out of the way, on the south rim
+    [A, B, V, R].forEach(park);
+    // open ground (no collider, platform or prop within 5 m), and a prop moved to each spot (debugProp)
+    const clear = (x, z, r) => Math.hypot(x, z) < C.ARENA_RADIUS - 4 && C.COLLIDERS.every(c => Math.hypot(c.x - x, c.z - z) > c.r + r)
+      && A.props.every(p => Math.hypot(p.x - x, p.z - z) > r) && [-r, 0, r].every(dx => [-r, 0, r].every(dz => C.surfaceTopAt(x + dx, z + dz) < 0.05));
+    const spots = [];
+    for (let x = -34; x <= 34; x++) for (let z = -34; z <= 34; z++) if (clear(x, z, 5) && spots.every(q => Math.hypot(q[0] - x, q[1] - z) > 10)) spots.push([x, z]);
+    ok(spots.length >= 8, `eight open spots for the trap and roll tests (${spots.length})`);
+    const open = A.props.filter(p => p.state === 'idle').slice(0, 7);
+    open.forEach((p, i) => { p.x = spots[i][0]; p.z = spots[i][1]; A.send({ t: 'debugProp', id: p.id, x: p.x, z: p.z }); });
+    await wait(100);
+    const [p1, p2, p3, p4] = open;
+    const at = (prop, dx, dz) => [prop.x + dx, prop.z + dz];
+    const aimAt = (c, from, prop) => { const o = [from[0], 1.3, from[1]], t = [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z]; return { aimOrigin: o, aimDir: [t[0] - o[0], t[1] - o[1], t[2] - o[2]] }; };
+    const yawTo = (from, prop) => Math.atan2(prop.x - from[0], prop.z - from[1]);
+    const curse = async (prop) => {
+      const from = at(prop, 4, 0); place(A, from, yawTo(from, prop)); A.send({ t: 'debugPlace', p: [from[0], 0, from[1]], resetCd: true }); await wait(80);
+      const n = A.msgs.length; A.send({ t: 'curse', ...aimAt(A, from, prop) }); await wait(120);
+      return since(A, n, m => m.t === 'curse').pop()?.ids || null;
+    };
+
+    // Telekinesis only: a Relic player's pickup is ignored; a Telekinesis player's lifts
+    {
+      const from = at(p1, 4, 0); place(A, from, yawTo(from, p1)); await wait(80);
+      const n = A.msgs.length; A.send({ t: 'pickup', ...aimAt(A, from, p1) }); await wait(500);
+      ok(!since(A, n, m => m.t === 'prop' && m.prop.carrier === A.id).length, 'Trapped Relic can\'t lift (pickup ignored)');
+      park(A, 0);
+      place(B, from, yawTo(from, p1)); await wait(80);
+      const k = B.msgs.length; B.send({ t: 'pickup', ...aimAt(B, from, p1) }); await wait(600);
+      ok(since(B, k, m => m.t === 'prop' && m.prop.id === p1.id && m.prop.carrier === B.id).length > 0, 'Telekinesis lifts');
+      B.send({ t: 'drop' }); await wait(100);
+      park(B, 1); await wait(80);
+    }
+    // the curse, then the curser walking past it, then an enemy walking in
+    {
+      const ids = await curse(p2);
+      ok(ids?.includes(p2.id), 'Trapped Relic curses an object (F, no lift)');
+      let n = A.msgs.length;
+      place(A, at(p2, 1, 0)); await wait(600);
+      ok(!since(A, n, m => (m.t === 'relicFuse' || m.t === 'relicBlast') && (m.id === p2.id || m.prop === p2.id)).length, 'the curser walking past their own trap doesn\'t set it off');
+      park(A, 0);
+      place(V, at(p2, 0, 5)); await wait(200);
+      ok(V.msgs.filter(m => m.t === 'glyphs').pop()?.ids?.includes(p2.id), `an enemy within ${RELIC.seen} m sees the trap's glyph`);
+      place(V, at(p2, 0, 9)); await wait(200);
+      ok(!V.msgs.filter(m => m.t === 'glyphs').pop()?.ids?.includes(p2.id), 'and not from farther away');
+      n = V.msgs.length;
+      place(V, at(p2, 0, 1.2)); await wait(500);
+      const fuse = since(V, n, m => m.t === 'relicFuse' && m.id === p2.id)[0], blast = since(V, n, m => m.t === 'relicBlast' && m.prop === p2.id)[0];
+      const hit = since(V, n, m => m.t === 'hit' && m.target === V.id && m.kind === 'trapped_relic' && m.attacker === A.id)[0];
+      ok(!!fuse && !!blast && blast.by === A.id && blast.victim === null, 'an enemy walking up to it lights the fuse, and it blows where it stands');
+      ok(!!hit && hit.dmg > 0, `the enemy takes the blast, credited to the curser (${hit?.dmg} damage)`);
+      park(V, 2); await wait(600);
+    }
+    // an enemy's spell breaking it sets it off; the curser breaking their own only disarms it
+    {
+      let ids = await curse(p3);
+      ok(ids?.includes(p3.id), 'a second trap');
+      park(A, 0);
+      place(V, at(p3, 0, 2.6)); const from = at(p3, -4.5, 0); place(B, from, yawTo(from, p3)); await wait(150);
+      let n = V.msgs.length;
+      B.send({ t: 'cast', kind: 'fast', ...(({ aimOrigin, aimDir }) => ({ origin: aimOrigin, dir: aimDir }))(aimAt(B, from, p3)) }); await wait(700);
+      ok(since(V, n, m => m.t === 'relicBlast' && m.prop === p3.id).length === 1, 'an enemy\'s Spark breaking a trap sets it off');
+      ok(since(V, n, m => m.t === 'hit' && m.target === V.id && m.kind === 'trapped_relic').length === 1, 'and blasts an enemy beside it');
+      park(B, 1); park(V, 2); await wait(800);
+      ids = await curse(p4);
+      ok(ids?.includes(p4.id), 'a trap to break ourselves');
+      const f2 = at(p4, -4.5, 0); place(A, f2, yawTo(f2, p4)); place(V, at(p4, 0, 2.6)); await wait(150);
+      n = V.msgs.length;
+      A.send({ t: 'cast', kind: 'fast', ...(({ aimOrigin, aimDir }) => ({ origin: aimOrigin, dir: aimDir }))(aimAt(A, f2, p4)) }); await wait(700);
+      ok(since(V, n, m => m.t === 'propBreak' && m.id === p4.id).length === 1 && !since(V, n, m => m.t === 'relicBlast').length
+        && !since(V, n, m => m.t === 'hit' && m.target === V.id).length, 'the curser breaking their own trap only disarms it');
+      park(V, 2);
+    }
+    // two armed traps at most: a third clears the oldest
+    {
+      const fresh = open.slice(4, 7);
+      const got = [];
+      for (const pr of fresh) got.push(await curse(pr));
+      ok(fresh.length === 3 && got[1]?.length === 2 && got[2]?.length === RELIC.traps && !got[2].includes(fresh[0].id) && got[2].includes(fresh[2].id),
+        `${RELIC.traps} traps per caster; a third clears the oldest (${JSON.stringify(got)})`);
+      park(A, 0);
+    }
+    // Roll: two charges, then the cooldown; a Spark passes through inside the dodge window, and hits after it
+    {
+      const spot = [spots[7][0] + 2, spots[7][1]], from = [spot[0] - 4, spot[1]];
+      place(R, spot); place(B, from, Math.atan2(spot[0] - from[0], spot[1] - from[1])); B.send({ t: 'debugPlace', p: [from[0], 0, from[1]], resetCd: true }); await wait(800);
+      const shoot = () => B.send({ t: 'cast', kind: 'fast', origin: [from[0], 1.3, from[1]], dir: [spot[0] - from[0], C.HIT_CENTER_Y - 1.3, spot[1] - from[1]] });
+      let n = R.msgs.length;
+      R.send({ t: 'roll', dir: [0, 0, 1] }); shoot(); await wait(400);
+      ok(since(R, n, m => m.t === 'roll' && m.id === R.id).length === 1, 'Roll goes');
+      ok(!since(R, n, m => m.t === 'hit' && m.target === R.id).length, 'a Spark fired into the roll passes through (dodge window)');
+      await wait(200); n = R.msgs.length; shoot(); await wait(400);   // (Spark's cooldown is 0.45 s)
+      ok(since(R, n, m => m.t === 'hit' && m.target === R.id).length === 1, 'after the window, the next Spark hits');
+      n = R.msgs.length;
+      R.send({ t: 'roll', dir: [0, 0, -1] }); await wait(450);
+      R.send({ t: 'roll', dir: [0, 0, 1] }); await wait(200);
+      ok(since(R, n, m => m.t === 'roll' && m.id === R.id).length === 1, `two charges, then wait (${ROLL.cooldown} s)`);
+    }
+    for (const c of [A, B, V, R]) c.ws.close();
+  } catch (e) { ok(false, `server checks: ${e.message}`); }
+  finally { srv.kill(); }
+}
 
 console.log(fails ? `${fails} FAILED` : 'ALL PASS');
 process.exit(fails ? 1 : 0);
