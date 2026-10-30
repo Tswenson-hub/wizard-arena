@@ -889,24 +889,20 @@ export class Effects {
     const g = new THREE.Group();
     g.position.set(w.x, 0, w.z);
     g.rotation.y = w.yaw;
-    const sheets = [0, 1, 2].map(i => {
-      const tex = fireTexture().clone(); tex.needsUpdate = true;
-      tex.wrapT = THREE.ClampToEdgeWrapping;   // the tips fade out at the top; only the sideways sway scrolls
-      tex.repeat.set(2.5 + i * 0.7, 1);
-      const m = new THREE.Mesh(new THREE.PlaneGeometry(F.width + i * 0.3, F.height - i * 0.4),
-        new THREE.MeshBasicMaterial({ map: tex, color: [0xffc070, 0xff7a2a, 0xff4a10][i], transparent: true, opacity: 0, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
-      m.position.set(0, (F.height - i * 0.4) / 2, (i - 1) * 0.18);
-      g.add(m);
-      return m;
-    });
-    const base = new THREE.Mesh(new THREE.PlaneGeometry(F.width + 0.6, 0.9).rotateX(-Math.PI / 2),
-      new THREE.MeshBasicMaterial({ color: 0xff5a10, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false }));
-    base.position.y = 0.12;
+    // round 10 (Ty: "rough and boxy"): no sheets; a curtain of flame billboards spawned in update(), feathered at the
+    // ends and the top, over a glowing base, with embers, sparks and smoke. Only the light lives in the group.
     const light = new THREE.PointLight(0xff6a1e, 10, 12);
     light.position.y = 1.4;
-    g.add(base, light);
+    g.add(light);
     this.scene.add(g);
-    const e = { group: g, sheets, base, light, born: realNow(), endAt: realNow() + w.left, ember: 0 };
+    const along = [Math.cos(w.yaw), -Math.sin(w.yaw)];
+    // the ground glow along the base: a few long-lived flat glows, tapered at the ends
+    const glows = [];
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 4 - 0.5) * F.width * 0.85, edge = Math.cos(Math.PI * a / (F.width * 1.1));
+      glows.push(this.S('circle_05', { p: [w.x + along[0] * a, 0.06, w.z + along[1] * a], mode: 'flat', size: [0.5, 2.2 * edge + 0.6], life: w.left + 0.4, color: 0xff6a1e, alpha: 0.55 * edge + 0.15, fadeIn: 0.06, fadePow: 0.3 }));
+    }
+    const e = { group: g, light, glows, along, x: w.x, z: w.z, born: realNow(), endAt: realNow() + w.left, flame: 0, ember: 0, smoke: 0 };
     (this.firewalls ??= new Set()).add(e);
     // the ignite: a burst along its length
     for (let i = -2; i <= 2; i++) {
@@ -917,7 +913,7 @@ export class Effects {
     this.scorchDecal({ x: w.x, z: w.z }, F.width * 0.45, w.left + 4, 0x1a0c06, 0.6);
     return e;
   }
-  endFirewall(e) { if (e) e.endAt = Math.min(e.endAt, realNow()); }
+  endFirewall(e) { if (e) { e.endAt = Math.min(e.endAt, realNow()); for (const q of e.glows || []) if (q) q.life = Math.min(q.life, q.age + 0.35); } }
   // A projectile burning up in a Firewall.
   burnUp(p) {
     const pos = new THREE.Vector3(p[0], p[1], p[2]);
@@ -1393,23 +1389,45 @@ export class Effects {
     for (const e of this.firewalls || []) {
       const k = Math.min(1, (rn - e.born) / 0.2), fade = Math.max(0, Math.min(1, (e.endAt - rn) / 0.35));
       if (fade <= 0) { this.firewalls.delete(e); this.scene.remove(e.group); continue; }
-      e.sheets.forEach((m, i) => {
-        m.material.opacity = ([0.6, 0.55, 0.45][i] + Math.sin(this.clock * (19 + i * 6)) * 0.08) * k * fade;
-        m.material.map.offset.x = this.clock * (0.15 + i * 0.1) * (i % 2 ? -1 : 1) + Math.sin(this.clock * 3 + i) * 0.04;
-        m.scale.y = (0.3 + 0.7 * k) * (1 + Math.sin(this.clock * (13 + i * 4) + i * 2) * 0.1);
-        m.position.y = m.geometry.parameters.height * m.scale.y / 2;
-      });
-      e.base.material.opacity = 0.6 * fade;
-      e.light.intensity = (8 + Math.sin(this.clock * 23) * 3) * fade;
-      // embers drifting up off the flames
-      e.ember += dt;
-      while (e.ember > 0.015) {
-        e.ember -= 0.015;
-        if (this.low && Math.random() < 0.55) continue;
-        const F = C.SPELLBOOK.firewall, a = (Math.random() - 0.5) * F.width, yaw = e.group.rotation.y, flame = Math.random() < 0.45;
-        this.S(flame ? (Math.random() < 0.5 ? 'flame_01' : 'fire_01') : 'circle_05', { p: [e.group.position.x + Math.cos(yaw) * a, flame ? 0.4 + Math.random() * 1.2 : 0.3 + Math.random() * 2.5, e.group.position.z - Math.sin(yaw) * a],
-          v: [(Math.random() - 0.5) * 1.2, 2 + Math.random() * 2.5, (Math.random() - 0.5) * 1.2], grav: -1, life: flame ? 0.45 : 0.5 + Math.random() * 0.4,
-          size: flame ? [1, 0.4] : [0.16, 0.05], spin: flame ? (Math.random() - 0.5) * 2 : 0, color: flame ? (Math.random() < 0.5 ? 0xffc050 : 0xff8a2a) : (Math.random() < 0.5 ? 0xffb040 : 0xff5a1e), alpha: flame ? 0.75 : 1, add: !flame });
+      // heat flicker on the light
+      e.light.intensity = (8 + Math.sin(this.clock * 23) * 2 + (Math.random() - 0.5) * 3) * fade * k;
+      const F = C.SPELLBOOK.firewall, W = F.width, rate = this.low ? 0.5 : 1;
+      // a spot along the wall, tapered: fewer and smaller flames toward the ends (no hard silhouette)
+      const spot = () => { let a, edge; do { a = (Math.random() - 0.5) * W; edge = Math.cos(Math.PI * a / W); } while (Math.random() > 0.25 + 0.75 * edge); return [a, Math.max(0.15, edge)]; };
+      const at = (a, y, off = 0) => [e.x + e.along[0] * a - e.along[1] * off, y, e.z + e.along[1] * a + e.along[0] * off];
+      // the flames: overlapping billboards rising and curling, shrinking and fading as they go (the top feathers out)
+      e.flame += dt * 150 * rate * fade;
+      while (e.flame > 1) {
+        e.flame -= 1;
+        const [a, edge] = spot(), sz = (1.3 + Math.random() * 1.4) * (0.4 + 0.6 * edge) * (0.5 + 0.5 * k);
+        const body = Math.random() < 0.62;   // most of the curtain alpha-blended (true orange in daylight), the rest additive highlights
+        const up = (1.2 + Math.random() * 1.4) * (0.45 + 0.55 * edge) * F.height / 3, curl = (Math.random() - 0.5) * 1.2;
+        // born anywhere up the lower part of the curtain (lower toward the ends), so the body is full, not just the base
+        const y0 = 0.1 + Math.pow(Math.random(), 1.3) * F.height * 0.5 * edge * k;
+        this.S(['flame_01', 'flame_03', 'fire_01', 'fire_02'][Math.floor(Math.random() * 4)], { p: at(a, y0, (Math.random() - 0.5) * 0.3),
+          v: [e.along[0] * curl, up, e.along[1] * curl], drag: 0.6, grav: -0.6, life: 0.5 + Math.random() * 0.45,
+          size: [sz, sz * 0.45], aspect: 1.25, spin: (Math.random() - 0.5) * 2.4, rot: (Math.random() - 0.5) * 0.6,
+          color: body ? [0xffc050, 0xff9a30, 0xff7020, 0xffd070][Math.floor(Math.random() * 4)] : [0xffd080, 0xffa040, 0xff7a2a][Math.floor(Math.random() * 3)],
+          alpha: (body ? 0.75 + Math.random() * 0.2 : 0.55 + Math.random() * 0.35) * fade, fadeIn: 0.12, fadePow: 1.4, add: !body });
+      }
+      // the hot core along the base, and embers and sparks spitting up
+      e.ember += dt * rate * fade;
+      while (e.ember > 0.012) {
+        e.ember -= 0.012;
+        const [a, edge] = spot(), r = Math.random();
+        if (r < 0.4) this.S('circle_05', { p: at(a, 0.2 + Math.random() * 0.2), v: [0, 0.4, 0], life: 0.35, size: [1.1 * edge + 0.3, 0.6], color: 0xff7a2a, alpha: 0.45 * fade, fadeIn: 0.2 });
+        else if (r < 0.85) this.S('circle_05', { p: at(a, 0.3 + Math.random() * 1.5), v: [(Math.random() - 0.5) * 1.6, 2.5 + Math.random() * 3, (Math.random() - 0.5) * 1.6], grav: -0.5, drag: 0.4,
+          life: 0.6 + Math.random() * 0.6, size: [0.12, 0.04], color: Math.random() < 0.5 ? 0xffd080 : 0xff8a2a, alpha: fade });
+        else this.S('trace_01', { p: at(a, 0.4 + Math.random()), v: [(Math.random() - 0.5) * 3, 3 + Math.random() * 3, (Math.random() - 0.5) * 3], grav: 5, life: 0.4,
+          size: [0.7, 0.25], aspect: 0.8, mode: 'streak', stretch: 0.06, color: 0xffc060, alpha: fade, optional: true });
+      }
+      // a dark smoke wisp rising off the top
+      e.smoke += dt * 7 * rate * fade;
+      while (e.smoke > 1) {
+        e.smoke -= 1;
+        const [a] = spot();
+        this.S(['smoke_01', 'smoke_07', 'smoke_08'][Math.floor(Math.random() * 3)], { p: at(a * 0.8, F.height * 0.8 + Math.random() * 0.5), v: [(Math.random() - 0.5) * 0.6, 1 + Math.random() * 0.6, (Math.random() - 0.5) * 0.6],
+          drag: 0.5, life: 1.4 + Math.random() * 0.6, size: [1, 2.8], spin: (Math.random() - 0.5) * 0.6, color: 0x2a2420, alpha: 0.28 * fade, add: false, fadeIn: 0.25 });
       }
     }
     for (const e of this.cages || []) {

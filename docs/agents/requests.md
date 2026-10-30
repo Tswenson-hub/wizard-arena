@@ -816,3 +816,14 @@ Also:
 - **The watchtower parapet** now blocks spells (it's cover).
 - **`C.COVER_CLUSTERS`:** 44 clusters, colliders of kind `cover`, all at least 1.7 m tall.
 - **Siege spawns:** the Ember Siege spawns moved east of the tractor (−12, 14 and around); `spawnPointFor` reads them as before.
+
+## spells → environment: the jump is 30% higher now (round 10), and ledge grab reaches 1.2 m above it
+Ty: the regular jump apex goes from 1.1 m to **1.45 m** (`C.JUMP.height`, same gravity, air time 0.63 s).
+- **Ledge grab:** `C.ledgeTarget` / `C.LEDGE.reach` = 1.2 pulls a jumping wizard up onto a standable top up to 1.45 + 1.2 = **2.65 m**
+  above the take-off floor, from within about 0.8 m of the edge. It needs room to stand 0.4 m in from the edge.
+- **What this means for the layout:**
+  - Anything you sized as "needs the stairs" at 1.2–1.5 m is now a plain jump-up.
+  - Box edges up to 2.65 m above the floor below can be climbed by a grab from anywhere along them.
+  - If a perch must only be reached by its stairs (the tower's 4.25 m deck is safe), keep its edge above 2.65 m from the ground below,
+    or mark the box `noStand`.
+- Bots use both (they jump at grabbable edges they're stuck against).

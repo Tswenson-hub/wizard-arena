@@ -1,5 +1,78 @@
 # Spells hand-off
 
+## Round 10: combat (+30% damage, Jeb's wind-up, regen, potions, ledge grab), plus Ty's add-ons: free sprint, higher jump, knockdowns, the Firewall rebuilt
+
+- **Damage:**
+  - **Scale:** `C.DAMAGE_SCALE = 1.3`, applied once in server.js `applyHit`, so every hit (primaries, powers, ultimates, DoTs, thrown props
+    and goats, rams, relic, Firewall burn) scales and is tuned in one place.
+  - **Unchanged:** healing, wall HP, stamina costs, and ult charge per hit (charge uses dmg / scale).
+  - **One-shots stay one-shots:** goat and ram kills, and Meteor Rain's dive kill, go to `killPlayer` directly.
+  - **Blurbs:** numbers use `C.D(n)`, so they follow the scale.
+  - **Verified:** Fireball hits 26 / 26 / 36 (base 20/20/28) before the balance change below.
+- **Balance:** Cinder's Fireball base went 20 → 18 (third shot 28 → 26), because Cinder topped all three runs at 20.
+- **Jeb's Battering Ram:**
+  - **Wind-up:** `BRAM.windup` 0.8 s. `p.ramWind`, cast-rooted, nothing else castable meanwhile.
+  - **Interrupt:** a hit that interrupts (finisher, heavy) cancels it (`ramWindCancel`, 3 s cooldown). A stun or bind does too.
+  - **Launch:** `launchRam` sends `batteringRam` after the wind-up; cooldown 12 s as before.
+  - **Tell:** a translucent gilded `GoatView` in its rearing `windup` state at the launch point (main.js `ghostRams`), plus a stomp, dust,
+    a snort, and Jeb's heavy-cast pose.
+  - **Bots:** they treat a winding Jeb as a wind-up to punish (`busyCasting`).
+  - **Verified:** launched after 0.81 s; a finisher mid wind-up cancelled it and nothing launched.
+- **Regen** (`C.REGEN` = 5 s, 8 HP/s):
+  - **Server:** `p.lastDamagedAt` is set on any damage; `p.regen` heals in the tick. The snapshot carries `regen`, and our HP bar pulses
+    green (`.bar.hp.regen`).
+  - **Verified:** none at 4 s; +32 HP over the next 4 s.
+- **Health potions** (`C.POTION`: 35 HP, 20 s, at `C.HEAL_SPOTS`):
+  - **Server:** a hurt wizard within 0.9 m and 1 m of the spot's height drinks it, via `heal()` with green numbers. Messages are
+    `{ t: 'potion', id, p, ready, left, by }`, and `welcome.potions` carries the state.
+  - **Client:** a red flask bobbing on a wooden stand, with a light and a glow sprite. A HUD marker (Raven potion icon and distance) shows
+    for ready potions within 25 m when hurt, or within 8 m. The pickup plays a burst, a shimmer and a drink sound.
+  - **Bots:** `potionGoal` when under 55 HP: the nearest ready potion within 22 m whose spot has a floor, through the ramp router; not in a
+    close fight above 35 HP.
+  - **Verified:** 48 → 83 HP; the flask was back after 20.0 s.
+- **Ledge grab** (`C.LEDGE`: reach 1.2, time 0.45, rise 0.3; `C.ledgeTarget(p, dir, apexY)` is the one rule):
+  - **Rule:** a standable top 0.55–0.8 m ahead, above a step from the feet and at most apex + 1.2, with room 0.4 m in.
+  - **Client:** checks it each frame of a jump while moving, then sends `grab` with its direction and plays the pull-up (rise, then in;
+    no wall push; cast-rooted; `tk_lift` pose).
+  - **Server:** `startGrab` recomputes it from its own copy, for the jump in progress or one that ended under air time + 1 s ago. The
+    height check allows up to the top during the pull-up, and `grabAt` moves bots.
+  - **Bots:** they try it mid-jump toward where they're heading, and jump at grabbable walls they're stuck against.
+  - **Verified** (`t_r10b.mjs`): a grab from the ground at the low plateau's edge ended at y = 1.50 on the server; a grab without a jump
+    was refused. In the browser the client found the same target; a full browser grab couldn't be driven at about 1 fps (see Tests).
+- **Sprint is unlimited:** `SPRINT.drain` 0, no stamina gate, no regen pause. It still won't start while casting, crouching or carrying,
+  and still ends on a cast. Bots no longer save stamina for it, and they sprint at targets they can't see.
+  - **Verified:** 8 s of Shift+W, stamina 100 throughout, up to 5.5 m/s.
+- **Jump 30% higher:** `JUMP.height` 1.45 m, `airTime` 0.631 s, same gravity. The server's jump clamp is apex + 0.2 = 1.65.
+  - The environment agent was told (requests.md), and checked every standable top; the ruin ledges went to 2.0 m.
+- **Knockdown** (`C.KNOCKDOWN`: kinds prop and goat; fall 0.4, down 0.8, getup 0.4; fling 24 m/s, about 2 m):
+  - **When:** an unblocked thrown object; a ward, veil or wall prevents it.
+  - **Effect:** a 1.6 s stun (no moving, acting or shielding; the ward drops, sprint ends), knockback, and every interrupt. `hit.knockdown`
+    is sent, and the snapshot carries `knocked`.
+  - **Animation:** wizard.js `knockDown(K)` plays the characters agent's `knockdown` (fall, then held) and `getup` clips when present,
+    else a long stun.
+  - **Bots:** they get off the line of an enemy holding something who faces them, and switch to a knocked-down enemy (score −10, and a
+    retarget when one appears).
+  - **Verified:** the hit did 29 with knockdown 1.6; still stunned at 0.4 s, free at 1.9 s.
+- **Firewall visual rebuilt** (effects.js `firewall` and its update):
+  - **Gone:** the scrolling planes and the base plane.
+  - **Flames:** about 150/s along the wall, tapered toward both ends and fading as they rise, so there's no hard silhouette. Born up the
+    lower half of the curtain, they curl and spin. 62% are alpha-blended (true orange in daylight), the rest additive highlights.
+  - **Base and air:** a hot core and five flat ground glows along the base, embers and sparks, a dark smoke wisp above, and light flicker.
+  - Collision is unchanged.
+  - **Screenshots:** `/tmp/wa-spells/fx_fw_front.png` and `fx_fw_angle.png` (frozen-clock stepping), `r10_firewall_front.png` and
+    `r10_firewall_angle.png` (live).
+- **LOS:** `pillarBlocks` also asks `C.losVolumeBlocks` (the canopy foliage, the environment agent's request). `rampWaypoint` now chains up to 3 hops.
+- **Bots, pace** (Ty's target: about 20+ kills per 150 s):
+  - **Change:** they hunt a target they can't see (`fwd` 1, sprint), retreat only under 25 HP, and press a target under 40 HP.
+  - **Why:** with regen, a pause in a fight undid it.
+- **Tests:**
+  - `modematch-unit` 43 ok; `modematch` siege PASS, 0 friendly fire, 3v3. botmatch clean.
+  - **6-hero Hard, 150 s, after all changes:** 19, 19, 19 and 19 kills per run (it was 11–16 before the bot changes, 23–29 before the
+    Fireball tweak).
+  - **K/D over 3 runs:** Cinder 11/7, Gale 13/11, Rime 10/10, Vesper 7/10, Jeb 7/7, Embibe 9/12.
+  - **Not tested:** at this machine's load the headless page ran at about 1 fps, so the jump and grab couldn't be driven by key presses.
+    The apex is 1.450 by the formula, the server accepts 1.65, and the grab target matches the server's.
+
 ## Round 9: jump and crouch, shield on R, combat feedback, platforms and ramps (`a14a128`, then section 2)
 
 ### 1. Jump (Space), crouch (C toggles, Ctrl holds), shield on R

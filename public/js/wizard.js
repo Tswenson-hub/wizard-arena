@@ -123,7 +123,7 @@ export class Wizard {
     this.actions.stun.setLoop(THREE.LoopOnce); this.actions.stun.clampWhenFinished = true;
     this.actions.dash.setLoop(THREE.LoopOnce); this.actions.dash.clampWhenFinished = true;
     // optional clips some bodies have (looks.js): a death fall, Gale's cyclone sweep
-    for (const k of ['death', 'spin', 'lash', 'float', 'tk_lift', 'tk_throw', 'hit_waist']) if (this.actions[k]) { this.actions[k].setLoop(THREE.LoopOnce); this.actions[k].clampWhenFinished = true; }
+    for (const k of ['death', 'spin', 'lash', 'float', 'tk_lift', 'tk_throw', 'hit_waist', 'knockdown', 'getup']) if (this.actions[k]) { this.actions[k].setLoop(THREE.LoopOnce); this.actions[k].clampWhenFinished = true; }
 
     this.current = null;
     this.oneShotUntil = 0;
@@ -319,6 +319,16 @@ export class Wizard {
   }
 
   inOneShot() { return performance.now() / 1000 < this.oneShotUntil; }
+
+  // Round 10: knocked down by a thrown object: fall, lie there, get up. The characters agent's knockdown / getup clips
+  // (each death clip's first part, and reversed) when this body has them, else a long stun.
+  knockDown(K) {
+    clearTimeout(this.getupTimer);
+    const kd = this.actions.knockdown, gu = this.actions.getup;
+    if (!kd || !gu) { this.oneShot('stun', K.total, 1.2, 0); return; }
+    this.oneShot('knockdown', K.fall + K.down, kd.getClip().duration / K.fall, 0);   // the fall in K.fall s, then held (clamped)
+    this.getupTimer = setTimeout(() => { if (!this.dead) this.oneShot('getup', K.getup, gu.getClip().duration / K.getup, 0); }, (K.fall + K.down) * 1000);
+  }
 
   // A body with its own lash clip (Vesper) plays it from the start: the strike lands on the 1.5 s release.
   // Smoke Screen: hidden from a viewer outside the cloud. Fades the body, ring, nameplate and health bar.

@@ -199,3 +199,13 @@ kbd {
 #deathScreen .killedBy img { width: 48px; height: 48px; image-rendering: pixelated; }
 #deathScreen .kb-name { font-size: 18px; font-weight: 800; } #deathScreen .kb-name span { font-size: 13px; opacity: 0.8; font-weight: 600; }
 #deathScreen .kb-spell { font-size: 14px; color: #e8dcc0; } #deathScreen .kb-stats { font-size: 13px; opacity: 0.9; } #deathScreen .kb-stats b { color: #ffd25c; }
+
+/* round 10: out-of-combat regen, a soft green pulse on the HP bar */
+#bars .bar.hp.regen { box-shadow: 0 0 0 1px rgba(110,255,140,0.5), 0 0 12px rgba(110,255,140,0.45); animation: regenPulse 1.2s ease-in-out infinite; }
+#bars .bar.hp.regen .fill { filter: brightness(1.15) saturate(0.85) hue-rotate(-12deg); }
+@keyframes regenPulse { 50% { box-shadow: 0 0 0 1px rgba(110,255,140,0.9), 0 0 18px rgba(110,255,140,0.7); } }
+
+/* round 10: health potion markers */
+.potionMark { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; align-items: center; pointer-events: none; filter: drop-shadow(0 0 6px rgba(255,40,60,0.8)); }
+.potionMark img { width: 26px; height: 26px; image-rendering: pixelated; }
+.potionMark span { font: 700 11px/1 system-ui, sans-serif; color: #ffd0d4; text-shadow: 0 1px 0 #000; margin-top: 2px; }

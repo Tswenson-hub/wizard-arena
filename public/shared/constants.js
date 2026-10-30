@@ -1,6 +1,7 @@
 // Shared between server and client. Keep this file dependency-free.
 // Map layout (arena size, obstacles, props, goats, spawns) lives in map.js and is re-exported here.
 import { COLLIDERS, ARENA_RADIUS, LOS_HEIGHT, surfaceBlocks, SURFACES } from './map.js';
+import * as MAPNS from './map.js';   // (optional helpers, such as losVolumeBlocks, looked up by name)
 import { WIZARDS, DEFAULT_WIZARD } from './wizards.js';
 export * from './map.js';
 export * from './wizards.js';
@@ -12,10 +13,39 @@ export const PLAYER_HEIGHT = 1.8;
 export const PLAYER_RADIUS = 0.45;
 export const HIT_CENTER_Y = 0.95;     // centre of the hit-sphere above feet
 export const HIT_RADIUS = 0.75;
+// Round 10 (Ty: "+30% for every spell, ultimate and thrown object"): every damage source is multiplied by this in
+// server.js applyHit, so it's tuned in one place. Healing, shields (wall HP, stamina costs) and ult charge per hit are not.
+// Goat, ram and Meteor Rain one-shots stay one-shots. D(n) is a blurb's number at this scale.
+export const DAMAGE_SCALE = 1.3;
+export const D = (n) => Math.round(n * DAMAGE_SCALE);
+// Round 10: out of combat (no damage taken for `delay` s), health comes back at `rate` HP a second, up to full.
+export const REGEN = { delay: 5, rate: 8 };
+// Round 10: health potions at map.js HEAL_SPOTS: 35 HP on touch (only when hurt), back after 20 s.
+export const POTION = { heal: 35, respawn: 20, radius: 0.9, height: 1.0 };
+// Round 10: ledge grab. Jumping at an edge whose top is out of the jump's reach (but at most `reach` above its apex)
+// pulls you up onto it in `time` s (cast-rooted). ledgeTarget is the one rule for client, server and bots.
+export const LEDGE = { reach: 1.2, time: 0.45, rise: 0.3 };
+// Round 10 (Ty): a thrown object (a prop, a potion barrel, hay, a goat) that hits an unblocked wizard knocks them down:
+// flung back about 2 m, they fall (fall), lie there (down) and get up (getup), unable to move, act or shield throughout.
+export const KNOCKDOWN = { kinds: ['prop', 'goat'], fall: 0.4, down: 0.8, getup: 0.4, fling: 24 };   // fling: m/s, decays to ~2 m
+KNOCKDOWN.total = KNOCKDOWN.fall + KNOCKDOWN.down + KNOCKDOWN.getup;
+import { surfaceHeight as _sh, STEP_UP as _step } from './map.js';
+// From feet at p ([x, y, z]) facing dir ([x, z], unit), in a jump peaking at apexY: where we'd end up standing, or null.
+export function ledgeTarget(p, dir, apexY) {
+  const maxTop = apexY + LEDGE.reach;
+  for (const d of [0.55, 0.8]) {
+    const rx = p[0] + dir[0] * d, rz = p[2] + dir[1] * d;
+    const top = _sh(rx, rz, maxTop - _step);              // the highest standable top there, no higher than maxTop
+    if (!(top > p[1] + _step + 0.05) || top > maxTop) continue;
+    const ix = p[0] + dir[0] * (d + 0.4), iz = p[2] + dir[1] * (d + 0.4);
+    if (_sh(ix, iz, top) >= top - 0.05) return [ix, top, iz];   // room to stand a little way in
+  }
+  return null;
+}
 // Round 9: jump (Space) and crouch (C toggle, Ctrl hold).
 // A jump is a fixed arc: `height` at the apex, `airTime` up and down (v0 = 4h/T, g = 8h/T²), steered at `airControl`
 // of the ground acceleration. No casting for `castLock` s after take-off; then only the primary.
-export const JUMP = { height: 1.1, airTime: 0.55, airControl: 0.6, stamina: 10, castLock: 0.15 };
+export const JUMP = { height: 1.45, airTime: 0.55 * Math.sqrt(1.45 / 1.1), airControl: 0.6, stamina: 10, castLock: 0.15 };   // round 10: 30% higher (1.1 -> 1.45 m, same gravity)
 JUMP.v0 = 4 * JUMP.height / JUMP.airTime; JUMP.gravity = 8 * JUMP.height / JUMP.airTime ** 2;
 export const jumpY = (e) => Math.max(0, JUMP.v0 * e - JUMP.gravity * e * e / 2);   // height above take-off, e s in
 // Crouched: slow, and a smaller, lower hit sphere, so low cover (fences, crops, hay, table rocks) hides you.
@@ -93,8 +123,8 @@ export const SPELLS = {
     bind: 1.25,          // rooted and silenced
   },
   fireball: {           // Cinder's primary: a big, hot, slower bolt
-    damage: 20,          // balance match: 18 left Cinder trailing in 2 of 3 runs
-    finDamage: 28,       // the 3rd shot of the magazine
+    damage: 18,          // round 10 (dense map, 1.3x scale): 20 had Cinder on top in 3 of 3 runs (23 kills / 9 deaths)
+    finDamage: 26,       // the 3rd shot of the magazine
     stun: 0.55,
     speed: 24,
     radius: 0.45,
@@ -297,25 +327,25 @@ export const SPELLBOOK = {
   },
   fireball: {
     id: 'fireball', slot: 'primary', name: 'Fireball', short: 'Fireball',
-    blurb: 'Big, hot bolts, 3 to a charge, then a reload. 20 damage; the 3rd hits for 28, stuns and breaks a wind-up.',
+    blurb: `Big, hot bolts, 3 to a charge, then a reload. ${D(18)} damage; the 3rd hits for ${D(26)}, stuns and breaks a wind-up.`,
     cooldown: SPELLS.fireball.cooldown,
     magazine: 3, reload: 1.5, idleReload: 2,
   },
   gale_shear: {
     id: 'gale_shear', slot: 'primary', name: 'Gale Shear', short: 'Shear',
-    blurb: 'A blade of wind out to 8 m (16 damage), 3 to a charge. The 3rd is a wide crescent that breaks a wind-up.',
+    blurb: `A blade of wind out to 8 m (${D(16)} damage), 3 to a charge. The 3rd is a wide crescent that breaks a wind-up.`,
     cooldown: SPELLS.shear.cooldown,
     magazine: 3, reload: 1.5, idleReload: 2,
   },
   potion_toss: {
     id: 'potion_toss', slot: 'primary', name: 'Potion Toss', short: 'Potion',
-    blurb: 'Arcing potions, 2 to a belt, then a reload. 16 damage with a small splash; the 2nd hits for 14 and stuns.',
+    blurb: `Arcing potions, 2 to a belt, then a reload. ${D(16)} damage with a small splash; the 2nd hits for ${D(14)} and stuns.`,
     cooldown: SPELLS.potion.cooldown,
     magazine: 2, reload: 1.5, idleReload: 2,
   },
   toxic_flask: {
     id: 'toxic_flask', slot: 'power', name: 'Toxic Flask', short: 'Toxic',
-    blurb: 'Lob a flask (18 m): it shatters into a 3.5 m pool of poison for 5 s. 12 damage a second to enemies standing in it.',
+    blurb: `Lob a flask (18 m): it shatters into a 3.5 m pool of poison for 5 s. ${D(12)} damage a second to enemies standing in it.`,
     radius: 3.5, life: 5,
     tick: 0.5, dps: 12,
     cooldown: 8,
@@ -374,7 +404,7 @@ export const SPELLBOOK = {
   },
   frostfall: {
     id: 'frostfall', slot: 'power', name: 'Frostfall', short: 'Frostfall',
-    blurb: 'Hold to aim a circle, release: 1.75 s later a block of ice crushes it. 50 damage and freezes 1.5 s. Wards don\'t help.',
+    blurb: `Hold to aim a circle, release: 1.75 s later a block of ice crushes it. ${D(50)} damage and freezes 1.5 s. Wards don't help.`,
     radius: 3.2,         // the circle
     range: 24,           // farthest centre from the caster
     delay: 1.75,         // release to impact; everyone sees the shadow grow meanwhile
@@ -391,7 +421,9 @@ export const SPELLBOOK = {
   },
   battering_ram: {
     id: 'battering_ram', slot: 'power', name: 'Battering Ram', short: 'Ram',
-    blurb: 'A ram bursts out in front of you and charges dead straight along your aim. It flattens the first enemy it meets, unless a ward, wall or Veil stops it.',
+    blurb: 'Stomp for 0.8 s (a hit stops you), then a ram bursts out in front of you and charges dead straight along your aim. It flattens the first enemy it meets, unless a ward, wall or Veil stops it.',
+    windup: 0.8,         // round 10 (Ty: too strong): a stomp and a ghost ram pawing the ground first; cast-rooted, interruptible
+    interruptCd: 3,      // the cooldown an interrupted wind-up leaves
     spawnDist: 1.4,
     maxTime: 3,          // the charge runs at GOAT.chargeSpeed for at most this long
     cooldown: 12,        // balance match: 9 left Jeb on top (most of his kills were ram one-shots)
@@ -541,7 +573,7 @@ export const SPELLBOOK = {
   },
   eye_of_storm: {
     id: 'eye_of_storm', slot: 'ultimate', name: 'Eye of the Storm', short: 'Eye', ult: true,
-    blurb: 'Become a tornado for 3 s: 1.3× speed, unstoppable, pulls enemies within 7 m in, 8 damage every 0.5 s, then flings them out.',
+    blurb: `Become a tornado for 3 s: 1.3× speed, unstoppable, pulls enemies within 7 m in, ${D(8)} damage every 0.5 s, then flings them out.`,
     duration: 3,
     speedMul: 1.3,
     radius: 7,
@@ -648,7 +680,7 @@ export const CAST_ROOT = {
 };
 
 // Sprint (Shift): a run at the wizard's `sprint` speed, paid from the same stamina as the ward.
-export const SPRINT = { speed: 5.5, drain: 25, restart: 15 };   // m/s default, stamina/s, stamina needed to start again after running dry
+export const SPRINT = { speed: 5.5, drain: 0, restart: 0 };   // m/s default. Round 10 (Ty): unlimited, no stamina (it still ends on a cast)
 export const sprintOf = (id) => WIZARDS[id]?.sprint ?? SPRINT.speed;
 export const chargeSpeedOf = (id) => speedOf(id) * CHARGE_MOVE_SPEED / MOVE_SPEED;
 export const blockSpeedOf = (id) => speedOf(id) * BLOCK_MOVE_SPEED / MOVE_SPEED;
@@ -713,6 +745,8 @@ export function pillarBlocks(a, b, pad = 0) {
   }
   // round 9: platforms and ramps, at body height above each end's feet (a ledge hides who's behind or under it)
   if (SURFACES?.length && surfaceBlocks?.([a[0], (a[1] || 0) + 1.1, a[2]], [b[0], (b[1] || 0) + 1.1, b[2]])) return { kind: 'surface', h: 99 };
+  // round 10: sight-only volumes (the canopy fort's foliage): they hide, but don't stop movement or spells
+  if (MAPNS.losVolumeBlocks?.([a[0], (a[1] || 0) + 1.1, a[2]], [b[0], (b[1] || 0) + 1.1, b[2]])) return { kind: 'foliage', h: 99 };
   return null;
 }
 export const PROP_RESPAWN_TIME = 18;

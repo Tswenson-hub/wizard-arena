@@ -235,6 +235,7 @@ function onWelcome(msg) {
   for (const pl of msg.pools || []) pools.set(pl.id, { ...pl, fx: effects.toxicPool(pl.p, pl.left), snd: sfx.loop('fizz_loop', { pos: [pl.p[0], 0.3, pl.p[2]], vol: 0.6, fadeIn: 0.4 }) });
   for (const c of msg.smokeFlasks || []) effects.smokeFlask(c.p, c.left);
   for (const c of msg.cages || []) cages.set(c.id, { ...c, x: c.p[0], z: c.p[2], fx: effects.nightCage(c.p, c.left) });
+  for (const pt of msg.potions || []) setPotion(pt);
   me = players.get(myId);
   for (const d of msg.decoys || []) spawnDecoy(d);
   local.pos.set(me.targetPos.x, 0, me.targetPos.z);
@@ -253,6 +254,7 @@ function addGoat(g) {
   goats.set(g.id, v);
   return v;
 }
+const ghostRams = new Map();     // Battering Ram wind-ups: Jeb's id -> a translucent GoatView pawing the ground
 const stampedeFx = new Map();   // Stampede lanes on the ground: id -> effects entry
 const pools = new Map();        // Toxic Flask pools: id -> { p, owner, fx }
 const laneMark = effects.laneAim(STAMP.width, STAMP.length);
@@ -302,6 +304,7 @@ function applySnapshot(w, s) {
   w.team = s.team ?? null;
   w.riding = !!s.ride; w.ramGuard = !!s.ramGuard;
   w.brewing = !!s.brew;
+  w.regen = !!s.regen;   // out-of-combat regen: our HP bar pulses green
   w.healing = !!s.heal;   // Night Cage or Black Death healing: the crimson shimmer (per frame)
   if (!s.brew && w.brewFx) { effects.stopAura(w.brewFx); w.brewFx = null; }
   if (w !== me) { w.sprinting = !!s.sprint; w.castRooted = !!s.castRoot; w.crouch = !!s.crouch; w.jumping = !!s.jump; }
@@ -488,7 +491,8 @@ function handleMessage(msg) {
       else {
         effects.hitFlash(c, msg.kind === 'skim' ? 0xbfeaff : 0xff3b4e);
         // a hurled prop or goat doubles them over (hit_waist); other interrupting hits flinch
-        if ((msg.kind === 'prop' || msg.kind === 'goat') && target.actions.hit_waist) target.oneShot('hit_waist', target.actions.hit_waist.getClip().duration, 1, 0);
+        if (msg.knockdown) { target.knockDown(C.KNOCKDOWN); effects.dust(target.group.position, 6); sfx.play('hit_heavy', { pos: c, vol: 1 }); }   // round 10: knocked flat
+        else if ((msg.kind === 'prop' || msg.kind === 'goat') && target.actions.hit_waist) target.oneShot('hit_waist', target.actions.hit_waist.getClip().duration, 1, 0);
         else if (C.hitSpec(msg.kind)?.stun !== 0 && msg.int !== false) target.oneShot('stun', msg.kind === 'heavy' ? 0.5 : 0.55, 3.0, 0.3);
         sfx.hitBody(c);
         sfx.voice(target, target === me ? null : c);   // a grunt, by gender (rate-limited per wizard)
@@ -500,7 +504,8 @@ function handleMessage(msg) {
       if (target === me) {
         if (!msg.blocked) {
           flashVignette(); shake(msg.kind === 'heavy' || msg.kind === 'cyclone' || msg.kind === 'trapped_relic' || ULT_KINDS.has(msg.kind) ? 0.6 : 0.25);
-          if (msg.int !== false) local.stunUntil = Math.max(local.stunUntil, now + (C.hitSpec(msg.kind)?.stun ?? 0.4));
+          if (msg.int !== false) local.stunUntil = Math.max(local.stunUntil, now + (msg.knockdown || (C.hitSpec(msg.kind)?.stun ?? 0.4)));
+          if (msg.knockdown) { local.blocking = false; local.sprinting = false; local.knockUntil = now + msg.knockdown; }
           if (msg.slow) local.slowUntil = now + msg.slow;
           if (msg.bind) {
             local.rootUntil = Math.max(local.rootUntil, now + msg.bind); local.silenceUntil = Math.max(local.silenceUntil, now + msg.bind); local.vel.set(0, 0, 0);
@@ -794,6 +799,26 @@ function handleMessage(msg) {
       else if (me && (w.team && w.team === me.team)) floatNumber(w, `+${msg.amt}`, 'heal');
       break;
     }
+    case 'potion': {   // a health potion drunk (by) or back on its stand
+      setPotion(msg);
+      if (msg.by != null) {
+        const w = players.get(msg.by);
+        effects.burst(new THREE.Vector3(msg.p[0], msg.p[1] + 0.9, msg.p[2]), 0xff3b4e, 16, 3, 0.4, -1);
+        effects.healShimmer(new THREE.Vector3(msg.p[0], msg.p[1] + 1, msg.p[2]));
+        sfx.play('brew_drink', { pos: [msg.p[0], msg.p[1] + 1, msg.p[2]], vol: w === me ? 0.9 : 0.6, rate: 1.15 });
+        if (w === me) feed(`<b>Health potion</b> +${C.POTION.heal}`);
+      }
+      break;
+    }
+    case 'grabRefused':   // the server didn't find that edge: drop back down from where we are
+      if (local.grab) { local.grab = null; local.fall = { start: now, y0: local.pos.y }; }
+      break;
+    case 'grab': {
+      const w = players.get(msg.id);
+      if (w && w !== me) w.oneShot('tk_lift', msg.time, 1.6, 0);
+      if (w) sfx.play('step_grass', { pos: wpos(w), vol: 0.6, rate: 0.8 });
+      break;
+    }
     case 'jumpRefused':   // (stamina, or a state we predicted wrong): back down
       if (local.jump) { local.jump = null; local.pos.y = groundAt(local.pos.x, local.pos.z, local.pos.y); }
       break;
@@ -949,7 +974,30 @@ function handleMessage(msg) {
       else if (msg.by === myId) feed(`Your sling calls a ram on <b>${esc(tg?.name || '?')}</b>`);
       break;
     }
+    case 'ramWind': {
+      // Battering Ram's wind-up: Jeb stomps; a ghost ram paws the ground in front of him, kicking up dust, and snorts
+      const w = players.get(msg.id);
+      if (!w) break;
+      w.oneShot('cast_heavy', msg.left, 1.5, 1.9);
+      const B = SPELL.battering_ram, d = [Math.sin(msg.yaw), Math.cos(msg.yaw)], gp = w.group.position;
+      ghostRams.get(msg.id)?.dispose(scene);
+      const ghost = new GoatView({ id: -msg.id, p: [gp.x + d[0] * B.spawnDist, gp.z + d[1] * B.spawnDist], y: gp.y, yaw: msg.yaw, s: 'windup', summoned: true }, scene);
+      ghost.group.traverse(o => { if (o.material) { o.material = o.material.clone(); o.material.transparent = true; o.material.opacity = 0.45; o.material.depthWrite = false; } });
+      ghost.until = performance.now() / 1000 + msg.left + 0.3;
+      ghostRams.set(msg.id, ghost);
+      effects.dust(gp, 6); sfx.play('impact_big', { pos: wpos(w), vol: 0.7, rate: 0.55 });
+      sfx.bleat([gp.x + d[0] * B.spawnDist, gp.y + 0.8, gp.z + d[1] * B.spawnDist], true, { vol: 0.9 });
+      break;
+    }
+    case 'ramWindCancel': {
+      ghostRams.get(msg.id)?.dispose(scene); ghostRams.delete(msg.id);
+      if (msg.id === myId) local.ramWind = null;
+      const w = players.get(msg.id); if (w) effects.burst(w.group.position.clone().setY(w.group.position.y + 1), 0xe8d090, 10, 2.5, 0.35, 2);
+      break;
+    }
     case 'batteringRam': {
+      ghostRams.get(msg.id)?.dispose(scene); ghostRams.delete(msg.id);
+      if (msg.id === myId) { local.ramWind = null; local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.ram); }
       const w = players.get(msg.id);
       if (w) { w.oneShot('cast_heavy', 0.55, 1.5, 1.9); sfx.play('battering_ram', { pos: wpos(w), vol: 1, jitter: 0.04 }); }
       break;
@@ -1258,6 +1306,55 @@ let vignetteT = 0;
 function flashVignette() { ui.vignette.classList.add('hit'); vignetteT = 0.25; }
 let shakeAmt = 0;
 function shake(a) { shakeAmt = Math.max(shakeAmt, a); }
+// ---------------------------------------------------------------- health potions (round 10)
+// A red flask glowing on a little wooden stand at each map.js HEAL_SPOTS spot, and a marker on screen for nearby ready ones.
+const potionViews = new Map();   // id -> { group, flask, ready, p, marker }
+function potionMesh() {
+  const g = new THREE.Group();
+  const wood = new THREE.MeshStandardMaterial({ color: 0x6a4a2a, roughness: 0.9 });
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.1, 0.7, 8), wood); post.position.y = 0.35;
+  const top = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.05, 12), wood); top.position.y = 0.72;
+  const flask = new THREE.Group();
+  const glass = new THREE.Mesh(new THREE.SphereGeometry(0.17, 14, 10), new THREE.MeshStandardMaterial({ color: 0xff2a3c, emissive: 0xd01020, emissiveIntensity: 0.8, roughness: 0.15, transparent: true, opacity: 0.92 }));
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 0.16, 8), new THREE.MeshStandardMaterial({ color: 0xe8d0d0, roughness: 0.3 }));
+  neck.position.y = 0.2;
+  const cork = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.06, 8), wood); cork.position.y = 0.3;
+  flask.add(glass, neck, cork); flask.position.y = 0.95;
+  const light = new THREE.PointLight(0xff3040, 2.5, 4); light.position.y = 1;
+  g.add(post, top, flask, light);
+  return { g, flask, light };
+}
+function setPotion(pt) {
+  let v = potionViews.get(pt.id);
+  if (!v) {
+    const m = potionMesh(); scene.add(m.g);
+    const marker = document.createElement('div'); marker.className = 'potionMark'; marker.innerHTML = '<img src="/textures/icons/potion.png" alt=""><span></span>';
+    $('#hud').appendChild(marker);
+    v = { group: m.g, flask: m.flask, light: m.light, marker, glow: null };
+    potionViews.set(pt.id, v);
+  }
+  v.p = pt.p; v.ready = pt.ready;
+  v.group.position.set(pt.p[0], pt.p[1], pt.p[2]);
+  v.flask.visible = v.light.visible = pt.ready;
+  if (pt.ready && !v.glow) v.glow = effects.S('circle_05', { follow: v.flask, size: 1.1, life: 1e6, color: 0xff3048, alpha: 0.45, fadeIn: 0 });
+  if (!pt.ready && v.glow) { v.glow.dead = true; v.glow = null; }
+}
+function updatePotions(dt) {
+  const tNow = performance.now() / 1000, v3 = tmp.vp ??= new THREE.Vector3();
+  for (const v of potionViews.values()) {
+    v.flask.rotation.y += dt * 1.6; v.flask.position.y = 0.95 + Math.sin(tNow * 2.2) * 0.05;
+    // the marker: ready potions within 25 m, when we're hurt or close
+    const d = me ? Math.hypot(v.p[0] - local.pos.x, v.p[2] - local.pos.z) : 1e9;
+    let show = v.ready && !me?.dead && d < 25 && (me.hp < C.MAX_HP || d < 8);
+    if (show) { v3.set(v.p[0], v.p[1] + 1.4, v.p[2]).project(camera); show = v3.z < 1 && Math.abs(v3.x) < 1.1 && Math.abs(v3.y) < 1.1; }
+    v.marker.style.display = show ? '' : 'none';
+    if (show) {
+      v.marker.style.transform = `translate(${((v3.x + 1) / 2 * innerWidth).toFixed(0)}px, ${((1 - v3.y) / 2 * innerHeight).toFixed(0)}px) translate(-50%, -100%)`;
+      v.marker.lastChild.textContent = `${Math.round(d)} m`;
+    }
+  }
+}
+
 // ---------------------------------------------------------------- combat feedback (round 9)
 // Spell icons (Raven Fantasy Icons, public/textures/icons/CREDITS.md) by hit kind, and names for the feed and card.
 const KIND_ICON = { fireball: 'fireball', heavy: 'heavy', meteor_rain_hit: 'meteor_rain', firewall_burn: 'firewall', shear: 'shear', cyclone: 'cyclone',
@@ -1531,7 +1628,8 @@ function updateLocal(dt) {
   if (local.cyclone && now - local.cyclone.start > CYC.windup + CYC.spin + 0.3) local.cyclone = null;
   if (local.lash && local.lash.sent && now - local.lash.start > LASH.windup + 0.6) { local.lash = null; me.endLash(); }
   const winding = (!!local.cyclone && !local.cyclone.pulsed) || !!local.lash;
-  const busy = local.charging || !!local.cyclone || !!local.lash;
+  if (local.ramWind && now - local.ramWind.start > SPELL.battering_ram.windup + 1) local.ramWind = null;   // missed the launch
+  const busy = local.charging || !!local.cyclone || !!local.lash || !!local.ramWind;
 
   // movement input (camera-relative), also the direction of a Mirror Step
   let mx = 0, mz = 0;
@@ -1636,7 +1734,7 @@ function updateLocal(dt) {
       } else if (K.power === 'battering_ram') {
         computeAim();
         local.cd.power = now + SPELL.battering_ram.cooldown;
-        net.send({ t: 'ram', dir: [aimDir.x, 0, aimDir.z] }); local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.ram);
+        net.send({ t: 'ram', dir: [aimDir.x, 0, aimDir.z] }); local.ramWind = { start: now };   // round 10: a 0.8 s wind-up (the server launches it)
       } else if (K.power === 'frostfall') {
         local.frostAim = true;   // hold to aim, release to cast
       }
@@ -1820,7 +1918,7 @@ function updateLocal(dt) {
   // casting roots us (turning and aiming still work); movement abilities don't
   const castRooted = !local.flight && !local.ride && !local.mrain && now >= local.eyeUntil && (now < local.castRootUntil || local.charging || !!local.lash
     || (!!local.cyclone && !local.cyclone.pulsed) || !!local.flaskWind || !!local.ultWind || now < local.blizzUntil || !!local.fHold
-    || (local.blocking && C.isWard(K.guard)));
+    || !!local.ramWind || !!local.grab || (local.blocking && C.isWard(K.guard)));
   if (castRooted && !local.wasCastRooted) local.vel.set(0, 0, 0);   // stop dead as the cast starts (a later knockback still lands)
   local.wasCastRooted = castRooted;
   local.castRooted = castRooted;
@@ -1830,8 +1928,7 @@ function updateLocal(dt) {
   const sprintAllowed = moving && mz > 0 && !local.crouch && !castRooted && !local.ride && !local.flight && !local.blocking && !local.charging && !local.cyclone && !local.lash
     && !local.ultWind && !local.flaskWind && !(me.carrying || me.carryingGoat) && now >= local.blizzUntil && now >= local.eyeUntil;
   const wantSprint = (input.down('ShiftLeft') || input.down('ShiftRight')) && sprintAllowed;
-  if (!wantSprint || me.st <= 0.5) local.sprinting = false;
-  else if (!local.sprinting && me.st >= C.SPRINT.restart) local.sprinting = true;
+  local.sprinting = wantSprint;   // round 10: unlimited (no stamina); still not while casting, crouching or carrying
   let speed = C.speedOf(me.wizard);   // per wizard (wizards.js speed)
   if (local.charging || local.cyclone || local.lash || local.ultWind || local.flaskWind) speed = C.chargeSpeedOf(me.wizard);   // (an ultimate's wind-up too)
   else if (local.blocking) speed = C.blockSpeedOf(me.wizard);
@@ -1889,7 +1986,25 @@ function updateLocal(dt) {
   // ---- height (real time; the server checks it against its clock): a jump's arc, falling off an edge, stepping
   // up a ramp or stairs. A jump's arc carries on below where it started (off a ledge) until it meets a floor.
   const landed = () => { effects.dust(local.pos, 3); sfx.play('step_grass', { pos: [local.pos.x, local.pos.y + 0.1, local.pos.z], vol: 0.6, rate: 0.85, jitter: 0.05, bag: 'land' + myId }); };
-  if (local.jump) {
+  if (local.jump && !me.dead && now - local.jump.start > 0.08 && (mx || mz)) {
+    // round 10: ledge grab, jumping at an edge out of the jump's reach (the server checks it the same way)
+    const hv = Math.hypot(local.vel.x, local.vel.z), dir = hv > 0.5 ? [local.vel.x / hv, local.vel.z / hv] : [Math.sin(local.yaw), Math.cos(local.yaw)];
+    const to = C.ledgeTarget([local.pos.x, local.pos.y, local.pos.z], dir, local.jump.y0 + C.JUMP.height);
+    if (to) {
+      local.grab = { start: now, from: [local.pos.x, local.pos.y, local.pos.z], to };
+      local.jump = null; local.vel.set(0, 0, 0); local.sprinting = false;
+      net.send({ t: 'grab', dir });
+      me.oneShot('tk_lift', C.LEDGE.time, 1.6, 0);   // the climb pose (stand-in until a pull-up clip exists)
+    }
+  }
+  if (local.grab) {
+    // the pull-up: rise to the top, then in over the edge (real time)
+    const G = local.grab, k = Math.min(1, (now - G.start) / C.LEDGE.time), kr = Math.min(1, k * C.LEDGE.time / C.LEDGE.rise);
+    const ki = Math.max(0, (k * C.LEDGE.time - C.LEDGE.rise) / (C.LEDGE.time - C.LEDGE.rise));
+    local.pos.set(G.from[0] + (G.to[0] - G.from[0]) * ki, G.from[1] + (G.to[1] - G.from[1]) * (1 - (1 - kr) * (1 - kr)), G.from[2] + (G.to[2] - G.from[2]) * ki);
+    local.vel.set(0, 0, 0);
+    if (k >= 1 || me.dead) { local.grab = null; if (!me.dead) landed(); }
+  } else if (local.jump) {
     const e = now - local.jump.start;
     const fl = groundAt(local.pos.x, local.pos.z, local.pos.y);
     local.pos.y = Math.max(fl, local.jump.y0 + C.JUMP.v0 * e - C.JUMP.gravity * e * e / 2);
@@ -1923,7 +2038,7 @@ function updateLocal(dt) {
   }
   for (const c of C.COLLIDERS) if (y < c.h) pushOut(c.x, c.z, c.r);
   // platforms' sides are walls for anyone whose feet are more than a step below their top
-  if (C.SURFACES.length) { const q = C.surfacePushOut(local.pos.x, local.pos.z, local.pos.y, pr); local.pos.x = q[0]; local.pos.z = q[1]; }
+  if (C.SURFACES.length && !local.grab) { const q = C.surfacePushOut(local.pos.x, local.pos.z, local.pos.y, pr); local.pos.x = q[0]; local.pos.z = q[1]; }
   if (y < 1) for (const e of props.values()) if (e.data.state === 'idle') pushOut(e.data.x, e.data.z, C.PROP_TYPES[e.data.type].r * 0.8);
   for (const w of players.values()) if (w !== me && !w.dead && Math.abs(w.group.position.y - y) < C.PLAYER_HEIGHT) pushOut(w.group.position.x, w.group.position.z, pr);
   // (never the ram we ride: it sits under us a frame behind, and pushing out of it shoved us forward every frame)
@@ -2041,6 +2156,7 @@ function updateHud(dt) {
   const pctText = pct >= C.ULT_CHARGE.max ? 'READY' : `${pct}%`;
   if (ui.ultPct.textContent !== pctText) ui.ultPct.textContent = pctText;
   ultEl.classList.toggle('ready', pct >= C.ULT_CHARGE.max);
+  ui.hp.parentElement.classList.toggle('regen', !!me.regen && !me.dead);
   if (pct >= C.ULT_CHARGE.max && !local.ultWasReady && !me.dead) sfx.ultReady();   // the charge just filled
   local.ultWasReady = pct >= C.ULT_CHARGE.max;
   ultEl.style.setProperty('--ult', `#${C.boltColor(me.wizard).toString(16).padStart(6, '0')}`);
@@ -2202,7 +2318,7 @@ function frame(t) {
     updateGoatAudio(dt);
     for (const w of players.values()) { const gp = w.group.position; w.inAir = gp.y > groundAt(gp.x, gp.z, gp.y) + 0.25; }   // (on a platform isn't "in the air")
     for (const w of players.values()) updateWizardAudio(w, dt);
-    updateFloats(dt); updateKilledBy();
+    updateFloats(dt); updateKilledBy(); updatePotions(dt);
     // a full ultimate charge glows in the hero's colour
     for (const w of players.values()) if (!w.dead && w.ult >= C.ULT_CHARGE.max && (w.ultFxT = (w.ultFxT || 0) + dt) > (LOW_FX ? 0.2 : 0.08)) { w.ultFxT = 0; effects.ultGlow(w.group.position, C.WIZARDS[w.wizard]?.color ?? 0xffffff); }
     for (const w of players.values()) if (w.healing && !w.dead && (w.healFxT = (w.healFxT || 0) + dt) > 0.05) { w.healFxT = 0; effects.healShimmer(w.group.position.clone().setY(w.group.position.y + 1)); }
@@ -2214,6 +2330,7 @@ function frame(t) {
   }
 
   for (const g of goats.values()) g.update(dt, effects, sfx);
+  for (const [id, g] of ghostRams) { g.update(dt, effects, sfx); if (performance.now() / 1000 > g.until) { g.dispose(scene); ghostRams.delete(id); } }
   // a Ram Ride mount sits right under its rider (the rider is drawn ahead of the snapshots)
   for (const g of goats.values()) {
     if (g.state !== 'mount') continue;

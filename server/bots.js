@@ -164,7 +164,7 @@ const canAct = (q, t) => !q.dead && !isStunned(q, t) && !(q.silenceUntil > t);
 const rooted = (q, t) => q.rootUntil > t;
 const airborne = (q, t) => q.flightUntil > t || !!q.jump || q.p[1] > C.surfaceHeight(q.p[0], q.p[2], q.p[1]) + 0.05;   // (standing on a platform isn't)
 // Round 9: a jump the server will take (it checks the same and more)
-const canJump = (q, t) => !q.jump && !airborne(q, t) && q.st >= C.JUMP.stamina + 15 && !q.blocking && !q.charging && !q.cyclone && !q.lash && !q.ride && !q.eye
+const canJump = (q, t) => !q.jump && !q.grab && !airborne(q, t) && q.st >= C.JUMP.stamina + 15 && !q.blocking && !q.charging && !q.cyclone && !q.lash && !q.ride && !q.eye
   && !(q.castRootUntil > t) && !(q.rootUntil > t) && !(q.stunUntil > t);
 // Round 9: the way up to a platform. A ramp whose high end reaches `destY` near `dest` ([x, z]): its foot, then up it.
 // If that ramp starts on another piece (the ruin bridge between ledges), the way up to its foot first (one level).
@@ -172,7 +172,7 @@ const rampHigh = (s) => { const lz = (s.y1 >= s.y0 ? 1 : -1) * s.d / 2, c = Math
 const onRamp = (me, s) => { const dx = me.p[0] - s.x, dz = me.p[2] - s.z, c = Math.cos(s.yaw || 0), n = Math.sin(s.yaw || 0); const lx = dx * c - dz * n, lz = dx * n + dz * c; return Math.abs(lx) <= s.w / 2 + 0.2 && Math.abs(lz) <= s.d / 2 + 0.2; };
 function rampWaypoint(me, dest, destY, depth = 0) {
   const myFloor = C.surfaceHeight(me.p[0], me.p[2], me.p[1]);
-  if (destY <= myFloor + C.STEP_UP + 0.1 || depth > 1) return null;
+  if (destY <= myFloor + C.STEP_UP + 0.1 || depth > 2) return null;   // (up to three hops: stairs, then a ladder, then a bridge)
   let best = null, bc = Infinity;
   for (const s of C.SURFACES) {
     if (s.kind !== 'ramp' || s.w < 0.7 || s.moveOnly && !s.ladder) continue;   // (rails and ropes are narrow ramps: not ways up)
@@ -216,9 +216,9 @@ function raiseFirewall(me, toward, act) {
 // Casting roots a wizard (server.js castRooted; the same rule): short cast poses, wind-ups, channels, a held ward.
 // Movement abilities don't.
 const castRootedBot = (q, t) => !(q.eye || q.ride || q.mrain || q.mrainFall || q.flightUntil > t)
-  && (t < (q.castRootUntil || 0) || q.charging || !!q.lash || (!!q.cyclone && !q.cyclone.pulsed) || !!q.flaskWind || !!q.ultWind || !!q.blizz
+  && (t < (q.castRootUntil || 0) || q.charging || !!q.lash || !!q.ramWind || !!q.grab || (!!q.cyclone && !q.cyclone.pulsed) || !!q.flaskWind || !!q.ultWind || !!q.blizz
     || (q.blocking && C.isWard(kit(q).guard)));
-const busyCasting = (q) => q.charging || !!q.lash || cycloneWindingUp(q) || !!q.ultWind || (!!q.mrain && q.mrain.phase !== 'dive');
+const busyCasting = (q) => q.charging || !!q.lash || !!q.ramWind || cycloneWindingUp(q) || !!q.ultWind || (!!q.mrain && q.mrain.phase !== 'dive');   // (a winding Jeb is a target to interrupt)
 // the primary can fire now (cooldown, and the magazine isn't reloading)
 const primaryReady = (me, t) => t >= me.cd.fast && !(me.reloadUntil > t) && me.ammo > 0;
 
@@ -290,7 +290,8 @@ function think(me, world, t) {
   // a target that vanished into smoke is lost: remember where, and pick someone we can see
   const cur = world.players.get(b.targetId);
   if (cur && !cur.dead && smokeHides(me.p, cur.p)) { b.lastSeen = cur.p.slice(); b.lastSeenUntil = t + 3; b.targetId = null; b.decoyId = null; }
-  if (t >= b.retargetAt || !world.players.get(b.targetId) || world.players.get(b.targetId).dead) {
+  const knocked = [...world.players.values()].some(q => q.knockUntil > t + 0.5 && foe(me, q) && !q.dead && dist2D(me.p, q.p) < 20 && q.id !== b.targetId);
+  if (t >= b.retargetAt || knocked || !world.players.get(b.targetId) || world.players.get(b.targetId).dead) {
     let best = null, bs = Infinity;
     for (const q of world.players.values()) {
       if (q === me || q.dead || !foe(me, q) || smokeHides(me.p, q.p)) continue;
@@ -298,6 +299,7 @@ function think(me, world, t) {
       if (q.id === me.lastHitBy) s -= 7;
       if (!q.bot) s -= 3;
       if (!hasLOS(me.p, q.p)) s += 6;
+      if (q.knockUntil > t) s -= 10;   // round 10: knocked flat, a free punish
       if (s < bs) { bs = s; best = q; }
     }
     if (best?.id !== b.targetId) b.decoyId = null;
@@ -1328,8 +1330,9 @@ function moveBot(me, dt, world, t) {
     return;
   }
   if (me.ride) { b.vel = [0, 0]; me.anim = 'idle'; return; }   // getting on or off
+  if (me.grab) { b.vel = [0, 0]; me.anim = 'idle'; return; }   // pulling up onto a ledge: the server moves us
   let wx = 0, wz = 0;
-  const goal = objectiveGoal(me, world);
+  const goal = potionGoal(me, world, t, target) || objectiveGoal(me, world);
   if (b.dash) { /* the dash carries us */ }
   else if (!stunned) {
     if (t < b.dodgeUntil && b.dodgeVec) { wx = b.dodgeVec[0]; wz = b.dodgeVec[1]; }
@@ -1347,7 +1350,7 @@ function moveBot(me, dt, world, t) {
       const d = Math.hypot(dx, dz) || 1;
       const fx = dx / d, fz = dz / d;
       const los = hasLOS(me.p, target.p);
-      const lowHp = me.hp < 35 && me.hp < target.hp;
+      const lowHp = me.hp < 25 && me.hp < target.hp;   // round 10: regen makes a retreat nearly free, so only when really low
       // Gale Shear only reaches 8 m: she fights up close
       const range = kit(me).primary === 'gale_shear' ? [2.5, 6] : cfg.range;
       const diving = t < (b.diveUntil || 0) && t >= me.cd.power && !me.carrying;
@@ -1358,14 +1361,22 @@ function moveBot(me, dt, world, t) {
         const cover = coverPoint(me, target);
         if (cover) { const cx = cover[0] - me.p[0], cz = cover[1] - me.p[2]; const cl = Math.hypot(cx, cz) || 1; wx = cx / cl; wz = cz / cl; }
         else fwd = -1;
-      } else if (!los) fwd = d > 6 ? 0.6 : 0;            // flank around the obstruction
+      } else if (!los) fwd = d > 4 ? 1 : 0.3;            // round 10: hunt them down (regen undoes a fight that pauses)
       else if (diving) fwd = d > 3 ? 1 : 0;              // closing in for a cyclone
       else if (veiled(target, t)) fwd = d < 12 ? -1 : 0;  // a veiled Gale is coming: keep away until it drops
+      else if (target.hp < 40 && d > range[0]) fwd = 1;  // round 10: press a hurt target before regen saves them
       else if (d > range[1]) fwd = 1;
       else if (d < range[0]) fwd = -0.8;
       if (t >= b.strafeUntil) { if (Math.random() < 0.6) b.strafe *= -1; b.strafeUntil = t + rand(0.5, 1.8) / (cfg.dodge + 0.4); }
       const strafe = diving ? 0.35 : los ? 0.9 : 1;
       if (!(lowHp && los && wx)) { wx = fx * fwd + fz * strafe * b.strafe; wz = fz * fwd - fx * strafe * b.strafe; }
+      // round 10: an enemy holding something to throw, facing us: get off the line (sideways, toward our strafe side)
+      const thrower = [...world.players.values()].find(q => foe(me, q) && !q.dead && (q.carrying || q.carryingGoat) && dist2D(q.p, me.p) < 18
+        && facingWithin(q, me.p, 25) && hasLOS(q.p, me.p));
+      if (thrower && !me.eye) {
+        const lx = me.p[0] - thrower.p[0], lz = me.p[2] - thrower.p[2], ll = Math.hypot(lx, lz) || 1;
+        wx = -lz / ll * b.strafe + lx / ll * 0.2; wz = lx / ll * b.strafe + lz / ll * 0.2;
+      }
       // the target is up on a platform: take the ramp (unless we can shoot them from here)
       if (!me.eye && !airborne(target, t)) {
         const wp = (!los || kit(me).primary === 'gale_shear' || d > range[1]) ? rampWaypoint(me, [target.p[0], target.p[2]], target.p[1]) : null;
@@ -1420,10 +1431,10 @@ function moveBot(me, dt, world, t) {
   // stamina for the ward. A sprinting bot faces where it runs (the server only grants a forward sprint).
   {
     const tg = target && !target.dead ? target : null, dT = tg ? dist2D(me.p, tg.p) : 0;
-    const far = goal ? Math.hypot(goal[0] - me.p[0], goal[1] - me.p[2]) > 6 : !!tg && dT > (kit(me).primary === 'gale_shear' ? 7 : cfg.range[1] + 5);
+    const far = goal ? Math.hypot(goal[0] - me.p[0], goal[1] - me.p[2]) > 6 : !!tg && (dT > (kit(me).primary === 'gale_shear' ? 7 : cfg.range[1] + 5) || (dT > 8 && !hasLOS(me.p, tg.p)));   // (sprint is free: close in on one we can't see)
     const fleeing = me.hp < 35 && !!tg && dT < 14;
     const threatened = [...b.threats.values()].some(r => !r.handled && !r.ignore) || t < (b.goatDanger || 0);
-    const keep = C.isWard(kit(me).guard) && threatened && me.st < 70;
+    const keep = false;   // round 10: sprint is free, nothing to save stamina for
     const want = (far || fleeing) && !keep && wl > 0.01 && !stunned && !flying && !me.blocking && !busyCasting(me) && !me.carrying && t >= b.dodgeUntil;
     if (want !== !!me.sprinting || (want && t - (me.sprintAt || 0) > 0.2)) world.handle(me, { t: 'sprint', on: want });
     if (me.sprinting && wl > 0.01) me.yaw = Math.atan2(wx, wz);
@@ -1484,6 +1495,8 @@ function moveBot(me, dt, world, t) {
     b.stuckT += dt;
     // stuck on something low (a fence, crops, hay): hop it
     if (b.stuckT > 0.25 && canJump(me, t) && lowCoverToward(me, [me.p[0] + wx, 0, me.p[2] + wz])) { world.handle(me, { t: 'jump' }); b.stuckT = 0; }
+    // round 10: against a ledge we can grab (the server pulls us up mid-jump): jump at it
+    else if (b.stuckT > 0.25 && canJump(me, t) && C.ledgeTarget(me.p, [wx / (wl || 1), wz / (wl || 1)], me.p[1] + C.JUMP.height)) { world.handle(me, { t: 'jump' }); b.stuckT = 0; }
     else if (b.stuckT > 0.4) { b.strafe *= -1; b.stuckT = 0; }
   }
   else b.stuckT = 0;
@@ -1491,6 +1504,22 @@ function moveBot(me, dt, world, t) {
 
   const moving = Math.hypot(b.vel[0], b.vel[1]) > 0.6;
   me.anim = me.charging || me.lash || cycloneWindingUp(me) ? 'charge' : me.blocking ? 'block' : moving ? 'run' : 'idle';
+}
+
+// Round 10: hurt, and a ready health potion near (one we can reach: its spot has a floor under it): go and drink it,
+// unless the fight is right on top of us and we're not that low.
+function potionGoal(me, world, t, target) {
+  if (!world.potions?.length || me.hp >= 55 || me.eye || me.ride) return null;
+  if (target && !target.dead && dist2D(me.p, target.p) < 6 && me.hp > 35) return null;
+  let best = null, bd = 22;
+  for (const pt of world.potions) {
+    if (t < pt.readyAt) continue;
+    const sp = pt.spot, y = sp.y;
+    if (y > C.surfaceTopAt(sp.x, sp.z) + 0.3) continue;   // nothing to stand on there yet
+    const d = Math.hypot(sp.x - me.p[0], sp.z - me.p[2]) + Math.max(0, y - me.p[1]) * 2;
+    if (d < bd) { bd = d; best = [sp.x, sp.z]; }
+  }
+  return best;
 }
 
 // Where a game-mode objective wants us, as [x, z], or null when we're close enough (or there's none).
