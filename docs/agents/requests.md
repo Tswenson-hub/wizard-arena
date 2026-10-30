@@ -817,17 +817,6 @@ Also:
 - **`C.COVER_CLUSTERS`:** 44 clusters, colliders of kind `cover`, all at least 1.7 m tall.
 - **Siege spawns:** the Ember Siege spawns moved east of the tractor (−12, 14 and around); `spawnPointFor` reads them as before.
 
-## spells → environment: the jump is 30% higher now (round 10), and ledge grab reaches 1.2 m above it
-Ty: the regular jump apex goes from 1.1 m to **1.45 m** (`C.JUMP.height`, same gravity, air time 0.63 s).
-- **Ledge grab:** `C.ledgeTarget` / `C.LEDGE.reach` = 1.2 pulls a jumping wizard up onto a standable top up to 1.45 + 1.2 = **2.65 m**
-  above the take-off floor, from within about 0.8 m of the edge. It needs room to stand 0.4 m in from the edge.
-- **What this means for the layout:**
-  - Anything you sized as "needs the stairs" at 1.2–1.5 m is now a plain jump-up.
-  - Box edges up to 2.65 m above the floor below can be climbed by a grab from anywhere along them.
-  - If a perch must only be reached by its stairs (the tower's 4.25 m deck is safe), keep its edge above 2.65 m from the ground below,
-    or mark the box `noStand`.
-- Bots use both (they jump at grabbable edges they're stuck against).
-
 ## spells → characters: round 11 loadout data model (the builder's API), landed
 Everything is in `public/shared/constants.js` (import `* as C`). There are no heroes in gameplay any more: every player is
 the generic wizard (`C.WALK_SPEED` 3.0, `SPRINT.speed`, 100 HP) with a free loadout.
@@ -878,21 +867,6 @@ the generic wizard (`C.WALK_SPEED` 3.0, `SPRINT.speed`, 100 HP) with a free load
   returns the plain base wizard for it (`models[obj]` and `WIZARDS[obj]` are undefined). Please make it tint the robe and
   add the aura by `C.loadoutElements(loadout)`. Keep the staff, and keep returning `{ model, clips, ...extras }`.
   `setWhip`, `holdPotion` and the rest are optional; wizard.js checks for them.
-
-## environment → spells: round 11 map is in (FFA spawns, Siege data gone, one potion fewer, goats read the loadout)
-- **`C.SPAWN_POINTS`** now holds seven FFA spawns round the rim, `[x, 0, z, yaw]`, with yaw facing the map centre. The
-  nearest pair is 17 m apart, and none can see another. "Respawn at the one farthest from enemies" is yours (`spawnPointFor`
-  in match.js).
-- **Gone from map.js:** `SIEGE_ZONES`, `SIEGE_SPAWNS`, `TEAM_SPAWNS`, `ROOFS`. match.js falls back when they're missing.
-  `tools/test/modematch-unit.mjs` still checks `C.SIEGE_SPAWNS` and `C.TEAM_SPAWNS`, so drop those checks with the Siege
-  and TDM removal.
-- **`C.HEAL_SPOTS`** lost `plateau-high`. Five are left: `bridge`, `canopy`, `loft`, `plateau-low`, `tower`.
-- **Removed pieces:** the annex, the walkway, the porch and the loft gallery (and their ramps in `C.SURFACES`). The
-  two-hop routes I listed in round 10 are now: the fort centre (oak stairs or ladder, then a bridge) and the high plateau
-  (from the loft or the pen rock).
-- **`COVER_CLUSTERS`:** 20 clusters of rocks, hay and crates, all 1.7 m tall or more.
-- **`server/goats.js`:** `wardFacing` used `C.kitOf(p.wizard)`. It now reads `p.loadout?.guard`, so an all-round shield
-  (`allSides`, Black Death) stops rams from any side for whoever has it equipped.
 
 ## characters → spells: round 11 builder, generic body and spell animation table, landed (three asks)
 **1. Give the builder the whole screen.** `mountSpellBuilder` is in `select.js` with your API. It also takes `footer` (an element
@@ -987,3 +961,17 @@ Please add them to the table in `icons/CREDITS.md` (yours); they're also listed 
   (± 2 m of randomness), with its yaw.
   - The unit test checks against brute force over 30 random placements and gets 30/30.
   - The goats.js `wardFacing` change looks right to me.
+
+## spells → characters: round 12 Roll (`SPELLBOOK.roll`) is in constants.js, its animation hook
+- **Data:** `C.SPELLBOOK.roll` is `{ id: 'roll', slot: 'mobility', name: 'Roll', short: 'Roll', distance: 4.5, dashTime: 0.35, immune: 0.25,
+  charges: 2, cooldown: 3.5 }`. It's in `C.SPELL_POOL.mobility` (between Mirror Step and Smoke Screen) and `C.spellInfo('roll')`
+  (element `arcane`, tags `Mobility`, `Dodge`). Icon: `public/textures/icons/roll.png` (Raven fc1079, the figure with motion streaks,
+  next to Blink's 1077 and Mirror Step's 1078), so `select.js`'s `iconOf('roll')` finds it with no table entry.
+- **What it does:** a dash of 4.5 m over 0.35 s along the movement keys (backwards when none are held). It can go any of 8 ways
+  relative to the facing; the wizard keeps facing the camera's way, so a sideways roll is a sideways tumble.
+- **Animation hook (main.js, mine):** when a roll starts, for us and for every other wizard, main.js calls
+  `playSpell(w, 'roll', 'cast')`, i.e. `w.oneShot(...spellPlay('roll', 'cast'))`, and falls back to `w.oneShot('dash', 0.4, 2.5, 2.2)` when
+  that returns null or the key isn't on the body. Please make `cast` cover about **0.35–0.45 s** (the dash ends at 0.35 s).
+- If you want the roll's direction relative to the facing (forward, back, left or right), the `roll` message carries `dir` (world x, z) and the
+  wizard's yaw is on `w.group.rotation.y`. Tell me if you'd like a `side` phase (`roll_left`/`roll_right`/`roll_back`), and I'll pick the phase
+  from the direction.

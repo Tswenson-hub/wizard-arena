@@ -462,6 +462,15 @@ export const SPELLBOOK = {
     decoyTime: 2.5,      // decoys run this long at run speed, then fade
     cooldown: 7,
   },
+  roll: {
+    id: 'roll', slot: 'mobility', name: 'Roll', short: 'Roll',
+    blurb: 'Roll 4.5 m the way you are moving (backwards if standing still). Projectiles pass through you for the first 0.25 s; area damage still lands. 2 charges.',
+    distance: 4.5,
+    dashTime: 0.35,      // a fast dash, not a teleport: it collides and steps up like walking
+    immune: 0.25,        // from the start of the roll: projectiles pass through (areas, beams and rams still hit)
+    charges: 2,          // each charge refills `cooldown` after it was spent
+    cooldown: 3.5,
+  },
   smoke_screen: {
     id: 'smoke_screen', slot: 'mobility', name: 'Smoke Screen', short: 'Smoke',
     blurb: 'Leap 6.5 m backwards, leaving a cloud of smoke for 5 s. Nobody outside can see who is inside it.',
@@ -530,14 +539,18 @@ export const SPELLBOOK = {
   },
   trapped_relic: {
     id: 'trapped_relic', slot: 'utility', name: 'Trapped Relic', short: 'Relic',
-    blurb: 'Telekinesis, plus: hold F on an object to curse it. It explodes on the next enemy who lifts it.',
-    hold: 0.5,           // seconds of holding F that curse instead of lift
+    blurb: 'Curse an object. It explodes when an enemy comes near, lifts it or breaks it.',
+    hold: 0.5,           // F on an object: this long to curse it (no lifting with Relic: only Telekinesis lifts)
+    traps: 2,            // armed at once per caster; a third clears the oldest
+    trigger: 1.8,        // an enemy this close (m, centre to centre) to a resting trap lights it
+    fuse: 0.25,          // lit, it flares, then blows this long later
+    seen: 6,             // enemies within this see the trap's glyph
     damage: 45, radius: 3.5,
     stun: 0.4,
     knockback: 7,
     staminaCost: 40,     // a ward facing the blast blocks it
-    cooldown: 0.6,
-    liftCooldown: 3,     // as telekinesis; laying a curse starts it too
+    cooldown: 3,
+    liftCooldown: 3,     // after each curse (p.cd.lift)
   },
 
   // ---- ultimates (Q). `ult: true` hits never charge the ultimate. Each one cannot be cancelled once cast.
@@ -845,7 +858,7 @@ export const ELEMENTS = {
 
 // Builder card data for every pickable spell: its element, tags, and quick stats (strings, ready to show; '' = n/a).
 // Tags: Projectile, Hitscan-like (fast and straight), Lob, Area, Wind-up, Interrupts, Slows, Roots, Stuns, Knockdown,
-// Shield, Dash, Teleport, Summon, Heal, Channel (plus Combo, added by spellInfo when it has a combo partner).
+// Shield, Dash, Teleport, Mobility, Dodge, Summon, Heal, Channel (plus Combo, added by spellInfo when it has a combo partner).
 const S_ = (n) => `${n} s`, M_ = (n) => `${n} m`;
 export const SPELL_INFO = {
   // primaries (magazine; the last shot of a magazine is the finisher)
@@ -877,10 +890,11 @@ export const SPELL_INFO = {
   skyward:       { element: 'ice',    tags: ['Dash'], damage: '', cooldown: S_(6), range: M_(7), windup: '', duration: 'float 2.8 s' },
   mirror_step:   { element: 'dark',   tags: ['Dash'], damage: '', cooldown: S_(7), range: M_(7), windup: '', duration: 'decoys 2.5 s' },
   ram_ride:      { element: 'earth',  tags: ['Dash', 'Summon'], damage: `${D(15)}`, cooldown: S_(8), range: M_(20), windup: S_(0.4) },
+  roll:          { element: 'arcane', tags: ['Mobility', 'Dodge'], damage: '', cooldown: '3.5 s × 2', range: M_(4.5), windup: '', duration: 'dodge 0.25 s' },
   flask_step:    { element: 'acid',   tags: ['Teleport', 'Lob', 'Wind-up'], damage: '', cooldown: S_(8), range: M_(16), windup: S_(0.6) },
   // utility (F)
   telekinesis:   { element: 'arcane', tags: ['Knockdown'], damage: `${D(22)}`, cooldown: S_(3), range: M_(16), windup: '' },
-  trapped_relic: { element: 'dark',   tags: ['Knockdown', 'Area'], damage: `${D(22)} / trap ${D(45)}`, cooldown: S_(3), range: M_(16), windup: '' },
+  trapped_relic: { element: 'dark',   tags: ['Area', 'Stuns'], damage: `trap ${D(45)}`, cooldown: S_(3), range: M_(16), windup: '', duration: '2 traps' },
   // ultimates (Q, charged)
   meteor_rain:   { element: 'fire',   tags: ['Area', 'Wind-up'], damage: 'kill', cooldown: 'charge', range: M_(24), windup: S_(1.3) },
   eye_of_storm:  { element: 'wind',   tags: ['Area', 'Channel', 'Wind-up'], damage: `${D(8)} / 0.5 s`, cooldown: 'charge', range: M_(7), windup: S_(1.3), duration: S_(3) },
