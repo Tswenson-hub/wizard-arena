@@ -28,16 +28,18 @@ const DIFFICULTY = {
     relicMemory: false, // stops re-lifting a prop that just blew up on it
     jump: 0.15,         // round 9: chance it hops a Glacial Skim volley at its feet
     crouch: 0,          // chance per check it crouches behind low cover when hurt
+    airCast: 0.04,      // round 13: chance per attack decision it jumps first and casts from the air
+    airJump: 0.2,       // round 13: chance it air-jumps out of a shot's way when it's up already
   },
   normal: {
     react: 0.25, aimErr: 3.5, lead: 0.6, dodge: 0.6, blinkDodge: true,
     think: 1 / 3, speed: 0.95, range: [8, 14], aggression: 0.8, tk: 0.12, punish: 0.7, goatAware: true,
-    fooled: 0.3, relicMemory: false, saveFinisher: 0.5, jump: 0.5, crouch: 0.5,
+    fooled: 0.3, relicMemory: false, saveFinisher: 0.5, jump: 0.5, crouch: 0.5, airCast: 0.08, airJump: 0.5,
   },
   hard: {
     react: 0.12, aimErr: 1.2, lead: 1, dodge: 0.9, blinkDodge: true,
     think: 1 / 6, speed: 1, range: [9, 15], aggression: 0.95, tk: 0.1, punish: 1, goatAware: true,
-    fooled: 0.15, relicMemory: true, saveFinisher: 0.9, jump: 0.85, crouch: 0.8,
+    fooled: 0.15, relicMemory: true, saveFinisher: 0.9, jump: 0.85, crouch: 0.8, airCast: 0.16, airJump: 0.8,
   },
 };
 
@@ -162,10 +164,13 @@ const chest = (q) => [q.p[0], q.p[1] + C.hitCenterOf(q), q.p[2]];   // (lower wh
 const isStunned = (q, t) => q.stunUntil > t;
 const canAct = (q, t) => !q.dead && !isStunned(q, t) && !(q.silenceUntil > t);
 const rooted = (q, t) => q.rootUntil > t;
-const airborne = (q, t) => q.flightUntil > t || !!q.jump || q.p[1] > C.surfaceHeight(q.p[0], q.p[2], q.p[1]) + 0.05;   // (standing on a platform isn't)
+const airborne = (q, t) => q.flightUntil > t || !!q.jump || !!q.hover || q.p[1] > C.surfaceHeight(q.p[0], q.p[2], q.p[1]) + 0.05;   // (standing on a platform isn't)
 // Round 9: a jump the server will take (it checks the same and more)
-const canJump = (q, t) => !q.jump && !q.grab && !airborne(q, t) && q.st >= C.JUMP.stamina + 15 && !q.blocking && !q.charging && !q.cyclone && !q.lash && !q.ride && !q.eye
-  && !(q.castRootUntil > t) && !(q.rootUntil > t) && !(q.stunUntil > t);
+const canJump = (q, t) => !q.jump && !q.grab && !airborne(q, t) && q.st >= C.JUMP.stamina + 15 && !q.blocking && !q.charging && !q.lash && !q.ramWind && !q.ultWind && !q.flaskWind
+  && !q.ride && !q.eye && !q.mrain && !(q.rootUntil > t) && !(q.stunUntil > t);
+// Round 13: the air jump (once per airtime, from any height it's at)
+const canAirJump = (q, t) => airborne(q, t) && !(q.flightUntil > t) && !q.airJumped && !q.hover && !q.grab && q.st >= C.AIR_JUMP.stamina + 5 && !q.blocking && !q.charging
+  && !q.lash && !q.ramWind && !q.ultWind && !q.flaskWind && !q.ride && !q.eye && !q.mrain && !q.mrainFall && !(q.rootUntil > t) && !(q.stunUntil > t) && !(q.airDashUntil > t);
 // Round 9: the way up to a platform. A ramp whose high end reaches `destY` near `dest` ([x, z]): its foot, then up it.
 // If that ramp starts on another piece (the ruin bridge between ledges), the way up to its foot first (one level).
 const rampHigh = (s) => { const lz = (s.y1 >= s.y0 ? 1 : -1) * s.d / 2, c = Math.cos(s.yaw || 0), n = Math.sin(s.yaw || 0); return [s.x + lz * n, s.z + lz * c]; };
@@ -201,11 +206,11 @@ function lowCoverToward(me, toward) {
   return null;
 }
 const cycloneWindingUp = (q) => q.cyclone && !q.cyclone.pulsed;
-const mobilityReady = (me, t) => t >= me.cd.mobility && !airborne(me, t) && !rooted(me, t);
+const mobilityReady = (me, t) => t >= me.cd.mobility && !(me.flightUntil > t) && !rooted(me, t);   // (round 13: in a jump too)
 const veiled = (q, t) => q.veilUntil > t;
 const veilReady = (me, t) => kit(me).guard === 'tempest_veil' && t >= me.cd.guard && !veiled(me, t);
-const wallReady = (me, t) => kit(me).guard === 'glacial_bulwark' && t >= me.cd.guard && !airborne(me, t);
-const firewallReady = (me, t) => kit(me).guard === 'firewall' && t >= me.cd.guard && !airborne(me, t);
+const wallReady = (me, t) => kit(me).guard === 'glacial_bulwark' && t >= me.cd.guard;
+const firewallReady = (me, t) => kit(me).guard === 'firewall' && t >= me.cd.guard;
 const FIREWALL = C.SPELLBOOK.firewall;
 // A Glacial Bulwark or a Firewall toward `toward` (both stop projectiles; only the Bulwark stops anything else).
 function raiseFirewall(me, toward, act) {
@@ -213,12 +218,14 @@ function raiseFirewall(me, toward, act) {
   act({ t: 'firewall', yaw: me.yaw });
 }
 // winding something up that a well-timed interrupt stops (an ultimate's wind-up, and Meteor Rain's hover, included)
-// Casting roots a wizard (server.js castRooted; the same rule): short cast poses, wind-ups, channels, a held ward.
-// Movement abilities don't.
-const castRootedBot = (q, t) => !(q.eye || q.ride || q.mrain || q.mrainFall || q.flightUntil > t)
-  && (t < (q.castRootUntil || 0) || q.charging || !!q.lash || !!q.ramWind || !!q.grab || (!!q.cyclone && !q.cyclone.pulsed) || !!q.flaskWind || !!q.ultWind || !!q.blizz
-    || (q.blocking && C.isWard(kit(q).guard)));
-const busyCasting = (q) => q.charging || !!q.lash || !!q.ramWind || cycloneWindingUp(q) || !!q.ultWind || (!!q.mrain && q.mrain.phase !== 'dive');   // (a winding Jeb is a target to interrupt)
+// Round 13 (server.js castRooted; the same rule): only the big wind-ups root (Meteor's charge, the Lash's and the Ram's
+// wind-ups, an ultimate's wind-up, the Blizzard channel, a pull-up). Other casts slow (C.CAST_SLOW), as do Cyclone's and
+// Flask Step's short wind-ups: bots strafe while they fire.
+const castRootedBot = (q, t) => !(q.eye || q.ride || q.mrain || q.mrainFall)
+  && (q.charging || !!q.lash || !!q.ramWind || !!q.grab || !!q.ultWind || !!q.blizz);
+const castSlowedBot = (q, t) => t < (q.castSlowUntil || 0) || (!!q.cyclone && !q.cyclone.pulsed) || !!q.flaskWind;
+// (a winding Jeb is a target to interrupt; so is anyone hanging in mid-air through a wind-up: q.hover)
+const busyCasting = (q) => q.charging || !!q.lash || !!q.ramWind || cycloneWindingUp(q) || !!q.ultWind || !!q.hover || (!!q.mrain && q.mrain.phase !== 'dive');
 // the primary can fire now (cooldown, and the magazine isn't reloading)
 const primaryReady = (me, t) => t >= me.cd.fast && !(me.reloadUntil > t) && me.ammo > 0;
 
@@ -459,7 +466,7 @@ function think(me, world, t) {
   // ---- cyclone: spin as soon as they're inside the radius (a ward facing us blocks it, so
   // prefer them stunned, busy or turned away)
   const targetAir = airborne(target, t);
-  if (K.power === 'cyclone' && t >= me.cd.power && !airborne(me, t) && !me.carrying && !targetAir && d < 4.5 && los) {
+  if (K.power === 'cyclone' && t >= me.cd.power && !me.carrying && !targetAir && d < 4.5 && los) {
     const busy = isStunned(target, t) || busyCasting(target) || rooted(target, t);
     const warded = target.blocking && target.st > CYC.staminaCost && facing(target, me.p);
     if ((busy || !warded) && Math.random() < cfg.aggression * 0.3) { act({ t: 'cyclone' }); b.diveUntil = 0; return; }
@@ -501,6 +508,7 @@ function think(me, world, t) {
     if (K.mobility === 'blink' && cfg.blinkDodge && mobilityReady(me, t) && Math.random() < 0.35 * cfg.dodge) return blinkAway(me, away, act);
     if (K.mobility === 'smoke_screen' && mobilityReady(me, t) && Math.random() < 0.35 * Math.max(cfg.dodge, 0.5)) return smokeAway(me, away, act);
     if (K.mobility === 'roll' && mobilityReady(me, t) && Math.random() < 0.3 * Math.max(cfg.dodge, 0.5)) return rollAway(me, away, act);
+    if (canAirJump(me, t) && Math.random() < 0.3 * (cfg.airJump ?? 0)) return act({ t: 'jump', n: 2, y0: me.p[1] });   // round 13: up and away
     if (wallReady(me, t) && d > 3.5 && Math.random() < 0.4 * cfg.dodge) return raiseWall(me, target.p, act);
     if (K.mobility === 'ram_ride' && mobilityReady(me, t) && Math.random() < 0.35 * Math.max(cfg.dodge, 0.5)) return rideAway(me, away, act);
     if (K.mobility === 'flask_step' && mobilityReady(me, t) && Math.random() < 0.35 * Math.max(cfg.dodge, 0.5)) return flaskEscape(me, target, away, act);
@@ -623,6 +631,12 @@ function think(me, world, t) {
     act({ t: 'skyward' });
     return;
   }
+  // Round 13: now and then hop first and fire from the air (the next decision, mid-jump); Hard bots more often
+  if (fastReady && canJump(me, t) && d > 5 && Math.random() < (cfg.airCast ?? 0)) {
+    act({ t: 'jump' });
+    if (Math.random() < 0.4 * (cfg.airJump ?? 0)) b.ledgeAirJumpAt = t + C.JUMP.airTime * 0.45;   // and up again at the top
+    return;
+  }
   // The primary: the bread and butter. Against a raised ward sparks still drain stamina.
   if (fastReady && !savingFinisher && (!targetWarded || Math.random() < 0.5)) return primary(me, target, act, cfg, world, t);
 }
@@ -720,6 +734,7 @@ function reactToUltimates(me, world, t, act) {
     else if (K.mobility === 'blink') blinkAway(me, dir, act);
     else if (K.mobility === 'smoke_screen') smokeAway(me, dir, act);
     else if (K.mobility === 'roll') rollAway(me, dir, act);
+    else if (canAirJump(me, t)) act({ t: 'jump', n: 2, y0: me.p[1] });   // round 13: no dash: at least the air jump's hop
     else return false;
     return true;
   };
@@ -1283,6 +1298,8 @@ function respond(me, world, t, proj, th, act) {
   }
   // Ice shards fly at ankle height: up in the air they can't reach us.
   if (proj.kind === 'skim' && airborne(me, t)) return;
+  // Round 13: already up: the air jump lifts us over a chest-high shot (and the skim volley below)
+  if (canAirJump(me, t) && th.tc < 0.35 && th.tc > 0.06 && Math.random() < (cfg.airJump ?? 0)) return act({ t: 'jump', n: 2, y0: me.p[1] });
   // ...so hop them: a jump in the last moment clears the shards (they fly about 0.3 m up)
   if (proj.kind === 'skim' && th.tc < 0.4 && th.tc > 0.08 && canJump(me, t) && Math.random() < (cfg.jump ?? 0)) return act({ t: 'jump' });
   // Roll: inside its 0.25 s dodge window the shot passes through (and the roll carries us off its line anyway)
@@ -1468,20 +1485,23 @@ function moveBot(me, dt, world, t) {
   let speed = run * cfg.speed;
   if (me.sprinting) speed = C.sprintOf() * cfg.speed;
   if (me.eye) speed = run * EYE.speedMul;
-  else if (me.charging || me.cyclone || me.lash) speed = C.chargeSpeedOf();
   else if (me.blocking) speed = C.blockSpeedOf();
   else if (flying) speed = SKY.airSpeed;
-  if (t < b.dodgeUntil && !me.cyclone && !flying && !me.charging && !me.lash) speed = Math.max(speed, run * 0.95);
+  if (t < b.dodgeUntil && !flying) speed = Math.max(speed, run * 0.95);
+  const upInAir = !flying && (!!me.jump || airborne(me, t));
+  if (upInAir && me.jumpSpeed) speed = Math.max(speed, me.jumpSpeed * cfg.speed);   // round 13: a sprint-jump carries its speed
   if (me.crouch) speed = Math.min(speed, C.CROUCH.speed);
   if (me.slowUntil > t) speed *= 1 - SKIM.slow;
+  if (castSlowedBot(me, t) && !flying) speed *= C.CAST_SLOW.mult;   // round 13: a cast slows, it doesn't stop
   if (rooted(me, t)) { speed = 0; b.vel = [0, 0]; }
-  // casting: no translation (knockback still carries us); stop dead as the cast starts
+  // a rooting wind-up: no translation (knockback still carries us); stop dead as it starts
   const castStop = castRootedBot(me, t);
   if (castStop) { speed = 0; if (!b.wasCastRooted) b.vel = [0, 0]; }
   b.wasCastRooted = castStop;
   if (wl > 0.01) speed = C.backpedalSpeed(speed, wx, wz, me.yaw);   // backpedalling is slower, like for players
   const tx = wl > 0.01 ? wx / wl * speed : 0, tz = wl > 0.01 ? wz / wl * speed : 0;
-  const k = Math.min(1, dt * 12);
+  // round 13: snappier (MOVE_ACCEL), with only a little drag in the air when not steering
+  const k = Math.min(1, dt * (wl > 0.01 ? C.MOVE_ACCEL.accel : upInAir ? C.MOVE_ACCEL.airDrag : C.MOVE_ACCEL.stop));
   if (!b.dash) { b.vel[0] += (tx - b.vel[0]) * k; b.vel[1] += (tz - b.vel[1]) * k; }
   me.p[0] += b.vel[0] * dt; me.p[2] += b.vel[1] * dt;
   // dragged by an Eye of the Storm
@@ -1512,9 +1532,14 @@ function moveBot(me, dt, world, t) {
     if (b.stuckT > 0.25 && canJump(me, t) && lowCoverToward(me, [me.p[0] + wx, 0, me.p[2] + wz])) { world.handle(me, { t: 'jump' }); b.stuckT = 0; }
     // round 10: against a ledge we can grab (the server pulls us up mid-jump): jump at it
     else if (b.stuckT > 0.25 && canJump(me, t) && C.ledgeTarget(me.p, [wx / (wl || 1), wz / (wl || 1)], me.p[1] + C.JUMP.height)) { world.handle(me, { t: 'jump' }); b.stuckT = 0; }
+    // round 13: a ledge only the air jump's apex reaches: jump, then the air jump at the top (below)
+    else if (b.stuckT > 0.25 && canJump(me, t) && C.ledgeTarget(me.p, [wx / (wl || 1), wz / (wl || 1)], me.p[1] + C.JUMP.height + C.AIR_JUMP.height)) {
+      world.handle(me, { t: 'jump' }); b.stuckT = 0; b.ledgeAirJumpAt = t + C.JUMP.airTime * 0.45;
+    }
     else if (b.stuckT > 0.4) { b.strafe *= -1; b.stuckT = 0; }
   }
   else b.stuckT = 0;
+  if (b.ledgeAirJumpAt && t >= b.ledgeAirJumpAt) { b.ledgeAirJumpAt = 0; if (canAirJump(me, t)) world.handle(me, { t: 'jump', n: 2, y0: me.p[1] }); }
   b.lastPos = me.p.slice();
 
   const moving = Math.hypot(b.vel[0], b.vel[1]) > 0.6;
