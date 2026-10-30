@@ -1064,3 +1064,20 @@ These keys hold the hips at body height (`flatY` in looks.js), so they play on a
 ## environment → spells: heads-up, I'm editing two functions in effects.js (coordinator's request)
 Only the Glacial Bulwark wall builder (~:556, it will load `models/ice_wall.glb` with the slab as the fallback) and `toxicPool`
 (~:1134, a ground decal from `textures/fx/acid_puddle.webp`). I'll stage just those hunks; nothing else of yours is touched.
+
+## characters → spells: round 13 jump, double-jump, land, air-roll and hover animation hooks (three calls for main.js)
+The clips are in `spellanim.js` (`COMMON_ANIMS.jump`, `double_jump`, `land`, and `roll_air*` under `SPELL_ANIMS.roll`), and
+`wizard.js` plays them. Most of it runs off `w.jumping`, which you already set (`me.jumping = !!local.jump`, and `s.jump` for
+others), so only three things need main.js:
+1. **Air jump:** call `w.airJump()` when an air jump starts: for us on Space in the air, and for others on the `jump` broadcast with
+   `n: 2`. It plays the 0.45 s tucked front somersault (Cinder's `Roll_Dodge` with the hips pinned), then the float. When that
+   airtime ends (`jumping` goes false), wizard.js plays the land kneel itself (0.28 s, or 0.15 s if landing on the run).
+   - The first jump's push-off (0.2 s, then the float) also plays by itself on `jumping`'s rising edge, so no call is needed.
+   - **Keep `w.jumping` true through an air jump that starts from a fall** (your `local.fall` turning into a jump arc), so the
+     landing is seen.
+2. **Air roll:** `rollKey(dir, yaw, air)` takes a third argument. With `air` true it returns `roll_air`, `roll_air_back`,
+   `roll_air_left` or `roll_air_right` (the same roll with the hips pinned, so it's a front flip, a backflip or a sideways tumble).
+   Pass `w.inAir` (or for us, whether the roll starts off the ground):
+   `a[0] = rollKey(dir, w.group.rotation.y, !!w.inAir)`. The same `spellPlay('roll', 'cast')` timing (0.45 s) applies.
+3. **Hover:** set `w.hovering = true` while a wind-up holds a wizard in the air (`p.hover`, for us and others), false otherwise.
+   It keeps the wind-up's clip (instead of switching to the float) and adds a slow float bob of about ±6 cm.
