@@ -1,5 +1,69 @@
 # Environment hand-off: the farmstead
 
+## Round 13: double-jump verification, the barn's walls, and two spell assets (ice wall, acid puddle)
+**Reach with the double jump** (`JUMP.height` 1.45 + `AIR_JUMP.height` 1.2): the best apex is **2.65 m** above the take-off floor and a
+ledge grab reaches **3.85 m**. Checked with the game's own rules (`surfaceHeight`, `surfacePushOut`, `ledgeTarget`) from just outside every
+edge of every standable surface (`/tmp/wa-environment/reach2.mjs`, `reach3.mjs`), then in game (below).
+- **Nothing new opens up.** Every perch at 2.65 m or less (the three ruin ledges at 2.0, the loft deck at 2.28, the high plateau and the
+  pen rock at 2.5) was already reachable from the ground with a single jump plus a ledge grab (2.65 m) since round 10. The double jump
+  only skips the pull-up. Their stairs and ladders are still the quick way up, and each keeps its counter (a second route, or cover).
+- **The watchtower stays ladder-only.** Its deck is 4.25 m up, 0.4 m beyond the 3.85 m grab, and nothing standable is near it. Its roof
+  has no collider and isn't a surface, so you can't grab or stand on it.
+- **Roofs:** the farmhouse, barn and well are colliders, not surfaces, so `ledgeTarget` never targets them. Nobody can grab onto or stand
+  on a roof.
+- **The rim:** you can't leave over it at any height. The client clamps you to the arena circle every frame (main.js), the server clamps
+  dashes radially, and the farthest surface corner (the tower deck) is 38 m out of 40. Note for spells: the server's `state` clamp
+  (server.js, `np`) is a square ±40, so only a modified client could stand outside the circle in the corners. That's unrelated to jumping.
+- **Low colliders you can now hop over from the ground** (h 1.45–2.65): hay bales (cover and the pen stacks), blast rocks, the cart (2.0),
+  the pen shelter (2.4), the scarecrow, the obelisks' feet and the fallen pillar's foot. None is standable or encloses anything, so you come
+  down beyond it or slide off its top. That's the agility Ty asked for, so I left them alone.
+- **Fixed: the barn** (`fe901b8`). Its wall colliders were 4 m tall, but its roof is 4.2 m at the eaves and 5.7 m along the ridge
+  (measured from barn.glb). A double jump from the hay loft's deck (apex 4.93) or its hay stack (5.92) could clear a wall and drop through
+  the roof into the barn. The posts under the roof (model z −2.4..1.15, 50 of 60) are now **6 m** (`BARN_POST_H`); the open door leaves
+  stay 4 m. Spells now stop at 6 m on those wall lines, where the roof slope would have stopped them a step later anyway.
+- **Known, not changed: the watchtower roof.** On the deck, a jump puts your head into the roof (from 6.4 m) and a double jump puts your
+  whole body in it for a moment. A single jump already did this before round 13. An invisible cap would need a head-clearance check
+  in the jump physics, and the push-out code would shove you off the deck rather than stop you, so it's spells' call. Under a 2.1 m roof it
+  would cap the jump at about 0.3 m, which also stops hopping over the parapet.
+
+**Glacial Bulwark's ice wall** (coordinator's request, Ty's Meshy model):
+- **The model:** `public/models/ice_wall.glb`, shrunk with `tools/optimize-models.sh one <src> ice_wall 0.4 1024`: 7.3 MB and 14k tris
+  down to **406 KB and 7.4k tris** (1024 webp textures).
+- **`effects.wall()`:** the model loads once on first use (a dynamic `GLTFLoader` import, cached in `effects.iceWallModel`). Each wall clones
+  it at `BULWARK.width` × `BULWARK.height` and 0.7 m thick; the gameplay collider is unchanged.
+  - The procedural slab and crystals show until the model loads, or for good if it fails.
+  - **Material:** frosty and translucent (opacity 0.92, low roughness, a blue emissive at 0.3).
+  - **Damage:** `setHp` still reveals the cracks (moved out onto the thicker faces) and clouds the ice (opacity down to 0.75, emissive down
+    to 0.1). The shatter is unchanged.
+
+**Toxic Flask's pool** (Ty's Meshy concept render):
+- **The texture:** `public/textures/fx/acid_puddle.webp` (163 KB, 1024², alpha).
+  - The grey background became alpha, by flood-filling from the borders so the dark soil patches inside stay.
+  - The grey fringe was un-premultiplied out of the edges, the image trimmed, and its height stretched 1.52× so the puddle reads round
+    from above. Script: `/tmp/wa-environment/puddle.py`.
+- **`effects.toxicPool()`:** a decal 2.5 R across, randomly turned, at `surfaceHeight` under the pool (so it lies on a deck or ledge), 0.1 m
+  up, with polygonOffset and no depth write.
+  - The green liquid fills most of the rim, and the splashes and soaked soil run a little past it.
+  - The rim ring at R, the bubbles, the fumes, the grow-in, the fade-out and the scorch are unchanged.
+  - **Leftover:** the bubbles (in the update loop, which isn't mine) still spawn at y 0.15 rather than at the pool's height on a raised
+    surface.
+
+**Verified** (port 4102; the HEAD server crashed on spells' half-landed constants while I tested the assets, so those shots ran from a
+copy of `10bc641` plus my files):
+- **Ice wall:** `wall_fresh.png`, `wall_fresh_angle.png`, `wall_half.png`, `wall_damaged.png`, `wall_shatter.png`.
+- **Pool:** `pool.png` (from above), `pool_low.png`, `pool_end.png` (faded).
+- No console errors. A 60 s hard/normal/easy botmatch with the barn change ran without errors.
+- All screenshots are in `/tmp/wa-environment/`.
+- **In game, against the spells agent's committed jump** (`9ac931c`, `a71870d`, `5023e57`; WA_DEBUG server on 4102,
+  `/tmp/wa-environment/jumpcheck.py`, Metal flags):
+  - **Flat ground:** the double jump peaks at **2.65 m**.
+  - **The tower deck from the ground** (its west parapet, sprinting in, both jumps): peak 2.65, back on the ground. It stays ladder-only.
+  - **The high plateau from the ground:** reached directly (y 2.5).
+  - **A sprint double jump west from the loft hay at the barn:** peak 5.57. The 6 m wall stops it and it drops between the loft and the
+    barn (x 17.3, outside the wall at 16.4); before the fix it would have cleared the 4 m wall. Shots: `jc_*.png`.
+  - **Bots:** a 120 s botmatch with three Hard bots ran with no errors and no stalls.
+  - No console errors.
+
 ## Round 12: one story, farm north, blast band, magic land south (`cd12afb`, notes for spells in `34bfaac`)
 **The layout** (`map.js` header has the full map):
 - **The farm (z > +5).** Farmhouse, barn, hay loft, leaning silo, well, cart, tractor, scarecrow and the cart road are unchanged.
