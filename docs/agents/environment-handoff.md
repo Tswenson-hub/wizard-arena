@@ -1,5 +1,42 @@
 # Environment hand-off: the farmstead
 
+## Distant mountains and ground textures (Ty's paintings; `52cdc2c`, `8044c3a`)
+**The mountain vista:** `textures/sky/mountain_vista.webp` (2048×653, 141 KB), cut from Ty's painting with
+`/tmp/wa-environment/vista.py`.
+- **Cut:** it keeps the peaks and the mist band. The foreground ledge is cropped off, and the sky and sunset clouds above the peaks are
+  keyed to alpha, using an envelope polyline I traced just above the peaks plus a smooth-sky scan, then a 1-D opening to remove slivers.
+- **Ring:** world.js `mountainVista()` puts it on one open cylinder (r 160, 24–68 m up, 6 mirrored tiles so the seams meet), unlit with
+  `fog: false`.
+- **Shader:** a variation round the ring (a whole number of periods, so it closes) changes the peaks' height and tint so neighbouring tiles
+  don't read as twins. There's a haze of the fog colour toward the cylinder's foot, which hides behind the hills.
+- **Draw calls:** one, replacing the 18 cone mountains and 90 hill tufts.
+- **Known:** from far above (only the editor's camera gets there) you can see sky between the ground's edge (±120 m) and the ring.
+  Players never see it.
+- **Shots:** `/tmp/wa-environment/vista_{north,east,south,west,overhead}.png`.
+
+**The ground:**
+- **Textures:** `textures/ground/grass.webp` and `dirt_path.webp` (1024, mipmapped, repeat, anisotropy 8).
+- **Grass:** one material for the arena and the hills (`grassGround`), sampled in world space.
+  - It's 5 m to a tile, with a second sample turned 34° at 13 m plus noise patches against repetition.
+  - It's a little desaturated and tinted (`GROUND_LOOK`) to sit with the 3D tufts and the old palette.
+  - The magic land gets a light violet cast, matching its tufts' ramp, inside the arena only.
+  - The blast scorch decal stays on top.
+- **Dirt:** the paths (`dirtStrip`) get one tile across, so the ruts are about half the path's width apart and run along it, with ragged
+  soft edges and faded ends. The yard is two crossed samples with a soft noisy edge.
+  - Gotcha: two materials with the same `onBeforeCompile` source share one program unless they get their own `customProgramCacheKey`. That
+    made the yard invisible at first.
+- **Perf** (`/tmp/wa-environment/ground/perf.py`, headless Metal, four fixed views):
+
+  | View | Before | After |
+  |---|---|---|
+  | farm | 60 fps, 573 calls | 51–55 fps, 550 calls (two runs; may be noise, since bots move) |
+  | path | 55 fps, 448 calls | 60 fps, 434 calls |
+  | magic | 38 fps, 617 calls | 60 fps, 599 calls |
+  | overview | 59 fps, 659 calls | 60 fps, 640 calls |
+
+- **Shots:** `/tmp/wa-environment/ground/g_{overhead,farm_ground,path_ground,magic_ground,yard}.png` and `after2_*.png`.
+- **Not done:** the well's cobble ring is still a flat grey decal, and it looks plain on the new ground.
+
 ## Map editor: layout.json and ?edit=1 (`2703613` migration, `dacc48c` editor, `ba596f4` endpoint, docs after)
 **The data:** `public/shared/layout.json` has 176 entries `{ id, kind, model?, x, z, rotY?, scale?, ...kind fields }` plus `scatter` (the
 seeds and counts of the blast shards, crystals, rim rocks, far trees and grass). It's written one entry per line, keys in a fixed order,
