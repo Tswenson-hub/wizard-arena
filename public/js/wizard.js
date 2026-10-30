@@ -13,7 +13,7 @@ const BEAM_MOTES = 12;
 const CYC = C.SPELLBOOK.cyclone, LASH = C.SPELLBOOK.sanguine_lash;
 // Natural ground speed (m/s) of each locomotion clip at 1x, so playback = actual speed / natural speed and the
 // feet don't slide. looks.js measures each body's clips (clip.userData.speed); these are the fallbacks.
-const NATURAL_SPEED = { run: 4.6, walk_fight: 0.73, back: 0.56 };
+const NATURAL_SPEED = { run: 4.6, walk_fight: 0.73, back: 0.56, crouch_walk: 1.3 };
 // Normal movement is a walk (Ty): the fight walk forward and sideways, the backward walk backward, each time-scaled
 // to the ground speed by its measured gait speed. 'run' only plays for a body without the fight walk.
 
@@ -21,7 +21,9 @@ const NATURAL_SPEED = { run: 4.6, walk_fight: 0.73, back: 0.56 };
 // is a copy of its clip with only its own bones' tracks (LEG_BONES: the hips and legs; everything else is upper body),
 // so every bone has exactly one action driving it. Whole-body moves never split (jumps, flips, rolls, falls, hits).
 const LEG_BONES = new Set(['Hips', ...['Left', 'Right'].flatMap(s => ['UpLeg', 'Leg', 'Foot', 'ToeBase'].map(b => s + b))]);
-const WHOLE_BODY = /^(jump|double_jump|land|roll|dash|death|stun|knockdown|getup|hit_waist|mrain_|ride|spin|arrival|flask_step|float|lash|ult$)/;
+const WHOLE_BODY = /^(jump|double_jump|land|roll|dash|death|stun|knockdown|getup|hit_waist|mrain_|ride|spin|arrival|flask_step|float|lash|ult$|air_cast|crouch|smoke_screen|blink|mirror_step|skyward)/;
+// Landings and flips may cut these short (an air cast, a flip, an air roll); anything else playing at touchdown goes on.
+const LANDABLE = /^(jump|double_jump|float|air_cast|roll_air)/;
 
 // Sanguine Lash: the whip coiling around the caster during the wind-up (a helix of blood-red light).
 const coilGeo = (() => {
@@ -131,7 +133,7 @@ export class Wizard {
     this.actions.stun.setLoop(THREE.LoopOnce); this.actions.stun.clampWhenFinished = true;
     this.actions.dash.setLoop(THREE.LoopOnce); this.actions.dash.clampWhenFinished = true;
     // optional clips some bodies have (looks.js): a death fall, Gale's cyclone sweep
-    for (const k of ['death', 'spin', 'lash', 'float', 'tk_lift', 'tk_throw', 'hit_waist', 'knockdown', 'getup', 'jump', 'double_jump', 'land']) if (this.actions[k]) { this.actions[k].setLoop(THREE.LoopOnce); this.actions[k].clampWhenFinished = true; }
+    for (const k of ['death', 'spin', 'lash', 'float', 'tk_lift', 'tk_throw', 'hit_waist', 'knockdown', 'getup', 'jump', 'double_jump', 'double_jump_back', 'land', 'land_soft', 'air_cast']) if (this.actions[k]) { this.actions[k].setLoop(THREE.LoopOnce); this.actions[k].clampWhenFinished = true; }
 
     this.current = null;
     this.oneShotUntil = 0;
@@ -316,6 +318,10 @@ export class Wizard {
 
   // Short interrupt (cast, flinch, blink) that returns to the base state afterwards.
   oneShot(name, duration, timeScale = 1, startAt = 0) {
+    // round 13: a cast in the air plays the air strike (knees tucked) instead of its ground clip; not a rooting wind-up,
+    // which hangs the caster in its own pose (hovering)
+    if (this.actions.air_cast && duration <= 1.2 && !WHOLE_BODY.test(name) && !this.castRooted && !this.hovering && !this.dead
+      && (this.inAir ?? this.group.position.y > 0.3)) { name = 'air_cast'; duration = 0.45; timeScale = 1; startAt = 0; }
     const a = this.actions[name];
     if (!a) return;
     if (this.layered) this.unsplit(false, !WHOLE_BODY.test(name));
@@ -468,7 +474,11 @@ export class Wizard {
   airJump() {
     if (this.dead) return;
     this.flipped = true;
-    if (this.actions.double_jump) this.oneShot('double_jump', 0.45, 1, 0);
+    // a front flip, or the backflip when the jump goes backwards (against the facing)
+    const v = this.vel, yaw = this.group.rotation.y, sp = v ? Math.hypot(v.x, v.z) : 0;
+    const back = sp > 0.5 && (v.x * Math.sin(yaw) + v.z * Math.cos(yaw)) / sp < -0.5;
+    const key = back && this.actions.double_jump_back ? 'double_jump_back' : 'double_jump';
+    if (this.actions[key]) this.oneShot(key, 0.45, 1, 0);
   }
 
   // Eye of the Storm's fling: the body is thrown up and lands (visual only; the server keeps feet on the ground).
@@ -516,19 +526,21 @@ export class Wizard {
     return this.actions.walk_fight ? 'walk_fight' : 'run';
   }
 
-  // Round 13: the first jump's push-off as it leaves the ground, and the land kneel when an airtime with an air jump
-  // in it ends. `jumping` is mirrored from the server (or our own jump), so this works for every wizard.
+  // Round 13: the push-off as a jump leaves the ground, and a landing when an airtime ends: the three-point crouch after
+  // an air jump or a drop of 3 m or more, a light dip after a plain jump (nothing after stepping off a ledge). `jumping`
+  // and `inAir` are mirrored for every wizard (main.js), so this needs no calls.
   updateJumpPoses(m) {
-    const jumping = !!this.jumping && !this.dead;
-    if (jumping && !this.wasJumping && !this.flipped && !this.hovering && !this.inOneShot() && this.actions.jump) this.oneShot('jump', 0.2, 1, 0);
-    if (!jumping && this.wasJumping && this.flipped && !this.dead && this.actions.land) {
-      // a 0.3 s kneel-and-rise; landing on the run it's squeezed to 0.15 s so the feet don't slide for long
-      const d = m.speed > 1.5 ? 0.15 : 0.28;
-      if (!this.inOneShot() || this.current === 'double_jump' || this.current === 'float') this.oneShot('land', d, 0.3 / d, 0);
+    const jumping = !!this.jumping && !this.dead, y = this.group.position.y;
+    const air = !this.dead && (jumping || (this.inAir ?? y > 0.3));
+    if (jumping && !this.wasJumping && !this.flipped && !this.hovering && !this.inOneShot() && this.actions.jump) this.oneShot('jump', 0.25, 1, 0);
+    if (air) { this.airPeak = this.wasAir ? Math.max(this.airPeak, y) : y; this.airJumpSeen ||= jumping; }
+    else if (this.wasAir && !this.dead) {
+      const hard = this.flipped || this.airPeak - y >= 3, run = m.speed > 1.5;
+      const [key, d] = hard ? ['land', run ? 0.22 : 0.4] : this.airJumpSeen ? ['land_soft', run ? 0.15 : 0.25] : [null, 0];
+      if (key && this.actions[key] && (!this.inOneShot() || LANDABLE.test(this.current))) this.oneShot(key, d, (hard ? 0.4 : 0.3) / d, 0);
     }
-    if (!jumping && !(this.inAir ?? this.group.position.y > 0.3)) this.flipped = false;
-    if (this.dead) this.flipped = false;
-    this.wasJumping = jumping;
+    if (!air) { this.flipped = false; this.airJumpSeen = false; }
+    this.wasJumping = jumping; this.wasAir = air;
   }
 
   updateAnimation(moving, dt) {
