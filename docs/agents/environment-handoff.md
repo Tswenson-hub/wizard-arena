@@ -1,5 +1,90 @@
 # Environment hand-off: the farmstead
 
+## Round 12: one story, farm north, blast band, magic land south (`cd12afb`, notes for spells in `34bfaac`)
+**The layout** (`map.js` header has the full map):
+- **The farm (z > +5).** Farmhouse, barn, hay loft, leaning silo, well, cart, tractor, scarecrow and the cart road are unchanged.
+  - The **goat pen** moved 9.5 m north and 1 m west (x 17..27, z 1.5..12.5), between the barn and the pen rock.
+    - Its gate (z 6.1..8.9), `gateOut`/`gateIn`, the shelter, the trough and `GOAT_SPAWNS` are now relative to `PEN`, so they follow it.
+    - Two hay stacks and two loose bales sit south of the gate.
+  - The **pen rock** is reached by `wooden_stairs.glb` (yaw π, `sx` 0.75, landing at 2.5 m, move-only hand rails). It used to be ruin
+    steps.
+  - **Cover:** every farm cluster is round bales (`hay`): c1, c2, c5 (the old crate stack), c6, c8, c9, c10 (moved, the pen took its
+    place), c12, c17 and c18.
+  - **Trees:** pines and oaks, plus a new east oak at (32.3, −1) that screens the east spawn from the pen rock.
+- **The blast band (z +5..−20).**
+  - The altar, the scorch with its glowing cracks, the rune circle, blast stones (four now; 112° went for the new ledge), slabs, ten
+    shards (was 26) and the c3/c4/c7/h1/h2 rocks.
+  - The **felled silo** moved from the south-west meadow to bearing 80, 12–23 m east of the altar (`SILO_BEARING`). Its crates and barrels
+    (props 20–24) lie on its north flank, 1.2 m off it, so a bot can walk between (at 0.45 m one wedged for 26 s).
+  - Four **fence panels** lie flat on the farm edge (`FENCE_DEBRIS` in world.js). They're cosmetic and have no collider.
+  - The **fallen pillar** is `rune_pillar.glb` on its side (`layFallenPillars`), 6.6 m long. Its collider is now a 1.7 m rubble foot and
+    1.1 m shaft circles.
+- **The magic land (z < −15).**
+  - A second **archway** at bearing 222, 22 m from the altar (`ARCHWAYS[1]`, 7 m), and a second, upright **obelisk** at bearing 141, 24 m
+    (`OBELISKS[1]`, 6.8 m).
+  - A third **ruin ledge** (`ledge-c`, `LEDGE_SE` = bearing 122, 17.5 m) where the fort stood. It holds heal spot `ruin`.
+  - **Broken rune pillars** as cover (type `pillar`): c11, c13, c14, c15 and c16, 2–3 each, 4.8–6.3 m.
+  - **14 crystal clusters** (`CRYSTALS`, seeded, colliders r 0.5s, h 1.1s, kind `crystal`).
+  - Six **vases** (pot props 25–30) and two rocks.
+  - **Birches only.** The two south oaks became birches, and two birches were added.
+  - The **grass turns violet** in the shader (`vMagic` from the instance's world z: none above −13, full past −20).
+  - The outer ring of far trees is birch on the south side.
+  - The **watchtower** stays put (its sight lines and heal spot are tuned) and is dressed as a mage's lookout: a violet pennant and a
+    turning crystal over its roof.
+
+**Removed:**
+- The pumpkins (type, spawns, mesh, comments).
+- The canopy fort (surfaces, oaks, `FORT`/`FORT_OAKS`/`CANOPY_DECK`, its heal spot) and the c5 procedural crate stack.
+- The cylinder fallen pillar (`makeFallenPillar`), the silo footing ring (`SILO_FOOTING`) and the dead `C.ROOFS` loop.
+- The `crates` cover type.
+
+**Fixes:**
+- **The invisible ledge parapets.** They're pieces of their own (`ledge-a-wall` etc., style `parapet`), so `swapModel('piece:ledge-a')` no
+  longer clears them. They're drawn as two `rock_jagged` instances standing on the ledge, like the plateau boulders. Plain boxes looked
+  unfinished.
+- **Two props that were inside colliders before this round.** The rock prop at fromAltar(30, 9.5) sat in h2, so it's at (2.6, −0.6)
+  now. Table rock 275° was 0.29 m from ledge-b's stairs (a snag), so it's at 16.2 m.
+
+**Asset counts** (in the arena unless noted):
+
+| Asset | Count |
+|---|---|
+| `rock_jagged` | 65, was about 150: rim 26, rock clusters 16, shards 10, blast stones 4, plateau boulders 3, parapets 6, none outside |
+| `rune_pillar` | 4 + 1 lying + 13 |
+| `archway` | 2 |
+| `obelisk` | 2 |
+| `ruin_platform` | 3 |
+| `ruin_steps` | 1 |
+| `wooden_stairs` | 1 (was 0) |
+| `rock_table` | 4 + rim 26 + 12 outside |
+
+**How I verified it** (server on 4102; scripts in `/tmp/wa-environment/`):
+- **`check12.mjs`.** No prop inside a collider, a surface or another prop. No 0.02–0.95 m snag gaps between colliders, or between
+  colliders and walkable pieces. Spawn clearances are in the next item.
+- **Spawns** (`spawnsearch12.mjs`, `evalset.mjs`, `why.mjs`).
+  - 415 valid candidates. The search keeps 4 on the farm side and 3 in the magic land.
+  - The closest pair is 15.2 m apart (was 17), none sees another at chest height, none is overlooked by a perch within 15 m, and each is
+    at least 14 m from every potion.
+  - The longest clear ground line from a spawn is 37–60 m, and the mean over 72 bearings is 11.5–14.4 m.
+- **Goats** (`homesim12.mjs`): a dizzy goat dropped at 67 spots, including round the new pen, the silo, ledge-c, the second archway, the
+  second obelisk, the stairs and the east oak, gets home every time. The one "miss" starts inside the pen and just grazes.
+- **Bots** (`stuckwatch12.mjs`, 150 s, four bots).
+  - The first runs had stalls by the c4/h1/h2 rocks and one 26 s wedge at the silo's crate row. I fixed the crate row.
+  - Later runs: 1–2 stalls of 6–11 s per run, all mid-fight beside cover.
+  - Round 11 baseline (a worktree of HEAD on 4112): 1–2 stalls of about 6 s.
+- **`botmatch.mjs 4102 60/90`** runs clean. `MATCH_DEBUG=1 node tools/test/modematch-unit.mjs`: ALL PASS.
+- **Screenshots** (headless, no console errors):
+  - The four for the coordinator: `r12_overhead.png`, `r12_farm_half.png`, `r12_blast_band.png`, `r12_magic_half.png`.
+  - Close-ups: `r12_parapet.png`, `r12_ledge_se.png`, `r12_crystals.png`, `r12_grass_s.png`, `r12_grass_band.png`, `r12_east.png`.
+  - Before: `r12_before_top.png`.
+
+**Known issues and left over:**
+- The spawns' closest pair is 15.2 m (south-west to south), 2 m tighter than round 11. More cover there would let them spread.
+- Bots steer greedily, so they can still lean on a cover cluster for a few seconds when their target is straight behind it (the silo's
+  base end and c4 make a channel east of the altar). That's the same behaviour as before, at about the same rate.
+- The crystals, pillar stubs and fence panels have no Meshy models. The crystals and panels are procedural; the pillars use `rune_pillar.glb`.
+- The farm's cover is now nearly all hay bales (31 big bales in clusters). A Meshy woodpile or crate stack would add variety.
+
 ## Round 11: map cleanup for a 4-player free-for-all
 Ty found the round 10 additions cluttered and haphazard. Commit afb8b0f.
 
