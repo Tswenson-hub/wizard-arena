@@ -553,16 +553,44 @@ export class Effects {
     }
   }
 
-  // Glacial Bulwark: an ice slab with crystals on top. Returns { group, setHp(hp) }.
+  // Glacial Bulwark: Ty's Meshy ice wall (models/ice_wall.glb) stretched to the wall's size, with the procedural ice slab
+  // and crystals standing in until it loads (or if it fails). Returns { group, setHp(hp) }.
   wall(w) {
     const g = new THREE.Group();
     g.position.set(w.x, 0, w.z);
     g.rotation.y = w.yaw;
     const iceMat = new THREE.MeshStandardMaterial({ color: 0xaee6ff, emissive: 0x3a8fc8, emissiveIntensity: 0.35, roughness: 0.15, metalness: 0.1, transparent: true, opacity: 0.72 });
+    const standIn = new THREE.Group();
     const slab = new THREE.Mesh(new THREE.BoxGeometry(BULWARK.width, BULWARK.height, 0.5), iceMat);
     slab.position.y = BULWARK.height / 2;
     slab.castShadow = true;
-    g.add(slab);
+    standIn.add(slab);
+    g.add(standIn);
+    // the model: loaded once, fitted to 1 m (base at y 0, centred), its material made frosty and see-through; each wall
+    // gets a clone stretched to width x height (0.7 m thick: the collider stays the 0.5 m slab) with its own material
+    this.iceWallModel ??= import('three/addons/loaders/GLTFLoader.js').then(({ GLTFLoader }) => new GLTFLoader().loadAsync('/models/ice_wall.glb')).then(gl => {
+      const m = gl.scene, box = new THREE.Box3().setFromObject(m), size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
+      m.position.set(-c.x, -box.min.y, -c.z);
+      const unit = new THREE.Group(); unit.add(m); unit.userData.size = size;
+      m.traverse(o => {
+        if (!o.isMesh) return;
+        o.castShadow = true;
+        Object.assign(o.material, { transparent: true, opacity: 0.92, roughness: 0.12, metalness: 0.05, emissive: new THREE.Color(0x2a78b8), emissiveIntensity: 0.3, depthWrite: true });
+        o.material.color.multiplyScalar(1.15);
+      });
+      return unit;
+    }).catch(() => null);
+    let modelMats = null;
+    this.iceWallModel.then(unit => {
+      if (!unit || !g.parent) return;
+      const s = unit.userData.size, ice = unit.clone();
+      ice.scale.set(BULWARK.width * 1.04 / s.x, BULWARK.height / s.y, 0.7 / s.z);
+      modelMats = [];
+      ice.traverse(o => { if (o.isMesh) { o.material = o.material.clone(); modelMats.push(o.material); } });
+      g.remove(standIn); g.add(ice);
+      for (const c of cracks) c.scale.z = 0.4 / 0.26;   // onto the thicker model's faces
+      entry.setHp(entry.hp);
+    });
     // jagged crystals along the top and the edges
     let seed = w.id * 977 + 3;
     const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
@@ -570,12 +598,12 @@ export class Effects {
       const c = new THREE.Mesh(new THREE.ConeGeometry(0.16 + rnd() * 0.12, 0.5 + rnd() * 0.7, 5), iceMat);
       c.position.set((i / 8 - 0.5) * BULWARK.width, BULWARK.height + 0.15, (rnd() - 0.5) * 0.3);
       c.rotation.z = (rnd() - 0.5) * 0.6;
-      g.add(c);
+      standIn.add(c);
     }
     for (const side of [-1, 1]) {
       const c = new THREE.Mesh(new THREE.ConeGeometry(0.22, 1.2, 5), iceMat);
       c.position.set(side * (BULWARK.width / 2 + 0.05), 0.5, 0); c.rotation.z = -side * 0.35;
-      g.add(c);
+      standIn.add(c);
     }
     // cracks on both faces, revealed as the wall takes damage
     const crackMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 });
@@ -598,9 +626,12 @@ export class Effects {
     const entry = {
       group: g, rise: 0,
       setHp: (hp) => {
+        entry.hp = hp;
         const k = 1 - Math.max(0, hp) / BULWARK.hp;
         cracks.forEach((c, i) => { c.visible = i < Math.round(k * cracks.length * 1.1); });
         iceMat.opacity = 0.72 - k * 0.2;
+        // the model clouds over and thins as it cracks
+        for (const m of modelMats || []) { m.opacity = 0.92 - k * 0.17; m.emissiveIntensity = 0.3 - k * 0.2; }
       },
     };
     entry.setHp(w.hp);
@@ -1130,14 +1161,23 @@ export class Effects {
     this.scene.add(ring);
     this.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0, maxLife: 0.3, grav: 0, grow: radius / 0.3, still: true });
   }
-  // Toxic Flask's pool: green liquid on the ground, a bright rim, bubbles and fumes. `left` = seconds it lasts.
+  // Toxic Flask's pool: the acid puddle decal (Ty's Meshy concept, cut out top-down: textures/fx/acid_puddle.webp) on the
+  // ground or the deck it landed on, a bright rim at the damage radius, bubbles and fumes. `left` = seconds it lasts.
   toxicPool(p, left) {
     const R = C.SPELLBOOK.toxic_flask.radius;
     const g = new THREE.Group();
-    g.position.set(p[0], 0, p[2]);
-    const liquid = new THREE.Mesh(new THREE.CircleGeometry(R, 40).rotateX(-Math.PI / 2),
-      new THREE.MeshStandardMaterial({ color: 0x4a9a20, emissive: 0x3a8a10, emissiveIntensity: 0.5, roughness: 0.1, metalness: 0.2, transparent: true, opacity: 0.8, depthWrite: false }));
-    liquid.position.y = 0.11; liquid.renderOrder = 1;
+    g.position.set(p[0], C.surfaceHeight(p[0], p[2], (p[1] || 0) + 0.3), p[2]);
+    if (!this.acidTex) {
+      this.acidTex = new THREE.TextureLoader().load('/textures/fx/acid_puddle.webp');
+      this.acidTex.colorSpace = THREE.SRGBColorSpace; this.acidTex.anisotropy = 4;
+    }
+    // the texture's green body reaches about 0.3 of its width from the centre, its splashes 0.45: drawn 2.5 R across, the
+    // liquid fills most of the rim and the splashes and the soaked soil run a little past it
+    const liquid = new THREE.Mesh(new THREE.PlaneGeometry(R * 2.5, R * 2.5).rotateX(-Math.PI / 2),
+      new THREE.MeshStandardMaterial({ map: this.acidTex, emissiveMap: this.acidTex, emissive: 0x9aff40, emissiveIntensity: 0.35, roughness: 0.25, metalness: 0.1,
+        transparent: true, opacity: 0.8, alphaTest: 0.02, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+    liquid.rotation.y = Math.random() * Math.PI * 2;
+    liquid.position.y = 0.1; liquid.renderOrder = 1;
     const rim = new THREE.Mesh(new THREE.RingGeometry(R - 0.15, R, 48).rotateX(-Math.PI / 2),
       new THREE.MeshBasicMaterial({ color: 0xb8ff60, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false }));
     rim.position.y = 0.13;
