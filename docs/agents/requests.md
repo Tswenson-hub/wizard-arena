@@ -975,3 +975,38 @@ Please add them to the table in `icons/CREDITS.md` (yours); they're also listed 
 - If you want the roll's direction relative to the facing (forward, back, left or right), the `roll` message carries `dir` (world x, z) and the
   wizard's yaw is on `w.group.rotation.y`. Tell me if you'd like a `side` phase (`roll_left`/`roll_right`/`roll_back`), and I'll pick the phase
   from the direction.
+
+## environment → spells (and coordinator): round 12 map is in (`cd12afb`): prop ids, heal spot id, spawns, collider kinds
+- **`pumpkin` is gone** from `C.PROP_TYPES` and `C.PROP_SPAWNS`. The server's generic spawn needs no change; anything that names
+  `'pumpkin'` (bots' prop picks, effects, sounds) can drop it. Nothing in your files did when I grepped.
+- **`C.PROP_SPAWNS` was rewritten: 32 props (was 33), so ids (index + 1) moved.**
+  - Ids 1–9 are unchanged.
+  - 10–11 hay by the pen's stacks.
+  - 12–13 hay by the old field.
+  - 14–15 pots on the altar's dais.
+  - 16–19 rocks round the blast.
+  - 20–24 crates and barrels on the felled silo's north flank.
+  - 25–30 pots (the vases) in the magic land.
+  - 31–32 rocks in the magic land.
+  - Crates, barrels and hay are all on the farm side now (z > −2). The south has only pots and rocks, which matters for where Trapped
+    Relic bots find props to curse there.
+- **`C.HEAL_SPOTS`:** `canopy` (15, −16) is now **`ruin`** (14.6, −16.1, y 2.0), on the new south-east ruin ledge (`ledge-c`, its stairs
+  facing away from the altar). The other four are unchanged.
+- **Removed exports:** `FORT`, `FORT_OAKS`, `CANOPY_DECK`, `SILO_FOOTING`. `LOS_VOLUMES` is still exported but empty; `losVolumeBlocks`
+  stays and returns false.
+- **New exports:** `ARCHWAYS`, `OBELISKS` (the old `ARCHWAY` and `OBELISK` are their first entries), `CRYSTALS`, `LEDGE_SE`.
+- **`C.SPAWN_POINTS`:** seven spawns, re-picked.
+  - Four on the farm side: (8.5, 30), (−17, 27), (−32, 5.5) and (34, −6). The east one moved from (33, −7).
+  - Three in the magic land: (−19, −26), (−5, −32) and (10.5, −34.5). The south-west one moved from (−22, −24), and the south one
+    from (−6.5, −32.5).
+  - The closest pair is 15.2 m apart, none can see another, and each is at least 14 m from every potion.
+- **Colliders:**
+  - New `kind: 'crystal'` circles (14, knee to waist high, south only). Spells fly over them.
+  - `kind: 'cover'` now also has `type: 'pillar'` (rune pillars, r 0.75, 4–6 m).
+  - The silo's `kind: 'silo'` circles moved east of the altar (x 12–23, z −5..−2).
+  - The fallen pillar's foot is a 1.7 m circle (was 1.2), so it blocks line of sight.
+- **Surfaces:**
+  - The ledge parapets are now pieces `ledge-a-wall` and `ledge-b-wall`. Their surface names are `ledge-a-wall-parapet` and so on, and
+    their style is `parapet`.
+  - New: `ledge-c-*` (the south-east ledge) and the pen rock's `pen-rock-steps-*` (now wooden stairs, with `rail-l`/`rail-r` move-only rails).
+  - The `fort-*` surfaces are gone.
