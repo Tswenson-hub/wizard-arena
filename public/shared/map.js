@@ -172,7 +172,12 @@ const BARN_WALLS = [
   [[-0.1, 1.1], [-4.3, 1.05], [-5.5, 1.5], [-7.2, 3.2]],                                 // north wall from the side door, then the arch's open door leaf
   [[6.6, 1.15], [6.5, 2.5]],                                                              // the end wall's open door leaf
 ];
-export const BARN_POSTS = BARN_WALLS.flatMap(line => chain(line, 0.6)).map(p => place(BARN, p));
+const BARN_MODEL_POSTS = BARN_WALLS.flatMap(line => chain(line, 0.6));
+export const BARN_POSTS = BARN_MODEL_POSTS.map(p => place(BARN, p));
+// Round 13 (the double jump): the walls under the roof (model z -2.4..1.15) stand 6 m, so nobody clears the eaves (4.2 m,
+// the ridge 5.7) from the hay loft's deck (apex 4.9) or its hay stack (5.9) and drops in through the roof. The open door
+// leaves (z > 1.2) stay 4 m.
+export const BARN_POST_H = BARN_MODEL_POSTS.map(([, lz]) => lz <= 1.2 ? 6 : 4);
 
 // ------------------------------------------------------------ the altar and the blast site
 // A stone altar between the farmyard and the meadow, where a spell went off. Its rune circle still stands, leaning
@@ -758,7 +763,7 @@ export const COLLIDERS = [
   ...FALLEN_PILLARS.flatMap(f => [{ x: f.x + Math.sin(f.yaw) * 0.45, z: f.z + Math.cos(f.yaw) * 0.45, r: 1.0, h: 1.7, kind: 'ruin' },
     ...Array.from({ length: Math.ceil((f.len - 1.6) / 0.8) }, (_, i) => { const k = 1.6 + i * 0.8; return { x: f.x + Math.sin(f.yaw) * k, z: f.z + Math.cos(f.yaw) * k, r: 0.55, h: 1.1, kind: 'ruin' }; })]),
   ...HAY_STACKS.map(([x, z]) => ({ x, z, r: 0.85, h: 1.7, kind: 'hay' })),
-  ...BARN_POSTS.map(([x, z]) => ({ x, z, r: 0.45, h: 4, kind: 'barn' })),
+  ...BARN_POSTS.map(([x, z], i) => ({ x, z, r: 0.45, h: BARN_POST_H[i], kind: 'barn' })),
   ...SILO_BLOCKS.map(([x, z]) => ({ x, z, r: 1.8, h: 3.6, kind: 'silo' })),
   ...PIECE_COLLIDERS,
   ...COVER_CLUSTERS.flatMap(coverColliders),
