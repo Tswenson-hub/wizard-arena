@@ -5,11 +5,12 @@
 - **Live game:** https://wizard-arena-76od.onrender.com
 - **Render service:** `srv-dbhui1ec6qcc73f0qt70`, Standard plan (always on), auto-deploy on every push to `main`.
   Deploys show up on GitHub as deployments ("main - wizard-arena") with the Render dashboard link.
-- **Live commit at hand-off:** `29602cc` (round 10 plus the round-11 spell builder and README). Deploy took ~45 s.
+- **Live commit:** `e416f68` (rounds 12b-13: Roll on F, the map editor, Ty's assets, mountains, ground textures,
+  jeb2 animations), pushed by the coordinator with Ty's approval. Earlier: `29602cc` (deploy took ~45 s).
 
 ## Pushes (each on the coordinator's go-ahead, always `git push origin <sha>:main`, fast-forward only)
 `ac71367` (initial) → `16afaad` → `4b4089e` → `5c4a3c1` → `09fdfa9` → `7677394` → `4c54e6c` → `d96ee39`
-→ `6b00b54` → `8d8a19b` → `29602cc`. Never pushed anything newer than the approved commit or anyone's
+→ `6b00b54` → `8d8a19b` → `29602cc`, then the coordinator pushed `e416f68` (which includes my `c52534a`). Never pushed anything newer than the approved commit or anyone's
 uncommitted work. No force pushes and no history rewrites.
 
 ## Pre-publish audit (full history) and per-push re-scans
@@ -23,6 +24,10 @@ uncommitted work. No force pushes and no history rewrites.
   turn on GitHub → Settings → Emails → "Keep my email addresses private" and use the noreply address.
 - `.gitignore` covers `node_modules/`, logs, `.env*`, keys, OS/editor junk and local test output.
 
+- `29602cc..e416f68` (56 commits, pushed by the coordinator): re-scanned afterwards and clean. No secrets or key files;
+  the 10 new or changed binaries (`.glb`, `.webp`, `.png`) carry no EXIF/GPS/XMP/text chunks or local paths;
+  largest new file `wizards/cinder.glb` at 2.1 MB.
+
 ## Render config
 - `render.yaml`: `runtime: node`, `NODE_VERSION=22`, `npm ci --omit=dev`, `npm start`, `healthCheckPath: /healthz`,
   `autoDeployTrigger: commit`, `plan: standard`.
@@ -33,7 +38,31 @@ uncommitted work. No force pushes and no history rewrites.
   downgrade the service. It goes live with the next push the coordinator approves. If Ty ever wants to go back
   to free, change that line, and expect the ~15 min idle sleep and ~30 s wake-up.
 
-## Live verification of 29602cc (2026-10-30, `python3 deploy/smoke.py https://wizard-arena-76od.onrender.com /tmp/wa-deploy/live.png`)
+## Map editor on live (e416f68)
+- `/?edit=1` serves the editor page to anyone (HTTP 200), but it can't write anything there.
+- `POST /api/map/layout` on live: **HTTP 403** `{"error":"map editing is off: start the server with \`npm run edit\`"}`.
+  `server/mapedit.js` gates saving twice: `MAP_EDIT=1` (Render never sets it), then a loopback-only caller and a
+  localhost Origin. `tools/layout-backups/` is gitignored and holds nothing tracked.
+
+## Live verification of e416f68 (2026-10-30, `python3 deploy/smoke.py https://wizard-arena-76od.onrender.com /tmp/wa-deploy/live.png`)
+```
+healthz: 'ok' in 0.2s
+page ready (assets loaded) in 9.6s
+spell builder: {'rows': 6, 'cards': 35, 'presets': 7, 'visible': True} ok
+joined: {'players': 4, 'bots': ['Zaltar (normal)', 'Morgra (normal)', 'Ebonyx (normal)'], 'status': ''}
+still connected after screenshot: True
+websockets: ['wss://wizard-arena-76od.onrender.com/'] {'sent': 8, 'recv': 501} ok
+console errors: none
+RESULT: PASS
+```
+- Live `index.html`, `js/main.js` and `js/select.js` byte-match `e416f68`. Screenshots: `/tmp/wa-deploy/live-builder.png`
+  (35 cards including Roll), `/tmp/wa-deploy/live.png` (in the FFA: mountains, new ground, a bot already hitting).
+- **Why the builder check read 0/0 before:** the selectors weren't stale (`.sb-row` / `.sb-card` are unchanged in
+  `select.js`). `#joinBtn` starts *enabled* in `index.html` until `main.js` runs, and round 13's bigger module graph
+  loads slowly enough that the old "button enabled" wait passed before the builder existed. `deploy/smoke.py` now
+  waits for `main.js`'s own `#loadStatus` line ("Ready…", or fails on "Failed…").
+
+## Earlier: live verification of 29602cc (2026-10-30, `python3 deploy/smoke.py https://wizard-arena-76od.onrender.com /tmp/wa-deploy/live.png`)
 ```
 healthz: 'ok' in 0.2s
 page ready (assets loaded) in 15.4s          (headless software rendering; a real browser is faster)

@@ -31,7 +31,13 @@ async def main():
         pg.on('websocket', on_ws)
         t = time.time()
         await pg.goto(BASE + '/', timeout=120000)
-        await pg.wait_for_function("!document.querySelector('#joinBtn').disabled", timeout=120000)
+        # Wait for main.js's own ready line, not just an enabled button: #joinBtn starts enabled in the HTML
+        # until main.js runs, so a slow module load would otherwise let the check race ahead of the builder.
+        await pg.wait_for_function("""() => { const s = document.querySelector('#loadStatus')?.textContent || '';
+          return s.startsWith('Ready') || s.startsWith('Failed'); }""", timeout=120000)
+        status = await pg.evaluate("document.querySelector('#loadStatus').textContent")
+        if not status.startswith('Ready'):
+            print('load failed:', status); ok = False
         print(f'page ready (assets loaded) in {time.time() - t:.1f}s')
         b_ = await pg.evaluate("""() => { const q = s => document.querySelectorAll('#joinPicker ' + s).length;
           const r = document.querySelector('#joinPicker .sb-main')?.getBoundingClientRect();
