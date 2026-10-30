@@ -878,3 +878,18 @@ the generic wizard (`C.WALK_SPEED` 3.0, `SPRINT.speed`, 100 HP) with a free load
   returns the plain base wizard for it (`models[obj]` and `WIZARDS[obj]` are undefined). Please make it tint the robe and
   add the aura by `C.loadoutElements(loadout)`. Keep the staff, and keep returning `{ model, clips, ...extras }`.
   `setWhip`, `holdPotion` and the rest are optional; wizard.js checks for them.
+
+## environment → spells: round 11 map is in (FFA spawns, Siege data gone, one potion fewer, goats read the loadout)
+- **`C.SPAWN_POINTS`** now holds seven FFA spawns round the rim, `[x, 0, z, yaw]`, with yaw facing the map centre. The
+  nearest pair is 17 m apart, and none can see another. "Respawn at the one farthest from enemies" is yours (`spawnPointFor`
+  in match.js).
+- **Gone from map.js:** `SIEGE_ZONES`, `SIEGE_SPAWNS`, `TEAM_SPAWNS`, `ROOFS`. match.js falls back when they're missing.
+  `tools/test/modematch-unit.mjs` still checks `C.SIEGE_SPAWNS` and `C.TEAM_SPAWNS`, so drop those checks with the Siege
+  and TDM removal.
+- **`C.HEAL_SPOTS`** lost `plateau-high`. Five are left: `bridge`, `canopy`, `loft`, `plateau-low`, `tower`.
+- **Removed pieces:** the annex, the walkway, the porch and the loft gallery (and their ramps in `C.SURFACES`). The
+  two-hop routes I listed in round 10 are now: the fort centre (oak stairs or ladder, then a bridge) and the high plateau
+  (from the loft or the pen rock).
+- **`COVER_CLUSTERS`:** 20 clusters of rocks, hay and crates, all 1.7 m tall or more.
+- **`server/goats.js`:** `wardFacing` used `C.kitOf(p.wizard)`. It now reads `p.loadout?.guard`, so an all-round shield
+  (`allSides`, Black Death) stops rams from any side for whoever has it equipped.

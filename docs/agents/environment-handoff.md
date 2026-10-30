@@ -1,5 +1,95 @@
 # Environment hand-off: the farmstead
 
+## Round 11: map cleanup for a 4-player free-for-all
+Ty found the round 10 additions cluttered and haphazard. Commit afb8b0f.
+
+**Removed:**
+- the farmhouse annex: the deck, the shed on posts, the shed-to-watchtower bridge and the shed's roof
+- the narrow covered walkway from the annex onto the cart road, and its roof (`C.ROOFS` is gone; world.js reads `C.ROOFS || []`)
+- the farmhouse porch (a stand-in deck)
+- the loft gallery along the barn's east wall, with its Meshy stairs, its ladder and its hay
+- all 44 round-10 cover clusters: the grey wall and green hedge blocks, plus the Siege-fairness walls `h1`/`h2`/`h4`
+- `SIEGE_ZONES`, `SIEGE_SPAWNS` and `TEAM_SPAWNS`
+- the `plateau-high` potion spot (8 m from the loft's; it blocked any spawn on the east side)
+
+The old crop field is meadow again: no dirt patch, grass grows on it, and the scarecrow and pumpkins stay. The watchtower
+parapet's west gap (where the shed bridge landed) is closed.
+
+**Kept, unchanged:**
+- the canopy fort
+- the ruin ledges with their stairs and plank bridge
+- both rock plateaus
+- the pen rock with its steps and bridge
+- the hay loft, the leaning silo up to it, and the loft-to-high-plateau bridge. Without the gallery this reads cleanly; the
+  loft's ways up are its ladder, the silo and the bridge.
+- the embankment cart road
+- the watchtower
+
+**Cover:** `COVER_CLUSTERS` has 20 clusters, all of real models: 16 rock outcrops (Meshy `rock_jagged`, mostly four rocks
+in a shallow arc), 3 hay stacks and 1 crate stack in the farmyard.
+- Each cluster is at least 6 m from the next.
+- 18 were placed by `/tmp/wa-environment/coverplace11.mjs`, a copy of the round-10 placer limited to these types, aimed at
+  ground lines over 30 m.
+- Two (`h1`, `h2`) are hand-placed either side of the path across the open strip between the yard and the altar, where
+  every 70 m+ line ran.
+- `gapfix.mjs`: no snag gaps under 1 m. `c4` and `c13` were then moved for the goats (see below).
+
+**Sight lines at chest height** (`sightlines.mjs`; reports `sight_r11_nocover.json` and `sight_r11_final.json`):
+
+| | round 10 (44 clusters) | round 11, no cover | round 11 (20 clusters) |
+|---|---|---|---|
+| median | 6.9 m | 13.1 m | 8.8 m |
+| p90 | 22.4 m | 37.9 m | 25.7 m |
+| p99 | 42.3 m | 60.4 m | 45.2 m |
+| rays > 40 m | 533 | 3,943 | 867 (1.9%) |
+
+The target was 20–30 m duel lines; p90 is 25.7 m. The archway lane (60 m) is kept open on purpose, and the longest
+remaining lines cross the altar's north side along the south path.
+
+**FFA spawns:** `SPAWN_POINTS` has seven entries, `[x, 0, z, yaw toward the centre]`, round the rim at r 31–37. Picked with
+`/tmp/wa-environment/spawnsearch11.mjs` and `overlook.mjs`.
+
+| spawn | x, z |
+|---|---|
+| N | 8.5, 30 |
+| NW | −17, 27 |
+| W | −32, 5.5 |
+| SW | −22, −24 |
+| S | −6.5, −32.5 |
+| SE | 10.5, −34.5 |
+| E | 33, −7 |
+
+- The nearest pair is 17 m apart, and the rest are 18–36 m.
+- No spawn can see another at chest height.
+- Every spawn is at least 14 m from a potion.
+- The nearest perch with a line onto a spawn is 10.3 m away (the fort's oak decks onto E and SE). The west and north spawns
+  have no perch within 18 m.
+- The barn, loft, pen, pen rock and fort take up the east half, so only one spawn is there.
+
+**Checks:**
+- `surface_test`: 29 checks pass.
+- **Goats:** `homesim11.mjs` (the round-10 spots minus the removed pieces, plus one beside each new cluster and each
+  spawn, 70 spots): every goat got home in two runs, with no ghosting; the longest took 36.7 s.
+  - `c4` (east of the altar) was moved twice. First it put a fallen-pillar detour corner inside its rocks. Then it blocked
+    the goats' west-to-gate lane along z −2.
+  - `c13` was turned north–south: from the south-east corner, goats ghosted 2 times in 5.
+  - `goatthrow_test` and `ramsummon_test` pass. Their "clear lanes" moved to the old field (z −8.5), because the new `c16`
+    sits in the old south-meadow lane.
+- **`server/goats.js`:** `wardFacing` called `C.kitOf(p.wizard)`, which no longer exists. A ram meeting a warding wizard
+  would have thrown. It now reads `C.SPELLBOOK[p.loadout?.guard]?.allSides`.
+- **Botmatch, 90 s, 4 bots:** no errors.
+- **Stuck-watch** (3 runs of 4 bots, 120–150 s, 12–14 kills each): 9 stall episodes.
+  - Eight were 6–9.5 s, at cover, the altar or a ruin ledge (bots holding a spot), the same as round 10.
+  - One was 18 s behind the `c17` outcrop on the east rim, in one run of three. If it shows up again, straighten that arc.
+- **Screenshots**, all looked at: `r11_before_top` and `r11_before_aerial` (round 10, with the overlay), `r11_aerial`, `r11_aerial_nw`, `r11_fort`,
+  `r11_ledges`, `r11_barn` (loft, silo and bridges), `r11_penrock`, `r11_road`, `r11_plateau_low`, `r11_tower`, and the
+  eye-level shots `r11_eye_s`, `r11_eye_w` and `r11_eye_e`, all in `/tmp/wa-environment/`.
+  - They show no walkways, no grey or green blocks, and the rock outcrops reading as one family with the blast stones.
+
+**Still stand-ins (models from Meshy would replace them):** the fort's decks, bridges, rails and plank walls, and the crate
+stacks. The ledge parapets and the perch boulders are as in round 10.
+
+
 ## Round 10: a dense, connected, vertical map (plus Ty's pen and stairs-into-rock notes)
 **`HEAL_SPOTS`** (committed first, abfded1): six potion spots, all at least 17 m from every spawn.
 - bridge crest 2.45
