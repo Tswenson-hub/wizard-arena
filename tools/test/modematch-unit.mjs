@@ -172,10 +172,10 @@ async function serverChecks() {
     const clear = (x, z, r) => Math.hypot(x, z) < C.ARENA_RADIUS - 4 && C.COLLIDERS.every(c => Math.hypot(c.x - x, c.z - z) > c.r + r)
       && A.props.every(p => Math.hypot(p.x - x, p.z - z) > r) && [-r, 0, r].every(dx => [-r, 0, r].every(dz => C.surfaceTopAt(x + dx, z + dz) < 0.05));
     const spots = [];
-    for (let x = -34; x <= 34; x++) for (let z = -34; z <= 34; z++) if (clear(x, z, 5) && spots.every(q => Math.hypot(q[0] - x, q[1] - z) > 10)) spots.push([x, z]);
-    ok(spots.length >= 8, `eight open spots for the trap and roll tests (${spots.length})`);
-    const open = A.props.filter(p => p.state === 'idle').slice(0, 7);
-    open.forEach((p, i) => { p.x = spots[i][0]; p.z = spots[i][1]; A.send({ t: 'debugProp', id: p.id, x: p.x, z: p.z }); });
+    for (let x = -34; x <= 34; x++) for (let z = -34; z <= 34; z++) if (clear(x, z, 4.6) && spots.every(q => Math.hypot(q[0] - x, q[1] - z) > 9.5)) spots.push([x, z]);
+    ok(spots.length >= 9, `nine open spots for the trap and roll tests (${spots.length})`);
+    const open = A.props.filter(p => p.state === 'idle').slice(0, 8);   // (spots[7] is the roll test's)
+    open.forEach((p, i) => { const sp = spots[i < 7 ? i : 8]; p.x = sp[0]; p.z = sp[1]; A.send({ t: 'debugProp', id: p.id, x: p.x, z: p.z }); });
     await wait(100);
     const [p1, p2, p3, p4] = open;
     const at = (prop, dx, dz) => [prop.x + dx, prop.z + dz];
@@ -238,6 +238,17 @@ async function serverChecks() {
       ok(since(V, n, m => m.t === 'propBreak' && m.id === p4.id).length === 1 && !since(V, n, m => m.t === 'relicBlast').length
         && !since(V, n, m => m.t === 'hit' && m.target === V.id).length, 'the curser breaking their own trap only disarms it');
       park(V, 2);
+    }
+    // laid beside an enemy, it waits for them to step out and come back (a trap, not a remote bomb)
+    {
+      const pr = open[7];
+      place(V, at(pr, 0, 1.2)); await wait(100);
+      const n = V.msgs.length;
+      const ids = await curse(pr); park(A, 0); await wait(500);
+      ok(ids?.includes(pr.id) && !since(V, n, m => m.t === 'relicFuse' && m.id === pr.id).length, 'a trap laid beside an enemy doesn\'t go off on them at once');
+      place(V, at(pr, 0, 4)); await wait(150); place(V, at(pr, 0, 1.2)); await wait(500);
+      ok(since(V, n, m => m.t === 'relicBlast' && m.prop === pr.id).length === 1, 'it does when they step out and come back');
+      park(V, 2); await wait(600);
     }
     // two armed traps at most: a third clears the oldest
     {

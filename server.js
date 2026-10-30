@@ -821,7 +821,7 @@ const cursedBy = (p) => [...props.values()].filter(prop => prop.cursedBy === p.i
 const sendCurses = (id) => send(id, { t: 'curse', ids: [...props.values()].filter(prop => prop.cursedBy === id).map(prop => prop.id) });
 function disarm(prop) {
   const id = prop.cursedBy;
-  prop.cursedBy = null; prop.cursedAt = 0; prop.fuseAt = 0;
+  prop.cursedBy = null; prop.cursedAt = 0; prop.fuseAt = 0; prop.near = null;
   if (id != null && players.has(id)) sendCurses(id);
 }
 function clearCurse(p) {
@@ -1581,7 +1581,8 @@ function simulate(dt) {
       // (at most once per tick per prop: the first enemy in reach lights it, then the fuse runs whatever they do)
       for (const q of players.values()) {
         if (q.dead || q.id === prop.cursedBy || !enemyOf(prop.cursedBy, q)) continue;
-        if (q.p[1] > 1.6 || dist2D(q.p, [prop.x, 0, prop.z]) > RELIC.trigger) continue;   // (flying over it is safe)
+        if (q.p[1] > 1.6 || dist2D(q.p, [prop.x, 0, prop.z]) > RELIC.trigger) { prop.near?.delete(q.id); continue; }   // (flying over it is safe)
+        if (prop.near?.has(q.id)) continue;   // was standing here when it was laid: not until they step out and back
         prop.fuseAt = t + RELIC.fuse;
         broadcast({ t: 'relicFuse', id: prop.id, p: [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z], by: prop.cursedBy, fuse: RELIC.fuse });
         break;
@@ -2023,6 +2024,8 @@ function handle(p, msg) {
       const mine = cursedBy(p).sort((a, b) => a.cursedAt - b.cursedAt);
       while (mine.length >= RELIC.traps) disarm(mine.shift());   // the oldest goes
       prop.cursedBy = p.id; prop.cursedAt = t; prop.fuseAt = 0;
+      // a trap is set off by an enemy *coming* close: one already standing there when it's laid has to step out first
+      prop.near = new Set([...players.values()].filter(q => !q.dead && enemyOf(p.id, q) && dist2D(q.p, [prop.x, 0, prop.z]) <= RELIC.trigger).map(q => q.id));
       p.cd.lift = t + RELIC.liftCooldown;
       castRoot(p, C.CAST_ROOT.curse);
       sendCurses(p.id);   // enemies only see its glyph up close (sendGlyphs)
