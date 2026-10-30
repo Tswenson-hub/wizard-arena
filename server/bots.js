@@ -4,7 +4,6 @@
 // a client sends, so every cooldown, stamina cost and rule applies to it unchanged.
 
 import * as C from '../public/shared/constants.js';
-import { objectiveFor } from './objectives.js';
 
 export const BOT_LIMIT = 6;
 const THINK_DT = 1 / 20;   // AI update rate
@@ -68,7 +67,7 @@ let players = null;
 const foe = (a, b) => !!a && !!b && a !== b && a.id !== b.id && (!match || match.isEnemy(a, b));
 // The owner of something (a projectile, a meteor) is a foe, or gone (which still hurts).
 const foeId = (me, id) => { const o = players?.get(id); return !o || foe(me, o); };
-const kit = (q) => C.kitOf(q.wizard);
+const kit = (q) => q.loadout;   // round 11: what it casts (C.sanitizeLoadout)
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const rand = (a, b) => a + Math.random() * (b - a);
 const dist2D = (a, b) => Math.hypot(a[0] - b[0], a[2] - b[2]);
@@ -225,7 +224,7 @@ const primaryReady = (me, t) => t >= me.cd.fast && !(me.reloadUntil > t) && me.a
 // A decoy seen as a target: shaped enough like a player for aiming and movement.
 function decoyTarget(d, owner) {
   return {
-    id: 'decoy' + d.id, decoy: d.id, p: d.p, yaw: d.yaw, vel: [d.dir[0] * C.speedOf(owner.wizard), d.dir[2] * C.speedOf(owner.wizard)],
+    id: 'decoy' + d.id, decoy: d.id, p: d.p, yaw: d.yaw, vel: [d.dir[0] * C.speedOf(), d.dir[2] * C.speedOf()],
     hp: owner.hp, st: owner.st, dead: false, flightUntil: 0, stunUntil: 0, blocking: false, charging: false, cyclone: null, lash: null,
   };
 }
@@ -306,11 +305,7 @@ function think(me, world, t) {
     b.targetId = best ? best.id : null;
     b.retargetAt = t + rand(1.5, 3);
   }
-  // game-mode objective hints (server/objectives.js): focus a player, guard one, go somewhere, lift something
-  const obj = b.obj = objectiveFor(me, world) || null;
-  const focus = obj?.focus != null ? world.players.get(obj.focus) : null;
-  if (focus && !focus.dead && foe(me, focus) && !smokeHides(me.p, focus.p)) { if (b.targetId !== focus.id) b.decoyId = null; b.targetId = focus.id; }
-  if (b.targetId != null && !foe(me, world.players.get(b.targetId))) b.targetId = null;   // teams changed
+  if (b.targetId != null && !foe(me, world.players.get(b.targetId))) b.targetId = null;   // gone, or the intermission
   let target = world.players.get(b.targetId) || null;
 
   // ---- Mirror Step: when our target splits three ways we may go after a decoy instead
@@ -429,15 +424,6 @@ function think(me, world, t) {
   if (me.mrain) return flyMeteorRain(me, world, t, act);
   if (me.blizz) return steerBlizzard(me, world, t);
   if (me.eye || me.ultWind || me.mrainFall || me.ride) return;   // our tornado, wind-up, fall or ram ride: nothing else (moveBot steers)
-
-  // ---- objective: lift the prop the mode wants lifted (a generic hint; no mode sends it now)
-  if (obj?.lift != null && free && !me.carrying && !me.carryingGoat && !me.blocking && !busyCasting(me) && t >= me.cd.lift) {
-    const prop = world.props.get(obj.lift);
-    if (prop && prop.state === 'idle' && dist2D(me.p, [prop.x, 0, prop.z]) < C.TK.range - 1.5 && hasLOS(me.p, [prop.x, 0, prop.z])) {
-      aimProp(me, prop, (from, dir) => act({ t: 'pickup', aimOrigin: from, aimDir: dir }));
-      if (me.carrying) return;
-    }
-  }
 
   // ---- our ultimate, when it's worth it
   if (b.ultFullAt == null && me.ult >= C.ULT_CHARGE.max) b.ultFullAt = t;
@@ -723,7 +709,7 @@ function tryUltimate(me, world, t, act, target) {
 function reactToUltimates(me, world, t, act) {
   const b = me.bot, cfg = b.cfg, K = kit(me);
   if (me.eye || me.blizz || me.mrain) return;
-  const run = C.speedOf(me.wizard) * cfg.speed * (me.slowUntil > t ? 1 - SKIM.slow : 1);
+  const run = C.speedOf() * cfg.speed * (me.slowUntil > t ? 1 - SKIM.slow : 1);
   const canMove = !rooted(me, t) && !isStunned(me, t);
   const mobOut = (dir) => {
     if (!cfg.blinkDodge || !mobilityReady(me, t) || !canAct(me, t)) return false;
@@ -835,7 +821,7 @@ function reactToStampedes(me, world, t, act) {
     const out = [-st.dir[2] * s, 0, st.dir[0] * s];
     const need = STAMP.width / 2 + C.PLAYER_RADIUS + 0.6 - Math.abs(side);
     const time = st.at + (dx * st.dir[0] + dz * st.dir[2]) / C.GOAT.chargeSpeed - t;   // until the first ram reaches us
-    if (!rec.mob && need > time * C.speedOf(me.wizard) * cfg.speed) {
+    if (!rec.mob && need > time * C.speedOf() * cfg.speed) {
       rec.mob = true;
       if (veilReady(me, t)) { act({ t: 'veil' }); continue; }
       if (K.mobility === 'skyward' && cfg.blinkDodge && mobilityReady(me, t)) { act({ t: 'skyward' }); continue; }
@@ -1143,7 +1129,7 @@ function respondCyclone(me, caster, t, act) {
   if (veiled(me, t)) return;
   if (veilReady(me, t)) return act({ t: 'veil' });
   if (wallReady(me, t) && d > BULWARK.dist + 0.6) return raiseWall(me, caster.p, act);
-  if (C.isWard(K.guard) && need > left * C.speedOf(me.wizard) * cfg.speed && me.st >= CYC.staminaCost + 5 && !me.carrying && cfg.dodge > 0.8) {
+  if (C.isWard(K.guard) && need > left * C.speedOf() * cfg.speed && me.st >= CYC.staminaCost + 5 && !me.carrying && cfg.dodge > 0.8) {
     me.yaw = Math.atan2(caster.p[0] - me.p[0], caster.p[2] - me.p[2]);
     act({ t: 'block', on: true });
     b.blockUntil = caster.cyclone.pulseAt + 0.15;
@@ -1174,7 +1160,7 @@ function respondFrostfall(me, f, df, t, act) {
   if (veilReady(me, t) && left < C.SPELLBOOK.tempest_veil.duration - 0.2) return act({ t: 'veil' });
   const need = FROST.radius + C.PLAYER_RADIUS + 0.3 - df;
   const out = df > 0.05 ? [(me.p[0] - f.x) / df, 0, (me.p[2] - f.z) / df] : [Math.sin(me.yaw), 0, Math.cos(me.yaw)];
-  if (need > left * C.speedOf(me.wizard) * cfg.speed * (me.slowUntil > t ? 1 - SKIM.slow : 1) && cfg.blinkDodge && mobilityReady(me, t) && canAct(me, t)) {
+  if (need > left * C.speedOf() * cfg.speed * (me.slowUntil > t ? 1 - SKIM.slow : 1) && cfg.blinkDodge && mobilityReady(me, t) && canAct(me, t)) {
     if (K.mobility === 'skyward') return act({ t: 'skyward' });
     if (K.mobility === 'mirror_step') return mirrorStep(me, out, act);
     if (K.mobility === 'blink') return blinkAway(me, out, act);
@@ -1280,7 +1266,7 @@ function respond(me, world, t, proj, th, act) {
   // ...so hop them: a jump in the last moment clears the shards (they fly about 0.3 m up)
   if (proj.kind === 'skim' && th.tc < 0.4 && th.tc > 0.08 && canJump(me, t) && Math.random() < (cfg.jump ?? 0)) return act({ t: 'jump' });
   // Sparks, shards and thrown props: sidestep if there's time to clear the hit sphere, else ward.
-  const clearTime = (C.HIT_RADIUS + proj.radius - th.miss + 0.3) / (C.speedOf(me.wizard) * cfg.speed);
+  const clearTime = (C.HIT_RADIUS + proj.radius - th.miss + 0.3) / (C.speedOf() * cfg.speed);
   // Black Death heals on every block: when hurt, Vesper would rather soak it than dodge
   const soak = K.guard === 'black_death' && me.hp < 80 ? 0.3 : 0.65;
   if (th.tc > clearTime + 0.05 && Math.random() < soak) return sidestep();
@@ -1332,12 +1318,12 @@ function moveBot(me, dt, world, t) {
   if (me.ride) { b.vel = [0, 0]; me.anim = 'idle'; return; }   // getting on or off
   if (me.grab) { b.vel = [0, 0]; me.anim = 'idle'; return; }   // pulling up onto a ledge: the server moves us
   let wx = 0, wz = 0;
-  const goal = potionGoal(me, world, t, target) || objectiveGoal(me, world);
+  const goal = potionGoal(me, world, t, target);
   if (b.dash) { /* the dash carries us */ }
   else if (!stunned) {
     if (t < b.dodgeUntil && b.dodgeVec) { wx = b.dodgeVec[0]; wz = b.dodgeVec[1]; }
     else if (goal && !me.eye) {
-      // a game-mode objective (go there, stay near a teammate, reach a prop); fight from wherever we are once close
+      // a potion we're walking to; fight from wherever we are on the way
       const gTop = C.surfaceTopAt(goal[0], goal[1]);
       const wp = gTop > 0.5 ? rampWaypoint(me, goal, gTop) : null;
       const gx = (wp ? wp[0] : goal[0]) - me.p[0], gz = (wp ? wp[1] : goal[1]) - me.p[2], gl = Math.hypot(gx, gz) || 1;
@@ -1395,12 +1381,6 @@ function moveBot(me, dt, world, t) {
       wx = -me.p[0]; wz = -me.p[2];
       if (Math.hypot(wx, wz) < 6) { wx = 0; wz = 0; }
     }
-    // Altar Siege: strafe, kite and dodge inside the zone (about 0.85 r), never back out of it to range
-    const area = b.obj?.area;
-    if (Array.isArray(area) && Math.hypot(me.p[0] - area[0], me.p[2] - area[1]) < area[2]) {
-      const dx = me.p[0] - area[0], dz = me.p[2] - area[1], dd = Math.hypot(dx, dz) || 1;
-      if (dd > area[2] * 0.85 && wx * dx + wz * dz > 0) { const k = (wx * dx + wz * dz) / dd; wx -= dx / dd * k * 1.5; wz -= dz / dd * k * 1.5; }
-    }
     // keep out of enemy poison pools
     for (const pl of world.pools?.values() || []) {
       if (!foeId(me, pl.owner) || pl.owner === me.id) continue;
@@ -1426,7 +1406,7 @@ function moveBot(me, dt, world, t) {
     if (r > C.ARENA_RADIUS - 5) { wx -= me.p[0] / r * 1.5; wz -= me.p[2] / r * 1.5; }
   }
   const wl = Math.hypot(wx, wz);
-  const run = C.speedOf(me.wizard);   // per wizard (wizards.js speed)
+  const run = C.speedOf();
   // Sprint: to reach a far objective spot or a far target, or to get away when hurt; a ward user under fire keeps its
   // stamina for the ward. A sprinting bot faces where it runs (the server only grants a forward sprint).
   {
@@ -1451,10 +1431,10 @@ function moveBot(me, dt, world, t) {
     if (me.crouch && (t > (b.crouchUntil || 0) || !tg || dist2D(me.p, tg.p) < 6 || me.jump || flying)) me.crouch = false;
   }
   let speed = run * cfg.speed;
-  if (me.sprinting) speed = C.sprintOf(me.wizard) * cfg.speed;
+  if (me.sprinting) speed = C.sprintOf() * cfg.speed;
   if (me.eye) speed = run * EYE.speedMul;
-  else if (me.charging || me.cyclone || me.lash) speed = C.chargeSpeedOf(me.wizard);
-  else if (me.blocking) speed = C.blockSpeedOf(me.wizard);
+  else if (me.charging || me.cyclone || me.lash) speed = C.chargeSpeedOf();
+  else if (me.blocking) speed = C.blockSpeedOf();
   else if (flying) speed = SKY.airSpeed;
   if (t < b.dodgeUntil && !me.cyclone && !flying && !me.charging && !me.lash) speed = Math.max(speed, run * 0.95);
   if (me.crouch) speed = Math.min(speed, C.CROUCH.speed);
@@ -1520,26 +1500,6 @@ function potionGoal(me, world, t, target) {
     if (d < bd) { bd = d; best = [sp.x, sp.z]; }
   }
   return best;
-}
-
-// Where a game-mode objective wants us, as [x, z], or null when we're close enough (or there's none).
-function objectiveGoal(me, world) {
-  const o = me.bot.obj;
-  if (!o) return null;
-  if (o.lift != null && !me.carrying) {
-    const prop = world.props.get(o.lift);
-    if (prop && prop.state === 'idle') return dist2D(me.p, [prop.x, 0, prop.z]) > C.TK.range - 3 ? [prop.x, prop.z] : null;
-  }
-  if (o.guard != null) {
-    const g = world.players.get(o.guard);
-    if (g && !g.dead) return dist2D(me.p, g.p) > 7 ? [g.p[0], g.p[2]] : null;
-  }
-  // Altar Siege: inside the zone we fight where we stand (moveBot keeps us in); outside, walk to our spot in it
-  if (Array.isArray(o.area) && Math.hypot(me.p[0] - o.area[0], me.p[2] - o.area[1]) < o.area[2] * 0.85) return null;
-  if (Array.isArray(o.moveTo) && Number.isFinite(o.moveTo[0]) && Number.isFinite(o.moveTo[1])) {
-    return Math.hypot(me.p[0] - o.moveTo[0], me.p[2] - o.moveTo[1]) > 2 ? o.moveTo : null;
-  }
-  return null;
 }
 
 function coverPoint(me, target) {

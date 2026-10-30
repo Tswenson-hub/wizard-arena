@@ -62,13 +62,15 @@ function propPublic(p) {
 const isHeld = (prop) => prop.state === 'lifting' || prop.state === 'carried';
 
 // ---------------------------------------------------------------- players
-function newPlayer(id, name, wizard = C.DEFAULT_WIZARD) {
+// Round 11: no heroes. Everyone is the generic wizard; `loadout` (C.sanitizeLoadout) is what they cast, `voice` their
+// grunts. A loadout change made in game waits in pendingLoadout until the next respawn.
+function newPlayer(id, name, loadout = C.DEFAULT_LOADOUT, voice = 'male') {
   const sp = C.SPAWN_POINTS[(id - 1) % C.SPAWN_POINTS.length];
-  if (!C.isWizard(wizard)) wizard = C.DEFAULT_WIZARD;
+  loadout = C.sanitizeLoadout(loadout) || { ...C.DEFAULT_LOADOUT };
   return {
     id, name,
-    wizard, pendingWizard: null,   // a switch waits here while a cast is in progress (or until respawn)
-    color: C.WIZARDS[wizard].color,
+    loadout, pendingLoadout: null, voice: C.sanitizeVoice(voice),
+    color: C.loadoutColor(loadout),
     p: [sp[0], 0, sp[2]], yaw: 0, anim: 'idle',
     jump: null, crouch: false,    // round 9: { start, y0 } while a jump is in the air; crouched (C / Ctrl)
     hp: C.MAX_HP, st: C.MAX_STAMINA,
@@ -82,7 +84,7 @@ function newPlayer(id, name, wizard = C.DEFAULT_WIZARD) {
     slowUntil: 0,                 // Glacial Skim slow
     rootUntil: 0, silenceUntil: 0,   // Sanguine Lash bind (both), or a missed lash's recovery (root only)
     frozenUntil: 0,               // Frostfall: the bind above, shown as ice
-    ammo: C.primaryMag(C.kitOf(wizard).primary).magazine, reloadUntil: 0, lastShotAt: 0,   // primary magazine (constants: primaryMag)
+    ammo: C.primaryMag(loadout.primary).magazine, reloadUntil: 0, lastShotAt: 0,   // primary magazine (constants: primaryMag)
     veilUntil: 0,                 // Tempest Veil: every hit is absorbed until then
     ult: 0,                       // ultimate charge, 0–100 (C.ULT_CHARGE); kept through death
     eye: null,                    // Eye of the Storm: { until, nextTick, nextPull }
@@ -105,7 +107,7 @@ function playerPublic(p) {
     blocking: p.blocking, charging: p.charging,
     stun: p.stunUntil > now(), dead: p.dead,
     carrying: p.carrying, carryingGoat: p.carryingGoat || null, kills: p.kills, deaths: p.deaths,
-    wizard: p.wizard, lashing: !!p.lash,
+    loadout: p.loadout, voice: p.voice, pendingLoadout: !!p.pendingLoadout, lashing: !!p.lash,
     veil: p.veilUntil > now(), liftCd: p.cd.lift > now() ? +(p.cd.lift - now()).toFixed(2) : 0,
     ammo: p.ammo, reload: p.reloadUntil > now() ? +(p.reloadUntil - now()).toFixed(2) : 0,
     slow: p.slowUntil > now(), bound: p.silenceUntil > now(), rooted: p.rootUntil > now(), frozen: p.frozenUntil > now(),
@@ -132,7 +134,7 @@ const isJumping = (p) => !!p.jump;
 const aboveFloor = (q) => q.p[1] - groundAt(q.p[0], q.p[2], q.p[1]);   // height over what's under them (a ledge counts as floor)
 // Casting in a jump: nothing for JUMP.castLock s after take-off, then only the primary (and movement abilities)
 const JUMP_LOCKED = new Set(['chargeStart', 'cyclone', 'lashStart', 'frostfall', 'ult', 'veil', 'bulwark', 'smokeFlask', 'ramGuard', 'firewall', 'block', 'toxic', 'curse', 'pickup', 'throw', 'ram', 'ride']);
-const kit = (p) => C.kitOf(p.wizard);
+const kit = (p) => p.loadout;
 const CYCLONE = C.SPELLBOOK.cyclone, SKY = C.SPELLBOOK.skyward, LASH = C.SPELLBOOK.sanguine_lash;
 const MIRROR = C.SPELLBOOK.mirror_step, BULWARK = C.SPELLBOOK.glacial_bulwark, RELIC = C.SPELLBOOK.trapped_relic;
 const SKIM = C.SPELLBOOK.glacial_skim, FROST = C.SPELLBOOK.frostfall, SMOKE = C.SPELLBOOK.smoke_screen, VEIL = C.SPELLBOOK.tempest_veil;
@@ -148,89 +150,31 @@ const inUltimate = (p) => !!p.ultWind || unstoppable(p) || !!p.mrain || !!p.mrai
 const enemies = (a, b) => !a || !b || (a.id !== b.id && match.isEnemy(a, b));
 const enemyOf = (ownerId, q) => enemies(players.get(ownerId), q);
 
-// ---------------------------------------------------------------- wizard choice
-// A switch applies at once if the player is alive and not mid-cast, else when the cast ends or at respawn.
-const midCast = (p) => p.charging || !!p.cyclone || !!p.lash || isAirborne(p) || inUltimate(p) || !!p.ride;
-function requestWizard(p, id) {
-  if (!C.isWizard(id)) return;
-  id = claimHero(p, id);
-  p.pendingWizard = id === p.wizard ? null : id;
-  flushPendingWizard(p);
+// ---------------------------------------------------------------- loadouts
+// Round 11: a loadout changes only between lives. Sent while alive, it waits for the respawn; sent while dead, it
+// applies at once (the next life starts with it).
+function requestLoadout(p, lo, voice) {
+  if (voice !== undefined) p.voice = C.sanitizeVoice(voice);
+  if (lo === undefined) return true;
+  const clean = C.sanitizeLoadout(lo);
+  if (!clean) return false;
+  p.pendingLoadout = C.sameLoadout(clean, p.loadout) ? null : clean;
+  if (p.dead) flushPendingLoadout(p);
+  return true;
 }
-function flushPendingWizard(p) {
-  if (!p.pendingWizard || p.dead || midCast(p)) return;
-  applyWizard(p, p.pendingWizard);
-}
-function applyWizard(p, id) {
-  p.pendingWizard = null;
-  if (id === p.wizard) return;
-  p.wizard = id;
-  p.color = C.WIZARDS[id].color;
+function flushPendingLoadout(p) {
+  if (!p.pendingLoadout) return;
+  const lo = p.pendingLoadout;
+  p.pendingLoadout = null;
+  p.loadout = lo;
+  p.color = C.loadoutColor(lo);
   if (p.blocking && !C.isWard(kit(p).guard)) { p.blocking = false; p.blockReleasedAt = now(); }
   if (kit(p).utility !== 'trapped_relic') clearCurse(p);
+  if (kit(p).power !== 'sanguine_lash') p.lashBonus = 0;
   p.ammo = C.primaryMag(kit(p).primary).magazine; p.reloadUntil = 0;   // a fresh pouch or magazine for the new primary
-  broadcast({ t: 'wizard', id: p.id, wizard: id, color: p.color });
+  broadcast({ t: 'loadout', id: p.id, loadout: lo, voice: p.voice, color: p.color });
 }
-
-// Team games (TDM, Altar Siege): one of each hero per team. FFA (no teams) allows duplicates.
-// A hero a wizard holds or is switching to; the heroes `p`'s teammates hold.
-const heroOf = (q) => q.pendingWizard || q.wizard;
-const teammates = (p) => p.team ? [...players.values()].filter(q => q !== p && q.team === p.team && !q.spectator && !q.dummy) : [];
-function teamTaken(p) { return new Set(teammates(p).map(heroOf)); }
-// The free hero nearest `id` in the roster (the next one along first), or null if the team has them all.
-function nearestFreeHero(id, taken) {
-  const ids = Object.keys(C.WIZARDS), i = Math.max(0, ids.indexOf(id));
-  for (let k = 1; k < ids.length; k++) for (const j of [i + k, i - k]) { const c = ids[(j + ids.length * 2) % ids.length]; if (!taken.has(c)) return c; }
-  return null;
-}
-// `p` wants hero `id`: what it gets. A human takes a bot teammate's hero (the bot switches); a hero a human
-// teammate already has sends `p` to the nearest free one, with a note.
-function claimHero(p, id) {
-  if (!p.team || !C.isWizard(id)) return id;
-  const holders = teammates(p).filter(q => heroOf(q) === id);
-  if (!holders.length) return id;
-  if (!p.bot && holders.every(q => q.bot)) {
-    for (const q of holders) { const free = nearestFreeHero(id, new Set([...teamTaken(q), id])); if (free) requestWizard(q, free); }
-    return id;
-  }
-  const free = nearestFreeHero(id, teamTaken(p));
-  if (!free) return id;   // more players than heroes: a duplicate is unavoidable
-  if (!p.bot) {
-    const text = `${C.WIZARDS[id].name} is already on your team: you're ${C.WIZARDS[free].name} instead`;
-    if (p.joining) p.joinNotice = text; else send(p.id, { t: 'notice', text });   // a joining player hears it after its welcome
-  }
-  return free;
-}
-// After team changes (a new mode's balance, a team switch): two of a hero on one team. The human who has it keeps
-// it (the earliest to join, if two do); bots give way first.
-function resolveTeamHeroes() {
-  const byTeam = new Map();
-  for (const q of players.values()) if (q.team && !q.spectator && !q.dummy) { if (!byTeam.has(q.team)) byTeam.set(q.team, []); byTeam.get(q.team).push(q); }
-  for (const list of byTeam.values()) {
-    list.sort((a, b) => (!!a.bot - !!b.bot) || a.id - b.id);   // humans first, then by join order
-    const seen = new Set();
-    for (const q of list) {
-      const h = heroOf(q);
-      if (!seen.has(h)) { seen.add(h); continue; }
-      const free = nearestFreeHero(h, new Set(list.filter(o => o !== q).map(heroOf)));
-      if (!free) continue;
-      if (!q.bot) send(q.id, { t: 'notice', text: `Your team already has ${C.WIZARDS[h].name}: you're ${C.WIZARDS[free].name} now` });
-      requestWizard(q, free);
-      seen.add(free);
-    }
-  }
-}
-// For the hero picker: the heroes each team has (by team id), or null outside team games.
-function teamHeroesPublic() {
-  const out = {};
-  for (const q of players.values()) if (q.team && !q.spectator && !q.dummy) (out[q.team] ??= []).push(heroOf(q));
-  return Object.keys(out).length ? out : null;
-}
-// Set a wizard before the player is announced (no broadcast).
-function setWizardQuiet(p, id) {
-  if (!C.isWizard(id) || id === p.wizard) return;
-  p.wizard = id; p.color = C.WIZARDS[id].color; p.ammo = C.primaryMag(kit(p).primary).magazine;
-}
+const hasCombo = (p, id) => C.hasCombo(p.loadout, id);
 
 function send(id, msg) {
   const ws = sockets.get(id);
@@ -443,8 +387,8 @@ function respawn(p) {
   p.ammo = C.primaryMag(kit(p).primary).magazine; p.reloadUntil = 0;
   endUltimates(p);
   endRide(p);
-  if (p.pendingWizard) applyWizard(p, p.pendingWizard);
-  if (Number.isFinite(sp[3])) p.yaw = sp[3];   // Siege spawns face the map centre
+  flushPendingLoadout(p);   // round 11: a loadout picked during the last life starts now
+  p.yaw = Number.isFinite(sp[3]) ? sp[3] : Math.atan2(-p.p[0], -p.p[2]);   // facing the map centre
   broadcast({ t: 'respawn', id: p.id, p: p.p, yaw: p.yaw });
 }
 
@@ -634,7 +578,7 @@ function endDecoy(d, popped) {
 function updateDecoys(dt, t) {
   for (const d of [...decoys.values()]) {
     if (t >= d.until) { endDecoy(d, false); continue; }
-    const sp = C.speedOf(players.get(d.owner)?.wizard);   // as fast as the caster runs
+    const sp = C.speedOf();   // as fast as the caster runs
     d.p[0] += d.dir[0] * sp * dt; d.p[2] += d.dir[2] * sp * dt;
     for (const c of C.COLLIDERS) {
       const dx = d.p[0] - c.x, dz = d.p[2] - c.z, dd = Math.hypot(dx, dz);
@@ -1034,6 +978,11 @@ function callRamOn(target, slinger) {
     }
     if (g) { angerGoat(g, target.id, goatCtx); g.angeredBy = slinger.id; }   // it charges the target; a kill is the slinger's
   }
+  // Herd Call (Sling + Ram Guard): no calm goat answered, so one of our circling guard rams goes instead
+  if (!g && hasCombo(slinger, 'herd')) {
+    g = [...goats, ...rams].find(q => q.summoned && q.owner === slinger.id && (q.state === 'orbit' || q.mode === 'orbit')) || null;
+    if (g) ramProvoked(g, target.id);
+  }
   if (!g) return;
   slinger.slingLock.set(target.id, t + SLING.callLockout);
   broadcast({ t: 'ramCalled', goat: g.id, target: target.id, by: slinger.id });
@@ -1395,13 +1344,11 @@ function updateMeteorRain(p, t, dt) {
 }
 
 // ---------------------------------------------------------------- simulation
-let resolveHeroesAt = 0;
 function simulate(dt) {
   const t = now();
   updateBots(dt, world);
   updateGoats(goats, dt, goatCtx);
   match.tick(dt);
-  if (t >= (resolveHeroesAt || 0)) { resolveHeroesAt = t + 1; resolveTeamHeroes(); }
   updatePotions(t);
   updateDecoys(dt, t);
   for (const w of [...walls.values()]) if (t >= w.until) wallDown(w, true);
@@ -1483,7 +1430,6 @@ function simulate(dt) {
       if (p.p[1] > fl + 0.01) { p.vy = (p.vy || 0) - C.JUMP.gravity * dt; p.p[1] = Math.max(fl, p.p[1] + p.vy * dt); if (p.p[1] <= fl) p.vy = 0; }
       else { p.p[1] = fl; p.vy = 0; }
     }
-    flushPendingWizard(p);
     // goats.js drops a held goat itself (holder dead, stunned or gone); forget it when it's no longer ours
     if (p.carryingGoat) { const g = goatById(p.carryingGoat); if (!g || g.state !== 'held' || g.holder !== p.id) p.carryingGoat = null; }
     // telekinesis: however we let go of something (thrown, set down, knocked away, dropped), the next lift waits
@@ -1706,14 +1652,14 @@ function handle(p, msg) {
       setSprint(p, !!msg.sprint && fwdOk && !p.crouch, t);
       const d = dist2D(np, p.p);
       // the fastest this wizard can go this way: its run speed, the backpedal cap against its facing, or a dash
-      const run = C.backpedalSpeed(C.speedOf(p.wizard) * (p.eye ? EYE.speedMul : 1), np[0] - p.p[0], np[2] - p.p[2], Number.isFinite(msg.yaw) ? msg.yaw : p.yaw)
+      const run = C.backpedalSpeed(C.speedOf() * (p.eye ? EYE.speedMul : 1), np[0] - p.p[0], np[2] - p.p[2], Number.isFinite(msg.yaw) ? msg.yaw : p.yaw)
         + (p.pulledUntil > t ? Math.max(EYE.pull, BLIZ.push) : 0);   // dragged by an Eye of the Storm, pushed by a Blizzard
       // (knockback only counts for a moment after one actually landed; it used to be allowed all the time, which with
       // 0.6 m of slack per update let a client run about 20 m/s faster than its walk)
       const own = dashing ? SMOKE.distance / SMOKE.dashTime : galloping(p, t) ? RIDE.speed * 1.1 : isAirborne(p) ? Math.max(run, SKY.airSpeed)
         : castRooted(p, t) ? 0   // casting: no translation (the budget's small burst covers latency)
         : p.crouch && !(p.sprintEndedAt > t - 0.3) ? Math.min(run, C.CROUCH.speed)
-        : p.sprinting || p.sprintEndedAt > t - 0.3 ? Math.max(run, C.sprintOf(p.wizard) * (p.slowUntil > t ? 1 - C.SPELLS.skim.slow : 1)) : run;
+        : p.sprinting || p.sprintEndedAt > t - 0.3 ? Math.max(run, C.sprintOf() * (p.slowUntil > t ? 1 - C.SPELLS.skim.slow : 1)) : run;
       // A movement budget: it refills at the fastest this wizard may go right now, and holds at most a short burst
       // (about 0.25 s of it, plus 0.25 m), so bunched-up updates from an honest client pass but a steady overspeed
       // doesn't. (A fixed allowance per update used to be worth about 6 m/s on top of the walk.)
@@ -1914,7 +1860,8 @@ function handle(p, msg) {
     }
     case 'veil': {
       if (kit(p).guard !== 'tempest_veil' || !canAct(p) || isVeiled(p) || t < p.cd.guard) break;
-      p.cd.guard = t + VEIL.cooldown;   // no cast root: Gale keeps moving (Ty: Veil and Blink are the exceptions)
+      p.cd.guard = t + VEIL.cooldown;
+      if (!VEIL.noRoot) castRoot(p, C.CAST_ROOT.tapShield);   // the Veil's own property: you keep moving
       p.veilUntil = t + VEIL.duration;
       broadcast({ t: 'veil', id: p.id, left: VEIL.duration });
       break;
@@ -2018,8 +1965,10 @@ function handle(p, msg) {
       send(p.id, { t: 'curse', id: prop.id });   // nobody else hears of it
       break;
     }
-    case 'wizard': {
-      requestWizard(p, msg.id);
+    case 'loadout': {
+      // round 11: { loadout?, voice? } from the builder; the loadout applies at the next respawn
+      if (!requestLoadout(p, msg.loadout, msg.voice)) send(p.id, { t: 'loadoutRejected', reason: 'Every slot needs a spell of that slot.' });
+      else if (msg.voice !== undefined && msg.loadout === undefined) broadcast({ t: 'loadout', id: p.id, loadout: p.loadout, voice: p.voice, color: p.color });
       break;
     }
     case 'reload': {
@@ -2122,7 +2071,7 @@ function handle(p, msg) {
       if (p.bot) break;
       const n = [...players.values()].filter(q => q.bot).length;
       if (n >= BOT_LIMIT) break;
-      addBot(['easy', 'normal', 'hard'].includes(msg.difficulty) ? msg.difficulty : 'normal', msg.wizard);
+      addBot(['easy', 'normal', 'hard'].includes(msg.difficulty) ? msg.difficulty : 'normal', msg.loadout);
       break;
     }
     case 'removeBots': {
@@ -2139,28 +2088,23 @@ function handle(p, msg) {
 // Bots are ordinary players without a socket. Their AI (server/bots.js) acts through handle(),
 // so they obey exactly the same rules and cooldowns as everyone else.
 const BOT_NAMES = ['Zaltar', 'Morgra', 'Ebonyx', 'Vexlith', 'Grimble', 'Oswin', 'Thistle', 'Pipsqueak', 'Quillon', 'Sorrow'];
-// `wizard` (optional) pins which wizard it plays; otherwise it picks one at random.
-function addBot(difficulty, wizard = null) {
+// `loadout` (optional) pins what it casts: a PRESETS id or a full loadout. Otherwise C.botLoadout: half the time an
+// old hero kit, half the time fully random.
+function addBot(difficulty, loadout = null) {
   const id = nextId++;
   const taken = new Set([...players.values()].map(q => q.name));
   const name = BOT_NAMES.find(n => !taken.has(n)) || `Bot${id}`;
-  const ids = Object.keys(C.WIZARDS);
-  const p = newPlayer(id, name, C.isWizard(wizard) ? wizard : ids[Math.floor(Math.random() * ids.length)]);
+  const preset = typeof loadout === 'string' ? C.PRESETS.find(k => k.id === loadout)?.loadout : null;
+  const p = newPlayer(id, name, preset || C.sanitizeLoadout(loadout) || C.botLoadout(), Math.random() < 0.5 ? 'male' : 'female');
   const sp = C.SPAWN_POINTS[Math.floor(Math.random() * C.SPAWN_POINTS.length)];
   p.p = [sp[0], 0, sp[2]];
   p.bot = createBot(difficulty);
   players.set(id, p);
   match.onJoin(p);
-  if (p.team) {   // team games: a hero the team doesn't have (pinned ones too, if it does)
-    const taken = teamTaken(p);
-    if (taken.has(p.wizard)) {
-      const free = ids.filter(w => !taken.has(w));
-      if (free.length) setWizardQuiet(p, C.isWizard(wizard) ? nearestFreeHero(wizard, taken) : free[Math.floor(Math.random() * free.length)]);
-    }
-  }
+  if (!players.has(id)) return;   // the match had no room for it
   { const msp = match.spawnPointFor(p); if (msp) p.p = [msp[0], 0, msp[2]]; }
   broadcast({ t: 'joined', player: playerPublic(p) });
-  console.log(`[+] bot ${name} (${difficulty}, ${p.wizard}) joined. ${players.size} online`);
+  console.log(`[+] bot ${name} (${difficulty}, ${C.LOADOUT_SLOTS.map(k => p.loadout[k]).join(' ')}) joined. ${players.size} online`);
 }
 
 function removePlayer(id) {
@@ -2276,12 +2220,12 @@ wss.on('connection', (ws) => {
       if (msg.t !== 'join') return;
       id = nextId++;
       const name = String(msg.name || 'Wizard').replace(/[^\w \-'!?.]/g, '').trim().slice(0, C.MAX_NAME_LEN) || `Wizard${id}`;
-      const p = newPlayer(id, name, msg.wizard);
-      if (['easy', 'normal', 'hard'].includes(msg.difficulty)) p.botPref = msg.difficulty;   // team modes fill bots at this
+      const lo = C.sanitizeLoadout(msg.loadout);
+      const p = newPlayer(id, name, lo || C.DEFAULT_LOADOUT, msg.voice);
+      if (['easy', 'normal', 'hard'].includes(msg.difficulty)) p.botPref = msg.difficulty;   // fill bots play at this
       players.set(id, p);
       sockets.set(id, ws);
       match.onJoin(p);
-      p.joining = true; setWizardQuiet(p, claimHero(p, p.wizard)); p.joining = false;   // team games: one of each hero per team
       { const sp = match.spawnPointFor(p); if (sp) p.p = [sp[0], 0, sp[2]]; }
       ws.send(JSON.stringify({
         t: 'welcome', id,
@@ -2302,7 +2246,7 @@ wss.on('connection', (ws) => {
         ...match.welcomeExtras(p),
       }));
       broadcast({ t: 'joined', player: playerPublic(p) });
-      if (p.joinNotice) { send(id, { t: 'notice', text: p.joinNotice }); p.joinNotice = null; }
+      if (msg.loadout !== undefined && !lo) send(id, { t: 'loadoutRejected', reason: 'That loadout is not valid: you have the default one.' });
       console.log(`[+] ${name} (#${id}) joined. ${players.size} online`);
       return;
     }
@@ -2337,7 +2281,7 @@ setInterval(() => {
 
 setInterval(() => {
   if (players.size === 0) return;
-  broadcast({ t: 'snap', time: now(), players: [...players.values()].map(playerPublic), goats: rams.length ? [...goats.map(goatPublic), ...rams.map(ramPublic)] : goats.map(goatPublic), decoys: [...decoys.values()].map(decoyPublic), teamHeroes: teamHeroesPublic(), ...match.snapshotExtras() });
+  broadcast({ t: 'snap', time: now(), players: [...players.values()].map(playerPublic), goats: rams.length ? [...goats.map(goatPublic), ...rams.map(ramPublic)] : goats.map(goatPublic), decoys: [...decoys.values()].map(decoyPublic), ...match.snapshotExtras() });
 }, 1000 / C.SNAPSHOT_RATE);
 
 httpServer.listen(PORT, () => console.log(`Wizard Arena listening on http://localhost:${PORT}`));

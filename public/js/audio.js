@@ -5,8 +5,8 @@
 const SOUND_DIR = '/sounds/';
 const PREFS_KEY = 'wizardAudio';
 
-const VOICE_MALE = new Set(['rime', 'jeb']);   // Cinder, Gale, Vesper and Embibe use the female set
-const VOICE_PITCH = { cinder: 1.04, gale: 1.1, vesper: 0.94, embibe: 1, rime: 0.96, jeb: 1.06 };
+// Round 11: each player picks a voice in the builder (male or female grunts); each player is pitched a little apart.
+const voicePitch = (id) => 0.94 + ((Number(id) || 0) % 5) * 0.03;
 
 export class Sfx {
   constructor() {
@@ -177,8 +177,9 @@ export class Sfx {
 
   // ---------------------------------------------------------------- game events
   // a primary's 3rd-shot accent, by the caster's element
-  finisher(pos, wizard) {
-    const key = { cinder: 'finisher_fire', gale: 'finisher_wind', rime: 'finisher_ice', vesper: 'finisher_dark', jeb: 'finisher_earth', embibe: 'finisher_acid' }[wizard];
+  // the 3rd-shot accent by the primary's element (constants.js ELEMENTS); arcane uses the generic one
+  finisher(pos, element) {
+    const key = { fire: 'finisher_fire', wind: 'finisher_wind', ice: 'finisher_ice', dark: 'finisher_dark', earth: 'finisher_earth', acid: 'finisher_acid' }[element];
     if (key && this.buffers[key]?.length) this.play(key, { pos, vol: 0.85, jitter: 0.04 }); else this.castFinisher(pos);
   }
   hitMarker() { this.play('hit_marker', { vol: 0.35, jitter: 0.05 }); }
@@ -197,14 +198,14 @@ export class Sfx {
   shatter(pos, type) { this.play(type === 'rock' || type === 'pot' ? 'prop_shatter_stone' : 'prop_shatter_wood', { pos, vol: 0.8 }); }
   pickup(pos) { this.play('tk_lift', { pos, vol: 0.6, jitter: 0.05 }); }
   throw_(pos) { this.play('tk_throw', { pos, vol: 0.85, jitter: 0.06 }); }
-  // Hurt and death voices, by the hero's gender, each hero pitched a little apart. Ours plays flat, others in 3D.
+  // Hurt and death voices, by the player's chosen voice, each player pitched a little apart. Ours plays flat, others in 3D.
   // At most one grunt per wizard every 0.35 s, so a damage-over-time tick doesn't stutter.
   voice(w, pos, death = false) {
-    const male = VOICE_MALE.has(w.wizard), now = performance.now();
+    const male = w.voice === 'male', now = performance.now();
     if (!death && now - (w.voiceAt || 0) < 350) return;
     w.voiceAt = now;
     const key = (death ? 'death_' : 'hurt_') + (male ? 'male' : 'female');
-    this.play(key, { pos, vol: death ? 0.9 : 0.6, rate: VOICE_PITCH[w.wizard] ?? 1, jitter: 0.025, bag: w.id });
+    this.play(key, { pos, vol: death ? 0.9 : 0.6, rate: voicePitch(w.id), jitter: 0.025, bag: w.id });
   }
   respawn(pos) { this.play('respawn', { pos, vol: 0.55 }); }
   // grass steps, cycled per wizard; a sprint lands heavier and a little lower

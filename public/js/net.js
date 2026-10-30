@@ -7,12 +7,13 @@ export class Net {
     this.onClose = null;
   }
 
-  connect(name, wizard, difficulty) {
+  // round 11: `pick` is { loadout, voice } from the builder
+  connect(name, pick, difficulty) {
     return new Promise((resolve, reject) => {
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
       const ws = new WebSocket(`${proto}://${location.host}`);
       this.ws = ws;
-      ws.onopen = () => { this.connected = true; this.send({ t: 'join', name, wizard, difficulty }); };
+      ws.onopen = () => { this.connected = true; this.send({ t: 'join', name, loadout: pick?.loadout, voice: pick?.voice, difficulty }); };
       ws.onmessage = (e) => {
         let msg; try { msg = JSON.parse(e.data); } catch { return; }
         if (msg.t === 'welcome') resolve(msg);

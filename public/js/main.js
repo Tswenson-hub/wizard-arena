@@ -9,7 +9,8 @@ import { GoatView } from './goats.js';
 import { Wizard } from './wizard.js';
 import { registerModel, loadWizardModels } from './looks.js';
 import { Effects } from './effects.js';
-import { mountWizardPicker } from './select.js';
+import * as Select from './select.js';
+import { loadLoadout, saveLoadout, loadVoice, saveVoice } from './loadout-store.js';
 import { mountMatchUI } from './match-ui.js';
 
 // ---------------------------------------------------------------- setup
@@ -45,7 +46,7 @@ const ui = {
   charge: $('#chargeRing'), chargeFg: $('#chargeRing .fg'),
   feed: $('#feed'), killfeed: $('#killfeed'), hint: $('#hint'), status: $('#status'), death: $('#deathScreen'), vignette: $('#vignette'),
   scoreboard: $('#scoreboard'), scoreBody: $('#scoreboard tbody'), clickToPlay: $('#clickToPlay'),
-  botCount: $('#botCount'), botDiff: $('#botDiff'), botTally: $('#botTally'), volume: $('#volume'), mute: $('#mute'),
+  soundInd: $('#soundInd'), botDiff: $('#botDiff'), botTally: $('#botTally'), volume: $('#volume'), mute: $('#mute'),
   pickNote: $('#pickNote'),
   ammo: [...document.querySelectorAll('#abilities .ammo i')],
   ab: Object.fromEntries([...document.querySelectorAll('.ab')].map(el => [el.dataset.ab, el])),
@@ -96,12 +97,11 @@ let now = 0;
 const tmp = { v1: new THREE.Vector3(), v2: new THREE.Vector3(), v3: new THREE.Vector3() };
 const CYC = C.SPELLBOOK.cyclone, SKY = C.SPELLBOOK.skyward;
 
-// ---------------------------------------------------------------- wizard choice
-// The wizard we want (saved in localStorage). The server's copy (me.wizard) is what casts use; it
-// differs only while a switch waits for a cast to end or for a respawn.
-let wantWizard = C.DEFAULT_WIZARD;
-try { const w = localStorage.getItem('wizardChoice'); if (C.isWizard(w)) wantWizard = w; } catch {}
-const kit = () => C.kitOf(me ? me.wizard : wantWizard);
+// ---------------------------------------------------------------- loadout (round 11: the spell builder)
+// The loadout we want (localStorage, loadout-store.js). The server's copy (me.loadout) is what casts use; it differs
+// only while a change waits for our next respawn.
+let wantLoadout = loadLoadout(), wantVoice = loadVoice();
+const kit = () => me?.loadout || wantLoadout;
 // Berserker Brew halves every cooldown of hers (the server's rule; we predict with it)
 const cdMul = () => me?.brewing ? C.SPELLBOOK.berserker_brew.cooldownMul : 1;
 const SPELL = C.SPELLBOOK;
@@ -112,43 +112,66 @@ const STAMP = SPELL.stampede, RIDE = SPELL.ram_ride, RGUARD = SPELL.ram_guard;
 const AIMED_ULTS = { night_cage: CAGE, stampede: STAMP };   // hold Q to aim (a circle, or Stampede's lane), release; then the wind-up
 const LASH = SPELL.sanguine_lash, MIRROR = SPELL.mirror_step, BULWARK = SPELL.glacial_bulwark, RELIC = SPELL.trapped_relic, SKIM = SPELL.glacial_skim;
 
-function chooseWizard(id) {
-  if (!C.isWizard(id)) return;
-  if (id !== wantWizard) sfx.click();
-  wantWizard = id;
-  try { localStorage.setItem('wizardChoice', id); } catch {}
-  for (const pk of pickers) pk.set(id);
-  if (me) net.send({ t: 'wizard', id });
+function chooseLoadout(lo) {
+  const clean = saveLoadout(lo);
+  if (!clean) return;
+  if (!C.sameLoadout(clean, wantLoadout)) sfx.click();
+  wantLoadout = clean;
+  for (const pk of pickers) pk.set(clean);
+  if (me) net.send({ t: 'loadout', loadout: clean });
   updatePickNote();
+}
+function chooseVoice(v) {
+  wantVoice = C.sanitizeVoice(v);
+  saveVoice(wantVoice);
+  for (const pk of pickers) pk.setVoice?.(wantVoice);
+  if (me) net.send({ t: 'loadout', voice: wantVoice });
 }
 function updatePickNote() {
   if (!ui.pickNote) return;
-  const pending = me && me.wizard !== wantWizard;
-  ui.pickNote.textContent = pending ? `switching to ${C.WIZARDS[wantWizard].name} when your cast ends or you respawn`
-    : 'switches right away (after a cast in progress, or at respawn)';
+  const pending = me && !C.sameLoadout(me.loadout, wantLoadout);
+  ui.pickNote.textContent = pending ? 'your new loadout starts when you respawn' : 'a change applies at your next respawn';
   ui.pickNote.classList.toggle('pending', !!pending);
 }
-// The picker draws the cards (select.js). If it draws nothing (the stub), a plain <select> stands in.
+// The builder (select.js mountSpellBuilder, characters agent). Until it exists, six plain <select>s, the presets,
+// Randomize and the voice stand in.
 function mountPicker(el) {
-  const pk = mountWizardPicker(el, { selected: wantWizard, onChange: chooseWizard });
-  if (el.childElementCount) return pk;
-  el.innerHTML = `<div class="wiz-fallback"><select aria-label="Wizard">${Object.values(C.WIZARDS).map(w =>
-    `<option value="${w.id}">${esc(w.name)}, ${esc(w.title)}</option>`).join('')}</select><div class="wf-role"></div><ul></ul></div>`;
-  const sel = el.querySelector('select');
-  const show = (id) => {
-    sel.value = id;
-    const w = C.WIZARDS[id];
-    sel.style.borderColor = '#' + w.color.toString(16).padStart(6, '0');
-    el.querySelector('.wf-role').textContent = w.role;
-    el.querySelector('ul').innerHTML = C.KIT_SLOTS.map(slot => {
-      const sp = SPELL[w.kit[slot]];
-      return `<li><kbd>${C.SLOT_INFO[slot].key}</kbd> <b>${esc(sp?.name || w.kit[slot])}</b> · ${esc(sp?.blurb || '')}</li>`;
-    }).join('');
+  if (typeof Select.mountSpellBuilder === 'function') {
+    const pk = Select.mountSpellBuilder(el, { loadout: wantLoadout, voice: wantVoice, onChange: chooseLoadout, onVoice: chooseVoice });
+    if (el.childElementCount) return pk;
+  }
+  const hexOf = (n) => '#' + n.toString(16).padStart(6, '0');
+  el.innerHTML = `<div class="wiz-fallback">
+    <div class="wf-presets">${C.PRESETS.map(k => `<button type="button" data-preset="${k.id}">${esc(k.name)}</button>`).join('')}<button type="button" data-random>Randomize</button></div>
+    <ul>${C.LOADOUT_SLOTS.map(slot => `<li><kbd>${C.SLOT_INFO[slot].key}</kbd> <select data-slot="${slot}" aria-label="${C.SLOT_INFO[slot].label}">${
+      C.SPELL_POOL[slot].map(id => `<option value="${id}">${esc(SPELL[id].name)}</option>`).join('')}</select> <span class="wf-blurb"></span></li>`).join('')}</ul>
+    <div class="wf-mix"></div>
+    <label class="wf-voice">Voice <select data-voice><option value="male">Male</option><option value="female">Female</option></select></label></div>`;
+  const sels = [...el.querySelectorAll('select[data-slot]')];
+  const show = (lo) => {
+    for (const sel of sels) {
+      const id = lo[sel.dataset.slot], info = C.spellInfo(id);
+      sel.value = id;
+      sel.style.borderColor = hexOf(info.color);
+      sel.parentElement.querySelector('.wf-blurb').textContent = `${info.tags.join(' · ')} · ${info.blurb}`;
+    }
+    const mix = C.loadoutElements(lo).map(e => `<b style="color:${hexOf(C.ELEMENTS[e.element].color)}">${C.ELEMENTS[e.element].name} ${e.count}</b>`).join(' ');
+    const combos = C.combosOf(lo).map(c => `<span class="wf-combo" title="${esc(c.text)}">Combo: ${esc(c.name)}</span>`).join(' ');
+    el.querySelector('.wf-mix').innerHTML = mix + (combos ? ' · ' + combos : '');
   };
-  sel.addEventListener('change', () => chooseWizard(sel.value));
-  sel.addEventListener('keydown', (e) => e.stopPropagation());
-  show(wantWizard);
-  return { set: show, destroy() { el.innerHTML = ''; } };
+  const read = () => Object.fromEntries(sels.map(sel => [sel.dataset.slot, sel.value]));
+  for (const sel of sels) { sel.addEventListener('change', () => chooseLoadout(read())); sel.addEventListener('keydown', (e) => e.stopPropagation()); }
+  el.querySelector('.wf-presets').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    chooseLoadout(b.dataset.random !== undefined ? C.randomLoadout() : C.PRESETS.find(k => k.id === b.dataset.preset).loadout);
+  });
+  const vsel = el.querySelector('select[data-voice]');
+  vsel.value = wantVoice;
+  vsel.addEventListener('change', () => chooseVoice(vsel.value));
+  vsel.addEventListener('keydown', (e) => e.stopPropagation());
+  show(wantLoadout);
+  return { set: show, setVoice(v) { vsel.value = v; }, destroy() { el.innerHTML = ''; } };
 }
 const pickers = [mountPicker($('#joinPicker')), mountPicker($('#pausePicker'))];
 const spellName = (id) => SPELL[id]?.name || id;
@@ -158,7 +181,7 @@ const shortName = (id) => SPELL[id]?.short || spellName(id);
 try {
   ui.name.value = localStorage.getItem('wizardName') || '';
   const bots = JSON.parse(localStorage.getItem('wizardBots') || 'null');
-  if (bots) { ui.botCount.value = bots.count; ui.botDiff.value = bots.difficulty; }
+  if (bots?.difficulty) ui.botDiff.value = bots.difficulty;
 } catch {}
 ui.joinBtn.disabled = true;
 
@@ -181,14 +204,13 @@ ui.form.addEventListener('submit', async (e) => {
   const name = ui.name.value.trim() || 'Wizard';
   try {
     localStorage.setItem('wizardName', name);
-    localStorage.setItem('wizardBots', JSON.stringify({ count: ui.botCount.value, difficulty: ui.botDiff.value }));
+    localStorage.setItem('wizardBots', JSON.stringify({ difficulty: ui.botDiff.value }));
   } catch {}
   ui.joinBtn.disabled = true; ui.loadStatus.textContent = 'Connecting…';
   sfx.init(); sfx.resume();
   try {
-    const welcome = await net.connect(name, wantWizard, ui.botDiff.value);   // game modes fill teams with bots at this difficulty
+    const welcome = await net.connect(name, { loadout: wantLoadout, voice: wantVoice }, ui.botDiff.value);   // fill bots play at this difficulty
     onWelcome(welcome);
-    for (let i = 0; i < +ui.botCount.value; i++) net.send({ t: 'addBot', difficulty: ui.botDiff.value });
   } catch (err) {
     ui.loadStatus.textContent = err.message || 'Connection failed';
     ui.joinBtn.disabled = false;
@@ -199,11 +221,20 @@ ui.form.addEventListener('submit', async (e) => {
 ui.clickToPlay.addEventListener('click', (e) => { if (e.target === ui.clickToPlay) input.requestLock(); });
 $('#resumeBtn').addEventListener('click', () => { sfx.click(); input.requestLock(); });
 for (const b of document.querySelectorAll('[data-bot]')) b.addEventListener('click', () => { sfx.click(); net.send({ t: 'addBot', difficulty: b.dataset.bot }); });
-$('#clearBots').addEventListener('click', () => { sfx.click(); net.send({ t: 'removeBots' }); });
 ui.volume.value = Math.round(sfx.volume * 100);
 ui.mute.checked = sfx.muted;
-ui.volume.addEventListener('input', () => { sfx.volume = ui.volume.value / 100; if (sfx.muted) { sfx.muted = false; ui.mute.checked = false; } });
-ui.mute.addEventListener('change', () => { sfx.muted = ui.mute.checked; });
+ui.volume.addEventListener('input', () => { sfx.volume = ui.volume.value / 100; if (sfx.muted) { sfx.muted = false; ui.mute.checked = false; } updateSoundInd(); });
+ui.mute.addEventListener('change', () => { sfx.muted = ui.mute.checked; updateSoundInd(); });
+// Round 11 (Ty heard nothing): the HUD's speaker shows the mute state and volume; a click toggles mute like M.
+function updateSoundInd() {
+  const el = ui.soundInd, off = sfx.muted || sfx.volume === 0;
+  el.classList.toggle('muted', off);
+  el.querySelector('.lvl').textContent = sfx.muted ? 'muted' : `${Math.round(sfx.volume * 100)}%`;
+  el.title = sfx.muted ? 'Sound is muted: press M (or click) to unmute' : `Sound ${Math.round(sfx.volume * 100)}%: M to mute`;
+}
+function toggleMute() { sfx.muted = !sfx.muted; ui.mute.checked = sfx.muted; updateSoundInd(); feed(sfx.muted ? 'Sound muted (M)' : 'Sound on'); }
+ui.soundInd.addEventListener('click', (e) => { e.stopPropagation(); sfx.init(); sfx.resume(); toggleMute(); });
+updateSoundInd();
 input.onLockChange = (locked) => { ui.clickToPlay.classList.toggle('hidden', locked || !me); updateBotTally(); };
 function updateBotTally() {
   const n = [...players.values()].filter(w => w.bot).length;
@@ -218,7 +249,6 @@ net.onClose = () => {
 // ---------------------------------------------------------------- network handlers
 // Game modes UI (public/js/match-ui.js, modes agent)
 const matchUI = mountMatchUI({ scene, camera, net, players, props, myId: () => myId });
-let teamBots = false;   // a team mode is on (snap.match.teams)
 
 function onWelcome(msg) {
   myId = msg.id;
@@ -244,7 +274,10 @@ function onWelcome(msg) {
   ui.hud.classList.remove('hidden');
   input.enabled = true;
   input.requestLock();
-  feed(`Welcome, <b>${esc(me.name)}</b>. ${players.size - 1} other wizard${players.size === 2 ? '' : 's'} here.`);
+  feed(`Welcome, <b>${esc(me.name)}</b>. Free-for-all: first to ${msg.match?.target ?? 10} kills.`);
+  if (sfx.muted) feed('<span class="warn">Sound is muted (press M)</span>');   // round 11: a saved mute is easy to forget
+  if (me.spectator) feed('The match is full: you are watching until a place opens.');
+  updateSoundInd();
 }
 
 // A goat (or one of Jeb's summoned rams) seen for the first time.
@@ -267,10 +300,10 @@ function addPlayer(info) {
   return w;
 }
 
-// A player switched wizard: rebuild their Wizard (model, ring and nameplate colour), keeping its state.
-function rebuildWizard(w, wizard, color) {
+// A player's loadout changed (at a respawn): rebuild their Wizard (the look follows the spell mix), keeping its state.
+function rebuildWizard(w, loadout, color, voice = w.voice) {
   const g = w.group.position;
-  const info = { id: w.id, name: w.name, color: color ?? C.WIZARDS[wizard].color, bot: w.bot, wizard, p: [g.x, g.y, g.z], yaw: w.group.rotation.y };
+  const info = { id: w.id, name: w.name, color: color ?? C.loadoutColor(loadout), bot: w.bot, loadout, voice, p: [g.x, g.y, g.z], yaw: w.group.rotation.y };
   stopWizardAudio(w);
   w.dispose(scene);
   const n = new Wizard(info, scene, w === me);
@@ -284,24 +317,26 @@ function rebuildWizard(w, wizard, color) {
 }
 
 function applySnapshot(w, s) {
-  if (s.wizard && s.wizard !== w.wizard) w = rebuildWizard(w, s.wizard, s.color);
+  if (s.loadout && !C.sameLoadout(s.loadout, w.loadout)) w = rebuildWizard(w, s.loadout, s.color, s.voice);
+  if (s.voice) w.voice = s.voice;
+  w.pendingLoadout = !!s.pendingLoadout;
   if (w !== me) {
     w.targetPos.set(s.p[0], s.p[1], s.p[2]);
     w.targetYaw = s.yaw;
     w.netAnim = s.anim;
   }
   w.hp = s.hp; w.st = s.st; w.kills = s.kills; w.deaths = s.deaths;
-  if (s.blocking && !w.blocking && !w.dead && C.kitOf(w.wizard).guard === 'black_death') sfx.play('black_death_cast', { pos: wpos(w), vol: 0.6, jitter: 0.05 });   // Vesper raising the Black Death
+  if (!!s.spectator !== !!w.spectator) { w.spectator = !!s.spectator; if (w !== me) w.group.visible = !w.spectator; }   // a 5th human watching
+  if (s.blocking && !w.blocking && !w.dead && w.loadout?.guard === 'black_death') sfx.play('black_death_cast', { pos: wpos(w), vol: 0.6, jitter: 0.05 });   // raising the Black Death
   w.blocking = s.blocking; w.charging = s.charging; w.stunned = s.stun;
   w.slowed = !!s.slow; w.bound = !!s.bound; w.lashing = !!s.lashing; w.frozen = !!s.frozen;
   w.ult = s.ult ?? 0;
-  // game modes: the ring and nameplate wear the team colour (match.js), else the wizard's own
-  const shown = s.teamColor ?? s.color;
+  // the ring and nameplate wear the loadout's dominant element
+  const shown = s.color;
   if (shown != null && shown !== w.shownColor) { w.setColor(shown); w.shownColor = shown; }
   if (!s.eye && w.eyeFx) endEye(w);                  // missed the end message
   // Black Death's absorbed damage rides on the next Lash: the coiled whip glows with it (looks.js)
   if ((s.lashBonus ?? 0) !== (w.lashBonus ?? 0)) { w.lashBonus = s.lashBonus ?? 0; w.body?.setWhipGlow?.(w.lashBonus / SPELL.black_death.maxBonus); }
-  w.team = s.team ?? null;
   w.riding = !!s.ride; w.ramGuard = !!s.ramGuard;
   w.brewing = !!s.brew;
   w.regen = !!s.regen;   // out-of-combat regen: our HP bar pulses green
@@ -373,7 +408,7 @@ function tkGesture(w, clip) {
 // A spark takes its caster's colour (constants: BOLT_COLORS).
 function withBolt(pj) {
   const owner = players.get(pj.owner);
-  return pj.kind === 'fast' && owner ? { ...pj, color: C.boltColor(owner.wizard) } : pj;
+  return pj.kind === 'fast' && owner ? { ...pj, color: C.ELEMENTS[C.dominantElement(owner.loadout)].bolt } : pj;
 }
 
 // Where a wizard's sounds come from (chest height).
@@ -386,18 +421,12 @@ function handleMessage(msg) {
         const w = players.get(s.id) || addPlayer(s);
         applySnapshot(w, s);
       }
-      updateTakenHeroes(msg);
       updateDecoys(msg.decoys || []);
       for (const g of msg.goats || []) { const v = goats.get(g.id) || addGoat(g); v.apply(g); }
       // a summoned ram no longer in the snapshot is gone, even if we missed its goatGone
       if (msg.goats) { const ids = new Set(msg.goats.map(g => g.id)); for (const [id, v] of goats) if (v.summoned && !ids.has(id)) { v.dispose(scene); goats.delete(id); } }
       matchUI.onSnapshot(msg);
       matchSnapSounds(msg.match);
-      // team modes keep bots at 3v3 themselves: the practice-bot buttons don't apply
-      if (!!msg.match?.teams !== teamBots) {
-        teamBots = !!msg.match?.teams;
-        for (const b of document.querySelectorAll('[data-bot], #clearBots')) { b.disabled = teamBots; b.title = teamBots ? 'Team modes fill bots to 3v3 automatically' : ''; }
-      }
       break;
     case 'goatAngry': {
       const g = goats.get(msg.id);
@@ -441,8 +470,8 @@ function handleMessage(msg) {
         if (combo) owner.oneShot('combo' + (msg.shot + 1), Math.min(0.7, combo.getClip().duration), Math.max(1, combo.getClip().duration / 0.7), 0);
         // the cast's muzzle flash; a combo strike (and Gale Shear) also sweeps an arc in the hero's colour
         if (msg.kind !== 'prop' && msg.kind !== 'flaskstep' && !(msg.kind === 'skim' && owner.inOneShot() && !combo)) effects.muzzle(msg);
-        if ((combo || msg.kind === 'shear') && C.PRIMARY_KINDS.has(msg.kind)) effects.slash([msg.p[0] + msg.v[0] * 0.04, msg.p[1], msg.p[2] + msg.v[2] * 0.04], C.WIZARDS[owner.wizard]?.color ?? 0xffffff, msg.fin ? 1.2 : 0.9);
-        if (msg.fin && C.PRIMARY_KINDS.has(msg.kind) && !(performance.now() - (owner.finSndAt || 0) < 150)) { owner.finSndAt = performance.now(); sfx.finisher(msg.p, owner.wizard); }   // the 3rd-shot accent, by element (once for Skim's three shards)
+        if ((combo || msg.kind === 'shear') && C.PRIMARY_KINDS.has(msg.kind)) effects.slash([msg.p[0] + msg.v[0] * 0.04, msg.p[1], msg.p[2] + msg.v[2] * 0.04], owner.color ?? 0xffffff, msg.fin ? 1.2 : 0.9);
+        if (msg.fin && C.PRIMARY_KINDS.has(msg.kind) && !(performance.now() - (owner.finSndAt || 0) < 150)) { owner.finSndAt = performance.now(); sfx.finisher(msg.p, C.primaryElement(owner.loadout)); }   // the 3rd-shot accent, by element (once for Skim's three shards)
         if (msg.kind === 'potion') { if (!combo) owner.oneShot('cast_fast', 0.45, 2.4, 0.25); sfx.play('potion_toss', { pos: msg.p, vol: 0.8, jitter: 0.08 }); }
         else if (msg.kind === 'toxic') { owner.oneShot('cast_fast', 0.5, 2, 0.25); sfx.play('potion_toss', { pos: msg.p, vol: 0.85, rate: 0.85 }); }
         else if (msg.kind === 'flaskstep') { sfx.play('whoosh', { pos: msg.p, vol: 0.6, rate: 1.3 }); }
@@ -487,7 +516,7 @@ function handleMessage(msg) {
       if (!target) break;
       const c = target.group.position.clone(); c.y += 1;
       if (msg.veil) { target.veilFlash(); effects.burst(c, 0xe8dcff, 8, 3, 0.25, 0); sfx.play('veil_block', { pos: c, vol: 0.7, jitter: 0.06 }); }
-      else if (msg.blocked) { const G = C.kitOf(target.wizard).guard; effects.blockFlash(c, G === 'black_death' ? 0xa0102a : 0x9ae4ff); if (G === 'black_death') sfx.play('black_death_block', { pos: c, vol: 0.75, jitter: 0.06 }); else sfx.block(c); }
+      else if (msg.blocked) { const G = target.loadout?.guard; effects.blockFlash(c, G === 'black_death' ? 0xa0102a : 0x9ae4ff); if (G === 'black_death') sfx.play('black_death_block', { pos: c, vol: 0.75, jitter: 0.06 }); else sfx.block(c); }
       else {
         effects.hitFlash(c, msg.kind === 'skim' ? 0xbfeaff : 0xff3b4e);
         // a hurled prop or goat doubles them over (hit_waist); other interrupting hits flinch
@@ -530,7 +559,7 @@ function handleMessage(msg) {
     case 'blockBreak': {
       const w = players.get(msg.id);
       if (!w) break;
-      if (C.kitOf(w.wizard).guard === 'black_death') sfx.play('black_death_break', { pos: wpos(w), vol: 1 }); else sfx.blockBreak(wpos(w));
+      if (w.loadout?.guard === 'black_death') sfx.play('black_death_break', { pos: wpos(w), vol: 1 }); else sfx.blockBreak(wpos(w));
       effects.burst(w.group.position.clone().add(new THREE.Vector3(0, 1, 0)), 0x9ae4ff, 24, 5, 0.4);
       if (w === me) { local.blocking = false; local.stunUntil = now + C.BLOCK_BREAK_STUN; flashVignette(); feed('Your ward shattered!'); }
       w.blocking = false;
@@ -587,15 +616,20 @@ function handleMessage(msg) {
     case 'skywardCancel':
       if (msg.id === myId && local.flight) { local.flight = null; local.pos.y = Math.min(local.pos.y, groundAt(local.pos.x, local.pos.z, local.pos.y) + 0.01); }
       break;
-    case 'wizard': {
+    case 'loadout': {
+      // round 11: a loadout took effect (at a respawn), or a voice changed
       const w = players.get(msg.id);
-      if (w && w.wizard !== msg.wizard) {
-        const n = rebuildWizard(w, msg.wizard, msg.color);
-        effects.teleport([n.group.position.x, n.group.position.y, n.group.position.z], [n.group.position.x, n.group.position.y, n.group.position.z]);
-        if (n === me) feed(`You are now <b>${esc(C.WIZARDS[msg.wizard].name)}</b>, ${esc(C.WIZARDS[msg.wizard].title)}`);
+      if (!w) break;
+      w.voice = msg.voice ?? w.voice;
+      if (msg.loadout && !C.sameLoadout(msg.loadout, w.loadout)) {
+        const n = rebuildWizard(w, msg.loadout, msg.color, msg.voice);
+        if (n === me) feed(`New loadout: ${C.LOADOUT_SLOTS.map(k => `<b>${esc(shortName(msg.loadout[k]))}</b>`).join(' · ')}`);
       }
       break;
     }
+    case 'loadoutRejected':
+      feed(`<span class="warn">${esc(msg.reason || 'That loadout was refused.')}</span>`);
+      break;
     case 'lashStart': {
       const w = players.get(msg.id);
       if (!w) break;
@@ -791,12 +825,11 @@ function handleMessage(msg) {
       feed(`<b>${esc(w.name)}</b> unleashes <b>${esc(SPELL[msg.ult]?.name || 'an ultimate')}</b>!`);
       break;
     }
-    case 'notice': feed(esc(msg.text)); break;   // a server note for us (e.g. our hero was already on the team)
+    case 'notice': feed(esc(msg.text)); break;   // a server note for us (e.g. the match is full)
     case 'heal': {   // Night Cage, Black Death: green numbers (ours by the HP bar)
       const w = players.get(msg.id);
       if (!w) break;
       if (w === me) hudNumber(`+${msg.amt}`, 'heal');
-      else if (me && (w.team && w.team === me.team)) floatNumber(w, `+${msg.amt}`, 'heal');
       break;
     }
     case 'potion': {   // a health potion drunk (by) or back on its stand
@@ -870,7 +903,7 @@ function handleMessage(msg) {
       if (!w) break;
       w.ultWinding = true;
       w.oneShot(w.actions.ult ? 'ult' : 'cast_heavy', msg.left, w.actions.ult ? w.actions.ult.getClip().duration / msg.left : 0.9, w.actions.ult ? 0 : 0.3);
-      effects.ultTell(w.group, msg.left, C.boltColor(w.wizard));
+      effects.ultTell(w.group, msg.left, C.loadoutBolt(w.loadout));
       sfx.ultWindup(wpos(w));   // the shared sting; it peaks on the release
       if (w === me && !local.ultWind) local.ultWind = { start: now };
       if (w !== me && Math.hypot(w.group.position.x - local.pos.x, w.group.position.z - local.pos.z) < 30) feed(`<b>${esc(w.name)}</b> is calling <b>${esc(SPELL[msg.ult]?.name || 'an ultimate')}</b>! Interrupt it`);
@@ -1132,21 +1165,6 @@ function handleMessage(msg) {
   }
 }
 
-// One of each hero per team: both pickers grey out heroes a human teammate holds (a bot gives way, so its hero stays
-// pickable). FFA (teamHeroes null) clears them. select.js's setTaken repaints only when the list changes.
-function updateTakenHeroes(msg) {
-  const meS = msg.players.find(s => s.id === myId), teamList = meS?.team ? msg.teamHeroes?.[meS.team] : null;
-  const taken = {};
-  for (const id of teamList || []) {
-    if (id === meS.wizard) continue;                                   // my current hero (mid-switch)
-    const holders = msg.players.filter(s => s.id !== myId && s.team === meS.team && s.wizard === id);
-    const isBot = (s) => !!(s.bot ?? players.get(s.id)?.bot);
-    if (holders.length && holders.every(isBot)) continue;
-    taken[id] = holders.find(s => !isBot(s))?.name || '';               // '' = a teammate's pending switch
-  }
-  for (const pk of pickers) pk.setTaken?.(taken);                       // the <select> fallback has no setTaken
-}
-
 // ---------------------------------------------------------------- game-mode sounds and menu music
 // (match-ui.js draws the mode; its tones live here with the rest of the sound)
 let lastMatch = null;
@@ -1161,15 +1179,12 @@ function updateGoatAudio(dt) {
     if (g.group.position.distanceTo(camera.position) < 28) sfx.bleat(g.group.position.clone().setY(0.8), false, { vol: 0.3, owner: g.id });
   }
 }   // the guard's rams go together: one break sound
-function myTeamOf() { return me?.team ?? null; }
 function matchSounds(msg) {
   if (msg.t === 'matchPhase' && msg.match.phase === 'live' && lastMatch?.phase === 'warmup') sfx.ui('fight_start', 0.8);
   if (msg.t === 'matchEnd') {
     const w = msg.results?.winner;
-    if (w != null) sfx.ui(w === myId || (myTeamOf() && w === myTeamOf()) ? 'victory' : 'defeat', 0.75);
+    if (w != null) sfx.ui(w === myId ? 'victory' : 'defeat', 0.75);
   }
-  if (msg.t === 'matchZone' && msg.type === 'warn') sfx.ui('siege_moving', 0.6);
-  if (msg.t === 'matchVotes' && msg.voter === myId) sfx.ui('vote', 0.6);
 }
 function matchSnapSounds(m) {
   if (!m) return;
@@ -1177,23 +1192,11 @@ function matchSnapSounds(m) {
   if (!prev) return;
   // the warm-up's last three seconds tick down
   if (m.phase === 'warmup' && m.left != null && m.left <= 3.05 && Math.ceil(m.left) !== Math.ceil(prev.left ?? 99) && Math.ceil(m.left) > 0) sfx.ui('countdown_tick', 0.6);
-  // our team scoring: a tick per kill in Team Deathmatch, every 10 points in Siege
-  const team = myTeamOf();
-  if (team && m.phase === 'live' && prev.phase === 'live' && m.scores && prev.scores) {
-    const step = m.mode === 'siege' ? 10 : 1;
-    if (Math.floor(m.scores[team] / step) > Math.floor(prev.scores[team] / step)) sfx.ui('score_tick', 0.45);
-  }
-  // Siege: our side taking the altar, and a contest starting
-  const z = m.zone, pz = prev.zone;
-  if (z && pz && z.i === pz.i) {
-    if (z.contested && !pz.contested) sfx.ui('siege_contested', 0.55);
-    if (z.owner && z.owner !== pz.owner && z.owner === team) sfx.ui('siege_capture', 0.6);
-  }
 }
-// The menu music plays on the join screen, the end screen and the vote; not in the fight.
+// The menu music plays on the join screen and the results screen; not in the fight.
 function updateMusic() {
   const phase = lastMatch?.phase;
-  sfx.setMusic(!me || phase === 'end' || phase === 'vote');
+  sfx.setMusic(!me || phase === 'end');
 }
 // Browsers only allow sound after a gesture: the first click or key on the join screen starts the music.
 for (const ev of ['pointerdown', 'keydown']) document.addEventListener(ev, function first() { sfx.init(); sfx.resume(); updateMusic(); document.removeEventListener(ev, first); });
@@ -1205,7 +1208,7 @@ function spawnDecoy(d) {
   if (decoys.has(d.id)) return;
   const owner = players.get(d.owner);
   if (!owner) return;
-  const wiz = new Wizard({ id: owner.id, name: owner.name, color: owner.color, bot: owner.bot, wizard: owner.wizard, p: d.p, yaw: d.yaw }, scene, false);
+  const wiz = new Wizard({ id: owner.id, name: owner.name, color: owner.color, bot: owner.bot, loadout: owner.loadout, voice: owner.voice, p: d.p, yaw: d.yaw }, scene, false);
   wiz.hp = owner.hp; wiz.netAnim = 'run';
   if (owner === me) wiz.makeGhost();
   decoys.set(d.id, { wiz, owner: d.owner });
@@ -1367,7 +1370,9 @@ const KIND_NAME = { heavy: 'Meteor', fast: 'Spark', shear: 'Gale Shear', hex: 'H
   blizzard_freeze: 'Blizzard', bulwark_frost: 'Glacial Bulwark', flaskstep: 'Flask Step' };
 const iconFor = (kind) => `/textures/icons/${KIND_ICON[kind] || 'skull'}.png`;
 const kindName = (kind) => KIND_NAME[kind] || C.SPELLBOOK[kind]?.name || C.SPELLS[kind]?.name || (kind ? kind.replace(/_/g, ' ') : 'something');
-const heroHex = (w) => '#' + ((C.WIZARDS[w?.wizard]?.color ?? 0xdddddd).toString(16).padStart(6, '0'));
+const heroHex = (w) => '#' + ((w?.color ?? 0xdddddd).toString(16).padStart(6, '0'));
+// A loadout in a few words: its primary, power and ultimate.
+const loadoutLine = (lo) => lo ? ['primary', 'power', 'ultimate'].map(k => shortName(lo[k])).join(' · ') : '';
 const dmgFrom = new Map();   // attacker id -> damage they've done us since we last spawned (the killed-by card)
 let killedBy = null;
 
@@ -1454,7 +1459,7 @@ function showKilledBy(k, kind) {
   killedBy = k ? { id: k.id, kind } : null;
   if (!k) { card.innerHTML = `<img src="${iconFor(kind)}" alt=""><div><div class="kb-spell">${esc(kindName(kind))}</div></div>`; return; }
   card.innerHTML = `<img src="${iconFor(kind)}" alt=""><div>
-    <div class="kb-name" style="color:${heroHex(k)}">${esc(k.name)} <span>${esc(C.WIZARDS[k.wizard]?.name || '')}</span></div>
+    <div class="kb-name" style="color:${heroHex(k)}">${esc(k.name)} <span>${esc(loadoutLine(k.loadout))}</span></div>
     <div class="kb-spell">${esc(kindName(kind))}</div>
     <div class="kb-stats">dealt you <b>${Math.round(dmgFrom.get(k.id) || 0)}</b> · <span class="kb-hp">HP <b>${Math.max(0, Math.round(k.hp ?? 0))}</b></span></div></div>`;
 }
@@ -1472,7 +1477,7 @@ function hitmarker() {
 let scoreVisible = false, scoreT = 0;
 function updateScoreboard() {
   const rows = [...players.values()].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
-  ui.scoreBody.innerHTML = rows.map(w => `<tr class="${w === me ? 'me' : ''}"><td style="color:#${w.color.toString(16).padStart(6, '0')}">${esc(w.name)}${w.bot ? `<span class="bot">${w.bot} bot</span>` : ''}</td><td class="wiz">${esc(C.WIZARDS[w.wizard]?.name || '?')}</td><td>${w.kills}</td><td>${w.deaths}</td></tr>`).join('');
+  ui.scoreBody.innerHTML = rows.map(w => `<tr class="${w === me ? 'me' : ''}"><td style="color:#${w.color.toString(16).padStart(6, '0')}">${esc(w.name)}${w.bot ? `<span class="bot">${w.bot} bot</span>` : ''}</td><td class="wiz">${esc(loadoutLine(w.loadout))}</td><td>${w.kills}</td><td>${w.deaths}</td></tr>`).join('');
 }
 
 // ---------------------------------------------------------------- local player update
@@ -1929,14 +1934,14 @@ function updateLocal(dt) {
     && !local.ultWind && !local.flaskWind && !(me.carrying || me.carryingGoat) && now >= local.blizzUntil && now >= local.eyeUntil;
   const wantSprint = (input.down('ShiftLeft') || input.down('ShiftRight')) && sprintAllowed;
   local.sprinting = wantSprint;   // round 10: unlimited (no stamina); still not while casting, crouching or carrying
-  let speed = C.speedOf(me.wizard);   // per wizard (wizards.js speed)
-  if (local.charging || local.cyclone || local.lash || local.ultWind || local.flaskWind) speed = C.chargeSpeedOf(me.wizard);   // (an ultimate's wind-up too)
-  else if (local.blocking) speed = C.blockSpeedOf(me.wizard);
+  let speed = C.speedOf();
+  if (local.charging || local.cyclone || local.lash || local.ultWind || local.flaskWind) speed = C.chargeSpeedOf();   // (an ultimate's wind-up too)
+  else if (local.blocking) speed = C.blockSpeedOf();
   else if (local.flight) speed = SKY.airSpeed;
-  if (local.sprinting) speed = C.sprintOf(me.wizard);
+  if (local.sprinting) speed = C.sprintOf();
   if (local.crouch) speed = Math.min(speed, C.CROUCH.speed);   // crouched: a slow creep
   if (now < local.slowUntil) speed *= 1 - C.SPELLS.skim.slow;     // Glacial Skim
-  if (now < local.eyeUntil) speed = C.speedOf(me.wizard) * EYE.speedMul;   // the tornado: fast, and nothing slows it
+  if (now < local.eyeUntil) speed = C.speedOf() * EYE.speedMul;   // the tornado: fast, and nothing slows it
   if (galloping) speed = RIDE.speed;
   const wish = tmp.v3.set(0, 0, 0);
   if (moving) {
@@ -2159,7 +2164,7 @@ function updateHud(dt) {
   ui.hp.parentElement.classList.toggle('regen', !!me.regen && !me.dead);
   if (pct >= C.ULT_CHARGE.max && !local.ultWasReady && !me.dead) sfx.ultReady();   // the charge just filled
   local.ultWasReady = pct >= C.ULT_CHARGE.max;
-  ultEl.style.setProperty('--ult', `#${C.boltColor(me.wizard).toString(16).padStart(6, '0')}`);
+  ultEl.style.setProperty('--ult', `#${C.loadoutBolt(me.loadout).toString(16).padStart(6, '0')}`);
   ultEl.classList.toggle('active', local.cataAim || !!local.ultWind || !!local.mrain || now < local.eyeUntil || now < local.blizzUntil || [...cages.values()].some(c => c.owner === myId));
   ultEl.classList.toggle('disabled', bound || holdingNow);
 
@@ -2262,7 +2267,7 @@ function updateWizardAudio(w, dt) {
   if (w.sndWard) w.sndWard.setPos(pos);
 
   // running steps every 0.3 s; slowed by a ward or wind-up, every 0.5 s
-  const speed = w === me ? Math.hypot(local.vel.x, local.vel.z) : (w.netAnim === 'run' ? C.speedOf(w.wizard) : 0);
+  const speed = w === me ? Math.hypot(local.vel.x, local.vel.z) : (w.netAnim === 'run' ? C.speedOf() : 0);
   const moving = !w.dead && speed > 1.5;
   const interval = speed > 4 ? 0.3 : 0.5;
   w.stepT = (w.stepT || 0) + dt;
@@ -2312,7 +2317,7 @@ function frame(t) {
     for (const w of players.values()) w.faceCamera(camera);
     updateHud(dt);
     matchUI.update(dt);
-    if (input.justPressed('KeyM')) { sfx.muted = !sfx.muted; ui.mute.checked = sfx.muted; feed(sfx.muted ? 'Sound muted (M)' : 'Sound on'); }
+    if (input.justPressed('KeyM')) toggleMute();
     sfx.setListener(camera);
     updateMusic();
     updateGoatAudio(dt);
@@ -2320,7 +2325,7 @@ function frame(t) {
     for (const w of players.values()) updateWizardAudio(w, dt);
     updateFloats(dt); updateKilledBy(); updatePotions(dt);
     // a full ultimate charge glows in the hero's colour
-    for (const w of players.values()) if (!w.dead && w.ult >= C.ULT_CHARGE.max && (w.ultFxT = (w.ultFxT || 0) + dt) > (LOW_FX ? 0.2 : 0.08)) { w.ultFxT = 0; effects.ultGlow(w.group.position, C.WIZARDS[w.wizard]?.color ?? 0xffffff); }
+    for (const w of players.values()) if (!w.dead && w.ult >= C.ULT_CHARGE.max && (w.ultFxT = (w.ultFxT || 0) + dt) > (LOW_FX ? 0.2 : 0.08)) { w.ultFxT = 0; effects.ultGlow(w.group.position, w.color ?? 0xffffff); }
     for (const w of players.values()) if (w.healing && !w.dead && (w.healFxT = (w.healFxT || 0) + dt) > 0.05) { w.healFxT = 0; effects.healShimmer(w.group.position.clone().setY(w.group.position.y + 1)); }
   } else {
     // idle camera drift on the join screen

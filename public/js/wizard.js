@@ -102,8 +102,10 @@ export class Wizard {
     this.bot = info.bot || null;
     this.scene = scene;
     this.group = new THREE.Group();
-    this.wizard = info.wizard;
-    const body = makeWizardBody(info.wizard);   // model + clips for this wizard (looks.js)
+    // round 11: the generic wizard, its look by the loadout's spell mix (looks.js); `voice` picks the grunts
+    this.loadout = C.sanitizeLoadout(info.loadout) || { ...C.DEFAULT_LOADOUT };
+    this.voice = C.sanitizeVoice(info.voice);
+    const body = makeWizardBody(this.loadout);
     const clips = body.clips;
     this.body = body;   // looks.js: optional extras such as Vesper's setWhip / setWhipGlow
     this.model = body.model;
@@ -145,8 +147,8 @@ export class Wizard {
       new THREE.MeshBasicMaterial({ color: 0x5cc8ff, transparent: true, opacity: 0.0, depthWrite: false, side: THREE.DoubleSide }));
     this.wardFill.position.y = 1.0;
     this.group.add(this.wardFill);
-    // Vesper's Black Death has its own look: a black shroud instead of the blue bubble
-    this.guardStyle = C.kitOf(info.wizard).guard;
+    // Black Death has its own look: a black shroud instead of the blue bubble
+    this.guardStyle = this.loadout.guard;
     if (this.guardStyle === 'black_death') {
       this.ward.material.color.setHex(0x8a0020);
       this.wardFill.material.color.setHex(0x040006);

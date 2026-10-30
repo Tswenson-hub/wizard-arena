@@ -21,22 +21,21 @@
 <div id="join" class="overlay">
   <div class="panel">
     <h1>Wizard Arena</h1>
-    <p class="sub">Low-poly spell duels. Bring friends.</p>
+    <p class="sub">Build your wizard from any spells. Four wizards, first to 10 kills.</p>
     <form id="joinForm">
       <input id="nameInput" maxlength="14" placeholder="Your wizard name" autocomplete="off" spellcheck="false">
       <button type="submit" id="joinBtn">Enter the arena</button>
     </form>
     <div class="practice-row">
-      <label for="botCount">Practice bots</label>
-      <select id="botCount"><option value="0">None</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select>
+      <label for="botDiff">Bots fill the match to 4:</label>
       <select id="botDiff"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard</option></select>
     </div>
-    <h3 class="book-title">Choose your wizard</h3>
+    <h3 class="book-title">Build your wizard: one spell per slot</h3>
     <div class="wizard-pick" id="joinPicker"></div>
     <div class="controls">
-      <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move &nbsp; <kbd>Mouse</kbd> look &nbsp; <kbd>LMB</kbd> <kbd>RMB</kbd> <kbd>E</kbd> <kbd>R</kbd> <kbd>F</kbd> your wizard's five spells &nbsp; <kbd>Space</kbd> jump &nbsp; <kbd>C</kbd> / <kbd>Ctrl</kbd> crouch</div>
-      <div><kbd>R</kbd> your shield: hold to Ward (blocks spells from the front, drains stamina), or tap for your hero's own (an ice wall, a wind veil, a firewall...)</div>
-      <div><kbd>F</kbd> Telekinesis: aim at an object to lift it, <kbd>F</kbd> again to hurl it. It shields you while held</div>
+      <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move &nbsp; <kbd>Mouse</kbd> look &nbsp; <kbd>LMB</kbd> <kbd>RMB</kbd> <kbd>R</kbd> <kbd>E</kbd> <kbd>F</kbd> <kbd>Q</kbd> your six spells &nbsp; <kbd>Space</kbd> jump &nbsp; <kbd>C</kbd> / <kbd>Ctrl</kbd> crouch</div>
+      <div><kbd>R</kbd> your shield: hold to Ward (blocks spells from the front, drains stamina), or tap the one you picked (an ice wall, a wind veil, a firewall...)</div>
+      <div><kbd>F</kbd> Telekinesis: aim at an object to lift it, <kbd>F</kbd> again to hurl it. It shields you while held. <kbd>Q</kbd> your ultimate, once charged</div>
       <div>Don't hit the goats. An angry goat charges and kills in one hit, unless your ward (<kbd>R</kbd>) faces it</div>
       <div><kbd>LMB</kbd> fires 3 shots, then reloads (<kbd>T</kbd> to reload early). The 3rd shot stuns and breaks a wind-up</div>
       <div><kbd>G</kbd> set it down &nbsp; <kbd>Tab</kbd> scoreboard &nbsp; <kbd>M</kbd> mute &nbsp; <kbd>Esc</kbd> menu</div>
@@ -70,23 +69,23 @@
   <div id="killMarker"><i></i><i></i></div>
   <div id="hint"></div>
   <div id="status"></div>
+  <button id="soundInd" type="button" title="Sound (M to mute)" aria-label="Sound"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="spk" d="M3 9h4l5-4v14l-5-4H3z"/><path class="wave" d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/><path class="cross" d="M15 9l6 6M21 9l-6 6"/></svg><span class="lvl"></span></button>
   <div id="deathScreen" class="hidden"><div class="big">You were vanquished</div><div class="killedBy"></div><div class="small">Respawning…</div></div>
   <div id="vignette"></div>
 
   <div id="scoreboard" class="hidden">
     <h2>Scoreboard</h2>
-    <table><thead><tr><th>Player</th><th>Wizard</th><th>Kills</th><th>Deaths</th></tr></thead><tbody></tbody></table>
+    <table><thead><tr><th>Player</th><th>Loadout</th><th>Kills</th><th>Deaths</th></tr></thead><tbody></tbody></table>
   </div>
   <div id="clickToPlay" class="hidden">
     <div class="pause panel">
       <h2>Paused</h2>
       <button id="resumeBtn" class="primary">Resume</button>
-      <h3>Wizard <span class="book-note" id="pickNote">switches right away (after a cast in progress, or at respawn)</span></h3>
+      <h3>Loadout <span class="book-note" id="pickNote">a change applies at your next respawn</span></h3>
       <div class="wizard-pick" id="pausePicker"></div>
-      <h3>Practice bots <span id="botTally"></span></h3>
+      <h3>Bots <span class="book-note">they fill the match to 4; swap one in at another difficulty</span> <span id="botTally"></span></h3>
       <div class="btn-row">
-        <button data-bot="easy">+ Easy</button><button data-bot="normal">+ Normal</button><button data-bot="hard">+ Hard</button>
-        <button id="clearBots" class="ghost">Remove all</button>
+        <button data-bot="easy">Easy bot</button><button data-bot="normal">Normal bot</button><button data-bot="hard">Hard bot</button>
       </div>
       <h3>Sound</h3>
       <div class="vol-row">

@@ -53,8 +53,8 @@ export const CROUCH = { speed: 1.6, hitCenter: 0.5, hitRadius: 0.42 };   // top 
 export const hitCenterOf = (q) => (q?.crouch ? CROUCH.hitCenter : HIT_CENTER_Y);
 export const hitRadiusOf = (q) => (q?.crouch ? CROUCH.hitRadius : HIT_RADIUS);
 
-export const MOVE_SPEED = 3.6;        // m/s: the fastest walk (Gale); each wizard's own is wizards.js `speed` (Ty: normal movement is a walk)
-export const CHARGE_MOVE_SPEED = MOVE_SPEED * 0.32;   // while winding up: the same fraction of a wizard's walk as before
+export const MOVE_SPEED = 3.0;        // m/s: everyone's walk (round 11: one generic wizard; Ty: normal movement is a walk)
+export const CHARGE_MOVE_SPEED = MOVE_SPEED * 0.32;   // while winding up
 export const BLOCK_MOVE_SPEED = MOVE_SPEED * 0.42;    // while blocking
 
 export const MAX_HP = 100;
@@ -503,6 +503,7 @@ export const SPELLBOOK = {
     id: 'tempest_veil', slot: 'guard', name: 'Tempest Veil', short: 'Veil',
     blurb: 'Tap: a wind bubble wraps you for 2 s and swallows every spell, from any side. Move and cast freely.',
     duration: 2,         // Ty: shields much shorter (was 3 s)
+    noRoot: true,        // no cast root: you keep moving (round 11: the spell's property, not Gale's)
     cooldown: 10,        // from activation; it can't be refreshed while up
   },
   ram_guard: {
@@ -631,9 +632,6 @@ export const SPELLBOOK = {
   },
 };
 
-// Spark colour per wizard (a hot near-white core, this glow): brighter than the UI colours so it reads as fire.
-export const BOLT_COLORS = { embibe: 0xa050e0, cinder: 0xff5a1e, gale: 0xb070ff, vesper: 0xff1f3d, rime: 0x7ad8ff };
-export const boltColor = (wizard) => BOLT_COLORS[wizard] ?? 0x7ad8ff;
 
 // Primary fire is a magazine: `magazine` shots (a Skim volley counts as one), then `reload` seconds.
 // Pressing R, or `idleReload` seconds without firing, reloads a partial magazine. Only the last shot
@@ -663,8 +661,8 @@ export function cageClamp(pos, cage, inside) {
   return false;
 }
 
-// Run speed of wizard `id` (wizards.js `speed`); wind-up and ward speeds scale with it.
-export const speedOf = (id) => WIZARDS[id]?.speed ?? MOVE_SPEED;
+// Movement speeds (round 11: the same for everyone; the argument is ignored, kept so old call sites read the same).
+export const speedOf = () => MOVE_SPEED;
 // Casting roots the caster in place (Ty: "players should be stopped while casting a spell, unless it is a
 // movement-based ability"). Turning and aiming still work. These are the short ones (seconds), each about as long as its
 // cast pose up to the release; wind-ups, channels and held shields root for as long as they last.
@@ -679,11 +677,11 @@ export const CAST_ROOT = {
   curse: 0.3,
 };
 
-// Sprint (Shift): a run at the wizard's `sprint` speed, paid from the same stamina as the ward.
+// Sprint (Shift): a run at SPRINT.speed.
 export const SPRINT = { speed: 5.5, drain: 0, restart: 0 };   // m/s default. Round 10 (Ty): unlimited, no stamina (it still ends on a cast)
-export const sprintOf = (id) => WIZARDS[id]?.sprint ?? SPRINT.speed;
-export const chargeSpeedOf = (id) => speedOf(id) * CHARGE_MOVE_SPEED / MOVE_SPEED;
-export const blockSpeedOf = (id) => speedOf(id) * BLOCK_MOVE_SPEED / MOVE_SPEED;
+export const sprintOf = () => SPRINT.speed;
+export const chargeSpeedOf = () => CHARGE_MOVE_SPEED;
+export const blockSpeedOf = () => BLOCK_MOVE_SPEED;
 
 // Backpedalling is slower: moving against the facing direction is capped at BACKPEDAL_SPEED, easing back to
 // full speed as the direction turns sideways (strafing is full speed). (dx, dz) is the movement direction.
@@ -695,8 +693,6 @@ export function backpedalSpeed(speed, dx, dz, yaw) {
   return back > 0 ? speed - Math.max(0, speed - BACKPEDAL_SPEED) * back : speed;
 }
 
-// The kit (slot -> spell id) of wizard `id`, falling back to the default wizard.
-export const kitOf = (id) => (WIZARDS[id] || WIZARDS[DEFAULT_WIZARD]).kit;
 
 // Damage/stun/knockback/stamina spec for a `hit` kind: a projectile kind or a spellbook id.
 export const hitSpec = (kind) => SPELLS[kind] || SPELLBOOK[kind];
@@ -833,7 +829,7 @@ export const inSmoke = (p, clouds) => (p[1] || 0) < SPELLBOOK.smoke_screen.heigh
 // game waits in p.pendingLoadout until the next respawn. The builder UI reads SPELL_POOL, SPELL_INFO, PRESETS,
 // COMBOS and the helpers below; the look (robe tint, aura) follows loadoutElements / dominantElement.
 export const LOADOUT_SLOTS = ['primary', 'power', 'guard', 'mobility', 'utility', 'ultimate'];   // builder row order
-export const WALK_SPEED = 3.0;        // everyone walks at this (sprint: SPRINT.speed)
+export const WALK_SPEED = MOVE_SPEED;  // everyone walks at this (sprint: SPRINT.speed)
 
 // The six elements. `color` is the UI and robe accent, `bolt` the brighter projectile/glow colour, `aura` the looks.js
 // flair name (null: none). Arcane is the neutral one (Spark, Ward, Telekinesis).
