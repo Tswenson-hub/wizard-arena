@@ -1,4 +1,146 @@
-# Characters hand-off (rounds 4–8)
+# Characters hand-off
+
+## Round 11: the spell builder, the generic wizard and the spell animation table
+
+### What I built
+**The builder** (`public/js/select.js` `mountSpellBuilder`, `public/css/select.css`). It replaces the hero picker; that
+picker and its CSS are deleted (they're in git history).
+- **API:** the spells agent's API, `mountSpellBuilder(container, { loadout, voice, onChange, onVoice, footer })`, returns
+  `{ set, setVoice, footer, loadout, voice, destroy }`. `footer` is an element placed in the bottom bar, for the name field and Join.
+- **Layout:**
+  - **Top:** six presets (`C.PRESETS`), with the matching one lit; 🎲 Randomize (`C.randomLoadout`); three saved slots
+    (`loadout-store.js`).
+    - Save fills the clicked slot, or the first empty one, and names it by the mix ("Ice + Blood 1").
+    - Clicking a filled slot loads it.
+  - **Left:** six slot rows (`C.LOADOUT_SLOTS`, with keys and labels from `C.SLOT_INFO`), each with every spell of
+    `C.SPELL_POOL[slot]` as a card. A card shows:
+    - the Raven icon, the name, and its element colour (top stripe, tint, glow when selected)
+    - the blurb's first sentence
+    - stats from `C.spellInfo`: ⚔ damage, ⟳ cooldown, ↔ range or duration, ⏳ wind-up
+    - tags, with Combo in gold
+  - **Right:** a live preview of the generic wizard in the loadout's look. Hovering or focusing a card plays that spell's cast
+    from the animation table (a primary plays its magazine's shots in turn), and the spell's name shows under it.
+    Below it: the element mix (a bar and counts) and the active combos with their text.
+  - **Bottom:** the voice (Male / Female) and the footer slot.
+- **Tooltips** (hover or keyboard focus): the full blurb, every stat, the element and slot, the tags, and each combo with its partner.
+- **Keyboard:** one roving tab stop across the grid. ←/→ move within a row, ↑/↓ move between rows, Home/End go to the row's
+  ends, and Enter or Space picks. Keys don't propagate, so nothing casts in the Esc menu.
+- **Sizes:** designed for a full-screen container.
+  - At 1280×720, a card that would overflow (a two-line name) drops its blurb: `.tight`, set by a ResizeObserver.
+  - At 1500 px and up, blurbs get two lines and the icons grow.
+  - Under 980 px (an embedded panel), the preview goes on top and each row scrolls sideways.
+- **The preview** is one small WebGL canvas, rendered at 30 fps only while the builder is on screen (IntersectionObserver).
+  The camera always frames 3 m × 2.1 m, so a raised staff or wide arms stay in view.
+
+**The generic wizard** (`public/js/looks.js`):
+- `makeWizardBody(loadout)` returns `makeGenericBody`: `{ model, clips, look, loadout, setLook }`. A hero id still works:
+  it gives the generic wizard in that hero's old kit.
+- **Look by mix** (`lookOf(loadout)`, built on the spells agent's `C.loadoutElements`):
+  - The dominant element sets the robe, through the same recolour shader as before (`ROBES`: fire keeps the base red; wind,
+    ice and blood reuse Gale's, Rime's and Vesper's tuning; earth is tan, alchemy green, arcane blue).
+  - A second element with two or more spells tints the dark cloth 30% toward its colour and adds a half-strength aura.
+  - **Auras** (`AURA`, one draw call each):
+    - fire: ember glow and sparks at the hand
+    - wind: violet motes
+    - ice: frost shards on the shoulders, and snow
+    - blood: a crimson halo, smoke, sparks and a dark pool
+    - earth (new): dust and hopping pebbles at the feet
+    - alchemy: bubbles, plus drops dripping from the hands (new)
+    - arcane (new): motes circling the staff hand, shown only when nothing else leads
+  - `setLook` re-tints and swaps the aura in place.
+- **No hero models load any more** (`HERO_BODIES.load = false`), which saves about 10 MB per visit.
+- **Clips depend on the loadout** (cached per loadout): the base clips, `COMMON_ANIMS`, each equipped spell's keys, and the
+  older shared keys filled from the spells that have them (`combo1..3`, `spin`, `lash`, `ult`, `ride`, `flask_step`, `arrival`).
+  Today's main.js calls work unchanged.
+
+**The clip pool:** every clip of the six hero exports, 36 unique, retargeted onto the base wizard's 24-bone rig.
+- `bakeClipPool` in looks.js maps Mixamo bones to the base rig, the inverse of `MIXAMO_TO_BASE`.
+- It's baked into `public/models/wizards/clip-pool.glb`: 2.0 MB raw, then 1.57 MB after resample, then **676 KB** after meshopt.
+- Tool: `tools/bake-clip-pool.py [port]` (new, characters-owned). It drives the game page headless, exports the bones and
+  clips with GLTFExporter, then runs gltf-transform resample + meshopt.
+  **Re-run it after adding a Meshy export to `POOL_SOURCES`**, then pick from it in spellanim.js.
+- Clips are named `hero.Clip` (`embibe.Triple_Combo_Attack`). The base clips are reachable as `base.cast_heavy` and so on.
+
+**The per-spell animation table** (`public/js/spellanim.js`, new, characters-owned). Every pickable spell has an entry:
+- `keys`: pool cuts in the same pick format as before (a clip, `[clip, from, to, dur]`, or `{ clip, from, to, warp, yaw }`).
+- `play`: phase → `Wizard.oneShot` arguments. The phases are shot, windup, cast, release, channel, hold and loop.
+- `release`: where the spell leaves the hand.
+- `legacy`: the older shared keys it fills.
+- `grade` and `need`.
+- `spellPlay(id, phase, n)` is the lookup.
+- **Release frames were measured**, not guessed: each pool clip's right-hand speed peaks
+  (`/tmp/wa-characters/r11/trace.py`, `trace.json`).
+  - Primaries' strikes are cut so the peak lands at 0.08 s (the bolt spawns as the shot plays).
+  - Wind-ups are warped so the peak lands exactly at the spell's wind-up length (Meteor 1.25 s, Lash 1.5 s, Ram 0.8 s,
+    Cyclone 0.45 s, every ultimate 1.3 s).
+- Checked on contact sheets of the generic wizard: `/tmp/wa-characters/r11/prim.png`, `power.png`, `ult.png`.
+
+### Animation status, for Ty (what to export from Meshy next)
+**Missing** (stand-ins that don't sell the spell):
+- **Blink:** a short forward lunge or vanishing crouch (the base dodge is a sidestep).
+- **Mirror Step:** a fast forward dash (a sprint-start lunge).
+- **Smoke Screen:** a backflip or backward leap (it's a 6.5 m leap; now it's a quick backpedal).
+- **Smoke Flask:** a flask smashed down at the feet.
+
+**OK** (works, a better clip would help the tell):
+- **Spark:** a quick one-handed flick (now the same flick 3×).
+- **Glacial Skim:** a low underhand sweep along the ground.
+- **Hex Shards:** a sign-tracing gesture (left, right, up). Vesper's own cast is too slow for a 0.45 s shot.
+- **Shepherd's Sling:** a sling whirl and sidearm release.
+- **Battering Ram:** a big two-footed stomp or ground punch. Jeb's stomp is legs-only and reads weakly on the generic wizard.
+- **Toxic Flask:** a standing underhand lob (the pool's lob starts from a crouch).
+- **Skyward Flash:** a crouch-and-launch straight up.
+- **Ram Ride:** a seated riding pose.
+- **Black Death:** a hunched, arms-wrapped shroud (it blocks every side; the front block undersells it).
+- **Firewall:** a sweeping arm raise from low to high.
+- **Tempest Veil:** an upper-body swirl that blends over running.
+- **Ram Guard:** a whistle or shepherd's-call gesture.
+- **Trapped Relic:** a two-handed curse gesture over an object.
+- **Meteor Rain:** a crouch-and-leap up, a hover pose, a diving fall.
+- **Eye of the Storm:** a looping full-body spin.
+- **Night Cage:** both fists slammed to the ground.
+- **Berserker Brew:** a drink with a flask in hand. The generic wizard holds no flask; or fit Embibe's potion prop to it.
+
+**Good:** Fireball, Gale Shear, Potion Toss, Meteor, Arcane Cyclone, Sanguine Lash, Frostfall, Flask Step, Ward,
+Glacial Bulwark, Telekinesis, Blizzard, Stampede.
+
+To add a clip:
+1. Prepare the export (`tools/prepare-wizard-model.sh`, or just the rigged GLB).
+2. Add it to `POOL_SOURCES` in looks.js.
+3. Run `python3 tools/bake-clip-pool.py`.
+4. Run `trace.py <clip>` for its release peak.
+5. Set the spell's `keys` and `play` in spellanim.js.
+6. Check it with `sheet.py out.png <spell>`.
+
+### Verification
+- **Screens:** `/tmp/wa-characters/r11/builder-1280.png`, `builder-1280-hover.png` (tooltip and Frostfall cast in the preview),
+  `builder-1920.png`, `builder-1920-hover.png`, and `fn-icebuild.png` (an ice + blood build: blue robe, frost shards,
+  Blood Lash combo active). There is no page scroll at either size.
+- **Functions** (`builder_fn.py`):
+  - card clicks call `onChange` with full, valid loadouts
+  - the Jeb preset fills all six slots and lights its chip
+  - Save writes `wizardLoadouts`, and the slot survives a reload and loads back
+  - Randomize gives a full loadout
+  - keyboard: →→↓ Enter picked Arcane Cyclone, and ↑ Space picked a primary; the tooltip follows focus
+  - the voice calls `onVoice`
+  - no console errors
+- **In game** (`ingame.py`, port 4103): four players, each body with a look by mix (ice, blood, wind, earth) and 27–30 clip
+  keys including `combo1` and `ult`. No `[looks]` warnings, no errors. `ingame-1.png` shows the local ice wizard in the arena.
+- The botmatch wasn't run: I touched no server-loaded file.
+
+### Known issues and asks
+- **The join screen and Esc menu still mount the builder in narrow panels** (690 px), so it shows its scrolling fallback. Asked
+  the spells agent for a full-screen mount with the name, bots and Join passed as `footer` (`requests.md`, "round 11 builder…").
+- **The 14 new icons** in `public/textures/icons/` need rows in its `CREDITS.md` (asked in the same request). The pack numbers:
+  - ward fc856, black_death fc859, tempest_veil fc857, ram_guard fc853, smoke_flask fc830, smoke_screen fc755, blink fc1077
+  - skyward fc874, mirror_step fc1078, ram_ride fc885, telekinesis fc1082, night_cage fc1180, stampede fc1045, berserker_brew fc961
+- **`float` is on every body now** (Rime's airborne pose), so every jump uses it. Drop it from `COMMON_ANIMS` if it reads oddly.
+- **Pool clips keep their first frame's hip offset** (up to 25 cm for Embibe's crouch throws), as the hero bodies did.
+- **The generic wizard has no flask or whip props**, so those hero props are gone with the heroes.
+
+---
+
+## Rounds 4–10 (the hero era; kept for history and for the model pipeline)
 
 ## What I built
 **Wizard picker** (`public/js/select.js`, `public/css/select.css`)

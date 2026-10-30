@@ -1,93 +1,150 @@
-/* Wizard picker (characters track): cards rendered by public/js/select.js. */
-.wizard-picker { container-type: inline-size; position: relative; }
-/* One transparent WebGL canvas over the cards; select.js draws each preview into its card's box. */
-.wp-stage { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2; }
-.wp-grid {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 10px; text-align: left;
+/* The spell builder (characters track): rendered by public/js/select.js mountSpellBuilder. */
+/* Fills its container (give it a height): presets and saved loadouts on top, six slot rows of cards on the left,
+   the preview and the loadout summary on the right, the voice (and main.js's name field and Join) at the bottom. */
+.spell-builder {
+  --accent: #ffc857; --ink: #f4ecd8; --dim: rgba(244,236,216,0.62); --line: rgba(255,255,255,0.12);
+  container: builder / inline-size; position: relative; box-sizing: border-box; height: 100%; min-height: 0;
+  display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 10px;
+  color: var(--ink); text-align: left; font-size: 13px;
 }
-.wp-card {
-  --accent: #ffc857;
-  position: relative; display: flex; flex-direction: column; gap: 6px; min-width: 0;
-  padding: 8px 10px 10px; border-radius: 12px; cursor: pointer; color: var(--ink, #f4ecd8); outline: none;
-  background: linear-gradient(160deg, color-mix(in srgb, var(--accent) 10%, transparent), rgba(255,255,255,0.03) 55%);
-  border: 1px solid rgba(255,255,255,0.13);
-  transition: border-color .12s, box-shadow .12s, background .12s;
+.spell-builder *, .spell-builder *::before { box-sizing: border-box; }
+.sb-top, .sb-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 18px; }
+.sb-group { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.sb-label { font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--dim); margin-right: 3px; }
+.sb-chip, .sb-save {
+  font: inherit; font-size: 12px; color: var(--ink); cursor: pointer; white-space: nowrap;
+  padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line); background: rgba(255,255,255,0.05);
+  transition: border-color .12s, background .12s;
 }
-.wp-card:hover { border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
-.wp-card:focus-visible { box-shadow: 0 0 0 2px rgba(255,255,255,0.75); }
-.wp-card.selected {
-  border-color: var(--accent);
-  background: linear-gradient(160deg, color-mix(in srgb, var(--accent) 26%, transparent), color-mix(in srgb, var(--accent) 6%, transparent) 60%);
-  box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 35%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent);
-}
-.wp-card.selected:focus-visible { box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 35%, transparent), 0 0 0 2px rgba(255,255,255,0.75); }
+.sb-chip:hover:not(:disabled), .sb-save:hover { border-color: var(--accent); }
+.sb-chip:focus-visible, .sb-save:focus-visible, .sb-card:focus-visible { outline: 2px solid rgba(255,255,255,0.85); outline-offset: 1px; }
+.sb-chip.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.sb-chip:disabled { cursor: default; color: var(--dim); border-style: dashed; }
+.sb-random { border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.sb-slotbtn { display: inline-flex; }
+.sb-slotbtn .sb-load { border-radius: 999px 0 0 999px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+.sb-slotbtn .sb-save { border-radius: 0 999px 999px 0; border-left: none; color: var(--dim); }
 
-.wp-head { display: flex; align-items: center; gap: 8px; }
-.wp-preview {
-  flex: none; width: 96px; height: 124px; border-radius: 9px;
-  background: radial-gradient(ellipse at 50% 85%, color-mix(in srgb, var(--accent) 30%, transparent), rgba(0,0,0,0.25) 70%);
-  opacity: 0.35; transition: opacity .3s;
+.sb-main { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) clamp(220px, 21cqw, 400px); gap: 12px; }
+.sb-rows { min-height: 0; display: grid; grid-template-rows: repeat(6, minmax(0, 1fr)); gap: 6px; }
+.sb-row { min-height: 0; display: grid; grid-template-columns: 54px minmax(0, 1fr); gap: 6px; align-items: stretch; }
+.sb-slot {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  border-radius: 9px; background: rgba(255,255,255,0.04); border: 1px solid var(--line);
 }
-.wp-preview.ready { opacity: 1; }
-.wp-id { min-width: 0; flex: 1; }
-.wp-name { font-size: 19px; font-weight: 700; letter-spacing: 0.5px; color: var(--accent); text-shadow: 0 0 12px color-mix(in srgb, var(--accent) 40%, transparent); }
-.wp-title { font-size: 12px; color: var(--ink, #f4ecd8); opacity: 0.85; margin-top: 1px; }
-.wp-role { font-size: 11px; line-height: 1.3; color: var(--dim, rgba(244,236,216,0.6)); margin-top: 5px; }
-.wp-check {
-  position: absolute; top: 8px; right: 8px; width: 22px; height: 22px; border-radius: 50%;
-  display: grid; place-items: center; font-size: 13px; font-weight: 700; color: #140c06;
-  background: var(--accent); box-shadow: 0 0 10px var(--accent); transform: scale(0); transition: transform .15s;
-}
-.wp-card.selected .wp-check { transform: scale(1); }
+.sb-slot kbd { font: 700 13px/1 inherit; font-family: inherit; color: var(--accent); padding: 3px 6px; border-radius: 5px; border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent); }
+.sb-slot span { font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase; color: var(--dim); }
+.sb-cards { min-height: 0; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 5px; }
 
-/* Team modes: a hero a teammate already plays. Visible, greyed out, not selectable. */
-.wp-card.taken { cursor: not-allowed; filter: grayscale(0.85) brightness(0.7); opacity: 0.6; }
-.wp-card.taken:hover { border-color: rgba(255,255,255,0.13); }
-.wp-taken {
-  display: none; position: absolute; top: 8px; right: 8px; padding: 2px 8px; border-radius: 999px;
-  font-size: 11px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase;
-  color: #f4ecd8; background: rgba(20, 14, 10, 0.85); border: 1px solid rgba(244, 236, 216, 0.45);
+.sb-card {
+  --el: #ffc857;
+  position: relative; min-width: 0; min-height: 0; overflow: hidden; cursor: pointer; user-select: none;
+  container: card / size; min-height: 84px;
+  display: flex; flex-direction: column; gap: 3px; padding: 5px 7px 5px; border-radius: 9px;
+  background: linear-gradient(165deg, color-mix(in srgb, var(--el) 13%, rgba(20,16,24,0.6)), rgba(255,255,255,0.025) 70%);
+  border: 1px solid rgba(255,255,255,0.11); border-top: 2px solid color-mix(in srgb, var(--el) 70%, transparent);
+  transition: border-color .12s, box-shadow .12s, transform .12s;
 }
-.wp-card.taken .wp-taken { display: block; }
+.sb-card:hover { border-color: color-mix(in srgb, var(--el) 65%, transparent); transform: translateY(-1px); }
+.sb-card.selected {
+  border-color: var(--el);
+  background: linear-gradient(165deg, color-mix(in srgb, var(--el) 34%, transparent), color-mix(in srgb, var(--el) 8%, transparent) 75%);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--el) 40%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--el) 55%, transparent);
+}
+.sb-card.selected::after {
+  content: '✓'; position: absolute; top: 4px; right: 5px; width: 16px; height: 16px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 10px; font-weight: 700; color: #140c06; background: var(--el);
+}
+.sb-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.sb-head, .sb-blurb, .sb-stats, .sb-tags { flex: none; }
+.sb-icon {
+  flex: none; width: 26px; height: 26px; image-rendering: pixelated; border-radius: 5px; padding: 1px;
+  background: color-mix(in srgb, var(--el) 22%, rgba(0,0,0,0.45)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--el) 45%, transparent);
+}
+.sb-name { min-width: 0; font-size: 12px; line-height: 1.15; font-weight: 700; padding-right: 14px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.sb-blurb { font-size: 10.5px; line-height: 1.3; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sb-stats { display: flex; flex-wrap: wrap; gap: 1px 7px; font-size: 10.5px; line-height: 1.3; font-variant-numeric: tabular-nums; }
+.sb-stats span { white-space: nowrap; }
+.sb-stats span::before { margin-right: 2px; opacity: 0.75; font-size: 9.5px; }
+.st-dmg::before { content: '⚔'; } .st-cd::before { content: '⟳'; } .st-rng::before { content: '↔'; } .st-wu::before { content: '⏳'; }
+.st-dmg { color: #ffd2b8; } .st-wu { color: #ffe08a; }
+.sb-tags { display: flex; flex-wrap: wrap; gap: 3px; overflow: hidden; max-height: 15px; margin-top: auto; }
+.sb-tags i, .sb-none i {
+  font-style: normal; font-size: 9.5px; line-height: 1; padding: 2px 5px; border-radius: 4px; white-space: nowrap;
+  color: rgba(244,236,216,0.82); background: rgba(255,255,255,0.08);
+}
+.sb-tags i.combo, .sb-none i.combo { color: #2a1d05; background: #ffc857; font-weight: 700; }
 
-.wp-kit { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
-.wp-kit li {
-  display: grid; grid-template-columns: 42px 1fr; column-gap: 6px; align-items: baseline;
-  font-size: 12px; line-height: 1.25;
+/* the right column: the preview and the loadout summary */
+.sb-side { min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 8px; }
+.sb-preview {
+  --el: var(--accent);
+  position: relative; min-height: 0; border-radius: 12px; overflow: hidden; border: 1px solid var(--line);
+  background: radial-gradient(ellipse at 50% 88%, color-mix(in srgb, var(--el) 32%, transparent), rgba(0,0,0,0.3) 62%);
 }
-.wp-kit kbd {
-  grid-row: span 2; justify-self: stretch; text-align: center; padding: 1px 0; margin: 0;
-  font-size: 10px; font-weight: 700; color: var(--accent);
+.sb-preview canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.sb-caption {
+  position: absolute; left: 0; right: 0; bottom: 8px; text-align: center; font-size: 12px; font-weight: 700; letter-spacing: 0.5px;
+  color: var(--ink); text-shadow: 0 1px 4px rgba(0,0,0,0.9); pointer-events: none;
 }
-.wp-kit b { font-weight: 700; }
-.wp-kit span { grid-column: 2; font-size: 11px; color: var(--dim, rgba(244,236,216,0.6)); }
+.sb-summary { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: 12px; background: rgba(255,255,255,0.04); border: 1px solid var(--line); }
+.sb-mixbar { display: flex; gap: 2px; height: 8px; border-radius: 4px; overflow: hidden; }
+.sb-mixbar i { display: block; }
+.sb-mix { display: flex; flex-wrap: wrap; gap: 3px 10px; font-size: 12px; }
+.sb-mix span { color: var(--el); white-space: nowrap; }
+.sb-mix b { color: var(--ink); }
+.sb-combos h4 { margin: 2px 0 4px; font-size: 10.5px; font-weight: normal; letter-spacing: 1px; text-transform: uppercase; color: var(--dim); }
+.sb-combo { margin-bottom: 4px; font-size: 12px; }
+.sb-combo b { color: #ffc857; }
+.sb-combo span { color: var(--dim); font-size: 11px; }
+.sb-combo p, .sb-none { margin: 1px 0 0; font-size: 11px; line-height: 1.3; color: var(--dim); }
 
-/* The ultimate (Q) row: set off from the five kit spells. */
-.wp-kit li.ult { margin-top: 3px; padding-top: 4px; border-top: 1px dashed color-mix(in srgb, var(--accent) 35%, transparent); }
-.wp-kit li.ult kbd { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+/* the full-stats tooltip (hover or keyboard focus) */
+.sb-tip {
+  position: absolute; left: 0; top: 0; z-index: 5; width: 290px; pointer-events: none;
+  padding: 9px 11px; border-radius: 10px; font-size: 12px; line-height: 1.35;
+  background: rgba(16, 12, 20, 0.96); border: 1px solid rgba(255,255,255,0.18); box-shadow: 0 8px 26px rgba(0,0,0,0.55);
+}
+.sb-tip[hidden] { display: none; }
+.tip-head { display: flex; align-items: center; gap: 8px; }
+.tip-head img { width: 34px; height: 34px; image-rendering: pixelated; border-radius: 6px; background: color-mix(in srgb, var(--el) 25%, rgba(0,0,0,0.5)); }
+.tip-head b { display: block; font-size: 14px; color: var(--el); }
+.tip-head span { font-size: 11px; color: var(--dim); }
+.sb-tip p { margin: 6px 0; }
+.sb-tip dl { display: grid; grid-template-columns: auto 1fr; gap: 1px 10px; margin: 0 0 6px; font-size: 11.5px; }
+.sb-tip dt { color: var(--dim); }
+.sb-tip dd { margin: 0; }
+.sb-tip .sb-tags { max-height: none; }
+.tip-combo { margin-top: 6px; font-size: 11.5px; color: var(--dim); }
+.tip-combo b { color: #ffc857; }
 
-/* An odd card out (five wizards in two columns): the last card spans the row, portrait and name on the
-   left, its spells in two columns on the right. */
-@container (min-width: 560px) {
-  .wp-card:last-child:nth-child(odd) {
-    grid-column: 1 / -1;
-    display: grid; grid-template-columns: minmax(200px, 0.75fr) 2fr; column-gap: 16px; align-items: start;
-  }
-  .wp-card:last-child:nth-child(odd) .wp-kit { grid-template-columns: 1fr 1fr; column-gap: 16px; row-gap: 4px; }
-  .wp-card:last-child:nth-child(odd) .wp-head { flex-direction: column; align-items: flex-start; }
-  .wp-card:last-child:nth-child(odd) .wp-preview { width: 100%; height: 150px; }
-  .wp-card:last-child:nth-child(odd) .wp-kit li.ult { grid-column: 1 / -1; }
+/* short cards (720 px tall screens): a smaller icon; a card that still overflows (a two-line name) drops its blurb
+   (select.js marks it .tight; the tooltip has the full text) */
+@container card (max-height: 104px) {
+  .sb-icon { width: 22px; height: 22px; }
+  .sb-name { font-size: 11.5px; }
 }
-@container (max-width: 380px) {
-  .wp-card:last-child:nth-child(odd) { grid-column: auto; }
-}
+.sb-card.tight .sb-blurb { display: none; }
 
-/* Narrow (the 520 px join panel): keep blurbs to one line each, full text on wide layouts. */
-@container (max-width: 600px) {
-  .wp-kit span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .wp-preview { width: 80px; height: 104px; }
-  .wp-name { font-size: 17px; }
+/* wider screens: two-line blurbs, bigger icons */
+@container builder (min-width: 1500px) {
+  .spell-builder { font-size: 14px; }
+  .sb-card { padding: 7px 9px; gap: 4px; }
+  .sb-icon { width: 32px; height: 32px; }
+  .sb-name { font-size: 13.5px; }
+  .sb-blurb { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 11.5px; }
+  .sb-stats { font-size: 11.5px; }
+  .sb-row { grid-template-columns: 74px minmax(0, 1fr); }
 }
-@container (max-width: 380px) {
-  .wp-grid { grid-template-columns: 1fr; }
+/* narrow (a panel under about 1000 px, e.g. a small window): the preview and summary go above the rows, each row
+   scrolls sideways, and the builder takes its natural height (the page or panel scrolls) */
+@container builder (max-width: 980px) {
+  .spell-builder { height: auto; }
+  .sb-main { grid-template-columns: 1fr; grid-template-rows: 200px auto; }
+  .sb-side { grid-row: 1; grid-template-columns: 150px 1fr; grid-template-rows: 1fr; }
+  .sb-rows { grid-template-rows: none; }
+  .sb-cards { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 132px; overflow-x: auto; padding-bottom: 3px; }
+  .sb-card { height: 100px; }
 }
+.sb-card.tight { gap: 2px; }

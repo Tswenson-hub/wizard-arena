@@ -7,7 +7,8 @@
 // themselves in onBeforeRender, so nothing outside this file has to tick them.
 import * as THREE from 'three';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
-import { WIZARDS } from '../shared/wizards.js';
+import { WIZARDS, ELEMENTS, loadoutElements } from '../shared/constants.js';
+import { SPELL_ANIMS, COMMON_ANIMS, legacyKey } from './spellanim.js';
 
 const HEIGHT = 1.8;              // every body is normalised to this height, feet on y = 0
 
@@ -325,6 +326,46 @@ function retargetClip(target, clip, names, source = baseModel, fps = 30) {
   return new THREE.AnimationClip(clip.name, clip.duration, tracks);
 }
 
+// ---------------------------------------------------------------- the clip pool (round 11)
+// Every clip from the six hero exports, retargeted onto the base wizard's rig and baked into one file
+// (POOL_URL), so the generic wizard can play any of them without loading the hero models. Clips are named
+// '<hero>.<clip>' (e.g. 'embibe.Triple_Combo_Attack'), keep their root motion and full length; spellanim.js
+// cuts and retimes them (pickClip specs). Re-bake after adding an export: tools/bake-clip-pool.py.
+export const POOL_URL = '/models/wizards/clip-pool.glb';
+// Hero exports in preference order: a clip name found in several (Meshy's stock moves) is taken from the first.
+export const POOL_SOURCES = {
+  cinder: '/models/wizards/cinder.glb', embibe: '/models/wizards/embibe.glb', jeb: '/models/wizards/jeb.glb',
+  vesper: '/models/wizards/vesper.glb', rime: '/models/wizards/rime.glb', gale: '/models/wizards/gale.glb',
+};
+// base bone -> Mixamo bone (the inverse of MIXAMO_TO_BASE)
+const BASE_FROM_MIXAMO = Object.fromEntries(Object.entries(MIXAMO_TO_BASE).map(([m, b]) => [b, m]));
+const plainName = (n) => n.replace(/^Armature\|/, '').replace(/\|baselayer$/, '');
+
+// The base wizard's bones alone (a copy of its Hips hierarchy), for exporting the pool.
+export const baseRig = () => skeletonClone(baseModel).getObjectByName('Hips');
+// The registered base wizard (bind pose), for tools.
+export const __base = () => baseModel;
+
+// Bake the pool in a browser (needs registerModel first). Returns the retargeted clips, longest names first.
+export async function bakeClipPool(loader, sources = POOL_SOURCES) {
+  const target = skeletonClone(baseModel);
+  const seen = new Set(), out = [];
+  for (const [hero, url] of Object.entries(sources)) {
+    const gltf = await loader.loadAsync(url);
+    gltf.scene.traverse(o => { o.name = o.name.replace(/^mixamorig:?/, ''); });
+    for (const a of gltf.animations) for (const t of a.tracks) t.name = t.name.replace(/^mixamorig:?/, '');
+    for (const clip of gltf.animations) {
+      const name = plainName(clip.name);
+      if (seen.has(name)) continue;
+      seen.add(name);
+      const c = retargetClip(target, clip, BASE_FROM_MIXAMO, gltf.scene);
+      c.name = `${hero}.${name}`;
+      out.push(c);
+    }
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------- loading
 
 function prepareMeshes(root) {
@@ -564,10 +605,14 @@ function sharedClips(id, scene, animations, loaded) {
 // Load each wizard's own model (WIZARDS[id].model). A model that fails to load, or can't be
 // animated, falls back to the recoloured base model with a console warning. All models load first,
 // then the clips are built, because SHARED_CLIPS come from one model and are retargeted onto the others.
+// Round 11: no heroes in play, so their models aren't loaded (every body is the generic wizard, with the hero clips
+// from the pool). Set true to bring the hero bodies back for makeWizardBody(heroId) (tools, comparisons).
+export const HERO_BODIES = { load: false };
+
 export async function loadWizardModels(loader) {
   const want = boneNames(baseModel);
   const loaded = {};
-  await Promise.all(Object.values(WIZARDS).filter(w => w.model).map(w =>
+  await Promise.all(Object.values(WIZARDS).filter(w => w.model && HERO_BODIES.load).map(w =>
     loader.loadAsync(w.model).then(gltf => {
       // Mixamo-style rigs name bones 'mixamorig:Hips' (three drops the colon); use the plain names, so
       // RightHand and Head are where wizard.js looks for them.
@@ -619,8 +664,24 @@ export async function loadWizardModels(loader) {
       }))).catch(err => console.warn(`[looks] ${id}: potions not used (${err?.message || err})`));
     } catch (err) { console.warn(`[looks] ${id}: ${WIZARDS[id].model} not used (${err?.message || err}); using the base model`); }
   }));
+  await loadClipPool().catch(err => console.warn(`[looks] clip pool ${POOL_URL} not loaded (${err?.message || err}); the generic wizard has the base clips only`));
   readyResolve();
 }
+
+// The pool: every hero clip on the base rig (see bakeClipPool). Loaded with its own loader, for the meshopt decoder.
+const pool = {};    // '<hero>.<clip>' -> clip; the base clips are there too, as 'base.<key>'
+async function loadClipPool() {
+  const [{ GLTFLoader }, { MeshoptDecoder }] = await Promise.all([
+    import('three/addons/loaders/GLTFLoader.js'), import('three/addons/libs/meshopt_decoder.module.js')]);
+  const gltf = await new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).loadAsync(POOL_URL);
+  for (const c of gltf.animations) pool[c.name] = c;
+}
+// For tools (contact sheets, timing traces): the pool's clips by name.
+const baseNamed = {};
+export const poolClips = () => {
+  for (const [k, c] of Object.entries(baseClips)) if (!baseNamed['base.' + k]) { const n = c.clone(); n.name = 'base.' + k; baseNamed[n.name] = n; }
+  return { ...pool, ...baseNamed };
+};
 
 // ---------------------------------------------------------------- stand-in recolour
 
@@ -843,6 +904,242 @@ const FLAIR = {
   },
 };
 
+// ---------------------------------------------------------------- the generic wizard (round 11)
+// Every player is the base wizard, tinted by the elements of the spells they equip (C.loadoutElements): the dominant
+// element sets the robe and the aura; a second element with two or more spells tints the dark cloth and adds a
+// fainter aura. Element ids, names and colours are the spells track's (constants.js ELEMENTS); the robe tuning is here.
+const ROBES = {
+  fire: null,                                                   // the base red robe as it is
+  wind: { hue: 0.775, shade: 0xa898d0, val: 1.3 },
+  ice: { hue: 0.55, shade: 0xa8c8e0, val: 1.45, sat: 0.75 },
+  dark: { hue: 0.955, shade: 0x1e1618, val: 0.52, sat: 1.2 },
+  earth: { hue: 0.085, shade: 0xc0aa88, val: 0.95, sat: 0.6 },
+  acid: { hue: 0.27, shade: 0x9aa880, val: 0.95, sat: 0.85 },
+  arcane: { hue: 0.62, shade: 0xb0b8d8, val: 1.15, sat: 0.7 },
+};
+
+// The look of a loadout: { main, second (or null), mix: [{ element, count }], color }.
+export function lookOf(loadout) {
+  const mix = loadoutElements(loadout || {});
+  const main = mix[0]?.element || 'arcane';
+  const second = mix.slice(1).find(e => e.count >= 2 && e.element !== 'arcane')?.element || null;
+  return { main, second, mix, color: ELEMENTS[main].color };
+}
+
+// Robe uniforms for a look: a hue/sat/val target and a shade for the dark cloth (uOn 0 keeps the base red).
+function lookUniforms(look, u) {
+  const r = ROBES[look.main];
+  u.uOn.value = r ? 1 : 0;
+  if (r) u.uRobe.value.set(r.hue, r.sat ?? 1, r.val ?? 1);
+  const shade = new THREE.Color(r?.shade ?? 0xffffff);
+  if (look.second) shade.lerp(new THREE.Color(ELEMENTS[look.second].color), 0.3);
+  u.uShade.value.set(shade.r, shade.g, shade.b);
+}
+function genericMaterial(src, u) {
+  const m = src.clone();
+  m.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, u);
+    sh.fragmentShader = sh.fragmentShader
+      .replace('void main() {', RECOLOR_GLSL + '\nuniform float uOn;\nvoid main() {')
+      .replace('#include <map_fragment>', '#include <map_fragment>\n\tif (uOn > 0.5) diffuseColor.rgb = wa_recolor(diffuseColor.rgb);')
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n\tif (uOn > 0.5) totalEmissiveRadiance = wa_recolor(totalEmissiveRadiance);');
+  };
+  m.customProgramCacheKey = () => 'wa-generic';
+  return m;
+}
+
+// Element auras: (host, body, k) adds to `host` (a group at the body's origin); `body` holds the bones; k is 1
+// for the dominant element and 0.5 for the second (fewer, fainter particles). Returns objects attached to bones.
+const AURA = {
+  fire(host, body, k) {
+    const hand = body.getObjectByName('RightHand');
+    if (!hand) return;
+    const h = new THREE.Vector3();
+    if (k === 1) host.add(motes(1, { size: 0.55, color: 0xff7a2a, place: (i, t, p) => { inModel(body, hand, p); return 0.55 + 0.2 * Math.sin(t * 9) + 0.1 * Math.sin(t * 23); } }));
+    host.add(motes(Math.round(8 * k), { size: 0.09, color: 0xffa040, place: (i, t, p) => {
+      const q = fract(t * 0.9 + rand(i, 1));
+      inModel(body, hand, h);
+      p.set(h.x + (rand(i, 2) - 0.5) * 0.25 + Math.sin(t * 3 + i) * 0.05 * q, h.y + q * 0.7, h.z + (rand(i, 3) - 0.5) * 0.25);
+      return (1 - q) * 0.95;
+    } }));
+  },
+  wind(host, body, k) {
+    const N = Math.round(10 * k), TRAIL = 4;
+    host.add(motes(N * TRAIL, { size: 0.13, color: 0xc9a4ff, place: (j, t, p) => {
+      const i = j % N, s = Math.floor(j / N);
+      const sp = 1.8 + rand(i, 1) * 1.6, r = 0.5 + rand(i, 2) * 0.3;
+      const a = (t - s * 0.045) * sp + rand(i, 3) * 6.283;
+      p.set(Math.cos(a) * r, 0.2 + rand(i, 4) * 1.6 + Math.sin(t * 1.3 + i) * 0.15, Math.sin(a) * r);
+      return (0.7 + 0.3 * Math.sin(t * 4 + i * 1.7)) * (1 - s / TRAIL);
+    } }));
+  },
+  ice(host, body, k) {
+    const bones = [];
+    if (k === 1) {
+      const mat = new THREE.MeshStandardMaterial({ color: 0xbfeaff, emissive: 0x2a6f9a, emissiveIntensity: 0.6, roughness: 0.25, metalness: 0.1, flatShading: true, transparent: true, opacity: 0.92 });
+      const geo = new THREE.OctahedronGeometry(1, 0);
+      for (const side of [1, -1]) {
+        const cluster = new THREE.Group();
+        for (const [x, y, z, len, tilt] of [[0, 0, 0, 0.17, 0.25], [0.05, -0.02, 0.05, 0.12, 0.7], [0.03, -0.02, -0.06, 0.11, -0.5], [-0.04, -0.01, 0.0, 0.09, -0.2]]) {
+          const s = new THREE.Mesh(geo, mat);
+          s.scale.set(0.035, len, 0.035); s.position.set(x * side, y + len * 0.6, z);
+          s.rotation.set(tilt * 0.6, 0, -side * (0.35 + Math.abs(tilt) * 0.5)); s.castShadow = false;
+          cluster.add(s);
+        }
+        if (attachToBone(body, side > 0 ? 'LeftArm' : 'RightArm', cluster, new THREE.Vector3(0.17 * side, 1.43, -0.02))) bones.push(cluster);
+      }
+    }
+    host.add(motes(Math.round(10 * k), { size: 0.07, color: 0xdff4ff, place: (i, t, p) => {
+      const q = fract(t * 0.25 + rand(i, 1));
+      const a = rand(i, 2) * 6.283 + t * 0.4, r = 0.4 + rand(i, 3) * 0.35;
+      p.set(Math.cos(a) * r, 2.0 - q * 2.0, Math.sin(a) * r);
+      return Math.sin(q * Math.PI) * 0.8;
+    } }));
+    return bones;
+  },
+  dark(host, body, k) {
+    host.add(motes(7, { size: 1.1, color: 0x8a0a22, place: (i, t, p) => {
+      const a = i / 7 * 6.283 + t * 0.3;
+      p.set(Math.cos(a) * 0.22, 0.35 + (i % 4) * 0.4, Math.sin(a) * 0.22);
+      return (0.26 + 0.07 * Math.sin(t * 2 + i)) * k;
+    } }));
+    host.add(motes(Math.round(16 * k), { size: 0.45, color: 0x2a0410, additive: false, place: (i, t, p) => {
+      const q = fract(t * 0.35 + rand(i, 1));
+      const a = rand(i, 2) * 6.283 + q * 2.5, r = 0.35 + rand(i, 3) * 0.2 + q * 0.15;
+      p.set(Math.cos(a) * r, 0.1 + q * 1.9, Math.sin(a) * r);
+      return Math.sin(q * Math.PI) * 0.65;
+    } }));
+    host.add(motes(Math.round(8 * k), { size: 0.08, color: 0xff2a48, place: (i, t, p) => {
+      const q = fract(t * 0.5 + rand(i, 1));
+      const a = rand(i, 2) * 6.283 - t * 1.2, r = 0.45 + rand(i, 3) * 0.2;
+      p.set(Math.cos(a) * r, 0.2 + q * 1.6, Math.sin(a) * r);
+      return Math.sin(q * Math.PI);
+    } }));
+    if (k === 1) {
+      const pool = new THREE.Mesh(new THREE.CircleGeometry(0.85, 32).rotateX(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({ map: dotTexture(), color: 0x5a0814, transparent: true, opacity: 0.7, depthWrite: false }));
+      pool.position.y = 0.025; pool.renderOrder = 1;
+      pool.onBeforeRender = () => { pool.material.opacity = 0.55 + 0.15 * Math.sin(performance.now() / 600); };
+      host.add(pool);
+    }
+  },
+  // earth: dust kicked up around the feet, a few pebbles hopping
+  earth(host, body, k) {
+    host.add(motes(Math.round(14 * k), { size: 0.38, color: 0x9a7a52, additive: false, place: (i, t, p) => {
+      const q = fract(t * 0.4 + rand(i, 1));
+      const a = rand(i, 2) * 6.283 + q * 1.2, r = 0.35 + rand(i, 3) * 0.3 + q * 0.35;
+      p.set(Math.cos(a) * r, 0.05 + q * 0.55, Math.sin(a) * r);
+      return Math.sin(q * Math.PI) * 0.5;
+    } }));
+    host.add(motes(Math.round(6 * k), { size: 0.07, color: 0xd8b880, place: (i, t, p) => {
+      const q = fract(t * 0.8 + rand(i, 1));
+      const a = rand(i, 2) * 6.283, r = 0.4 + rand(i, 3) * 0.3;
+      p.set(Math.cos(a) * r, 4 * q * (1 - q) * 0.45, Math.sin(a) * r);
+      return 0.9;
+    } }));
+  },
+  // alchemy: green and violet bubbles rising and popping, and drops dripping from the hands
+  acid(host, body, k) {
+    host.add(motes(Math.round(9 * k), { size: 0.1, color: 0xffffff, place: (i, t, p) => {
+      const q = fract(t * 0.32 + rand(i, 1));
+      const a = rand(i, 2) * 6.283 + t * 0.5, r = 0.32 + rand(i, 3) * 0.25;
+      p.set(Math.cos(a) * r + Math.sin(t * 2 + i) * 0.04, 0.5 + q * 1.1, Math.sin(a) * r);
+      return Math.sin(q * Math.PI) * 0.85;
+    }, tint: (i) => i % 3 ? 0x8cff4a : 0xb070ff }));
+    const hands = ['RightHand', 'LeftHand'].map(n => body.getObjectByName(n)).filter(Boolean);
+    if (!hands.length) return;
+    const h = new THREE.Vector3();
+    host.add(motes(Math.round(6 * k), { size: 0.06, color: 0x9cff50, place: (i, t, p) => {
+      const q = fract(t * 0.7 + rand(i, 1));
+      inModel(body, hands[i % hands.length], h);
+      p.set(h.x + (rand(i, 2) - 0.5) * 0.06, h.y - 0.05 - q * q * 0.9, h.z + (rand(i, 3) - 0.5) * 0.06);
+      return (1 - q) * 0.9;
+    } }));
+  },
+  // arcane (only when nothing else leads): pale blue motes circling the staff hand
+  arcane(host, body, k) {
+    const hand = body.getObjectByName('RightHand');
+    if (!hand) return;
+    const h = new THREE.Vector3();
+    host.add(motes(Math.round(6 * k), { size: 0.08, color: 0xa8c8ff, place: (i, t, p) => {
+      inModel(body, hand, h);
+      const a = t * 2.2 + i / 6 * 6.283;
+      p.set(h.x + Math.cos(a) * 0.18, h.y + Math.sin(t * 1.7 + i) * 0.1, h.z + Math.sin(a) * 0.18);
+      return 0.7;
+    } }));
+  },
+};
+
+// Clip sets per loadout: the base clips, the shared COMMON_ANIMS, each equipped spell's own keys, and the older
+// shared key names (combo1..3, spin, lash, ult, ...) filled from the spells that have them. Cached per loadout.
+const pickCache = new Map();    // pick spec (JSON) -> clip, shared by every loadout
+const clipSets = new Map();
+let commonClips = null;
+function poolPick(key, pick) {
+  const id = JSON.stringify(pick);
+  let c = pickCache.get(id);
+  if (!c) {
+    const all = poolClips();
+    const name = Array.isArray(pick) ? pick[0] : typeof pick === 'object' ? pick.clip : pick;
+    if (!all[name]) { console.warn(`[looks] generic: no pool clip '${name}' for ${key}`); return null; }
+    c = pickClip('generic', [all[name]], key, Array.isArray(pick) ? [name, ...pick.slice(1)] : pick, baseModel);
+    if (!c) return null;
+    pickCache.set(id, c);
+  }
+  if (c.name === key) return c;
+  const k = c.clone(); k.name = key; k.userData = c.userData; return k;
+}
+function genericClips(loadout = {}) {
+  const sig = KIT_ORDER.map(s => loadout[s] || '').join('|');
+  if (clipSets.has(sig)) return clipSets.get(sig);
+  if (!commonClips) {
+    commonClips = { ...baseClips };
+    for (const [key, pick] of Object.entries(COMMON_ANIMS)) { const c = poolPick(key, pick); if (c) commonClips[key] = c; }
+    for (const k of GAIT_KEYS) { const c = commonClips[k]; if (c) { c.userData ??= {}; c.userData.speed ??= +measureSpeed(baseModel, c, 1).toFixed(2); } }
+    if (commonClips.death) Object.assign(commonClips, knockClips(baseModel, commonClips.death));
+  }
+  const out = { ...commonClips };
+  const spells = KIT_ORDER.map(s => loadout[s]).filter(id => SPELL_ANIMS[id]);
+  for (const id of spells) for (const [key, pick] of Object.entries(SPELL_ANIMS[id].keys)) { const c = poolPick(key, pick); if (c) out[key] = c; }
+  for (const name of ['combo1', 'combo2', 'combo3', 'spin', 'lash', 'ult', 'float', 'ride', 'flask_step', 'arrival']) {
+    for (const id of spells) {
+      const key = legacyKey(id, name);
+      if (key && out[key] && key !== name) { const c = out[key].clone(); c.name = name; out[name] = c; break; }
+    }
+  }
+  clipSets.set(sig, out);
+  return out;
+}
+const KIT_ORDER = ['primary', 'power', 'mobility', 'guard', 'utility', 'ultimate'];
+// The generic wizard's clip set for a loadout (the builder's preview plays a hovered spell from it).
+export const clipsFor = (loadout) => genericClips(loadout || {});
+
+// A generic wizard body for a loadout. Returns { model, clips, look, setLook(loadout) }: setLook re-tints the
+// robe and swaps the aura in place (the clips stay; make a new body when the loadout's spells change mid-game).
+export function makeGenericBody(loadout = {}) {
+  const model = new THREE.Group();
+  model.name = 'wizardBody';
+  const inner = skeletonClone(baseModel);
+  const u = { uOn: { value: 0 }, uRobe: { value: new THREE.Vector3() }, uShade: { value: new THREE.Vector3(1, 1, 1) } };
+  inner.traverse(o => { if (o.isMesh) o.material = genericMaterial(o.material, u); });
+  model.add(inner);
+  let aura = null, onBones = [];
+  const body = { model, clips: genericClips(loadout), look: null, loadout };
+  body.setLook = (lo) => {
+    body.loadout = lo || {};
+    const look = body.look = lookOf(body.loadout);
+    lookUniforms(look, u);
+    if (aura) { model.remove(aura); aura.traverse(o => { o.geometry?.dispose(); o.material?.dispose?.(); }); }
+    for (const o of onBones) o.removeFromParent();
+    aura = new THREE.Group(); aura.name = 'aura';
+    onBones = [AURA[look.main]?.(aura, inner, 1), look.second && AURA[look.second]?.(aura, inner, 0.5)].flat().filter(Boolean);
+    model.add(aura);
+    model.userData.look = look;
+  };
+  body.setLook(loadout);
+  return body;
+}
+
 // ---------------------------------------------------------------- bodies
 
 // Base-colour gain for models whose texture is too dark to read in the arena light (Embibe's black leather and
@@ -852,7 +1149,12 @@ const BRIGHTEN = { embibe: 1.45 };
 // A fresh skinned clone and the animation clips to drive it, for wizard `id`.
 // Clips use the canonical names: run, walk, block, cast_fast, cast_heavy, stun, dash, idle.
 // `model` is a wrapper group: wizard.js may move/tilt it (death sink) without undoing the normalisation.
+// makeWizardBody(loadout) (round 11): the generic wizard for a loadout object ({ primary, power, ... }); see
+// makeGenericBody. A hero id gets that hero's own model when it is loaded (HERO_BODIES), else the generic wizard
+// wearing the hero's old kit.
 export function makeWizardBody(id) {
+  if (id && typeof id === 'object') return makeGenericBody(id);
+  if (!models[id]) return makeGenericBody(WIZARDS[id]?.kit || {});
   const own = models[id];
   const model = new THREE.Group();
   model.name = 'wizardBody';

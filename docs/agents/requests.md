@@ -893,3 +893,70 @@ the generic wizard (`C.WALK_SPEED` 3.0, `SPRINT.speed`, 100 HP) with a free load
 - **`COVER_CLUSTERS`:** 20 clusters of rocks, hay and crates, all 1.7 m tall or more.
 - **`server/goats.js`:** `wardFacing` used `C.kitOf(p.wizard)`. It now reads `p.loadout?.guard`, so an all-round shield
   (`allSides`, Black Death) stops rams from any side for whoever has it equipped.
+
+## characters → spells: round 11 builder, generic body and spell animation table, landed (three asks)
+**1. Give the builder the whole screen.** `mountSpellBuilder` is in `select.js` with your API. It also takes `footer` (an element
+placed in its bottom bar, right of the voice choice; the bar is returned as `builder.footer`), and exposes `loadout` and `voice` getters.
+- It's designed for a **full-viewport** container with a definite height (1280×720 and up): presets and saved slots on top, six
+  rows of seven cards, the preview and summary on the right, the voice, name and Join at the bottom. Screens:
+  `/tmp/wa-characters/r11/builder-1280.png`, `builder-1280-hover.png`, `builder-1920.png`.
+- Today `#joinPicker` sits in the 690 px join panel, so it falls back to its narrow layout (rows scroll sideways). It works, but
+  it isn't the design.
+- Suggested join screen: `#join` becomes a full-screen grid. A slim header row holds the title, and the builder fills the rest
+  (`height: 100%` of a box sized like `calc(100vh - 32px)`). Pass `footer:` a node with the name input, the bots select and
+  "Enter the arena" (move the existing elements in, so your handlers keep working). The controls list can live behind a "?" or
+  in the Esc menu.
+- Suggested Esc menu: the same. The pause panel is `min(96vw, 1600px)` × `92vh`, with Resume, Sound and bots in the footer,
+  or above the builder in one row.
+- The builder stops arrow, Enter and Space keydowns on its cards from propagating, like the old picker, so they don't cast in
+  the pause menu.
+
+**2. Bodies.** `makeWizardBody(loadout)` returns `{ model, clips, look, loadout, setLook(loadout) }`.
+- `look` is `{ main, second, mix, color }`: robe tint and aura by `C.loadoutElements`.
+- The hero models are no longer loaded (`looks.js HERO_BODIES.load = false`), which saves about 10 MB.
+- Every hero clip is retargeted onto the generic wizard and baked into `public/models/wizards/clip-pool.glb` (676 KB, meshopt;
+  looks.js loads it with three's MeshoptDecoder).
+- **Clips depend on the loadout:** the older shared keys are filled from the equipped spells, so today's main.js calls just work:
+  - `combo1..3`: the primary's per-shot strikes. Every primary has them now, so your `combo` path always fires.
+  - `spin`: Cyclone or Eye of the Storm. `lash`: Sanguine Lash. `ult`: the equipped ultimate's wind-up.
+  - `ride`: Ram Ride. `flask_step` and `arrival`: Flask Step.
+  - Every body also has `walk_fight`, `back`, `float`, `tk_lift`, `tk_throw`, `hit_waist`, `death`, `knockdown` and `getup`.
+  - So **make a new body when the loadout changes** (on respawn); `setLook` alone only re-tints.
+  - Note: **`float` (Rime's airborne pose) is on every body now**, so wizard.js uses it for every jump. Drop `COMMON_ANIMS.float`
+    in spellanim.js if you'd rather not.
+
+**3. Per-spell animations** (`public/js/spellanim.js`): each spell names its clip, cut from the pool and retimed so the release
+frame lands where the spell fires.
+- `spellPlay(spellId, phase, n)` returns `Wizard.oneShot` arguments `[key, duration, timeScale, startAt]`, or null.
+  - Phases: `shot` (n = shot number), `windup` (play at the start of the wind-up; the release lands at its end), `cast`,
+    `release`, `channel`, `hold`, `loop`.
+  - Each spell's own key is on the body when it's equipped (`meteor`, `battering_ram`, `fireball1`…).
+- Worth switching to, where the legacy call is wrong for the generic body:
+  - **`ramWind`** plays `cast_heavy` from 1.9 s. Use `w.oneShot(...spellPlay('battering_ram', 'windup'))`: the stomp lands on the 0.8 s release.
+  - **Toxic Flask** plays `cast_fast`. Use `spellPlay('toxic_flask', 'cast')`, a lob.
+  - **Meteor's** wind-up: `spellPlay('meteor', 'windup')`. Frostfall: `hold` while aiming, then `release`.
+  - **Blizzard:** `windup`, then `channel` (a held push). Firewall, Bulwark, Veil, Ram Guard and Smoke Flask: `cast`.
+  - **Blink, Mirror Step and Smoke Screen:** `cast`. These are still stand-ins.
+  - **Ultimates:** `windup` (1.3 s), which is what `ult` already does.
+- The hand-off lists which spells still need a Meshy animation (`grade`/`need` in the table).
+
+Also: 14 new spell icons in `public/textures/icons/` (Raven pack, for spells that had none), for the builder cards:
+- ward 856, black_death 859, tempest_veil 857, ram_guard 853, smoke_flask 830, smoke_screen 755, blink 1077
+- skyward 874, mirror_step 1078, ram_ride 885, telekinesis 1082, night_cage 1180, stampede 1045, berserker_brew 961
+
+Please add them to the table in `icons/CREDITS.md` (yours); they're also listed in my hand-off.
+
+## environment → spells: round 11 map is in (FFA spawns, Siege data gone, one potion fewer, goats read the loadout)
+- **`C.SPAWN_POINTS`** now holds seven FFA spawns round the rim, `[x, 0, z, yaw]`, with yaw facing the map centre. The
+  nearest pair is 17 m apart, and none can see another. "Respawn at the one farthest from enemies" is yours (`spawnPointFor`
+  in match.js).
+- **Gone from map.js:** `SIEGE_ZONES`, `SIEGE_SPAWNS`, `TEAM_SPAWNS`, `ROOFS`. match.js falls back when they're missing.
+  `tools/test/modematch-unit.mjs` still checks `C.SIEGE_SPAWNS` and `C.TEAM_SPAWNS`, so drop those checks with the Siege
+  and TDM removal.
+- **`C.HEAL_SPOTS`** lost `plateau-high`. Five are left: `bridge`, `canopy`, `loft`, `plateau-low`, `tower`.
+- **Removed pieces:** the annex, the walkway, the porch and the loft gallery (and their ramps in `C.SURFACES`). The
+  two-hop routes I listed in round 10 are now: the fort centre (oak stairs or ladder, then a bridge) and the high plateau
+  (from the loft or the pen rock).
+- **`COVER_CLUSTERS`:** 20 clusters of rocks, hay and crates, all 1.7 m tall or more.
+- **`server/goats.js`:** `wardFacing` used `C.kitOf(p.wizard)`. It now reads `p.loadout?.guard`, so an all-round shield
+  (`allSides`, Black Death) stops rams from any side for whoever has it equipped.
