@@ -1161,8 +1161,8 @@ export class Effects {
     this.scene.add(ring);
     this.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0, maxLife: 0.3, grav: 0, grow: radius / 0.3, still: true });
   }
-  // Toxic Flask's pool: the acid puddle decal (Ty's Meshy concept, cut out top-down: textures/fx/acid_puddle.webp) on the
-  // ground or the deck it landed on, a bright rim at the damage radius, bubbles and fumes. `left` = seconds it lasts.
+  // Toxic Flask's pool: Ty's Meshy acid puddle model (the decal cut from its concept render, textures/fx/acid_puddle.webp,
+  // while it loads) on the ground or the deck it landed on, a bright rim at the damage radius, bubbles and fumes. `left` = seconds it lasts.
   toxicPool(p, left) {
     const R = C.SPELLBOOK.toxic_flask.radius;
     const g = new THREE.Group();
@@ -1178,6 +1178,32 @@ export class Effects {
         transparent: true, opacity: 0.8, alphaTest: 0.02, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
     liquid.rotation.y = Math.random() * Math.PI * 2;
     liquid.position.y = 0.1; liquid.renderOrder = 1;
+    // Ty's Meshy acid puddle (models/acid_puddle.glb, the broken vial in it) replaces the decal once loaded: 2.4 R across like
+    // the decal, flattened to 0.45 of its scale so the vial lies low. It fades and pulses a green glow by itself.
+    this.acidModel ??= import('three/addons/loaders/GLTFLoader.js').then(({ GLTFLoader }) => new GLTFLoader().loadAsync('/models/acid_puddle.glb')).then(gl => {
+      const m = gl.scene, box = new THREE.Box3().setFromObject(m), size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
+      m.position.set(-c.x, -box.min.y, -c.z);
+      const unit = new THREE.Group(); unit.add(m); unit.userData.size = size;
+      return unit;
+    }).catch(() => null);
+    this.acidModel.then(unit => {
+      if (!unit || !g.parent) return;
+      const s = unit.userData.size, k = R * 2.4 / Math.max(s.x, s.z), puddle = unit.clone();
+      puddle.scale.set(k, k * 0.45, k); puddle.rotation.y = liquid.rotation.y; puddle.position.y = 0.02;
+      puddle.traverse(o => {
+        if (!o.isMesh) return;
+        const mat = o.material = o.material.clone();
+        Object.assign(mat, { emissive: new THREE.Color(0x7aff30), emissiveMap: mat.map, emissiveIntensity: 0.3 });
+        o.castShadow = false; o.receiveShadow = true;
+        o.onBeforeRender = () => {
+          const rn = realNow(), fade = Math.max(0, Math.min(1, (e.endAt - rn) / 0.6));
+          mat.transparent = fade < 0.999; mat.opacity = fade;
+          mat.emissiveIntensity = 0.3 + 0.15 * Math.sin(rn * 3.2);
+        };
+      });
+      liquid.visible = false;
+      g.add(puddle);
+    });
     const rim = new THREE.Mesh(new THREE.RingGeometry(R - 0.15, R, 48).rotateX(-Math.PI / 2),
       new THREE.MeshBasicMaterial({ color: 0xb8ff60, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false }));
     rim.position.y = 0.13;
