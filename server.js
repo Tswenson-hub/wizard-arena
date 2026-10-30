@@ -137,6 +137,7 @@ const JUMP_LOCKED = new Set(['chargeStart', 'cyclone', 'lashStart', 'frostfall',
 const kit = (p) => p.loadout;
 const CYCLONE = C.SPELLBOOK.cyclone, SKY = C.SPELLBOOK.skyward, LASH = C.SPELLBOOK.sanguine_lash;
 const MIRROR = C.SPELLBOOK.mirror_step, BULWARK = C.SPELLBOOK.glacial_bulwark, RELIC = C.SPELLBOOK.trapped_relic;
+const ROLL = C.SPELLBOOK.roll;
 const SKIM = C.SPELLBOOK.glacial_skim, FROST = C.SPELLBOOK.frostfall, SMOKE = C.SPELLBOOK.smoke_screen, VEIL = C.SPELLBOOK.tempest_veil;
 const isVeiled = (p) => p.veilUntil > now();
 const holding = (p) => !!(p.carrying || p.carryingGoat);   // a prop or a goat floats beside us
@@ -385,6 +386,7 @@ function respawn(p) {
   p.dead = false; p.stunUntil = 0; p.blocking = false; p.charging = false; p.cyclone = null; p.lash = null; p.flightUntil = 0; p.jump = null; p.crouch = false; p.grab = null; p.knockUntil = 0;
   p.slowUntil = p.rootUntil = p.silenceUntil = p.frozenUntil = 0;
   p.ammo = C.primaryMag(kit(p).primary).magazine; p.reloadUntil = 0;
+  p.rollImmuneUntil = 0;
   endUltimates(p);
   endRide(p);
   flushPendingLoadout(p);   // round 11: a loadout picked during the last life starts now
@@ -484,7 +486,7 @@ function cyclonePulse(p) {
   if (p.p[1] < 1) {
     for (const prop of props.values()) {
       if (prop.state !== 'idle') continue;
-      if (dist2D(p.p, [prop.x, 0, prop.z]) < CYCLONE.radius + C.PROP_TYPES[prop.type].r) breakProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z]);
+      if (dist2D(p.p, [prop.x, 0, prop.z]) < CYCLONE.radius + C.PROP_TYPES[prop.type].r) breakProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z], p.id);
     }
     for (const g of allGoats()) {
       if (g.holder === p.id || g.owner === p.id || Math.hypot(g.x - p.p[0], g.z - p.p[2]) > CYCLONE.radius + C.GOAT.radius) continue;
@@ -495,10 +497,13 @@ function cyclonePulse(p) {
   broadcast({ t: 'cyclonePulse', id: p.id, p: p.p, hits });
 }
 
-function breakProp(prop, at) {
+// `by`: the player whose spell broke it, if any. An enemy breaking a Trapped Relic sets it off where it stands;
+// its own curser (or a goat, or anything without an owner) only disarms it.
+function breakProp(prop, at, by = null) {
+  if (prop.cursedBy && by != null && by !== prop.cursedBy && prop.state === 'idle' && enemyOf(prop.cursedBy, players.get(by))) { relicBlast(prop); return; }
   match.onPropBroken(prop);
-  if (prop.cursedBy) { const c = players.get(prop.cursedBy); prop.cursedBy = null; if (c) send(c.id, { t: 'curse', id: null }); }
-  prop.trap = null;
+  if (prop.cursedBy) disarm(prop);
+  prop.trap = null; prop.fuseAt = 0;
   prop.state = 'broken';
   prop.carrier = null;
   prop.respawnAt = now() + C.PROP_RESPAWN_TIME;
@@ -798,7 +803,7 @@ function frostfallImpact(f) {
   for (const d of [...decoys.values()]) if (d.owner !== f.owner && enemyOf(f.owner, players.get(d.owner)) && dist2D(d.p, at) < FROST.radius) endDecoy(d, true);
   for (const prop of props.values()) {
     if (prop.state !== 'idle') continue;
-    if (dist2D(at, [prop.x, 0, prop.z]) < FROST.radius + C.PROP_TYPES[prop.type].r * 0.5) breakProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z]);
+    if (dist2D(at, [prop.x, 0, prop.z]) < FROST.radius + C.PROP_TYPES[prop.type].r * 0.5) breakProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z], f.owner);
   }
   for (const g of allGoats()) {
     if (g.holder === f.owner || g.owner === f.owner || Math.hypot(g.x - f.x, g.z - f.z) > FROST.radius + C.GOAT.radius * 0.5) continue;
@@ -809,20 +814,28 @@ function frostfallImpact(f) {
 }
 
 // ---------------------------------------------------------------- Trapped Relic
-// One cursed prop per caster. The curse is known only to the server and the caster.
-function clearCurse(p) {
-  let had = false;
-  for (const prop of props.values()) if (prop.cursedBy === p.id) { prop.cursedBy = null; had = true; }
-  if (had) send(p.id, { t: 'curse', id: null });
+// Round 12: traps only (only Telekinesis lifts). Up to RELIC.traps cursed props per caster; a third clears the oldest.
+// A trap goes off when an enemy comes within RELIC.trigger of it (after a RELIC.fuse flare), lifts it, or breaks it.
+// Its curser always knows where it is ({ t: 'curse', ids }); an enemy sees its glyph only within RELIC.seen ({ t: 'glyphs' }).
+const cursedBy = (p) => [...props.values()].filter(prop => prop.cursedBy === p.id);
+const sendCurses = (id) => send(id, { t: 'curse', ids: [...props.values()].filter(prop => prop.cursedBy === id).map(prop => prop.id) });
+function disarm(prop) {
+  const id = prop.cursedBy;
+  prop.cursedBy = null; prop.cursedAt = 0; prop.fuseAt = 0;
+  if (id != null && players.has(id)) sendCurses(id);
 }
-// The cursed prop reached its lifter's hold point: it explodes there.
-function relicBlast(prop, victim) {
+function clearCurse(p) {
+  for (const prop of cursedBy(p)) disarm(prop);
+}
+// A trap goes off: at its lifter's hold point, or where it stands.
+function relicBlast(prop, victim = null) {
   const curserId = prop.cursedBy;
-  const at = C.holdPoint(victim.p, victim.yaw);
-  broadcast({ t: 'relicBlast', p: at, by: curserId, victim: victim.id });
-  if (victim.carrying === prop.id) victim.carrying = null;
+  const at = victim ? C.holdPoint(victim.p, victim.yaw) : [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z];
+  broadcast({ t: 'relicBlast', p: at, by: curserId, victim: victim?.id ?? null, prop: prop.id });
+  if (victim && victim.carrying === prop.id) victim.carrying = null;
+  disarm(prop);
   breakProp(prop, at);
-  if (victim.bot) botNoteRelic(victim, prop.id, now());
+  if (victim?.bot) botNoteRelic(victim, prop.id, now());
   const hits = [];
   const wallsHit = new Set();
   for (const q of players.values()) {
@@ -830,7 +843,7 @@ function relicBlast(prop, victim) {
     const c = [q.p[0], q.p[1] + C.HIT_CENTER_Y, q.p[2]];
     const d = Math.hypot(c[0] - at[0], c[1] - at[1], c[2] - at[2]);
     if (d > RELIC.radius + C.HIT_RADIUS * 0.5) continue;
-    const wall = q !== victim && wallBetween(at, q.p);
+    const wall = q !== victim && wallBetween(at, q.p);   // (the lifter holds it: nothing between)
     if (wall) { wallsHit.add(wall); continue; }
     const dx = q.p[0] - at[0], dz = q.p[2] - at[2], l = Math.hypot(dx, dz);
     const out = l > 0.05 ? [dx / l, 0, dz / l] : [-Math.sin(q.yaw), 0, -Math.cos(q.yaw)];
@@ -942,7 +955,7 @@ function updateRams(dt, t) {
     const tg = r.target != null && players.get(r.target);
     if (tg && !tg.dead) { const want = Math.atan2(tg.p[0] - r.x, tg.p[2] - r.z); let d = Math.atan2(Math.sin(want - r.yaw), Math.cos(want - r.yaw)); d = clamp(d, -G_.turnRate * dt, G_.turnRate * dt); r.yaw += d; }
     r.x += Math.sin(r.yaw) * r.speed * dt; r.z += Math.cos(r.yaw) * r.speed * dt;
-    for (const prop of props.values()) if (prop.state === 'idle' && Math.hypot(prop.x - r.x, prop.z - r.z) < C.PROP_TYPES[prop.type].r + G_.radius) breakProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z]);
+    for (const prop of props.values()) if (prop.state === 'idle' && Math.hypot(prop.x - r.x, prop.z - r.z) < C.PROP_TYPES[prop.type].r + G_.radius) breakProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z], r.owner);
     let done = false;
     for (const q of players.values()) {
       if (q.dead || q.p[1] >= G_.rammableBelow || !enemies(owner, q) || q.id === r.owner) continue;
@@ -1081,7 +1094,7 @@ function crushArea(ownerId, x, z, r) {
   for (const d of [...decoys.values()]) if (d.owner !== ownerId && enemies(owner, players.get(d.owner)) && Math.hypot(d.p[0] - x, d.p[2] - z) < r) endDecoy(d, true);
   for (const prop of props.values()) {
     if (prop.state !== 'idle') continue;
-    if (Math.hypot(prop.x - x, prop.z - z) < r + C.PROP_TYPES[prop.type].r * 0.5) breakProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z]);
+    if (Math.hypot(prop.x - x, prop.z - z) < r + C.PROP_TYPES[prop.type].r * 0.5) breakProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z], ownerId);
   }
   for (const g of allGoats()) {
     if (g.holder === ownerId || g.owner === ownerId || Math.hypot(g.x - x, g.z - z) > r + C.GOAT.radius * 0.5) continue;
@@ -1524,6 +1537,7 @@ function simulate(dt) {
     // players (a lash pierces: it hits each wizard on its path once, unless a ward stops it)
     for (const pl of players.values()) {
       if (pl.dead || pl.id === proj.owner || !enemies(shooter, pl)) continue;   // teammates: it flies through
+      if (pl.rollImmuneUntil > t) continue;   // rolling: it passes through
       if (proj.pierce && proj.hitIds.has(pl.id)) continue;
       const c = [pl.p[0], pl.p[1] + C.hitCenterOf(pl), pl.p[2]];   // crouched: a smaller, lower sphere
       const d = Math.hypot(proj.p[0] - c[0], proj.p[1] - c[1], proj.p[2] - c[2]);
@@ -1553,15 +1567,27 @@ function simulate(dt) {
       const pt = C.PROP_TYPES[prop.type];
       const d = Math.hypot(proj.p[0] - prop.x, proj.p[1] - pt.h * 0.5, proj.p[2] - prop.z);
       if (d < pt.r + proj.radius) {
-        breakProp(prop, [prop.x, pt.h * 0.5, prop.z]);
+        breakProp(prop, [prop.x, pt.h * 0.5, prop.z], proj.owner);
         endProjectile(proj, true, { surface: 'prop' });
         done = true; break;
       }
     }
   }
 
-  // prop respawns / lifts finishing
+  // prop respawns / lifts finishing / Trapped Relics lit by an enemy close by
   for (const prop of props.values()) {
+    if (prop.state === 'idle' && prop.cursedBy != null) {
+      if (prop.fuseAt) { if (t >= prop.fuseAt) relicBlast(prop); continue; }
+      // (at most once per tick per prop: the first enemy in reach lights it, then the fuse runs whatever they do)
+      for (const q of players.values()) {
+        if (q.dead || q.id === prop.cursedBy || !enemyOf(prop.cursedBy, q)) continue;
+        if (q.p[1] > 1.6 || dist2D(q.p, [prop.x, 0, prop.z]) > RELIC.trigger) continue;   // (flying over it is safe)
+        prop.fuseAt = t + RELIC.fuse;
+        broadcast({ t: 'relicFuse', id: prop.id, p: [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z], by: prop.cursedBy, fuse: RELIC.fuse });
+        break;
+      }
+      continue;
+    }
     if (prop.state === 'lifting' && t >= prop.liftUntil) {
       // a Trapped Relic lifted by someone other than its curser explodes at their hold point
       const victim = prop.trap && players.get(prop.trap);
@@ -1607,6 +1633,22 @@ function handle(p, msg) {
       if (process.env.WA_DEBUG) p.ult = C.ULT_CHARGE.max;
       break;
     }
+    case 'debugPlace': {
+      // tests only (WA_DEBUG=1): put this wizard at p (and yaw) at once
+      if (!process.env.WA_DEBUG || !validVec(msg.p)) break;
+      p.p = msg.p.slice(); p.justTeleported = true; p.fall = null;
+      if (Number.isFinite(msg.yaw)) p.yaw = msg.yaw;
+      if (msg.resetCd) { for (const k in p.cd) p.cd[k] = 0; p.rollCharges = null; }
+      break;
+    }
+    case 'debugProp': {
+      // tests only (WA_DEBUG=1): move a resting prop to (x, z)
+      const prop = process.env.WA_DEBUG && props.get(msg.id);
+      if (!prop || prop.state !== 'idle' || !Number.isFinite(msg.x) || !Number.isFinite(msg.z)) break;
+      prop.x = msg.x; prop.z = msg.z;
+      broadcast({ t: 'prop', prop: propPublic(prop) });
+      break;
+    }
     case 'state': {
       if (p.dead) break;
       if (p.mrain || p.mrainFall) { if (Number.isFinite(msg.yaw)) p.yaw = msg.yaw; p.lastStateAt = t; break; }   // Meteor Rain: the server flies her
@@ -1645,7 +1687,7 @@ function handle(p, msg) {
       // bound or recovering from a missed lash: the wizard stays put (a slowed one is just slower,
       // which the speed check below already allows)
       if (isRooted(p)) { np[0] = p.p[0]; np[2] = p.p[2]; }
-      const dashing = p.dashUntil > t;   // Smoke Screen's dash is much faster than running
+      const dashing = p.dashUntil > t;   // Smoke Screen's or Roll's dash is much faster than running
       // Sprint: granted while Shift is held (msg.sprint), there's stamina, and nothing forbids it
       const fwdOk = (() => { const mx = msg.p[0] - p.p[0], mz = msg.p[2] - p.p[2], ml = Math.hypot(mx, mz); const y = Number.isFinite(msg.yaw) ? msg.yaw : p.yaw; return ml < 0.02 || (mx * Math.sin(y) + mz * Math.cos(y)) / ml > 0.2; })();
       p.crouch = !!msg.crouch && !p.jump && !isAirborne(p) && !p.ride && !p.eye && !p.mrain;
@@ -1656,7 +1698,7 @@ function handle(p, msg) {
         + (p.pulledUntil > t ? Math.max(EYE.pull, BLIZ.push) : 0);   // dragged by an Eye of the Storm, pushed by a Blizzard
       // (knockback only counts for a moment after one actually landed; it used to be allowed all the time, which with
       // 0.6 m of slack per update let a client run about 20 m/s faster than its walk)
-      const own = dashing ? SMOKE.distance / SMOKE.dashTime : galloping(p, t) ? RIDE.speed * 1.1 : isAirborne(p) ? Math.max(run, SKY.airSpeed)
+      const own = dashing ? p.dashSpeed || SMOKE.distance / SMOKE.dashTime : galloping(p, t) ? RIDE.speed * 1.1 : isAirborne(p) ? Math.max(run, SKY.airSpeed)
         : castRooted(p, t) ? 0   // casting: no translation (the budget's small burst covers latency)
         : p.crouch && !(p.sprintEndedAt > t - 0.3) ? Math.min(run, C.CROUCH.speed)
         : p.sprinting || p.sprintEndedAt > t - 0.3 ? Math.max(run, C.sprintOf() * (p.slowUntil > t ? 1 - C.SPELLS.skim.slow : 1)) : run;
@@ -1829,12 +1871,32 @@ function handle(p, msg) {
       const from = validVec(msg.from) && dist2D(msg.from, p.p) < 3 ? [msg.from[0], 0, msg.from[2]] : p.p.slice();
       const dir = [-Math.sin(yaw), 0, -Math.cos(yaw)];
       p.cd.mobility = t + SMOKE.cooldown;
-      p.dashUntil = t + SMOKE.dashTime + 0.35;
+      p.dashUntil = t + SMOKE.dashTime + 0.35; p.dashSpeed = SMOKE.distance / SMOKE.dashTime;
       if (p.blocking) { p.blocking = false; p.blockReleasedAt = t; }
-      if (p.bot) botDash(p, dir, t + SMOKE.dashTime);
+      if (p.bot) botDash(p, dir, t + SMOKE.dashTime, p.dashSpeed);
       const c = { id: nextFxId++, owner: p.id, x: from[0], z: from[2], until: t + SMOKE.life };
       smokes.set(c.id, c);
       broadcast({ t: 'smoke', ...smokePublic(c), dir });
+      break;
+    }
+    case 'roll': {
+      // Roll (round 12): a quick dash along the movement keys (backwards with none). The client moves itself, colliding and
+      // stepping up like walking; the server lets it go that fast. For the first ROLL.immune s projectiles pass through
+      // (areas still land). Two charges, each back ROLL.cooldown after it was spent. It doesn't root or end crouch or sprint.
+      if (kit(p).mobility !== 'roll' || !canAct(p) || isRooted(p) || p.charging || p.cyclone || p.lash || isAirborne(p) || t < p.cd.mobility || t < (p.rollUntil || 0)) break;
+      const dl = validVec(msg.dir) ? Math.hypot(msg.dir[0], msg.dir[2]) : 0;
+      const yaw = Number.isFinite(msg.yaw) ? msg.yaw : p.yaw;
+      const dir = dl > 0.01 ? [msg.dir[0] / dl, 0, msg.dir[2] / dl] : [-Math.sin(yaw), 0, -Math.cos(yaw)];
+      p.rollCharges ??= Array(ROLL.charges).fill(0);
+      const i = p.rollCharges.indexOf(Math.min(...p.rollCharges));
+      p.rollCharges[i] = t + ROLL.cooldown;
+      p.cd.mobility = Math.min(...p.rollCharges);
+      p.rollUntil = t + ROLL.dashTime; p.rollImmuneUntil = t + ROLL.immune;
+      p.dashUntil = t + ROLL.dashTime + 0.35; p.dashSpeed = ROLL.distance / ROLL.dashTime;
+      if (p.blocking) { p.blocking = false; p.blockReleasedAt = t; }
+      if (p.bot) botDash(p, dir, p.rollUntil, p.dashSpeed);
+      const from = validVec(msg.from) && dist2D(msg.from, p.p) < 3 ? [msg.from[0], p.p[1], msg.from[2]] : p.p.slice();
+      broadcast({ t: 'roll', id: p.id, from, dir, time: ROLL.dashTime, immune: ROLL.immune, charges: p.rollCharges.filter(c => c <= t).length });
       break;
     }
     case 'mirror': {
@@ -1957,12 +2019,13 @@ function handle(p, msg) {
     case 'curse': {
       if (kit(p).utility !== 'trapped_relic' || !canAct(p) || holding(p) || p.blocking || t < p.cd.lift) break;
       const prop = tkTarget(p, msg.aimOrigin, msg.aimDir);
-      if (!prop) break;
-      clearCurse(p);
-      prop.cursedBy = p.id;
-      p.cd.lift = t + C.SPELLBOOK.trapped_relic.liftCooldown;
+      if (!prop || prop.cursedBy) break;   // (already a trap: ours, or someone else's)
+      const mine = cursedBy(p).sort((a, b) => a.cursedAt - b.cursedAt);
+      while (mine.length >= RELIC.traps) disarm(mine.shift());   // the oldest goes
+      prop.cursedBy = p.id; prop.cursedAt = t; prop.fuseAt = 0;
+      p.cd.lift = t + RELIC.liftCooldown;
       castRoot(p, C.CAST_ROOT.curse);
-      send(p.id, { t: 'curse', id: prop.id });   // nobody else hears of it
+      sendCurses(p.id);   // enemies only see its glyph up close (sendGlyphs)
       break;
     }
     case 'loadout': {
@@ -2006,6 +2069,7 @@ function handle(p, msg) {
       break;
     }
     case 'pickup': {
+      if (kit(p).utility !== 'telekinesis') break;   // round 12: only Telekinesis lifts (Trapped Relic only curses)
       if (!canAct(p) || holding(p) || p.charging || p.cyclone || p.lash || p.blocking || t < p.cd.lift) break;
       const best = tkTarget(p, msg.aimOrigin, msg.aimDir, goatTK);
       if (!best) break;
@@ -2017,9 +2081,8 @@ function handle(p, msg) {
         broadcast({ t: 'goatLift', id: p.id, goat: best.goat.id });
         break;
       }
-      // a Trapped Relic: its curser just lifts it (and the curse is gone); anyone else sets it off
-      if (best.cursedBy === p.id) clearCurse(p);
-      else if (best.cursedBy && enemyOf(best.cursedBy, p)) best.trap = p.id;   // a teammate's trap doesn't go off on us
+      // an enemy's Trapped Relic goes off at our hold point once it's up (a teammate's just lifts)
+      if (best.cursedBy && enemyOf(best.cursedBy, p)) best.trap = p.id;
       best.state = 'lifting'; best.carrier = p.id; best.liftUntil = t + C.TK.liftTime;
       p.carrying = best.id;
       broadcast({ t: 'prop', prop: propPublic(best) });
@@ -2027,7 +2090,7 @@ function handle(p, msg) {
       break;
     }
     case 'throw': {
-      if (!canAct(p) || t < p.cd.throw) break;
+      if (kit(p).utility !== 'telekinesis' || !canAct(p) || t < p.cd.throw) break;
       if (p.carryingGoat) {
         // hurled like a prop (same speed and gravity); goats.js flies it, and calls goatHitPlayer on a hit
         const g = goatById(p.carryingGoat);
@@ -2279,8 +2342,20 @@ setInterval(() => {
   simulate(dt);
 }, 1000 / C.TICK_RATE);
 
+// Trapped Relic: each human sees the glyphs of enemy traps within RELIC.seen (sent when that set changes).
+function sendGlyphs() {
+  const traps = [...props.values()].filter(prop => prop.cursedBy != null && prop.state === 'idle');
+  for (const p of players.values()) {
+    if (p.bot) continue;
+    const ids = p.dead ? [] : traps.filter(prop => prop.cursedBy !== p.id && enemyOf(prop.cursedBy, p) && dist2D(p.p, [prop.x, 0, prop.z]) < RELIC.seen).map(prop => prop.id);
+    const key = ids.join(',');
+    if (key !== (p.glyphKey ?? '')) { p.glyphKey = key; send(p.id, { t: 'glyphs', ids }); }
+  }
+}
+
 setInterval(() => {
   if (players.size === 0) return;
+  sendGlyphs();
   broadcast({ t: 'snap', time: now(), players: [...players.values()].map(playerPublic), goats: rams.length ? [...goats.map(goatPublic), ...rams.map(ramPublic)] : goats.map(goatPublic), decoys: [...decoys.values()].map(decoyPublic), ...match.snapshotExtras() });
 }, 1000 / C.SNAPSHOT_RATE);
 
