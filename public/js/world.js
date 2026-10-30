@@ -162,28 +162,44 @@ export function buildWorld(scene) {
   buildFarmDebris(scene);
   buildMagicLand(scene);
 
-  // Scatter some tufts outside the arena for depth
-  const tuftMat = flat(0x5d9a48);
-  for (let i = 0; i < 90; i++) {
-    const a = Math.random() * Math.PI * 2;
-    const r = C.ARENA_RADIUS + 4 + Math.random() * 40;
-    const m = new THREE.Mesh(new THREE.ConeGeometry(0.4 + Math.random() * 0.5, 0.6 + Math.random() * 0.8, 4), tuftMat);
-    m.position.set(Math.cos(a) * r, groundHeight(Math.cos(a) * r, Math.sin(a) * r) + 0.2, Math.sin(a) * r);
-    scene.add(m);
-  }
-
-  // Distant mountains
-  const mtnMat = flat(0x6a7fa0);
-  for (let i = 0; i < 18; i++) {
-    const a = (i / 18) * Math.PI * 2 + Math.random() * 0.2;
-    const r = 86 + Math.random() * 14;
-    const h = 20 + Math.random() * 24;
-    const m = new THREE.Mesh(new THREE.ConeGeometry(14 + Math.random() * 10, h, 5), mtnMat);
-    m.position.set(Math.cos(a) * r, h / 2 - 2, Math.sin(a) * r);
-    scene.add(m);
-  }
+  scene.add(mountainVista());
 
   return { sun };
+}
+
+// Distant mountains (round 13): Ty's painted vista (textures/sky/mountain_vista.webp: the peaks and the mist band, the
+// sky above them keyed to alpha so the painted skybox shows through) wrapped round the horizon on one open cylinder
+// far past the hills, unlit, in one draw call. Mirrored tiles meet seamlessly; a smooth variation round the ring (a
+// whole number of periods, so it closes) changes the peaks' height and tint so neighbouring tiles don't read as twins.
+// The cylinder's foot hides behind the hills (they top out about 23 m up at the ground's edge, 120 m out); the haze
+// toward its foot is the fog's colour. Turned so the paintings' warm, lit flank faces the sun.
+const VISTA = { r: 160, y0: 24, h: 44, tiles: 6 };
+function mountainVista() {
+  const tex = new THREE.TextureLoader().load('/textures/sky/mountain_vista.webp');
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.MirroredRepeatWrapping; tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.repeat.set(VISTA.tiles, 1); tex.anisotropy = 4;
+  const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, fog: false, side: THREE.BackSide });
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uHaze = { value: new THREE.Color(SKY.fog) };
+    sh.fragmentShader = sh.fragmentShader
+      .replace('void main() {', `uniform vec3 uHaze;\nvoid main() {`)
+      .replace('#include <map_fragment>', `
+        float ring = vMapUv.x / ${VISTA.tiles.toFixed(1)} * 6.2831853;   // 0..2pi round the ring
+        float k = 1.0 + 0.16 * (0.5 + 0.5 * sin(ring + 0.4)) + 0.08 * (0.5 + 0.5 * sin(ring * 5.0 + 1.1));
+        vec2 vuv = vec2(vMapUv.x, vMapUv.y * k);                          // lower, squatter peaks in places
+        if (vuv.y > 0.995) discard;
+        vec4 texel = texture2D(map, vuv);
+        texel.rgb *= vec3(1.0 + 0.05 * sin(ring * 2.0 + 2.0), 1.0 - 0.02 * sin(ring * 3.0), 1.0 + 0.04 * sin(ring * 2.0 + 0.5));
+        texel.rgb = mix(texel.rgb, uHaze, 0.12 + 0.3 * (1.0 - smoothstep(0.0, 0.5, vMapUv.y)));
+        texel.a *= smoothstep(0.0, 0.08, vMapUv.y);
+        diffuseColor *= texel;`);
+  };
+  const geo = new THREE.CylinderGeometry(VISTA.r, VISTA.r, VISTA.h, 160, 1, true).translate(0, VISTA.y0 + VISTA.h / 2, 0);
+  const m = new THREE.Mesh(geo, mat);
+  m.rotation.y = 0.35;
+  m.renderOrder = -1; m.frustumCulled = false;
+  return m;
 }
 
 export const spinners = [];
