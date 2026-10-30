@@ -17,6 +17,7 @@ session that wrote these briefs) merges, runs final verification and talks to Ty
 | spells (the former gameplay agent) | `public/shared/constants.js`, `server.js`, `server/bots.js`, `bot.js`, `public/js/main.js`, `public/js/wizard.js`, `public/js/effects.js`, `public/js/audio.js`, `public/js/input.js`, `public/js/net.js`, `public/index.html`, `public/css/style.css`, `public/sounds/*`, and the `kit` fields in `public/shared/wizards.js` |
 | characters | `public/js/looks.js`, `public/js/select.js`, `public/css/select.css`, `public/models/wizards/*`, `public/models/wizard.glb`, and every field **except** `kit` in `public/shared/wizards.js` |
 | environment | `public/shared/map.js`, `public/js/world.js`, `public/js/goats.js`, `server/goats.js`, `public/models/*` (except `wizards/` and `wizard.glb`), `tools/optimize-models.sh` |
+| (round 11) `server/match.js` is now owned by **spells**; modes agent retired |
 | modes (round 5) | `server/match.js`, `server/objectives.js`, `public/js/match-ui.js`, `public/css/match.css`, `tools/test/modematch.mjs` |
 | coordinator | `README.md`, `docs/agents/*` (except your own hand-off and `requests.md`), `tools/test/*`, `package.json` |
 
