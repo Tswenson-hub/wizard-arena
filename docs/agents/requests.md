@@ -827,3 +827,54 @@ Ty: the regular jump apex goes from 1.1 m to **1.45 m** (`C.JUMP.height`, same g
   - If a perch must only be reached by its stairs (the tower's 4.25 m deck is safe), keep its edge above 2.65 m from the ground below,
     or mark the box `noStand`.
 - Bots use both (they jump at grabbable edges they're stuck against).
+
+## spells → characters: round 11 loadout data model (the builder's API), landed
+Everything is in `public/shared/constants.js` (import `* as C`). There are no heroes in gameplay any more: every player is
+the generic wizard (`C.WALK_SPEED` 3.0, `SPRINT.speed`, 100 HP) with a free loadout.
+- **A loadout** is `{ primary, power, guard, mobility, utility, ultimate }`, each a `SPELLBOOK` id of that slot.
+  - `C.LOADOUT_SLOTS`: the builder's row order (primary, power, guard, mobility, utility, ultimate). `C.SLOT_INFO[slot]`
+    has `{ key, label }` (LMB Primary, RMB Power, R Shield, E Mobility, F Utility, Q Ultimate).
+  - `C.SPELL_POOL[slot]`: every pickable id for that slot (7 primaries, 6 powers, 7 shields, 6 mobility, 2 utility,
+    6 ultimates; Spark and Ward are in too).
+  - `C.sanitizeLoadout(x)`: a clean copy, or `null` if any slot is missing or wrong (no partial repair). The server
+    uses the same function, so whatever passes it is accepted.
+  - `C.randomLoadout(rnd?)`: Randomize. `C.sameLoadout(a, b)`. `C.DEFAULT_LOADOUT` (Cinder's kit).
+  - `C.PRESETS`: `[{ id, name: "Cinder's", hero: 'Cinder', loadout }]`, the six old kits (from `wizards.js` `kit`).
+- **Card data:** `C.spellInfo(id)` returns
+  `{ id, slot, name, short, blurb, element, color, tags, damage, cooldown, range, windup, duration, combos }`.
+  - The stats are display strings (`'23 / 34'`, `'10 s'`, `'24 m'`, `'charge'`, `'hold'`, `'kill'`), and `''` means not applicable.
+  - `tags` come from: Projectile, Hitscan-like, Lob, Area, Wind-up, Interrupts, Slows, Roots, Stuns, Knockdown, Shield, Dash,
+    Teleport, Summon, Heal, Channel, and Combo (added when the spell has a combo partner).
+  - The raw table is `C.SPELL_INFO`.
+- **Elements, for the look by mix:** `C.ELEMENTS[e]` is `{ id, name, color, bolt, aura }`. The elements are fire, wind, ice,
+  dark ("Blood"), earth, acid ("Alchemy") and arcane (neutral: Spark, Ward, Telekinesis; `aura: null`). The aura names are
+  ember, motes, frost, smoke, dust and drip.
+  - `C.loadoutElements(lo)` returns `[{ element, count }]`, most first, with arcane last.
+  - `C.dominantElement(lo)`; `C.loadoutColor(lo)` (ring, nameplate and accent); `C.loadoutBolt(lo)` (the primary's glow).
+- **Combos:** `C.COMBOS` is `[{ id, name, spells: [a, b], text }]`.
+  - The list: Blood Lash (Black Death + Lash), Hot Brew (Brew + Potion Toss), Strong Brew (Brew + Toxic Flask), Hail from
+    Above (Skyward + Frostfall, cast mid-air), Herd Call (Sling + Ram Guard).
+  - `C.combosOf(lo)`: the combos active in a loadout. `C.combosWith(id)`: for a card's Combo tag and tooltip.
+  - `C.hasCombo(lo, comboId)`.
+- **Voice:** `C.VOICES` is `['male', 'female']`; `C.sanitizeVoice(v)`.
+- **Client storage** (main.js does this, so the builder only reports changes):
+  - localStorage `wizardLoadout` (JSON) and `wizardVoice`.
+  - The 3 saved custom loadouts are in `wizardLoadouts`: JSON `[{ name, loadout }]`, at most 3.
+  - The helpers are in `public/js/loadout-store.js` (spells-owned): `loadLoadout()`, `saveLoadout(lo)`, `loadVoice()`,
+    `saveVoice(v)`, `loadSaved()`, `saveSaved(list)`. Use them from the builder for the saved slots.
+- **What main.js will mount (please export this from select.js):**
+  `mountSpellBuilder(container, { loadout, voice, onChange(loadout), onVoice(voice) })`
+  - Returns `{ set(loadout), setVoice(voice), destroy() }`.
+  - Call `onChange` with a full, valid loadout whenever a slot, preset or Randomize changes it.
+  - main.js saves it, shows "applies on respawn" in game, and sends it.
+  - Until it exists, main.js falls back to six plain `<select>`s.
+- **Net messages** (main.js sends them; for reference):
+  - `join` carries `loadout` and `voice`.
+  - In game, `{ t: 'loadout', loadout, voice }`. The server applies it at the next respawn, or at once while dead; the
+    snapshot's `pendingLoadout` flag shows it's waiting.
+  - A bad one gets `{ t: 'loadoutRejected', reason }`.
+  - Snapshots carry each player's `loadout` and `voice` (no `wizard` any more).
+- **Bodies:** wizard.js now calls `makeWizardBody(loadout)`, a loadout object instead of a hero id. Today's looks.js already
+  returns the plain base wizard for it (`models[obj]` and `WIZARDS[obj]` are undefined). Please make it tint the robe and
+  add the aura by `C.loadoutElements(loadout)`. Keep the staff, and keep returning `{ model, clips, ...extras }`.
+  `setWhip`, `holdPotion` and the rest are optional; wizard.js checks for them.

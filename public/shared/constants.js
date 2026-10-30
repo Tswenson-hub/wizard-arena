@@ -288,14 +288,14 @@ export const TELEPORT = {
 };
 
 // ---------------------------------------------------------------- spellbook
-// Every spell, keyed by id. Each wizard (wizards.js) has a fixed kit of one spell per slot.
+// Every spell, keyed by id. A player's loadout picks one per slot (round 11; see the loadouts section at the end).
 // Adding a spell = one entry here plus its handler on the server (server.js) and client (main.js).
 // `short` is the ability bar label. `cooldown` is per slot.
 export const SLOT_INFO = {
   primary:  { key: 'LMB',   label: 'Primary' },
   power:    { key: 'RMB',   label: 'Power' },
   mobility: { key: 'E',     label: 'Mobility' },
-  guard:    { key: 'Space', label: 'Guard' },
+  guard:    { key: 'R',     label: 'Shield' },
   utility:  { key: 'F',     label: 'Utility' },
   ultimate: { key: 'Q',     label: 'Ultimate' },
 };
@@ -542,7 +542,7 @@ export const SPELLBOOK = {
   // ---- ultimates (Q). `ult: true` hits never charge the ultimate. Each one cannot be cancelled once cast.
   meteor_rain: {
     id: 'meteor_rain', slot: 'ultimate', name: 'Meteor Rain', short: 'Meteor Rain', ult: true,
-    blurb: 'Leap 12 m into the sky and hover up to 4 s, aiming a 4 m circle; Q or a click dives on it as a falling blaze. Everything in it, or in her path, dies. A hit that interrupts knocks her down.',
+    blurb: 'Leap 12 m into the sky and hover up to 4 s, aiming a 4 m circle; Q or a click dives on it as a falling blaze. Everything in it, or in your path, dies. A hit that interrupts knocks you down.',
     height: 12,          // the leap
     rise: 0.5,           // seconds to get up there
     hover: 4,            // longest hover; then she dives on her last aim
@@ -621,7 +621,7 @@ export const SPELLBOOK = {
   },
   night_cage: {
     id: 'night_cage', slot: 'ultimate', name: 'Night Cage', short: 'Cage', ult: true,
-    blurb: 'Hold Q to aim, release: a 7 m ring of black spikes for 4 s. Enemies inside can\'t get out, enemies outside can\'t get in. It heals you and your teammates inside, 10 HP a second.',
+    blurb: 'Hold Q to aim, release: a 7 m ring of black spikes for 4 s. Enemies inside can\'t get out, enemies outside can\'t get in. It heals you while you are inside, 10 HP a second.',
     radius: 7,
     range: 24,
     duration: 4,
@@ -826,3 +826,143 @@ export function smokeBlocks(a, b, clouds) {
 }
 export const inSmoke = (p, clouds) => (p[1] || 0) < SPELLBOOK.smoke_screen.height
   && clouds.some(c => Math.hypot(p[0] - c.x, p[2] - c.z) < SPELLBOOK.smoke_screen.radius);
+
+// ---------------------------------------------------------------- loadouts (round 11: the spell builder)
+// No heroes: every player is the same generic wizard (WALK_SPEED, SPRINT.speed, MAX_HP, one hitbox) with a free
+// loadout, one SPELLBOOK spell per slot. The server keeps p.loadout (sanitizeLoadout) and p.voice; a change made in
+// game waits in p.pendingLoadout until the next respawn. The builder UI reads SPELL_POOL, SPELL_INFO, PRESETS,
+// COMBOS and the helpers below; the look (robe tint, aura) follows loadoutElements / dominantElement.
+export const LOADOUT_SLOTS = ['primary', 'power', 'guard', 'mobility', 'utility', 'ultimate'];   // builder row order
+export const WALK_SPEED = 3.0;        // everyone walks at this (sprint: SPRINT.speed)
+
+// The six elements. `color` is the UI and robe accent, `bolt` the brighter projectile/glow colour, `aura` the looks.js
+// flair name (null: none). Arcane is the neutral one (Spark, Ward, Telekinesis).
+export const ELEMENTS = {
+  fire:   { id: 'fire',   name: 'Fire',   color: 0xff5c3c, bolt: 0xff5a1e, aura: 'ember' },
+  wind:   { id: 'wind',   name: 'Wind',   color: 0xb46cff, bolt: 0xb070ff, aura: 'motes' },
+  ice:    { id: 'ice',    name: 'Ice',    color: 0x7fd8ff, bolt: 0x7ad8ff, aura: 'frost' },
+  dark:   { id: 'dark',   name: 'Blood',  color: 0xd8203c, bolt: 0xff1f3d, aura: 'smoke' },
+  earth:  { id: 'earth',  name: 'Earth',  color: 0xc9a66b, bolt: 0xf0c060, aura: 'dust' },
+  acid:   { id: 'acid',   name: 'Alchemy', color: 0x7fd34a, bolt: 0xa050e0, aura: 'drip' },
+  arcane: { id: 'arcane', name: 'Arcane', color: 0x9ab8ff, bolt: 0x7ad8ff, aura: null },
+};
+
+// Builder card data for every pickable spell: its element, tags, and quick stats (strings, ready to show; '' = n/a).
+// Tags: Projectile, Hitscan-like (fast and straight), Lob, Area, Wind-up, Interrupts, Slows, Roots, Stuns, Knockdown,
+// Shield, Dash, Teleport, Summon, Heal, Channel (plus Combo, added by spellInfo when it has a combo partner).
+const S_ = (n) => `${n} s`, M_ = (n) => `${n} m`;
+export const SPELL_INFO = {
+  // primaries (magazine; the last shot of a magazine is the finisher)
+  spark:         { element: 'arcane', tags: ['Projectile', 'Hitscan-like', 'Interrupts'], damage: `${D(9)}`, cooldown: S_(0.45), range: M_(54), windup: '' },
+  fireball:      { element: 'fire',   tags: ['Projectile', 'Interrupts'], damage: `${D(18)} / ${D(26)}`, cooldown: S_(0.5), range: M_(31), windup: '' },
+  gale_shear:    { element: 'wind',   tags: ['Projectile', 'Hitscan-like', 'Interrupts'], damage: `${D(16)}`, cooldown: S_(0.42), range: M_(8), windup: '' },
+  glacial_skim:  { element: 'ice',    tags: ['Projectile', 'Slows', 'Interrupts'], damage: `3 × ${D(11)}`, cooldown: S_(0.6), range: M_(22), windup: '' },
+  hex_shards:    { element: 'dark',   tags: ['Projectile', 'Interrupts'], damage: `${D(11)}`, cooldown: S_(0.45), range: M_(28), windup: '' },
+  sling:         { element: 'earth',  tags: ['Projectile', 'Hitscan-like', 'Summon', 'Interrupts'], damage: `${D(7)} + ram`, cooldown: S_(0.4), range: M_(32), windup: '' },
+  potion_toss:   { element: 'acid',   tags: ['Projectile', 'Lob', 'Area', 'Stuns'], damage: `${D(16)} / ${D(14)}`, cooldown: S_(0.5), range: M_(26), windup: '' },
+  // powers (RMB)
+  meteor:        { element: 'fire',   tags: ['Projectile', 'Wind-up'], damage: `${D(44)}`, cooldown: S_(1.2), range: M_(57), windup: S_(1.25) },
+  cyclone:       { element: 'wind',   tags: ['Area', 'Wind-up', 'Stuns'], damage: `${D(28)}`, cooldown: S_(5), range: M_(5.5), windup: S_(0.45) },
+  frostfall:     { element: 'ice',    tags: ['Area', 'Roots'], damage: `${D(50)}`, cooldown: S_(14), range: M_(24), windup: S_(1.75), duration: 'freeze 1.5 s' },
+  sanguine_lash: { element: 'dark',   tags: ['Projectile', 'Wind-up', 'Roots'], damage: `${D(12)}`, cooldown: S_(13), range: M_(22), windup: S_(1.5), duration: 'bind 1.25 s' },
+  battering_ram: { element: 'earth',  tags: ['Summon', 'Wind-up', 'Knockdown'], damage: 'kill', cooldown: S_(12), range: M_(36), windup: S_(0.8) },
+  toxic_flask:   { element: 'acid',   tags: ['Lob', 'Area'], damage: `${D(12)} + ${D(12)}/s`, cooldown: S_(8), range: M_(18), windup: '', duration: S_(5) },
+  // shields (R)
+  ward:          { element: 'arcane', tags: ['Shield'], damage: '', cooldown: 'hold', range: '', windup: '', duration: 'about 3 s' },
+  firewall:      { element: 'fire',   tags: ['Shield', 'Area'], damage: `${D(15)} to walk through`, cooldown: S_(10), range: M_(5), windup: '', duration: S_(2.5) },
+  tempest_veil:  { element: 'wind',   tags: ['Shield'], damage: '', cooldown: S_(10), range: '', windup: '', duration: S_(2) },
+  glacial_bulwark: { element: 'ice',  tags: ['Shield', 'Roots'], damage: '', cooldown: S_(12), range: M_(6), windup: '', duration: S_(5) },
+  black_death:   { element: 'dark',   tags: ['Shield', 'Heal'], damage: '', cooldown: 'hold', range: '', windup: '', duration: 'about 3 s' },
+  ram_guard:     { element: 'earth',  tags: ['Shield', 'Summon'], damage: 'kill', cooldown: S_(10), range: '', windup: '', duration: S_(3) },
+  smoke_flask:   { element: 'acid',   tags: ['Shield', 'Area'], damage: '', cooldown: S_(10), range: M_(2.4), windup: '', duration: S_(2) },
+  // mobility (E)
+  smoke_screen:  { element: 'fire',   tags: ['Dash', 'Area'], damage: '', cooldown: S_(8), range: M_(6.5), windup: '', duration: 'cloud 5 s' },
+  blink:         { element: 'wind',   tags: ['Teleport'], damage: '', cooldown: S_(4), range: M_(9), windup: '' },
+  skyward:       { element: 'ice',    tags: ['Dash'], damage: '', cooldown: S_(6), range: M_(7), windup: '', duration: 'float 2.8 s' },
+  mirror_step:   { element: 'dark',   tags: ['Dash'], damage: '', cooldown: S_(7), range: M_(7), windup: '', duration: 'decoys 2.5 s' },
+  ram_ride:      { element: 'earth',  tags: ['Dash', 'Summon'], damage: `${D(15)}`, cooldown: S_(8), range: M_(20), windup: S_(0.4) },
+  flask_step:    { element: 'acid',   tags: ['Teleport', 'Lob', 'Wind-up'], damage: '', cooldown: S_(8), range: M_(16), windup: S_(0.6) },
+  // utility (F)
+  telekinesis:   { element: 'arcane', tags: ['Knockdown'], damage: `${D(22)}`, cooldown: S_(3), range: M_(16), windup: '' },
+  trapped_relic: { element: 'dark',   tags: ['Knockdown', 'Area'], damage: `${D(22)} / trap ${D(45)}`, cooldown: S_(3), range: M_(16), windup: '' },
+  // ultimates (Q, charged)
+  meteor_rain:   { element: 'fire',   tags: ['Area', 'Wind-up'], damage: 'kill', cooldown: 'charge', range: M_(24), windup: S_(1.3) },
+  eye_of_storm:  { element: 'wind',   tags: ['Area', 'Channel', 'Wind-up'], damage: `${D(8)} / 0.5 s`, cooldown: 'charge', range: M_(7), windup: S_(1.3), duration: S_(3) },
+  blizzard:      { element: 'ice',    tags: ['Area', 'Channel', 'Roots', 'Wind-up'], damage: `${D(10)}/s`, cooldown: 'charge', range: M_(14), windup: S_(1.3), duration: S_(2.5) },
+  night_cage:    { element: 'dark',   tags: ['Area', 'Heal', 'Wind-up'], damage: '', cooldown: 'charge', range: M_(24), windup: S_(1.3), duration: S_(4) },
+  stampede:      { element: 'earth',  tags: ['Area', 'Summon', 'Wind-up'], damage: 'kill', cooldown: 'charge', range: M_(28), windup: S_(1.3) },
+  berserker_brew: { element: 'acid',  tags: ['Wind-up'], damage: '×1.5 potions', cooldown: 'charge', range: '', windup: S_(1.3), duration: S_(7) },
+};
+
+// Everything pickable, per slot (SPELLBOOK order).
+export const SPELL_POOL = Object.fromEntries(LOADOUT_SLOTS.map(slot =>
+  [slot, Object.keys(SPELLBOOK).filter(id => SPELLBOOK[id].slot === slot && SPELL_INFO[id])]));
+
+// Cross-spell synergies: each works for whoever has every spell in `spells` equipped (server.js checks `hasCombo`).
+export const COMBOS = [
+  { id: 'blood_lash', name: 'Blood Lash', spells: ['black_death', 'sanguine_lash'],
+    text: 'Damage Black Death absorbs cuts the Lash\'s cooldown and charges its next hit (up to +14).' },
+  { id: 'brew_potions', name: 'Hot Brew', spells: ['berserker_brew', 'potion_toss'],
+    text: 'Under Berserker Brew, potions and their splash hit 50% harder.' },
+  { id: 'brew_pools', name: 'Strong Brew', spells: ['berserker_brew', 'toxic_flask'],
+    text: 'Under Berserker Brew, Toxic Flask and its pool hit 50% harder.' },
+  { id: 'sky_frost', name: 'Hail from Above', spells: ['skyward', 'frostfall'],
+    text: 'Frostfall can be cast mid-air during a Skyward Flash.' },
+  { id: 'herd', name: 'Herd Call', spells: ['sling', 'ram_guard'],
+    text: 'A Sling hit with no calm goat in reach sends one of your guard rams at the target.' },
+];
+export const hasCombo = (lo, comboId) => { const c = COMBOS.find(k => k.id === comboId); return !!(c && lo && c.spells.every(id => Object.values(lo).includes(id))); };
+export const combosOf = (lo) => COMBOS.filter(c => hasCombo(lo, c.id));          // the combos a loadout has active
+export const combosWith = (spellId) => COMBOS.filter(c => c.spells.includes(spellId));   // a card's "Combo" tag
+
+// Card data for spell `id`: SPELLBOOK's name/short/blurb/slot plus SPELL_INFO, its element and colour, and combos.
+export function spellInfo(id) {
+  const S = SPELLBOOK[id], I = SPELL_INFO[id];
+  if (!S || !I) return null;
+  const combos = combosWith(id);
+  return { id, slot: S.slot, name: S.name, short: S.short, blurb: S.blurb, ...I, duration: I.duration || '',
+    color: ELEMENTS[I.element].color, combos, tags: combos.length ? [...I.tags, 'Combo'] : I.tags.slice() };
+}
+
+// Presets: the old heroes' kits by name, as one-click starting points (wizards.js `kit`).
+export const PRESETS = Object.values(WIZARDS).map(w => ({ id: w.id, name: `${w.name}'s`, hero: w.name, loadout: { ...w.kit } }));
+export const DEFAULT_LOADOUT = { ...WIZARDS[DEFAULT_WIZARD].kit };
+
+// A clean loadout from anything (a message, localStorage): every slot an id from SPELL_POOL[slot], else null.
+// Nothing is filled in or guessed: a bogus loadout is rejected as a whole.
+export function sanitizeLoadout(x) {
+  if (!x || typeof x !== 'object' || Array.isArray(x)) return null;
+  const out = {};
+  for (const slot of LOADOUT_SLOTS) {
+    const id = x[slot];
+    if (typeof id !== 'string' || !SPELL_POOL[slot].includes(id)) return null;
+    out[slot] = id;
+  }
+  return out;
+}
+export const sameLoadout = (a, b) => !!a && !!b && LOADOUT_SLOTS.every(s => a[s] === b[s]);
+// A random full loadout. rnd: () => [0, 1).
+export function randomLoadout(rnd = Math.random) {
+  return Object.fromEntries(LOADOUT_SLOTS.map(slot => { const l = SPELL_POOL[slot]; return [slot, l[Math.floor(rnd() * l.length)]]; }));
+}
+// A bot's loadout: half the time an old hero preset, half the time fully random (round 11).
+export const botLoadout = (rnd = Math.random) => rnd() < 0.5 ? { ...PRESETS[Math.floor(rnd() * PRESETS.length)].loadout } : randomLoadout(rnd);
+
+// The element mix: [{ element, count }] most first (ties: the primary's, then the power's, ... first), arcane last.
+export function loadoutElements(lo) {
+  const n = new Map();
+  for (const slot of LOADOUT_SLOTS) { const e = SPELL_INFO[lo?.[slot]]?.element; if (e) n.set(e, (n.get(e) || 0) + 1); }
+  const order = LOADOUT_SLOTS.map(s => SPELL_INFO[lo?.[s]]?.element);
+  return [...n].map(([element, count]) => ({ element, count }))
+    .sort((a, b) => (a.element === 'arcane') - (b.element === 'arcane') || b.count - a.count || order.indexOf(a.element) - order.indexOf(b.element));
+}
+export const dominantElement = (lo) => loadoutElements(lo)[0]?.element || 'arcane';
+// Ring, nameplate and UI accent of a loadout: its dominant element's colour.
+export const loadoutColor = (lo) => ELEMENTS[dominantElement(lo)].color;
+// A primary's projectile glow and finisher accent follow the primary's own element.
+export const primaryElement = (lo) => SPELL_INFO[lo?.primary]?.element || 'arcane';
+export const loadoutBolt = (lo) => ELEMENTS[primaryElement(lo)].bolt;
+
+// Hurt and death voices: the builder's choice (audio.js has a grunt set for each).
+export const VOICES = ['male', 'female'];
+export const sanitizeVoice = (v) => VOICES.includes(v) ? v : 'male';
