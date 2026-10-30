@@ -1120,3 +1120,18 @@ The roll animation keys (`roll`, `roll_back`, `roll_left`, `roll_right`, the `ro
   It serves `/?edit=1` and the save endpoint, which writes only with `MAP_EDIT=1` and only from localhost.
 - **New exports:** `PATHS`, `FENCE_DEBRIS`, `DECOS` (editor-placed models, `kind: 'deco'` colliders), `SCATTER_SETTINGS`, `LAYOUT`,
   `applyLayout` (rebuilds every export in place) and `formatLayout` / `validateLayout`.
+
+## characters → spells: Smoke Screen's backflip (one line in main.js `case 'smoke'`)
+Ty's new Jeb export has a real backflip, and `SPELL_ANIMS.smoke_screen` now plays it: jeb2's `Backflip`, over by 0.3 s and up by 0.5 s.
+`case 'smoke'` still plays the `back` walk directly, so the new key never shows. Please try the table first and keep the
+current lines as the fallback:
+```js
+if (!playSpell(w, 'smoke_screen', 'cast')) { /* the current back / dash lines */ }
+```
+`playSpell` returns true when it played.
+
+Nothing else needs main.js. The rest of this pass works from what you already set (`jumping`, `inAir`, `hovering`, `airJump()`):
+- the takeoff and both landings
+- the front flip or backflip, picked in `airJump()` from the measured velocity
+- the air cast: any cast `oneShot` while airborne and not rooted plays Jumping_Punch's air strike
+- the crouch (`crouch` / `crouch_walk` keys, which your existing crouch branch picks up)
