@@ -47,6 +47,15 @@ export const COMMON_ANIMS = {
   tk_lift: { clip: 'cinder.mage_soell_cast_6', warp: [[0, 0], [0.7, 0.1], [1.2, 0.35], [2.3, 1.1]] },
   tk_throw: { clip: 'cinder.mage_soell_cast_4', warp: [[0, 0], [0.45, 0.08], [0.65, 0.18], [2.2, 1.0]] },
   death: 'embibe.dying_backwards',           // staggers back, flat by about 1.4 s (knockdown and getup are cut from it)
+  // Round 13 agility. The first jump's push-off: Jeb's leap (legs driving straight, the staff arm going up) squeezed into
+  // 0.2 s, then the shared float. Its root motion is dropped (flatY): the jump arc moves the body.
+  jump: { clip: 'jeb.Sword_Judgment', from: 0.6, to: 0.9, warp: [[0.6, 0], [0.9, 0.2]], flatY: 0 },
+  // The air jump: Cinder's Roll_Dodge played in the air with the hips pinned (flatY), so the tuck-and-roll becomes a
+  // tucked front somersault (head lowest at 0.1 s, upright again by 0.3 s), 0.45 s, then the float. Dive_Down_and_Land
+  // was tried first: its 0.2-0.5 s is a static tuck with no turn, and its somersault ends head-down (it is a dive).
+  double_jump: { ...ROLL, warp: [[0.55, 0], [0.86, 0.06], [1.47, 0.33], [1.8, 0.45]], flatY: 0.1 },
+  // After a double jump: Jeb's landing kneel (the staff driven down), crouched by 0.04 s, held to 0.12 s, up by 0.3 s.
+  land: { clip: 'jeb.Sword_Judgment', from: 1.16, to: 2.5, warp: [[1.16, 0], [1.3, 0.04], [1.6, 0.12], [2.5, 0.3]] },
 };
 
 export const SPELL_ANIMS = {
@@ -189,6 +198,12 @@ export const SPELL_ANIMS = {
       roll_back: { ...ROLL, reverse: true },
       roll_left: { ...ROLL, yaw: 90 },
       roll_right: { ...ROLL, yaw: -90 },
+      // round 13: in the air the same roll with the hips pinned (flatY) is a flipping air-dodge: a front flip, a backflip,
+      // and a sideways tumble each way (rollKey(dir, yaw, true))
+      roll_air: { ...ROLL, flatY: 0.1 },
+      roll_air_back: { ...ROLL, flatY: 0.1, reverse: true },
+      roll_air_left: { ...ROLL, flatY: 0.1, yaw: 90 },
+      roll_air_right: { ...ROLL, flatY: 0.1, yaw: -90 },
     },
     play: { cast: ['roll', 0.45, 1, 0] },
   },
@@ -341,9 +356,11 @@ export function spellPlay(spellId, phase, n = 1) {
 
 // Roll: the key for a roll along world direction `dir` ([x, z]) by a wizard facing `yaw` (a body faces +z at yaw 0;
 // wizard.js turns it by yaw about +y). Pass it to Wizard.oneShot with the rest of spellPlay('roll', 'cast').
-export function rollKey(dir, yaw) {
+// `air`: the roll starts off the ground, so it's the flipping air-dodge (the roll_air* keys).
+export function rollKey(dir, yaw, air = false) {
   const fx = Math.sin(yaw), fz = Math.cos(yaw);
   const fwd = dir[0] * fx + dir[1] * fz, side = dir[0] * fz - dir[1] * fx;    // side > 0: to the body's left
-  if (Math.abs(fwd) >= Math.abs(side)) return fwd >= 0 ? 'roll' : 'roll_back';
-  return side > 0 ? 'roll_left' : 'roll_right';
+  const base = air ? 'roll_air' : 'roll';
+  if (Math.abs(fwd) >= Math.abs(side)) return fwd >= 0 ? base : `${base}_back`;
+  return side > 0 ? `${base}_left` : `${base}_right`;
 }
