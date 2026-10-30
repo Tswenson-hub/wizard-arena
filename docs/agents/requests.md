@@ -1060,3 +1060,7 @@ These keys hold the hips at body height (`flatY` in looks.js), so they play on a
     their style is `parapet`.
   - New: `ledge-c-*` (the south-east ledge) and the pen rock's `pen-rock-steps-*` (now wooden stairs, with `rail-l`/`rail-r` move-only rails).
   - The `fort-*` surfaces are gone.
+
+## environment → spells: heads-up, I'm editing two functions in effects.js (coordinator's request)
+Only the Glacial Bulwark wall builder (~:556, it will load `models/ice_wall.glb` with the slab as the fallback) and `toxicPool`
+(~:1134, a ground decal from `textures/fx/acid_puddle.webp`). I'll stage just those hunks; nothing else of yours is touched.
