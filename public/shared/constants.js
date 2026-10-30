@@ -43,11 +43,23 @@ export function ledgeTarget(p, dir, apexY) {
   return null;
 }
 // Round 9: jump (Space) and crouch (C toggle, Ctrl hold).
-// A jump is a fixed arc: `height` at the apex, `airTime` up and down (v0 = 4h/T, g = 8h/T²), steered at `airControl`
-// of the ground acceleration. No casting for `castLock` s after take-off; then only the primary.
-export const JUMP = { height: 1.45, airTime: 0.55 * Math.sqrt(1.45 / 1.1), airControl: 0.6, stamina: 10, castLock: 0.15 };   // round 10: 30% higher (1.1 -> 1.45 m, same gravity)
+// A jump is a fixed arc: `height` at the apex, `airTime` up and down (v0 = 4h/T, g = 8h/T²). Round 13: full air control
+// (no cast lock any more: everything casts in the air), and `coyote` s of grace to jump after walking off an edge.
+export const JUMP = { height: 1.45, airTime: 0.55 * Math.sqrt(1.45 / 1.1), airControl: 1.0, stamina: 10, coyote: 0.12 };   // round 10: 30% higher (1.1 -> 1.45 m, same gravity)
 JUMP.v0 = 4 * JUMP.height / JUMP.airTime; JUMP.gravity = 8 * JUMP.height / JUMP.airTime ** 2;
 export const jumpY = (e) => Math.max(0, JUMP.v0 * e - JUMP.gravity * e * e / 2);   // height above take-off, e s in
+// Round 13: the double jump. Space while airborne (a jump, a fall off an edge, a drop after a dash): one fresh arc from
+// the current height, `height` higher, same gravity. One per airtime; landing gives it back.
+export const AIR_JUMP = { height: 1.2, stamina: 10 };
+AIR_JUMP.v0 = Math.sqrt(2 * JUMP.gravity * AIR_JUMP.height);
+// A jump record is { start, y0, n } (n 2 = the air jump). Its rise speed, apex and height e s in (server and client alike):
+export const jumpV0 = (J) => (J?.n === 2 ? AIR_JUMP.v0 : JUMP.v0);
+export const jumpApex = (J) => J.y0 + (J.n === 2 ? AIR_JUMP.height : JUMP.height);
+export const jumpAt = (J, e) => J.y0 + jumpV0(J) * e - JUMP.gravity * e * e / 2;
+// Round 13: snappier movement at the same top speeds. Velocity eases toward the wanted one at `accel` per second
+// (`stop` when no key is held); in the air at accel × JUMP.airControl, with only `airDrag` when no key is held, so a
+// sprint-jump carries its speed.
+export const MOVE_ACCEL = { accel: 24, stop: 30, airDrag: 1.5 };
 // Crouched: slow, and a smaller, lower hit sphere, so low cover (fences, crops, hay, table rocks) hides you.
 export const CROUCH = { speed: 1.6, hitCenter: 0.5, hitRadius: 0.42 };   // top of the sphere 0.92 m: under a chest-high shot
 export const hitCenterOf = (q) => (q?.crouch ? CROUCH.hitCenter : HIT_CENTER_Y);
@@ -676,22 +688,14 @@ export function cageClamp(pos, cage, inside) {
 
 // Movement speeds (round 11: the same for everyone; the argument is ignored, kept so old call sites read the same).
 export const speedOf = () => MOVE_SPEED;
-// Casting roots the caster in place (Ty: "players should be stopped while casting a spell, unless it is a
-// movement-based ability"). Turning and aiming still work. These are the short ones (seconds), each about as long as its
-// cast pose up to the release; wind-ups, channels and held shields root for as long as they last.
-export const CAST_ROOT = {
-  primary: { fast: 0.28, fireball: 0.3, skim: 0.28, shear: 0.22, hex: 0.3, sling: 0.28, potion: 0.32 },
-  heavyRelease: 0.3,   // Meteor leaving the hand (the charge before it is a wind-up)
-  lashRelease: 0.3,
-  frostfall: 0.5,      // Frostfall's cast pose
-  toxic: 0.35, ram: 0.35,
-  tapShield: 0.3,      // Firewall, Glacial Bulwark, Smoke Flask, Ram Guard (not Tempest Veil: Gale keeps moving)
-  tk: 0.35,            // a telekinesis lift or throw gesture
-  curse: 0.3,
-};
+// Round 13 (Ty: "most spells should be able to be cast while moving; only significant spells require rooting"): a cast
+// slows the caster to `mult` of their speed for `time` s (a sprint carries on after it). Only the big wind-ups root:
+// Meteor's charge, Sanguine Lash's and Battering Ram's wind-ups, an ultimate's wind-up, the Blizzard channel (and a
+// ledge pull-up). Started in mid-air, those hang the caster at that height until they end (server.js startHover).
+export const CAST_SLOW = { mult: 0.6, time: 0.3 };
 
 // Sprint (Shift): a run at SPRINT.speed.
-export const SPRINT = { speed: 5.5, drain: 0, restart: 0 };   // m/s default. Round 10 (Ty): unlimited, no stamina (it still ends on a cast)
+export const SPRINT = { speed: 5.5, drain: 0, restart: 0 };   // m/s default. Round 10 (Ty): unlimited, no stamina. Round 13: a cast no longer ends it
 export const sprintOf = () => SPRINT.speed;
 export const chargeSpeedOf = () => CHARGE_MOVE_SPEED;
 export const blockSpeedOf = () => BLOCK_MOVE_SPEED;

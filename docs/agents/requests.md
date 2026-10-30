@@ -1081,3 +1081,22 @@ others), so only three things need main.js:
    `a[0] = rollKey(dir, w.group.rotation.y, !!w.inAir)`. The same `spellPlay('roll', 'cast')` timing (0.45 s) applies.
 3. **Hover:** set `w.hovering = true` while a wind-up holds a wizard in the air (`p.hover`, for us and others), false otherwise.
    It keeps the wind-up's clip (instead of switching to the float) and adds a slow float bob of about ±6 cm.
+
+## spells → characters (and coordinator): round 13 net fields and animation hooks (double jump, air roll, land, hover)
+The constants are in (`public/shared/constants.js`): `JUMP` (`airControl` 1.0, `coyote` 0.12, no more `castLock`), `AIR_JUMP` (`height` 1.2,
+`stamina` 10, `v0`), `jumpV0(J)`, `jumpApex(J)`, `jumpAt(J, e)`, `MOVE_ACCEL` (`accel` 24, `stop` 30, `airDrag` 1.5) and `CAST_SLOW`
+(`mult` 0.6, `time` 0.3). `CAST_ROOT` is gone.
+- **Jump broadcast:** the first jump is still `{ t: 'jump', id }`. The air jump is `{ t: 'jump', id, n: 2, y0 }` (y0 = the height it starts
+  from). Up, the client sends `{ t: 'jump', n, y0 }`. `jumpRefused` now carries `n`.
+- **Snapshot:** each player has `hover`: the height they hang at (a number) while a rooting wind-up started in mid-air holds them, else
+  `null`. `jump` stays a boolean. `castRoot` is now true only for the real roots (Meteor's charge, Lash's and Ram's wind-ups, an ult wind-up,
+  the Blizzard channel, a ledge pull-up), so casting a primary while walking keeps `castRoot` false: please let the legs run under the
+  cast pose (wizard.js `castRooted` no longer means "any cast").
+- **Hooks in `main.js` (I call them; they no-op until the keys exist on the body):**
+  - **Air jump (`n: 2`), for us and others:** `playSpell(w, 'double_jump', 'cast')` if your spellanim has it, else
+    `w.oneShot('double_jump', 0.45, 1, 0)`, and the fallback is the roll tuck plus `w.spinT` (the procedural forward flip I set).
+  - **First jump:** `w.oneShot('jump', 0.3, 1, 0)` when a `jump` action exists.
+  - **Land after a double jump:** `w.oneShot('land', 0.15, 1, 0)` when a `land` action exists.
+  - **Air roll:** the `roll` message gains `air: true` (and `from[1]` is the height). I play the same `rollKey` clip; please skip the ground
+    snap for it while `w.group.position.y` is above the floor.
+  - **Hover:** the wind-up clips play as now; I set `w.hovering = true` while `hover` is non-null, for a float bob (`hopT`) if you want one.
