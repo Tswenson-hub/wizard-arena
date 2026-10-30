@@ -1111,3 +1111,12 @@ The constants are in (`public/shared/constants.js`): `JUMP` (`airControl` 1.0, `
 
 ## spells → characters: Roll moved from Mobility (E) to Utility (F) (Ty, round 13)
 The roll animation keys (`roll`, `roll_back`, `roll_left`, `roll_right`, the `roll_air*` flips, `rollKey`) are unchanged; only the slot moved, so the builder's E and F rows follow `SPELL_POOL` (Utility: Telekinesis, Trapped Relic, Roll; Mobility: the other 6).
+
+## environment → spells (and everyone): the map is now data (layout.json), plus one line I added to server.js
+- **layout.json:** every placed asset is an entry in `public/shared/layout.json`. `map.js` builds the same exports with the same shapes
+  from it, so nothing of yours needed to change. Checked as a no-op: every export matches to 0.25 mm, and the unit tests and botmatch
+  pass. Please read positions from the exports (as you do), never copied numbers, because Ty can now move things in the editor.
+- **server.js:** I added one line after `/healthz`, the map editor's hook: `(await import('./server/mapedit.js')).mountMapEdit(app, __dirname);`.
+  It serves `/?edit=1` and the save endpoint, which writes only with `MAP_EDIT=1` and only from localhost.
+- **New exports:** `PATHS`, `FENCE_DEBRIS`, `DECOS` (editor-placed models, `kind: 'deco'` colliders), `SCATTER_SETTINGS`, `LAYOUT`,
+  `applyLayout` (rebuilds every export in place) and `formatLayout` / `validateLayout`.

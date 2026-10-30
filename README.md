@@ -94,6 +94,29 @@ unless your shield faces it.
 
 Append `?low` to the URL for lighter graphics on weak GPUs.
 
+### Editing the map
+
+The map's placements live in `public/shared/layout.json` (one line per asset). To move things around in the game
+itself:
+
+1. `npm run edit` (the server with `MAP_EDIT=1`; it restarts by itself when the layout is saved).
+2. Open `http://localhost:3000/?edit=1`.
+3. **Camera:** hold the right mouse button to look, and fly with WASD (Q/E down and up, Shift fast, wheel forward);
+   T toggles a top-down view.
+4. **Select:** click an asset (Shift-click adds more). Its fields show on the right, where you can type values.
+5. **Gizmo:** W moves, E rotates, R scales. Ground snap is on, and a 0.25 m / 15° grid snap is a toggle.
+6. **Edit:** Del deletes, Ctrl+D duplicates, Ctrl+Z / Ctrl+Shift+Z undo and redo. Pick from the palette on the
+   left, then click the ground to place spawns, heal spots, props, cover, trees, platforms or any model in
+   `public/models`.
+7. **Overlays and checks:** the overlays show colliders, walkable surfaces, spawns, heal spots, the pen and the zones.
+   The checks list problems such as spawns that can see each other or a platform with no way up; they're warnings,
+   not blockers.
+8. **Save** (Ctrl+S) writes `layout.json` and keeps a backup in `tools/layout-backups/`. Players reload to see it.
+   Export / Import JSON work without the save endpoint.
+
+Saving only works from your own computer with `npm run edit`. The live site can't be written to. To publish a layout,
+commit `public/shared/layout.json` and push.
+
 ## How it works
 
 ```
@@ -101,9 +124,11 @@ server.js                  Node + express + ws. Authoritative for combat: spells
                            hits, HP, stamina, stuns, blocking cone, props, deaths/respawns.
 public/shared/constants.js Tuning shared by server and client: SPELLBOOK (every spell's slot, blurb and
                            numbers), speeds, stamina. Re-exports map.js.
-public/shared/map.js       Map layout: arena radius, COLLIDERS (every solid thing as a circle with a
-                           height: movement hits all of them, spells fly over low ones), props,
-                           goats, spawn points.
+public/shared/layout.json  Where everything on the map is (written by the map editor, ?edit=1).
+public/shared/map.js       Map layout built from layout.json: arena radius, COLLIDERS (every solid thing
+                           as a circle with a height: movement hits all of them, spells fly over low
+                           ones), walkable SURFACES, props, goats, spawn points.
+public/js/editor.js        The map editor (public/edit.html, server/mapedit.js saves it).
 public/js/main.js          Client bootstrap, local player controller, camera, HUD, message handling.
 public/js/wizard.js        Skinned wizard instances + animation state machine.
 public/js/select.js        The spell builder (slot rows of spell cards, presets, saves, preview).

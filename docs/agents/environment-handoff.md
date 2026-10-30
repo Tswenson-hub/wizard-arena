@@ -1,5 +1,66 @@
 # Environment hand-off: the farmstead
 
+## Map editor: layout.json and ?edit=1 (`2703613` migration, `dacc48c` editor, `ba596f4` endpoint, docs after)
+**The data:** `public/shared/layout.json` has 176 entries `{ id, kind, model?, x, z, rotY?, scale?, ...kind fields }` plus `scatter` (the
+seeds and counts of the blast shards, crystals, rim rocks, far trees and grass). It's written one entry per line, keys in a fixed order,
+4 decimals (`formatLayout`).
+- **Kinds:** listed with their editable fields in `LAYOUT_KINDS`: altar, farmhouse, pen (its goat points, shelter and trough inside it),
+  haystack, scarecrow, tractor, barn, silo, pillar, fallenPillar, archway, obelisk, blastStone, tableRock, well, cart, tree, piece (the
+  high-ground models, with surfaces from `PIECE_PARTS[model]`), leanSilo, wall (boulders and parapets), prop, spawn, heal, cover, fenceDebris,
+  path and deco (any model, optionally solid).
+- **map.js:** `buildMap(layout)` derives every export from the entries, with each collider and surface relative to its entry, so it moves,
+  turns and scales with it. `applyLayout(layout)` rebuilds the exports in place: arrays and objects keep their identity, so every importer
+  sees the change. The server reads the file with `readFileSync`; the browser fetches it with `no-store` (top-level await), since static
+  files are cached for an hour.
+- **No-op proof:** `/tmp/wa-environment/editor/mapdump.mjs` plus `mapdiff.mjs` against the old map.js:
+  - every old export matches to 2.5e-4 m (the 4-decimal rounding)
+  - shard and crystal counts are unchanged
+  - surfaceHeight, surfaceTopAt, inPen and fenceDistance are identical on a 1.5 m grid
+  - unit tests ALL PASS; a 90 s botmatch is clean
+  - the generator was `/tmp/wa-environment/editor/genlayout.mjs`
+- **Found, kept as it was (tell me if you want it fixed):** `GOAT_DETOURS` for cover clusters have always been empty ±Infinity boxes.
+  `boxOf('cover', cl)` looks for `near.cluster`, but a cluster object has `id`, so goats never routed round cover clusters. It's a one-word
+  fix, but a behaviour change for goats.
+
+**The editor:** `public/edit.html` + `public/js/editor.js`, served for `/?edit=1` by `server/mapedit.js`. There's no match, no bots and no
+goats; goat points show as rings.
+- **Rebuilds:** each committed change (gizmo release, a typed field, place, delete, duplicate, undo) runs `applyLayout` and then
+  `buildWorld` + `loadModels` into a fresh scene. GLTFs are cached and cloned, and a rebuild takes about 0.3–0.7 s on the Metal run.
+  `buildWorld()` now resets world.js's stand-ins and spinners and recomputes its scatter and grass.
+- **Dragging:** the world objects near the selection move with the gizmo, and instanced trees and rocks jump into place on release.
+- **Picking:** a click picks the entry whose footprint (its surfaces for pieces, a radius by kind otherwise) is nearest to the 3D hit point.
+- **Checks:** colliders on spawns, heal spots or props; spawns closer than 15 m or in sight (pillarBlocks, surfaceBlocks); entries outside
+  the rim; goat points in colliders; and platforms with no way up. That last one is a flood fill from the ground over walks, double jumps
+  and grabs (`JUMP.height + AIR_JUMP.height + LEDGE.reach`). The current map is clean.
+- **Limits:**
+  - The pen stays axis-aligned (rotation ignored).
+  - Its goat points, shelter and trough move with it but aren't separately draggable; they're fields on the pen entry.
+  - Paths are a centre, an angle and a length.
+  - The props' ids are their order, and a placed prop goes after the last one.
+  - The one-of-a-kind buildings (farmhouse, barn, pen, altar, tractor and so on) can be moved but not deleted.
+
+**Saving:** `POST /api/map/layout` writes `layout.json` (via a temp file and rename) and backs the old one up into `tools/layout-backups/`
+(gitignored). It requires all of:
+- `MAP_EDIT=1`
+- a loopback address
+- a localhost `Origin` header, if there is one
+- a layout that passes `validateLayout`: known kinds, finite numbers, unique ids
+
+`npm run edit` runs `MAP_EDIT=1 node --watch-path=server.js --watch-path=server --watch-path=public/shared server.js`, so the server restarts
+with the saved layout. Connected players see "disconnected" and reload. There is no live hot-reload of the game client, since main.js isn't
+mine.
+
+**Verified** (port 4102, `/tmp/wa-environment/editor/edit_e2e.py`, Metal flags):
+- **Load:** the editor loads in 670 ms with "No problems found".
+- **Select and drag:** clicking the barn selected it, and a real mouse drag on the gizmo's X arrow moved it exactly 3.0 m.
+- **Save and reload:** Ctrl+S saved, the server restarted, and after a reload the barn sat at x 17 with all 60 of its wall colliders 3 m
+  east. The revert save left `layout.json` byte-identical.
+- **Refusals:** a foreign Origin, the LAN address (10.0.0.42), an invalid layout, and a server without MAP_EDIT were each refused with a
+  clear message.
+- No console errors.
+- Screenshots: `ed_overview.png`, `ed_topdown.png`, `ed_barn_selected.png`, `ed_barn_dragging.png`, `ed_barn_moved.png` and
+  `ed_overlays_ledges.png`, all in `/tmp/wa-environment/editor/`.
+
 ## Round 13: double-jump verification, the barn's walls, and two spell assets (ice wall, acid puddle)
 **Reach with the double jump** (`JUMP.height` 1.45 + `AIR_JUMP.height` 1.2): the best apex is **2.65 m** above the take-off floor and a
 ledge grab reaches **3.85 m**. Checked with the game's own rules (`surfaceHeight`, `surfacePushOut`, `ledgeTarget`) from just outside every

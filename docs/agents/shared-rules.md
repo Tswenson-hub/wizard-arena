@@ -27,6 +27,14 @@ Need a change in a file you don't own? Append it to `docs/agents/requests.md`
 (`## <from> → <to>: <one-line title>` + what and why), keep going, and check that file now and then
 for requests addressed to you. Never edit the other agent's files, even for a one-liner.
 
+## The map layout (Ty edits it)
+- `public/shared/layout.json` is the map's data: every placed asset is one entry, and `map.js` builds `COLLIDERS`,
+  `SURFACES`, the spawns and the rest from it. Ty edits it himself in the map editor (`npm run edit`, `?edit=1`).
+- Pull his layout changes and never overwrite them. If `git status` shows layout.json modified and you didn't change it,
+  those are Ty's edits: leave the file alone and ask the coordinator before touching the layout.
+- Code that needs a position reads it from map.js's exports, never a copied number, so his moves carry through.
+- The environment agent owns layout.json's format and map.js. Ask there for a new kind of entry.
+
 ## Git
 - Commit only your own files: `git add <paths>` explicitly, never `git add -A` / `git commit -a`.
 - Small commits with clear messages, ending with the line
