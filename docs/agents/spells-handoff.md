@@ -1,5 +1,126 @@
 # Spells hand-off
 
+## Round 13: agility (double jump, casting on the move and in the air, snappier movement), and Roll moves to Utility
+Commits: `d80f81a` (constants, requests), `9ac931c` (server), `a71870d` (bots), `5023e57` (client), `cc29494` (tests, reply to characters),
+`d967e87` (Roll to Utility), `0c360b1` (E pips), plus this hand-off.
+
+### 1. Double jump
+- **Constants:** `AIR_JUMP` (1.2 m, 10 stamina, `v0` from the same gravity), `JUMP.coyote` 0.12, and `jumpV0`, `jumpApex` and `jumpAt` for
+  a jump record `{ start, y0, n }` (n 2 = the air jump). Server, client and bots all use these.
+- **Rule:** Space while airborne (a jump, a fall off an edge, after a hover or an air dash) gives one air jump: a fresh arc from the current
+  height. Landing gives it back. The first jump also works for 0.12 s after walking off an edge.
+- **Steering:** the air jump snaps the drift to the movement keys at the speed being carried.
+- **Net:** up, the client sends `{ t: 'jump', n, y0 }`. The server bounds y0 by what the client could have reached since its last report
+  (the apex, or the fall's start, and +0.8 m at most), and refuses with `{ t: 'jumpRefused', n }`. The broadcast is `{ t: 'jump', id, n: 2, y0 }`
+  for the air jump. A refused air jump falls from where it is instead of snapping to the floor.
+- **Ledge grab:** it reaches from `jumpApex`, so the second apex grabs higher. Bots fly the same arcs.
+- **Fixed on the way (an old server bug):** the jump's landing check compared the report with the already-clamped height. So every jump record
+  ended 0.15 s after take-off, and the fall rule capped the rest of the rise. With the air jump this also handed the air jump back mid-air.
+  Landing is now a report at the floor.
+
+### 2. Casting on the move and in the air
+- **Roots** are only Meteor's charge, the Lash's and the Ram's wind-ups, an ultimate's wind-up, the Blizzard channel and the ledge pull-up.
+  This is the same rule in `server.js castRooted`, main.js and bots.js.
+- **The cast slow:** every other cast slows to 60% for 0.3 s (`C.CAST_SLOW`, `p.castSlowUntil`). Cyclone's and Flask Step's short wind-ups
+  slow the same way while they last. Held wards move at `BLOCK_MOVE_SPEED`, which the server now enforces. `CAST_ROOT` is gone.
+- **Sprint:** casting and charging no longer end it; the speed comes back after the slow. The Lash's miss bind is unchanged.
+- **Everything casts in the air.** `JUMP_LOCKED`, the cast lock and the Skyward refusals are gone, and so are the client-only refusals (wards,
+  Veil, Bulwark, Smoke Flask, Ram Guard, Firewall, ults, power, F). `RAMWIND_LOCKED` keeps the Battering Ram wind-up's own lock.
+  - Ground-placed spells already land at the aim point's x and z.
+  - **Ram Ride from the air** is queued and starts as he lands (`p.rideQueued`, `{ t: 'rideQueued' }`).
+  - **Battering Ram:** its wind-up hangs him, and the ram runs on the ground.
+- **The hover:** a rooting wind-up started in the air sets `p.hover = { y, cap, until }` for the wind-up's length at most, and the snapshot
+  carries `hover` (the height, or null). The first report after it starts locks the height, so the client's latency doesn't lift it. On
+  release or interrupt the wizard falls with the air jump still there if unused. The client shows a rune circle and a soft hum.
+- **Meteor Rain now rises from the height she starts at** (`mrain.y0`, and `mrainLeap`'s `p[1]`), not from y 0. This also fixes a cast from a roof.
+- **Air dashes:** Roll, Smoke Screen, Blink and Mirror Step from the air keep the height (`airDash`), then fall. Roll's broadcast carries
+  `air: true` for the flipping air-dodge.
+
+### 3. Snappier movement
+- **Acceleration:** `MOVE_ACCEL` (24/s, 30/s to stop, 1.5/s air drag) and `JUMP.airControl` 1.0. Walk 3.0 and sprint 5.5 are unchanged.
+- **Momentum:** a sprint-jump keeps 5.5 m/s. The client and bots use `jumpSpeed`, and the server's budget allows `max(own, p.jumpSpeed)`
+  while `p.jump` or `p.fall`, then × 0.6 during a cast slow.
+- **Landing:** after a double jump, a dust ring and a quiet `skyward_land`. The characters agent's wizard.js plays the land pose.
+
+### 4. Effects (main.js; I left effects.js alone this round, since environment was editing it)
+- **Air jump:** a ring in the wizard's colour at their feet' height, a burst, a short sparkle trail through the flip, and `whoosh` plus
+  `skyward_launch` at a high rate and low volume.
+- **Hover:** a rune circle (`effects.cataAim`) under the feet and a looped `ult_windup` at a low volume.
+
+### 5. Bots
+- **Moving while casting:** they move while casting and stop only for the real roots; a cast slows them like players.
+- **Acceleration:** the same as players, and air momentum carries.
+- **Air jumps:**
+  - to ledges only the second apex reaches (`ledgeAirJumpAt`)
+  - as a dodge when a shot is about to hit and they're already up
+  - when hurt and pressed
+  - out of an ultimate when no dash is ready
+- **Air casts:** they hop before an attack now and then (`airCast`: Easy 0.04, Normal 0.08, Hard 0.16), sometimes with an air jump at the top.
+- **Punish windows:** `busyCasting` counts a hanging enemy, so it's treated like any wind-up.
+
+### 6. Roll moves to Utility (F), Ty's request through the coordinator
+- **Data:** `SPELLBOOK.roll.slot` is `'utility'` (its block now sits after Trapped Relic, so it's the third F card). The card's tags are
+  Dash and Dodge. Mobility has its other 6 again.
+- **Behaviour:** unchanged (4.5 m in 0.35 s, the 0.25 s dodge window, two charges). The charges' cooldown is the F slot's (`p.cd.lift` and
+  `local.liftCdUntil`; `roll.liftCooldown` 3.5 for the sweep). A Roll player has no lift, curse or marker.
+- **Old loadouts:** `sanitizeLoadout` turns `mobility: 'roll'` into the default mobility, and puts Roll in utility only when that slot is
+  missing or invalid.
+- **HUD:** the F slot's pips show Roll's charges or Relic's traps, and the E slot's pips stay hidden.
+- **Bots:** `rollReady` checks the utility slot and `cd.lift`, and it's checked apart from the mobility slot.
+- **loadoutbalance.mjs:** it groups by `SPELLBOOK[id].slot`, so it follows without a change.
+
+### Verification
+- **Unit:** `MATCH_DEBUG=1 node tools/test/modematch-unit.mjs` prints ALL PASS, 5 runs in a row on the round 13 code and again after the Roll
+  move. The new checks:
+  - The air jump peaks 1.2 m higher (2.65 m from the first apex).
+  - An air jump is accepted once with `n: 2`, its height is taken and capped at its apex, a second one is refused, and landing gives it back.
+  - Coyote time works on a real ledge (−31, −15, 2.82 m): a plain jump inside it is the normal jump. Past it, a plain jump is refused and
+    the air jump is accepted.
+  - A Spark cast while walking is accepted, and the position advances the full 60% (0.54 of 0.54 m).
+  - A Meteor charge on the ground roots: 0.58 of 1.8 m, which is only the budget's latency burst.
+  - A primary, Frostfall, Firewall and an ult cast mid-jump are all accepted.
+  - The ult's wind-up hangs the caster at 1.0 m, no higher, then the caster falls.
+  - A sprint-jump's 5.5 m/s is accepted in the air (2.75 of 2.75 m), and 9 m/s is held back (about 2.7 of 4.5 m).
+  - Roll is in the Utility pool, and the old-loadout migration works.
+- **Browser** (headless Chromium, `--use-angle=metal --enable-gpu`; swiftshader ran at a few frames a second, so its readings were
+  meaningless), screenshots in `/tmp/wa-spells/`:
+  - **Double jump:** a measured apex of 2.64 m (2.65 expected). See `dj_1_takeoff`, `dj_2_flip`, `dj_3_apex` and `dj_4_land`.
+  - **Strafe-firing Spark:** 1.8 m/s during the slow, 3.0 after (`strafe_fire`).
+  - **Firing mid-jump** at 1.05 m: the cast is sent (`jump_fire`).
+  - **Meteor Rain started mid-air:** it hangs at 1.35 m for the 1.3 s wind-up with the rune circle, then rises to 12 m (`mrain_hover`,
+    `mrain_rise`).
+  - **Roll on F:** it rolls on the ground. In the air it holds the height (an air dash, `roll_air`). F reads Roll, E reads Blink.
+  - **Console errors:** none.
+- **Bots (Hard ×4, 100 s, final code):**
+  - Every bot jumps and air-casts (1 to 4 casts from the air each), and air jumps run 0 to 5 per bot.
+  - One bot hung 1.3 s in a mid-air wind-up, and Roll was used 4 times from F.
+  - No bot stood still longer than 1.9 s outside a root.
+  - **Position jumps:** I compared bot position jumps of more than 12 m/s between snapshots with the pre-round-13 server on the same metric.
+    The remaining ones are Smoke Screen dashes and bots landing on low cover and being pushed out of it, which the old server shows too.
+    No rubber-banding from the new acceleration or momentum.
+  - The server logs have no errors.
+- **Balance**, `loadoutbalance.mjs 4101 12 75 hard`, final code with Roll in Utility (`/tmp/wa-spells/balance_r13.txt`): 41 kills
+  (57 in round 12's final run).
+  - **Spark:** 2 killing blows, K/D 1.43, not flagged.
+  - **Trapped Relic:** 7 blows (17.1%, the top spell; round 12 had 19.3%), K/D 1.00 (was 1.27).
+  - **Three DOMINANT flags.** None of them clearly comes from round 13:
+    - **Utility, Trapped Relic, 70%:** new only because the slot now has 3 spells, so the bar fell to 66.7%. Roll deals no damage, so it's
+      really Relic against Telekinesis, 7 to 3. Round 12 had the same ratio (11 of 16) and wasn't flagged.
+    - **Power, Battering Ram, 37.5%** (6 of 16), but K/D only 0.64.
+    - **Primary, Fireball, 38.5%** (5 of 13), K/D 1.71. It was flagged in round 12 too (29.4%). Fireball has topped the primary slot in two
+      rounds now, so it's worth a longer run. The levers are its damage (18/26) or cooldown.
+  - **Roll in Utility:** K/D 0.63 on 14 runs. As a mobility pick it was 1.86 on 7 runs. A Roll player now gives up Telekinesis or Relic.
+  - The samples are small (about 40 kills), so I haven't tuned anything on this run.
+
+### Left over and notes
+- **Human rubber-banding:** I only checked it through the budget tests and bots. The cast slow ends about one latency later on the server
+  than on the client, which is covered by the budget's 0.25 s burst (about 0.8 m). Worth Ty feeling it on a real connection.
+- **Air momentum:** with no key held in the air there's only a light drag (1.5/s), so a released sprint-jump keeps drifting. That's
+  deliberate, but easy to raise.
+- **Air rolls and dashes** zero the velocity during the dash (as on the ground), so after an air dash the fall starts with no drift.
+- **Skyward Flash** still sets an absolute 2 m height on use (old behaviour); from a roof that drops you. I left it alone.
+- **Cast slow in the air:** it applies there too (the brief has no exception), so a mid-jump cast shortens the jump's reach a little.
+
 ## Round 12: Telekinesis is the only lift, Trapped Relic is traps only, and the Roll spell
 Commits: `b4ac6af` (data, icon, Roll API), `085fd8f` (server), `3c72a3d` (bots), `ed85e1c` (client), `0fad7ca` (tests),
 `67182e0` (the step-out rule), `6dc6aaf` (test port), plus this hand-off and the requests reply.
