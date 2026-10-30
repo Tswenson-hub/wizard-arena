@@ -1,6 +1,6 @@
-// Low-poly farmstead: ground, farmhouse, farmyard, goat pen, crop field, tractor, the altar and its
-// blast site, trees, and prop mesh factories. Layout data lives in shared/map.js; this file only draws it.
-// Farm pieces are procedural stand-ins until a Meshy model for them is loaded (see loadModels).
+// The farmstead and what the spell did to it: ground, farmhouse, farmyard, goat pen, tractor, the altar and its
+// blast site, the magic land to the south, trees, and prop mesh factories. Layout data lives in shared/map.js; this
+// file only draws it. Pieces with a Meshy model show a plain stand-in only until it loads (see loadModels).
 import * as THREE from 'three';
 import * as C from '../shared/constants.js';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
@@ -148,23 +148,14 @@ export function buildWorld(scene) {
   standin('tractor', makeTractor(), C.TRACTOR, scene);
   standin('well', makeWell(), C.WELL, scene);
   standin('cart', makeCart(), C.CART, scene);
-  standin('archway', makeArchway(), C.ARCHWAY, scene);
-  standin('obelisk', makeObelisk(), C.OBELISK, scene);
+  for (const A of C.ARCHWAYS) standin('archway', makeArchway(), A, scene).scale.setScalar(A.height / C.ARCHWAY.height);
+  for (const O of C.OBELISKS) standin('obelisk', makeObelisk(), O, scene).scale.setScalar(O.height / C.OBELISK.height);
   standin('scarecrow', makeScarecrow(), C.SCARECROW, scene);
   standin('barn', makeBarn(), C.BARN, scene);
   standin('silo', makeSilo(), C.SILO, scene);
   for (const [x, z] of C.HAY_STACKS) standin('haystack', makeHayStack(), { x, z, yaw: Math.random() * Math.PI }, scene);
-  // the silo's cracked footing, where it stood before the blast
-  {
-    const F = C.SILO_FOOTING, g = new THREE.Group();
-    g.add(new THREE.Mesh(new THREE.CircleGeometry(F.r + 0.3, 14).rotateX(-Math.PI / 2), decal(0x8d9196, 4)));
-    for (let i = 0; i < 9; i++) {
-      if (i === 2 || i === 3) continue;   // broken open on the side it fell toward
-      const a = (i / 9) * Math.PI * 2, piece = box(1.2, 0.3 + (i % 3) * 0.08, 0.35, M.darkStone, Math.cos(a) * F.r, 0.15, Math.sin(a) * F.r);
-      piece.rotation.y = -a + Math.PI / 2; g.add(piece);
-    }
-    standin('siloFooting', g, { x: F.x, z: F.z, yaw: C.SILO.yaw }, scene);
-  }
+  buildFarmDebris(scene);
+  buildMagicLand(scene);
 
   // Scatter some tufts outside the arena for depth
   const tuftMat = flat(0x5d9a48);
@@ -202,6 +193,53 @@ const PATHS = [
   [[12.6, 22], [1.6, 20.6], 2.4],                                // the barn's side door to the house path
 ];
 
+// Fence panels the blast tore out of the farmyard and laid flat at the farm's edge: [x, z, yaw]. Cosmetic (a wizard
+// walks over them, spells pass over them).
+const FENCE_DEBRIS = [[9.4, -1.6, 0.6], [21.6, -0.2, -0.25], [-14.6, -0.9, 1.2], [-7.2, 3.6, 2.2]];
+function buildFarmDebris(scene) {
+  FENCE_DEBRIS.forEach(([x, z, yaw], n) => {
+    const g = new THREE.Group(), L = 2.4;
+    for (const y of [0.3, 0.68]) g.add(box(L, 0.1, 0.07, M.wood, 0, y, 0));
+    for (let i = 0; i < 5; i++) {
+      if (n % 2 && i === 3) continue;                                   // a picket gone
+      const k = box(0.11, 0.86 + ((i * 7 + n) % 3) * 0.05, 0.05, M.paleWood, -L / 2 + 0.2 + i * (L - 0.4) / 4, 0.45, 0.05);
+      k.rotation.z = ((i * 5 + n * 3) % 7 - 3) * 0.03; g.add(k);
+    }
+    g.rotation.set(-Math.PI / 2 + 0.06, 0, (n - 1.5) * 0.05);           // flat on its back, one end on a rail
+    const holder = new THREE.Group(); holder.add(g);
+    holder.position.set(x, 0.07, z); holder.rotation.y = yaw;
+    scene.add(shadowy(holder));
+  });
+}
+
+// The magic land: violet crystal clusters (C.CRYSTALS) and the watchtower dressed as a mage's lookout.
+const crystalMat = new THREE.MeshStandardMaterial({ color: 0xb48cff, emissive: 0x6a35ff, emissiveIntensity: 0.75, flatShading: true, roughness: 0.25, metalness: 0.1 });
+function buildMagicLand(scene) {
+  const spikes = [], rnd = seeded(5);
+  for (const [x, z, yaw, size] of C.CRYSTALS) {
+    const n = 4 + Math.floor(rnd() * 3);
+    for (let i = 0; i < n; i++) {
+      const a = yaw + i * 2.4 + rnd() * 0.5, d = i ? 0.2 + rnd() * 0.25 : 0, h = size * 1.25 * (i ? 0.45 + rnd() * 0.4 : 1);
+      spikes.push([x + Math.sin(a) * d * size, z + Math.cos(a) * d * size, a, h, i ? 0.35 + rnd() * 0.35 : 0.08]);
+    }
+  }
+  // a spike: an octahedron stretched upward, leaning out from its cluster's centre, its foot in the ground
+  const geo = new THREE.OctahedronGeometry(0.5, 0).scale(0.36, 1, 0.36).translate(0, 0.4, 0);
+  const im = new THREE.InstancedMesh(geo, crystalMat, spikes.length), m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler();
+  spikes.forEach(([x, z, a, h, tilt], i) => im.setMatrixAt(i, m.compose(new THREE.Vector3(x, 0, z), q.setFromEuler(e.set(tilt, a, 0, 'YXZ')), new THREE.Vector3(h, h, h))));
+  im.castShadow = true; im.receiveShadow = true;
+  scene.add(im);
+  // the lookout: a crystal turning over the watchtower's roof and a violet pennant on a pole
+  const T = C.PIECE_MODELS.find(p => p.id === 'tower');
+  if (T) {
+    const top = T.h * 1.02, pole = cyl(0.05, 0.05, 1.8, 5, M.darkWood, T.x, top + 0.9, T.z), flag = box(0.04, 0.5, 1.0, M.robe, T.x, top + 1.5, T.z + 0.52);
+    scene.add(shadowy(pole), shadowy(flag));
+    const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.4, 0), runeMat);
+    gem.scale.set(0.8, 1.5, 0.8); gem.position.set(T.x, top + 2.4, T.z);
+    scene.add(gem); spinners.push(gem);
+  }
+}
+
 // ------------------------------------------------------------ stand-ins
 // Every farm piece is a group placed at {x, z, yaw}. When its Meshy model loads, swapModel()
 // replaces the procedural children in place.
@@ -223,14 +261,17 @@ function swapModel(name, model) {
   }
 }
 
+const pillarMat = flat(0xa9b0b8), pillarTop = flat(0x8d949c);
+// A rune pillar's stand-in at the model's 6 m (C.PILLAR_HEIGHT), shown until models/rune_pillar.glb loads.
+function makePillar() {
+  const g = new THREE.Group(), r = 0.9, h = 5;
+  g.add(cyl(r * 0.7, r * 0.85, h, 7, pillarMat, 0, h / 2), cyl(r * 1.1, r * 1.2, 0.4, 7, pillarTop, 0, 0.2));
+  g.add(cyl(r * 0.75, r * 0.78, 0.18, 7, runeMat, 0, h * 0.62));
+  return g;
+}
 function buildRunePillars(scene) {
-  const pillarMat = flat(0xa9b0b8), pillarTop = flat(0x8d949c);
   for (const p of C.PILLARS) {
-    // procedural stand-in until models/rune_pillar.glb loads
-    const g = new THREE.Group();
-    g.add(cyl(p.r * 0.7, p.r * 0.85, p.h, 7, pillarMat, 0, p.h / 2), cyl(p.r * 1.1, p.r * 1.2, 0.4, 7, pillarTop, 0, 0.2));
-    g.add(cyl(p.r * 0.75, p.r * 0.78, 0.18, 7, runeMat, 0, p.h * 0.62));
-    standin('pillar', g, p, scene);
+    standin('pillar', makePillar(), p, scene);
     // the crystal floats over the top of the leaning pillar
     const crystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.45, 0), runeMat), up = C.PILLAR_HEIGHT + 0.9;
     crystal.position.set(p.x + Math.sin(p.yaw) * Math.sin(p.tilt) * up, Math.cos(p.tilt) * up, p.z + Math.cos(p.yaw) * Math.sin(p.tilt) * up);
@@ -321,7 +362,24 @@ function buildBlastSite(scene) {
     flags.add(f);
   }
   standin('flagstones', flags, { x: A.x, z: A.z }, scene);
-  for (const f of C.FALLEN_PILLARS) standin('fallenPillar', makeFallenPillar(f.len), f, scene);
+  // the fallen pillar: rune_pillar.glb on its side once it loads (layFallenPillars), a plain drum until then
+  for (const f of C.FALLEN_PILLARS) {
+    const g = new THREE.Group(), drum = cyl(0.55, 0.55, f.len - 1, 7, ruinStone, 0, 0.55, f.len / 2 + 0.4);
+    drum.rotation.x = Math.PI / 2; g.add(drum);
+    standin('fallenPillar', g, f, scene);
+  }
+}
+// The pillar model (fitted, 6 m, base at y 0, axis on x = z = 0) laid along +z from its rubble foot, `len` long, the
+// shaft resting on the ground and the rubble half buried.
+function layFallenPillars(pillar) {
+  for (const [i, g] of (standins.fallenPillar || []).entries()) {
+    const len = C.FALLEN_PILLARS[i].len, lie = new THREE.Group();
+    lie.add(pillar.clone());
+    lie.scale.setScalar(len / C.PILLAR_HEIGHT);
+    lie.rotation.set(Math.PI / 2, 0, 0.35);   // +y (the model's top) along +z, rolled a little onto its side
+    lie.position.y = 0.085 * len;            // the shaft's radius
+    g.clear(); g.add(lie);
+  }
 }
 // A crack from near the centre outward, in canvas pixels (c = centre), with a branch or two.
 function crack(g, c, rnd, r0, r1) {
@@ -335,30 +393,6 @@ function crack(g, c, rnd, r0, r1) {
   }
   g.stroke();
 }
-// Model space: the broken stump at the origin, the shaft lying along +z in three drums.
-function makeFallenPillar(len) {
-  const g = new THREE.Group();
-  g.add(new THREE.Mesh(jitterGeometry(new THREE.CylinderGeometry(0.62, 0.85, 1.15, 7, 2), 0.12), ruinDark).translateY(0.55));
-  g.add(cyl(0.95, 1.05, 0.3, 7, ruinStone, 0, 0.15));
-  for (let i = 0; i < 6; i++) {
-    const a = i * 1.1, rubble = new THREE.Mesh(jitterGeometry(new THREE.DodecahedronGeometry(0.22 + (i % 3) * 0.08, 0), 0.08), ruinStone);
-    rubble.position.set(Math.cos(a) * 1.15, 0.12, Math.sin(a) * 1.15 * 0.8 - 0.2); g.add(rubble);
-  }
-  const drums = [len * 0.36, len * 0.32, len * 0.26];
-  let z = 1.05;
-  drums.forEach((l, i) => {
-    const d = new THREE.Group();
-    d.add(cyl(0.48, 0.5, l, 7, i === 1 ? moss : ruinStone, 0, 0, 0), cyl(0.51, 0.51, 0.14, 7, runeMat, 0, l * 0.2, 0));
-    d.rotation.set(Math.PI / 2, 0, (i - 1) * 0.25);
-    d.position.set((i - 1) * 0.12, 0.46, z + l / 2);
-    d.rotation.y = (i - 1) * 0.1;
-    g.add(d); z += l + 0.12;
-  });
-  const shard = new THREE.Mesh(new THREE.OctahedronGeometry(0.3, 0), runeMat);
-  shard.position.set(0.5, 0.25, z + 0.4); shard.rotation.set(0.9, 0.3, 0.5); g.add(shard);
-  return g;
-}
-
 // ------------------------------------------------------------ the high ground (stand-ins for C.SURFACES)
 // Drawn from the shared surface list, so what you see is what you stand on: boxes as solid blocks to their top,
 // ramps as solid wedges. Each piece is a stand-in group ('surface:<name>') a Meshy model can replace later.
@@ -372,7 +406,7 @@ function wedgeGeometry(w, d, y0, y1) {
 const HG = {
   plank: flat(0x9a6b3f), plankDark: flat(0x6e4a2a), post: flat(0x5e3f24), hay: flat(0xd2ad55),
   ruin: flat(0x5d625b), ruinDark: flat(0x484c47), rock: flat(0x7d7f78), rockDark: flat(0x666a63),
-  earth: flat(0x7a5a38), roadTop: decal(0xa88d5e, 3), crate: flat(0xa07440), silo: flat(0x7c8288), roofMat: flat(0x5d4637),
+  earth: flat(0x7a5a38), roadTop: decal(0xa88d5e, 3), silo: flat(0x7c8288),
 };
 function buildHighGround(scene) {
   // Plain stand-ins per surface, grouped by piece ('piece:<id>'), shown only until the piece's Meshy model loads.
@@ -380,8 +414,8 @@ function buildHighGround(scene) {
     const g = new THREE.Group(), ramp = sf.kind === 'ramp';
     const top = ramp ? Math.max(sf.y0, sf.y1) : sf.top;
     const mat = { wood: HG.plank, hay: HG.hay, stone: HG.ruin, rock: HG.rock, earth: HG.earth, rail: HG.post, ladder: HG.post,
-      deck: HG.plank, 'deck-solid': HG.plank, stairs: HG.plankDark, plankwall: HG.plankDark, crate: HG.crate, silo: HG.silo }[sf.style] || HG.rock;
-    if (sf.style === 'silo' || sf.style === 'boulder') continue;   // a tilted silo model / a rock instance (SCATTER) draws these
+      deck: HG.plank, 'deck-solid': HG.plank, stairs: HG.plankDark, plankwall: HG.plankDark, silo: HG.silo }[sf.style] || HG.rock;
+    if (sf.style === 'silo' || sf.style === 'boulder' || sf.style === 'parapet') continue;   // a tilted silo model / rock instances (SCATTER) draw these
     if (sf.style === 'rail') {                 // a thin rail at the top edge
       const len = ramp ? Math.hypot(sf.d, sf.y1 - sf.y0) : Math.max(sf.w, sf.d);
       const r = box(ramp ? 0.08 : sf.w, 0.08, ramp ? len : sf.d, mat, 0, ramp ? (sf.y0 + sf.y1) / 2 : sf.top - 0.05, 0);
@@ -413,21 +447,13 @@ function buildHighGround(scene) {
     }
     standin(`piece:${sf.piece}`, g, sf, scene);
   }
-  // roofs over the shed and the covered walkway: visual only (nobody can reach them), on four posts
-  for (const r of C.ROOFS || []) {
-    const g = new THREE.Group();
-    g.add(box(r.w, 0.16, r.d, HG.roofMat, 0, r.y, 0));
-    for (const [i, k] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) g.add(box(0.14, r.y - r.posts, 0.14, HG.post, i * (r.w / 2 - 0.2), (r.y + r.posts) / 2, k * (r.d / 2 - 0.2)));
-    g.position.set(r.x, 0, r.z); g.rotation.y = r.yaw;
-    scene.add(shadowy(g));
-  }
 }
 
-// ------------------------------------------------------------ cover clusters (round 10; stand-ins)
-// Hedges as leafy blocks along their lines, broken stone walls as rough blocks, crate stacks, and hay stacks
-// (the hay model). Tall rocks are instanced with the blast stones (SCATTER).
+// ------------------------------------------------------------ cover clusters
+// Hay stacks (the hay model) on the farm, rune pillars (the pillar model, leaning a little) in the magic land; the
+// blast rocks are instanced with the blast stones (SCATTER). Hedges and walls are drawn as blocks (none since round 11).
 function buildCover(scene) {
-  const leaf = flat(0x3f7f35), leafDark = flat(0x346c2d), wallStone = flat(0x8a8d86), crate = flat(0xa07440), band = flat(0x6e4a2a);
+  const leaf = flat(0x3f7f35), leafDark = flat(0x346c2d), wallStone = flat(0x8a8d86);
   const hedge = [], stones = [];
   const rnd = seeded(77);
   for (const cl of C.COVER_CLUSTERS) {
@@ -444,10 +470,8 @@ function buildCover(scene) {
         }
       }
     }
-    if (cl.type === 'crates') cl.pts.forEach(([x, z], i) => {
-      const g = new THREE.Group();
-      g.add(box(1.2, 1.1, 1.2, crate, 0, 0.55, 0), box(1.24, 0.12, 1.24, band, 0, 0.55, 0), box(0.9, 0.7, 0.9, crate, 0.1, 1.45, -0.05));
-      g.position.set(x, 0, z); g.rotation.y = rnd() * 1.5; scene.add(shadowy(g));
+    if (cl.type === 'pillar') cl.pts.forEach(([x, z, h]) => {
+      standin('pillar', makePillar(), { x, z, yaw: rnd() * 6.3, tilt: 0.03 + rnd() * 0.07 }, scene).scale.setScalar(h / C.PILLAR_HEIGHT);
     });
     if (cl.type === 'hay') cl.pts.forEach(([x, z]) => standin('haystack', makeHayStack(), { x, z, yaw: rnd() * Math.PI }, scene));
   }
@@ -564,7 +588,7 @@ function makeTrough() {
 const crops = { mesh: null, tops: null, base: [], flatUntil: null, flatAmt: null, dirty: false, lastT: 0 };
 function buildField(scene) {
   const F = C.FIELD;
-  // round 11: no crops and no annex; the old field is meadow again (the scarecrow and the pumpkins stay)
+  // round 11: no crops and no annex; the old field is meadow again (the scarecrow stays)
   if (C.CROPS.length) scene.add(groundRect(F.x0 - 0.6, F.z0 - 0.8, F.x1 + 0.6, F.z1 + 0.8, decal(0x7a5636, 2)));
   for (const row of C.CROP_ROWS) {
     const ridge = box(1.0, 0.18, row.z1 - row.z0 + 1.0, M.soilRidge, row.x, 0.06, (row.z0 + row.z1) / 2);
@@ -757,29 +781,35 @@ for (const t of C.TREES) SCATTER[t.kind].push([t.x, t.z, t.yaw, t.h]);
 for (const [x, z, yaw, h, tilt] of C.TABLE_ROCKS) SCATTER.rock_table.push([x, z, yaw, h, tilt, C.awayYaw(x, z), h * 0.12]);
 for (const [x, z, h, tilt] of C.BLAST_STONES) SCATTER.rock_jagged.push([x, z, x * 3.1 + z, h, tilt, C.awayYaw(x, z), h * 0.1]);
 for (const [x, z, yaw, h, tilt] of C.BLAST_SHARDS) SCATTER.rock_jagged.push([x, z, yaw, h, tilt, C.awayYaw(x, z), 0.06]);
-// round 10 cover: tall rocks standing upright, and boulders sitting on the rock plateaus
+// round 10 cover: tall rocks standing upright round the blast, and boulders sitting on the rock plateaus
 for (const sf of C.SURFACES) if (sf.style === 'boulder') SCATTER.rock_jagged.push([sf.x, sf.z, sf.x + sf.z, 1.35, 0.05, 0, -(sf.top - sf.thick)]);
+// the ruin ledges' parapets: two rocks side by side along the altar-facing edge, standing on the ledge
+for (const sf of C.SURFACES) if (sf.style === 'parapet') for (const k of [-1, 1]) {
+  const lx = k * sf.w * 0.24, x = sf.x + lx * Math.cos(sf.yaw), z = sf.z - lx * Math.sin(sf.yaw);
+  SCATTER.rock_jagged.push([x, z, sf.yaw + k * 1.3, 1.15 + k * 0.08, 0.06, sf.yaw, -(sf.top - sf.thick)]);
+}
 for (const cl of C.COVER_CLUSTERS) if (cl.type === 'rock') cl.pts.forEach(([x, z, h], i) => SCATTER.rock_jagged.push([x, z, x * 1.7 + z + i, h, 0.05, 0, 0.1]));
 {
-  // the rim: jagged rocks with a table rock every fourth stone
+  // the rim: jagged rocks and table rocks in turn (round 12: every other one, was three in four jagged)
   const rnd = seeded(7);
   for (let i = 0; i < 52; i++) {
     const a = (i / 52) * Math.PI * 2, r = C.ARENA_RADIUS + 1.2 + rnd() * 0.6;
-    if (i % 4 === 2) SCATTER.rock_table.push([Math.cos(a) * r, Math.sin(a) * r, rnd() * 6.3, 0.7 + rnd() * 0.5]);
+    if (i % 2) SCATTER.rock_table.push([Math.cos(a) * r, Math.sin(a) * r, rnd() * 6.3, 0.7 + rnd() * 0.5]);
     else SCATTER.rock_jagged.push([Math.cos(a) * r, Math.sin(a) * r, rnd() * 6.3, 1.0 + rnd() * 1.1]);
   }
-  // outside the arena: a few oaks and birches near the rim, pines thickening toward the hills
+  // outside the arena: oaks, birches and pines near the rim on the farm side, birches beyond the magic land,
+  // pines thickening toward the hills
   const out = seeded(42);
   for (let i = 0; i < 90; i++) {
     const a = out() * Math.PI * 2, r = C.ARENA_RADIUS + 5 + Math.pow(out(), 0.7) * 45;
     const near = r < C.ARENA_RADIUS + 16, pick = out();
-    const kind = near ? (pick < 0.4 ? 'oak' : pick < 0.75 ? 'birch' : 'pine') : (pick < 0.85 ? 'pine' : 'birch');
-    const x = Math.cos(a) * r, z = Math.sin(a) * r;
+    const x = Math.cos(a) * r, z = Math.sin(a) * r, magic = z < -12;
+    const kind = magic ? (pick < (near ? 0.85 : 0.5) ? 'birch' : 'pine') : near ? (pick < 0.5 ? 'oak' : 'pine') : 'pine';
     SCATTER[kind + '_far'].push([x, z, out() * 6.3, C.TREE_KINDS[kind].h * (0.8 + out() * 0.5)]);
   }
-  for (let i = 0; i < 24; i++) {
+  for (let i = 0; i < 12; i++) {
     const a = out() * Math.PI * 2, r = C.ARENA_RADIUS + 4 + out() * 30;
-    SCATTER[out() < 0.6 ? 'rock_jagged' : 'rock_table'].push([Math.cos(a) * r, Math.sin(a) * r, out() * 6.3, 0.8 + out() * 1.6]);
+    out(); SCATTER.rock_table.push([Math.cos(a) * r, Math.sin(a) * r, out() * 6.3, 0.8 + out() * 1.6]);
   }
 }
 
@@ -807,7 +837,7 @@ export const GRASS_ITEMS = { tall: [], clover: [] };   // [x, z, yaw, height, ti
   const spawns = C.SPAWN_POINTS;
   const F = C.FIELD;
   const fieldDist = (x, z) => C.CROPS.length ? Math.hypot(Math.max(F.x0 - x, 0, x - F.x1), Math.max(F.z0 - z, 0, z - F.z1)) : Infinity;   // no crops: meadow
-  const near = C.COLLIDERS.filter(c => ['tree', 'rock', 'stone', 'silo', 'obelisk', 'arch', 'pillar', 'ruin', 'scarecrow', 'hay'].includes(c.kind) && c.r > 0.3);
+  const near = C.COLLIDERS.filter(c => ['tree', 'rock', 'stone', 'silo', 'obelisk', 'arch', 'pillar', 'ruin', 'scarecrow', 'hay', 'cover', 'crystal'].includes(c.kind) && c.r > 0.3);
   const blocked = (x, z) => {
     const r = Math.hypot(x, z);
     if (r > C.ARENA_RADIUS + 4) return true;
@@ -817,7 +847,7 @@ export const GRASS_ITEMS = { tall: [], clover: [] };   // [x, z, yaw, height, ti
     if (spawns.some(([sx, , sz]) => Math.hypot(sx - x, sz - z) < 2.5)) return true;
     if (C.inPen(x, z, -0.4) || fieldDist(x, z) < 0.4) return true;                     // the pen floor and the crops
     if (C.PROP_SPAWNS.some(([, px, pz]) => Math.hypot(px - x, pz - z) < 1.0)) return true;
-    if (Math.hypot(x - C.SILO_FOOTING.x, z - C.SILO_FOOTING.z) < C.SILO_FOOTING.r + 0.6) return true;
+    if (FENCE_DEBRIS.some(([fx, fz]) => Math.hypot(fx - x, fz - z) < 1.6)) return true;
     if (Math.hypot(x - C.WELL.x, z - C.WELL.z) < C.WELL.r + 1.6) return true;
     if (C.SURFACES.some(sf => { const c = Math.cos(sf.yaw || 0), n = Math.sin(sf.yaw || 0), dx = x - sf.x, dz = z - sf.z; return Math.abs(dx * c - dz * n) < sf.w / 2 + 0.3 && Math.abs(dx * n + dz * c) < sf.d / 2 + 0.3; })) return true;   // the high ground
     return C.COLLIDERS.some(c => Math.hypot(c.x - x, c.z - z) < c.r + 0.2);
@@ -857,6 +887,7 @@ export const GRASS_ITEMS = { tall: [], clover: [] };   // [x, z, yaw, height, ti
       if (blocked(x, z)) continue;
       const [h0, h1] = GRASS[kind].h, h = (h0 + (h1 - h0) * rnd()) * (0.8 + 0.25 * Math.min(1, w / 2));
       // brighter than the texture (it reads dark against the lit meadow), a touch greener, a little yellow in some
+      // (the magic land's violet is the shader's, see grassMeshes)
       const v = 1.15 + rnd() * 0.3, warm = rnd() * 0.14;
       GRASS_ITEMS[kind].push([x, z, rnd() * 6.3, h, v * (0.92 + warm), v * (1.08 + warm * 0.5), v * (0.85 - warm * 0.4)]);
       left[kind]--;
@@ -877,15 +908,22 @@ function grassMeshes(gltf, items) {
     mat.onBeforeCompile = (sh) => {
       Object.assign(sh.uniforms, grassUniforms);
       sh.vertexShader = sh.vertexShader
-        .replace('void main() {', 'uniform float uTime;\nuniform vec2 uFade;\nvoid main() {')
+        .replace('void main() {', 'uniform float uTime;\nuniform vec2 uFade;\nvarying float vMagic;\nvoid main() {\n  vMagic = 0.0;')
         .replace('#include <begin_vertex>', `#include <begin_vertex>
           #ifdef USE_INSTANCING
             vec3 gp = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+            vMagic = clamp((-13.0 - gp.z) / 7.0, 0.0, 1.0) * (0.8 + 0.2 * fract(gp.x * 1.7 + gp.z * 0.9));
             float gh = clamp(transformed.y, 0.0, 1.2), gph = gp.x * 0.37 + gp.z * 0.29;
             transformed.x += sin(uTime * 1.6 + gph) * 0.07 * gh * gh;
             transformed.z += cos(uTime * 1.2 + gph * 1.3) * 0.05 * gh * gh;
             transformed *= 1.0 - smoothstep(uFade.x, uFade.y, distance(gp, cameraPosition));
           #endif`);
+      // the magic land's grass (z below -13, fully past -20) turns violet, keeping its light and shade
+      sh.fragmentShader = sh.fragmentShader
+        .replace('void main() {', 'varying float vMagic;\nvoid main() {')
+        .replace('#include <color_fragment>', `#include <color_fragment>
+          float gLum = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11));
+          diffuseColor.rgb = mix(diffuseColor.rgb, gLum * vec3(1.3, 0.78, 1.9), vMagic * 0.85);`);
     };
     parts.push([o.geometry.clone().applyMatrix4(new THREE.Matrix4().multiplyMatrices(norm, o.matrixWorld)), mat]);
   });
@@ -995,6 +1033,7 @@ export function loadModels(loader, scene) {
       models[name] = fitModel(g, h, yaw);
       if (shift) models[name].position.set(shift[0] * h, 0, shift[1] * h);
       swapModel(name, models[name]);
+      if (name === 'pillar') layFallenPillars(models[name]);
     }, () => {})),
     // Trees and rocks repeat dozens of times: one InstancedMesh per model.
     ...Object.entries(SCATTER).map(([name, items]) => load(`/models/${name}.glb`).then(g => {
@@ -1071,13 +1110,6 @@ export function makePropMesh(type) {
         const band = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 0.1, 8), mat(0x4a4a52));
         band.position.y = y; g.add(band);
       }
-      break;
-    }
-    case 'pumpkin': {
-      m = new THREE.Mesh(new THREE.SphereGeometry(0.5, 8, 6), mat(spec.color));
-      m.scale.set(1, 0.75, 1); m.position.y = 0.38; g.add(m);
-      const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.1, 0.3, 5), mat(0x5a8a3a));
-      stem.position.y = 0.8; g.add(stem);
       break;
     }
     case 'rock': {

@@ -1,18 +1,23 @@
 // Map layout, shared by server and client: arena size, obstacles, props, goats and spawn points.
 // Owned by the environment track; gameplay code reads it through constants.js (which re-exports it).
 //
-// The wizard's farmstead. +z is north. Standing in the farmyard facing the farmhouse (north),
-// the goat pen is on your left (+x) and the old crop field (now meadow) on your right (-x).
-// In the middle of the map a stone altar marks where a spell went off: a scorched crater with the rune
-// pillars, the archway, the obelisk, stones and the grain silo thrown outward from it.
+// The wizard's farmstead, and what a spell did to it. +z is north. Standing in the farmyard facing the
+// farmhouse (north), the goat pen is on your left (+x) and the old crop field (now meadow) on your right (-x).
+// Round 12 tells one story from north to south:
+//   the farm (z > +5)        farmhouse, barn, hay loft, leaning silo, goat pen, well, cart, tractor, scarecrow,
+//                            hay, crates and barrels, the cart road, pines and oaks
+//   the blast (z +5 .. -20)  the altar at (0, -7) where the spell went off: scorch, glowing cracks, blast stones,
+//                            slabs and shards, the rune circle leaning outward, farm debris thrown out of the
+//                            yard (the felled silo, a few crates and barrels, broken fence panels)
+//   the magic land (z < -15) rune pillars, two archways, two obelisks, the ruin ledges, crystals and vases,
+//                            birches and violet grass; the watchtower is a mage's lookout now
 //
-//                 farmhouse (0, 26)
+//                     farmhouse (0, 26)
 //      tractor, cart       farmyard + well       walk-through barn (14, 20.5), hay loft, leaning silo
-//   cart road          altar + blast site (0, -7)          goat pen (gate faces the yard), pen rock
-//   (-x)   ruin ledges                                     (+x)
-//  watchtower   felled silo   archway, south meadow   canopy fort   low plateau
-//                 obelisk
-// One mode (round 11): a four-player free for all; eight spawns round the rim (SPAWN_POINTS).
+//   cart road                                             goat pen (gate faces the yard), pen rock
+//   (-x)   ruin ledges     altar + blast site (0, -7)     felled silo        (+x)
+//  watchtower   archway II, obelisk    archway, south meadow   ruin ledge, obelisk II, low plateau
+// One mode (round 11): a four-player free for all; seven spawns round the rim (SPAWN_POINTS).
 
 export const ARENA_RADIUS = 40;       // playable circle radius (m)
 
@@ -20,7 +25,6 @@ export const ARENA_RADIUS = 40;       // playable circle radius (m)
 export const PROP_TYPES = {
   crate:   { r: 0.55, h: 1.1, hp: 1, color: 0xc08a4a },
   barrel:  { r: 0.5,  h: 1.2, hp: 1, color: 0x8a5a3a },
-  pumpkin: { r: 0.45, h: 0.8, hp: 1, color: 0xf08a2a },
   rock:    { r: 0.6,  h: 1.0, hp: 1, color: 0x8d9299 },
   pot:     { r: 0.4,  h: 0.9, hp: 1, color: 0x6a8fd0 },
   potion:  { r: 0.5,  h: 1.15, hp: 1, color: 0x9a5cff },   // Meshy potion barrel (models/potion.glb)
@@ -68,16 +72,17 @@ const HOUSE_BLOCKS = [
   [-4.1, -2.8, 1.5],
 ];
 
-// ------------------------------------------------------------ goat pen (west, +x)
+// ------------------------------------------------------------ goat pen (north-east, +x)
 // An axis-aligned fenced rectangle. The gate is a gap in the courtyard-facing side (x = x0).
-// Round 10: a third of its old area (it was x 18..33, z -13..9); the freed ground is cover and high ground.
+// Round 10: a third of its old area (it was x 18..33, z -13..9). Round 12 moved it 9.5 m north and 1 m west, out of
+// the blast band and into the farm, between the barn and the pen rock.
 export const PEN = {
-  x0: 18, x1: 28, z0: -8, z1: 3,
-  gate: { z0: -3.4, z1: -0.6 },
+  x0: 17, x1: 27, z0: 1.5, z1: 12.5,
+  gate: { z0: 6.1, z1: 8.9 },
   postR: 0.25, postH: 0.7, postSpacing: 0.62,   // postH: spells fly over; aiming at a goat's body clears it
 };
-PEN.gateOut = [16.0, (PEN.gate.z0 + PEN.gate.z1) / 2];   // just outside the gate
-PEN.gateIn = [19.8, (PEN.gate.z0 + PEN.gate.z1) / 2];    // just inside it
+PEN.gateOut = [PEN.x0 - 2, (PEN.gate.z0 + PEN.gate.z1) / 2];   // just outside the gate
+PEN.gateIn = [PEN.x0 + 1.8, (PEN.gate.z0 + PEN.gate.z1) / 2];  // just inside it
 export const inPen = (x, z, margin = 0) =>
   x > PEN.x0 + margin && x < PEN.x1 - margin && z > PEN.z0 + margin && z < PEN.z1 - margin;
 
@@ -118,18 +123,18 @@ export function fenceDistance(x, z) {
   return best;
 }
 
-export const GOAT_SPAWNS = [[21.5, -5.5], [24, -1], [22.5, 1], [24.5, -6]];
+export const GOAT_SPAWNS = [[3.5, 2.5], [6, 7], [4.5, 9], [6.5, 2]].map(([dx, dz]) => [PEN.x0 + dx, PEN.z0 + dz]);
 
 // Inside the pen: a lean-to shelter against the back fence and a water trough by the gate.
-export const SHELTER = { x: 26.6, z: -4.6, yaw: -Math.PI / 2, w: 4.2, d: 2.6 };
-export const TROUGH = { x: 20.4, z: 1.0, yaw: Math.PI / 2, len: 2.0 };
+export const SHELTER = { x: PEN.x1 - 1.4, z: PEN.z0 + 3.4, yaw: -Math.PI / 2, w: 4.2, d: 2.6 };
+export const TROUGH = { x: PEN.x0 + 2.4, z: PEN.z1 - 2.0, yaw: Math.PI / 2, len: 2.0 };
 
 // ------------------------------------------------------------ crop field (east, -x)
 // Rows run north-south; walkable furrows between them. Each plant is a low collider: it blocks
 // walking but spells fly over it.
 export const FIELD = { x0: -33, x1: -18.4, z0: -11, z1: 10.5 };
 // Round 10 took the crops out; round 11 took the annex that replaced them out too. FIELD stays as the old field's outline
-// (meadow now: the scarecrow and the pumpkins along its edge remain).
+// (meadow now, with the scarecrow).
 export const CROP_ROWS = [];
 export const CROPS = [];
 for (const row of CROP_ROWS) {
@@ -170,11 +175,11 @@ const BARN_WALLS = [
 export const BARN_POSTS = BARN_WALLS.flatMap(line => chain(line, 0.6)).map(p => place(BARN, p));
 
 // ------------------------------------------------------------ the altar and the blast site
-// A stone altar between the farmyard and the meadow, where a spell went off. Everything mystical on
-// the map was thrown outward from it: a broken circle of floating rune pillars leaning away, two pillars
-// knocked flat, the archway that framed the way south, stones tilted away from the centre, flat slabs
-// flung farther out, and the obelisk thrown into the meadow. The grain silo that stood at the edge of the
-// crater lies where the blast laid it down.
+// A stone altar between the farmyard and the meadow, where a spell went off. Its rune circle still stands, leaning
+// away: floating rune pillars, one knocked flat, stones tilted away from the centre and flat slabs flung farther out.
+// Southward the magic soaked into the land (the archways, obelisks, ruins and crystals of the magic land); northward
+// the blast tore into the farm and threw its edge outward: the grain silo lies where it laid it down, east of the
+// altar, with spilled crates and barrels and flattened fence panels.
 export const ALTAR = { x: 0, z: -7, r: 1.3, h: 1.1 };   // the slab: spells fly over it, you can't walk through it
 // [x, z] at compass bearing `deg` (0 = north +z, 90 = east +x) and distance `d` from the altar.
 export const fromAltar = (deg, d) => [ALTAR.x + Math.sin(deg * Math.PI / 180) * d, ALTAR.z + Math.cos(deg * Math.PI / 180) * d];
@@ -185,11 +190,11 @@ export const BLAST_RADIUS = 15;
 
 // A grain silo knocked flat by the blast (models/silo.glb): 11 m of hard cover, 3.6 m tall, base toward the altar.
 // In model space its body runs along x (-5.75..5.3, domed cap at +x), centred on z -0.25, radius 1.8.
-const SILO_AT = fromAltar(225, 21.5);
-export const SILO = { x: SILO_AT[0], z: SILO_AT[1], yaw: 3 * Math.PI / 4, height: 4 };
+// Round 12: it lies in the blast band east of the altar (bearing 80, base 12 m out), on the ground the pen gave back;
+// it used to lie in the south-west meadow. yaw = bearing - 90 turns the cap (+x) away from the altar.
+const SILO_BEARING = 80, SILO_AT = fromAltar(SILO_BEARING, 18);
+export const SILO = { x: SILO_AT[0], z: SILO_AT[1], yaw: (SILO_BEARING - 90) * Math.PI / 180, height: 4 };
 const SILO_BLOCKS = [-4, -2.7, -1.4, -0.1, 1.2, 2.5, 3.6].map(lx => place(SILO, [lx, -0.25]));
-// Where it stood: a cracked stone footing just past its base.
-export const SILO_FOOTING = (() => { const [x, z] = place(SILO, [-7.4, -0.25]); return { x, z, r: 1.9 }; })();
 
 // Floating rune pillars (models/rune_pillar.glb, 6 m) with a purple crystal above: what is left of the
 // circle round the altar, each leaning away from it. `r` is fitted to the rubble at the foot, `h` to where
@@ -199,9 +204,10 @@ export const PILLARS = [45, 135, 225, 315].map(deg => {
   const [x, z] = fromAltar(deg, 7.5);
   return { x, z, r: 0.9, h: 5, yaw: awayYaw(x, z), tilt: 0.11 };
 });
-// A pillar of the circle lies where it fell: a broken stump and the shaft beside it, pointing away from the
-// altar (another fell across the west ruin ledges; see the high ground). Low enough to shoot over. [bearing, distance of the stump, length of the shaft]
-export const FALLEN_PILLARS = [[100, 8.5, 5.4]].map(([deg, d, len]) => {
+// A pillar of the circle lies where it fell, its rubble foot at (x, z) and the shaft pointing away from the altar
+// (rune_pillar.glb on its side, `len` long; world.js). The shaft is low enough to shoot over; the foot is not.
+// [bearing, distance of the foot, length]
+export const FALLEN_PILLARS = [[100, 8.5, 6.6]].map(([deg, d, len]) => {
   const [x, z] = fromAltar(deg, d);
   return { x, z, yaw: awayYaw(x, z), len };
 });
@@ -210,22 +216,28 @@ export const FALLEN_PILLARS = [[100, 8.5, 5.4]].map(([deg, d, len]) => {
 // and shoot through it; only its two legs are solid. It faces away from the altar and leans a little.
 // Model space at 6.5 m: legs at x -1.85 and 1.6, 1.8 m deep.
 export const ARCHWAY = { x: -0.14, z: ALTAR.z - 10, yaw: Math.PI, height: 7.5, tilt: 0.06 };
-const ARCH_LEGS = [[-1.85, -0.35], [-1.85, 0.35], [1.6, -0.35], [1.6, 0.35]].map(([lx, lz]) => place(ARCHWAY, [lx * 7.5 / 6.5, lz * 7.5 / 6.5]));
+// Round 12: a second, older archway deep in the south-west of the magic land, square to the altar, over the way
+// from the south-west spawn toward the ruin ledges.
+const ARCH2_AT = fromAltar(222, 22);
+export const ARCHWAYS = [ARCHWAY, { x: ARCH2_AT[0], z: ARCH2_AT[1], yaw: awayYaw(...ARCH2_AT), height: 7, tilt: 0.03 }];
+const ARCH_LEGS = ARCHWAYS.flatMap(A => [[-1.85, -0.35], [-1.85, 0.35], [1.6, -0.35], [1.6, 0.35]].map(([lx, lz]) => place(A, [lx * A.height / 6.5, lz * A.height / 6.5])));
 // The obelisk (models/obelisk.glb, 6 m), thrown farthest: it stuck in the meadow, leaning hard away from the
-// altar, at the end of the furrow it ploughed.
+// altar, at the end of the furrow it ploughed. Round 12: a second one, upright and taller, in the south-east.
 const OBELISK_AT = fromAltar(200, 23);
 export const OBELISK = { x: OBELISK_AT[0], z: OBELISK_AT[1], yaw: awayYaw(...OBELISK_AT), height: 6, r: 0.9, tilt: 0.3, sink: 0.35 };
+const OBELISK2_AT = fromAltar(141, 24);
+export const OBELISKS = [OBELISK, { x: OBELISK2_AT[0], z: OBELISK2_AT[1], yaw: awayYaw(...OBELISK2_AT) + 0.6, height: 6.8, r: 0.9, tilt: 0.06, sink: 0.1 }];
 export const OBELISK_FURROW = { from: fromAltar(200, 14.5), to: fromAltar(200, 22) };
 
 // Blast stones (models/rock_jagged.glb): tall shards tilted away from the altar. [x, z, height, tilt]
 // The model is about 0.65 x its height across, so the collider is r 0.33 h, shifted toward the lean.
 export const BLAST_STONES = [
-  [15, 11.5, 1.9, 0.3], [340, 12, 1.6, 0.35], [112, 16, 1.7, 0.3],   // (125° went in round 10: the canopy fort's west oak)   // 112°: the south-east edge of the Barn Passage zone
+  [15, 11.5, 1.9, 0.3], [340, 12, 1.6, 0.35],   // (112° went in round 12: the south-east ruin ledge stands there)
   [160, 14, 2.2, 0.28], [205, 14, 1.8, 0.32],   // (290° went in round 9: the west ruin ledge stands there)
 ].map(([deg, d, h, tilt]) => [...fromAltar(deg, d), h, tilt]);
 // Flat slabs (models/rock_table.glb) flung farther: low cover you shoot over. [x, z, yaw, height, tilt]
 // Model space at 1.2 m tall: a round slab about 2.5 m across, centred on x -0.25.
-export const TABLE_ROCKS = [[20, 14.5, 0.9, 0.15], [140, 16, 1.1, 0.18], [192, 17.5, 1.1, 0.15], [275, 15, 0.9, 0.2]]
+export const TABLE_ROCKS = [[20, 14.5, 0.9, 0.15], [140, 16, 1.1, 0.18], [192, 17.5, 1.1, 0.15], [275, 16.2, 0.9, 0.2]]
   .map(([deg, d, h, tilt], i) => { const [x, z] = fromAltar(deg, d); return [x, z, (i * 2.1) % 6.3, h, tilt]; });
 
 // ------------------------------------------------------------ farmyard pieces
@@ -236,64 +248,66 @@ export const WELL = { x: -4.5, z: 12.5, r: 1.05, h: 3.4, height: 3.4, yaw: 0 };
 // Model space: the bed is x -0.75..3.75 (wheels at z ±1.5), the shafts run off toward -x.
 export const CART = { x: -9, z: 18, yaw: Math.PI, height: 2.6 };
 const CART_BLOCKS = [0.4, 1.6, 2.8].map(lx => place(CART, [lx, 0]));
-// Big round bales standing on end. [x, z] Three against the pen's yard-side fence, two drying in the
-// south-east meadow.
-export const HAY_STACKS = [[16.85, 4.0], [16.85, 5.7], [16.85, 7.4], [16.2, -26.5], [17.9, -26.5]];
+// Big round bales standing on end, against the pen's yard-side fence south of the gate. [x, z]
+export const HAY_STACKS = [[PEN.x0 - 1.15, 2.3], [PEN.x0 - 1.15, 4.0]];
 
-// Meshy trees (models/pine|oak|birch.glb): oaks and birches round the farm and meadow, pines toward the
-// hills. Trunk circles [dx, dz, r] in model space at the reference height, measured from a section at 1.5 m.
+// Meshy trees (models/pine|oak|birch.glb): pines and oaks round the farm, birches (only) in the magic land.
+// Trunk circles [dx, dz, r] in model space at the reference height, measured from a section at 1.5 m.
 export const TREE_KINDS = {
   pine:  { h: 9,   trunk: [0.1, 0, 0.25] },
   oak:   { h: 7.5, trunk: [-0.25, 0.1, 1.0] },
   birch: { h: 8,   trunk: [0, -0.2, 0.25] },
 };
 // [kind, x, z, height]; yaw is fixed per tree (server and clients must agree on the trunk offsets).
-// The canopy fort's three big oaks (round 10), round its centre deck south-east of the altar.
-export const FORT = { x: 15, z: -16, r: 5.5, oakH: 13, deck: 3.9, centre: 4.2, bearings: [60, 180, 300] };
-export const FORT_OAKS = FORT.bearings.map(b => [FORT.x + Math.sin(b * Math.PI / 180) * FORT.r, FORT.z + Math.cos(b * Math.PI / 180) * FORT.r]);
+// Round 12: the canopy fort and its three oaks are gone; the south's oaks are birches.
 export const TREES = [
-  ['oak', 24.5, -11.5, 7], ['birch', -17.5, -34.5, 8.5], ['birch', -11, -35, 7.5], ['oak', 12, -32, 7.5],
-  ['birch', 30, -21, 8], ['oak', -30, -19, 7.5], ['oak', -13, 31, 8], ['pine', 13, 32, 10],
-  ['birch', 24.5, 27.5, 8.5], ['pine', -24, 23, 10.5], ['pine', -33, 8, 11], ['pine', 33.5, 14, 10],
-  ...FORT_OAKS.map(([x, z]) => ['oak', x, z, FORT.oakH]),
+  ['oak', 24.5, -11.5, 7], ['birch', -17.5, -34.5, 8.5], ['birch', -11, -35, 7.5], ['birch', 12, -32, 8],
+  ['birch', 30, -21, 8], ['birch', -30, -19, 8], ['oak', -13, 31, 8], ['pine', 13, 32, 10],
+  ['oak', 24.5, 27.5, 7.5], ['pine', -24, 23, 10.5], ['pine', -33, 8, 11], ['pine', 33.5, 14, 10],
+  ['birch', 21, -31.5, 7.5], ['birch', -24.5, -29, 8.5],
+  ['oak', 32.3, -1.0, 7.5],   // screens the east spawn from the pen rock
 ].map(([kind, x, z, h], i) => {
   const k = TREE_KINDS[kind], s = h / k.h, yaw = (i * 2.39996) % (Math.PI * 2);
   const [cx, cz] = place({ x, z, yaw }, [k.trunk[0] * s, k.trunk[1] * s]);
   return { kind, x, z, h, yaw, cx, cz, r: Math.max(0.35, k.trunk[2] * s) };
 });
 
-// Initial prop placement: [type, x, z]. Every prop belongs somewhere; crates, barrels, pots, hay and potions
-// are split between the north and south halves.
-const SILO_ROW = [-3.2, -2.1, -1.0, 0.3, 1.4, 2.5].map(lx => place(SILO, [lx, -2.8]));   // along its south-east flank
+// Initial prop placement: [type, x, z]; a prop's id is its index here + 1. Crates, barrels, hay and potions stay on
+// the farm side (the north, and the silo's spill on the blast band's farm edge); pots (the vases) are the magic land's.
+const SILO_ROW = [-3.4, -2.2, -1.0, 0.3, 1.5].map(lx => place(SILO, [lx, 3.55]));   // along its north (farm-side) flank, a walkable 1.2 m off it
 export const PROP_SPAWNS = [
   // north: potion barrels flanking the farmhouse door, crates beside the cart, barrels by the barn,
-  // a pot by the well, loose bales by the pen's hay stacks
+  // a pot by the well, loose bales by the pen's hay stacks and by the old field
   ['potion', -2.6, 20.6], ['potion', -3.7, 20.6], ['potion', 2.6, 20.6], ['potion', 3.7, 20.6],
   ['crate', -10.0, 19.8], ['crate', -11.2, 19.8],
   ['barrel', 10.4, 17.3], ['barrel', 10.4, 18.4],
   ['pot', -2.4, 12.2],
-  ['hay', 15.6, 4.85], ['hay', 15.6, 6.55],
-  // pumpkins along the field edge
-  ['pumpkin', -16.8, -8], ['pumpkin', -16.8, -3], ['pumpkin', -16.8, 2], ['pumpkin', -16.8, 7],
+  ['hay', PEN.x0 - 2.8, 2.6], ['hay', PEN.x0 - 2.8, 3.8],
+  ['hay', -16.8, 8.2], ['hay', -16.8, 9.4],
   // the blast site: offering pots on the rim of the altar's dais, loose stones among the debris
   ['pot', ...fromAltar(220, 3.3)], ['pot', ...fromAltar(140, 3.3)],
-  ['rock', ...fromAltar(30, 9.5)], ['rock', ...fromAltar(150, 10)], ['rock', ...fromAltar(215, 10)], ['rock', ...fromAltar(300, 9.5)],
-  // south: the grain store lined up beside the felled silo, bales by the meadow hay stacks
-  ['crate', ...SILO_ROW[0]], ['crate', ...SILO_ROW[1]], ['crate', ...SILO_ROW[2]], ['barrel', ...SILO_ROW[3]], ['barrel', ...SILO_ROW[4]], ['barrel', ...SILO_ROW[5]],
-  ['hay', 15.6, -28.3], ['hay', 16.7, -28.3], ['hay', 17.8, -28.3], ['hay', 18.9, -28.3],
+  ['rock', 2.6, -0.6], ['rock', ...fromAltar(150, 10)], ['rock', ...fromAltar(215, 10)], ['rock', ...fromAltar(300, 9.5)],
+  // the farm's edge: the grain store spilled along the felled silo's north flank
+  ['crate', ...SILO_ROW[0]], ['crate', ...SILO_ROW[1]], ['barrel', ...SILO_ROW[2]], ['crate', ...SILO_ROW[3]], ['barrel', ...SILO_ROW[4]],
+  // the magic land: vases at the feet of the archways and obelisks, by the ruin ledge and among the pillars
+  ['pot', ...fromAltar(222, 19.6)], ['pot', ...fromAltar(226, 20)],
+  ['pot', ...fromAltar(141, 21.6)], ['pot', ...fromAltar(206, 21)],
+  ['pot', 0.2 + 2.2, ALTAR.z - 12.4], ['pot', 18.2, -15.2],
+  ['rock', 24.4, -26.4], ['rock', -20.5, -15.6],
 ];
 
-// Free for all (round 11): seven spawns round the rim, [x, 0, z, yaw facing the map centre], 17-36 m apart,
-// none in sight of another at chest height, at least 14 m from every potion and at least 10 m from any perch
-// that sees them. The barn, loft, pen and fort fill the east, so it gets one. Picked with /tmp/wa-environment/spawnsearch11.mjs (see the hand-off).
+// Free for all: seven spawns round the rim, [x, 0, z, yaw facing the map centre], four on the farm side and three in the
+// magic land, at least 15 m apart, none in sight of another at chest height, at least 14 m from every potion and not
+// overlooked by any perch within 15 m. Round 12 re-picked the east and the south pair (the silo that screened the
+// south-west moved, the fort went) with /tmp/wa-environment/spawnsearch12.mjs; the east oak screens the pen rock.
 export const SPAWN_POINTS = [
-  [8.5, 0, 30, -2.87],      // north, behind the farmhouse's east corner
-  [-17, 0, 27, 2.58],       // north-west, past the tractor
-  [-32, 0, 5.5, 1.74],      // west, the old field's far edge
-  [-22, 0, -24, 0.74],      // south-west, beyond the felled silo
-  [-6.5, 0, -32.5, 0.20],   // south, west of the archway lane
-  [10.5, 0, -34.5, -0.30],  // south-east meadow, south of the canopy fort
-  [33, 0, -7, -1.36],       // east, behind the pen
+  [8.5, 0, 30, -2.87],      // farm: north, behind the farmhouse's east corner
+  [-17, 0, 27, 2.58],       // farm: north-west, past the tractor
+  [-32, 0, 5.5, 1.74],      // farm: west, the old field's far edge
+  [34, 0, -6, -1.40],       // farm's edge: east, past the felled silo's cap, behind the east oak
+  [-19, 0, -26, 0.63],      // magic: south-west, beyond the second archway
+  [-5, 0, -32, 0.15],       // magic: south, west of the archway lane
+  [10.5, 0, -34.5, -0.30],  // magic: south-east, south of the second obelisk
 ];
 
 
@@ -446,6 +460,8 @@ export const surfaceCorners = (s) => [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([
 // The foot of a ramp (its low end's middle) in world space: where a bot heads to get onto the high ground.
 export const rampFoot = (s) => sWorld(s, 0, (s.y1 >= s.y0 ? -1 : 1) * (s.d / 2 + 0.6));
 
+export const LEDGE_SE = fromAltar(122, 17.5);   // the south-east ruin ledge (below)
+
 // ------------------------------------------------------------ the high ground (round 9): Ty's Meshy pieces
 // Each piece is a model placed at { x, z, yaw, h (model height in m), sx / sz (horizontal stretch), y (lift) }
 // plus the walkable surfaces fitted to it. Surface shapes are given in the model's own units (fitModel space: the
@@ -536,6 +552,9 @@ function piece(id, model, at, parts) {
   ];
   piece('ledge-a', 'ruin_platform', { x: A[0], z: A[1], yaw: LY, h: LH, sx: LS, sz: LS }, ledgeParts);
   piece('ledge-b', 'ruin_platform', { x: B[0], z: B[1], yaw: LY, h: LH, sx: LS, sz: LS }, ledgeParts);
+  // round 12: a third ledge alone in the south-east of the magic land, where the canopy fort stood, its stairs facing
+  // away from the altar: the high point with the south-east health potion (HEAL_SPOTS 'ruin').
+  piece('ledge-c', 'ruin_platform', { x: LEDGE_SE[0], z: LEDGE_SE[1], yaw: awayYaw(...LEDGE_SE), h: LH, sx: LS, sz: LS }, ledgeParts);
   // the bridge's deck ends sit on the ledges (0.33 of its height = the ledge top), its posts just inside their edges
   const BY = LEDGE_TOP - 0.33 * BH;
   piece('bridge', 'plank_bridge', { x: mid[0], z: mid[1], yaw: LY + Math.PI / 2, modelYaw: LY, h: BH, y: BY }, [
@@ -592,18 +611,19 @@ rampW('silo-lean', 'top', LEANING_SILO.foot, LEANING_SILO.top, 1.2, { style: 'si
   ]);
 }
 
-// ---- the pen rock (round 10): stone ruin steps up onto a rock plateau (2.5 m) on ground the smaller pen gave
-// back, bridged north to the high plateau, which is bridged on to the hay loft: one high route from the pen
-// side over to the barn. The pen's hay stacks and the c10 outcrop are cover against it from the farmyard.
+// ---- the pen rock (round 10): a rock plateau (2.5 m) east of the pen, bridged north to the high plateau, which is
+// bridged on to the hay loft: one high route from the pen side over to the barn. Round 12: up a flight of wooden
+// farm stairs (wooden_stairs: treads rising toward -z from 0.08 to a 0.69 landing, a hand rail each side from 0.45
+// to 1.0) instead of the stone ruin steps, which belong to the magic land.
 export const PEN_ROCK = { x: 30, z: 8.8 };
 piece('pen-rock', 'rock_plateau', { x: PEN_ROCK.x, z: PEN_ROCK.z, yaw: 2.2, h: 2.66, sx: 1.4, sz: 1.4 }, [{ disc: 0.73, top: 0.94, style: 'rock' }]);
 {
-  const H = 2.5 / 0.62, r1 = 0.73 * 2.66 * 1.4, len = 1.123 * H;
-  piece('pen-rock-steps', 'ruin_steps', { x: PEN_ROCK.x, z: PEN_ROCK.z - r1 - len / 2 + 0.45, yaw: Math.PI, h: H, sx: 0.7 }, [
-    { name: 'treads', ramp: [-0.18, 0.21], lz: [0.56, -0.3], y: [0.03, 0.62], style: 'stone' },
-    { name: 'landing', box: [-0.18, 0.21, -0.56, -0.3], top: 0.62, style: 'stone' },
-    { name: 'wall-l', ramp: [-0.38, -0.18], lz: [0.5, -0.1], y: [0.5, 0.95], style: 'stone', wall: true },
-    { name: 'wall-r', ramp: [0.21, 0.4], lz: [0.5, -0.1], y: [0.36, 0.82], style: 'stone', wall: true },
+  const H = 2.5 / 0.69, r1 = 0.73 * 2.66 * 1.4, len = 1.51 * H;
+  piece('pen-rock-steps', 'wooden_stairs', { x: PEN_ROCK.x, z: PEN_ROCK.z - r1 - len / 2 + 0.6, yaw: Math.PI, h: H, sx: 0.75 }, [
+    { name: 'treads', ramp: [-0.25, 0.25], lz: [0.74, -0.2], y: [0.08, 0.69], style: 'wood' },
+    { name: 'landing', box: [-0.25, 0.25, -0.74, -0.2], top: 0.69, style: 'wood' },
+    { name: 'rail-l', ramp: [-0.37, -0.25], lz: [0.7, -0.7], y: [0.45, 1.0], style: 'rail', opts: { moveOnly: true } },
+    { name: 'rail-r', ramp: [0.25, 0.37], lz: [0.7, -0.7], y: [0.45, 1.0], style: 'rail', opts: { moveOnly: true } },
   ]);
   // the plank bridge north to the high plateau (2.5 -> 2.5)
   const to = [29, 18.5], d = Math.hypot(to[0] - PEN_ROCK.x, to[1] - PEN_ROCK.z), u = [(to[0] - PEN_ROCK.x) / d, (to[1] - PEN_ROCK.z) / d];
@@ -616,45 +636,20 @@ piece('pen-rock', 'rock_plateau', { x: PEN_ROCK.x, z: PEN_ROCK.z, yaw: 2.2, h: 2
   ]);
 }
 
-// ---- the canopy fort: three big oaks round a centre deck south-east of the altar, a deck round each trunk,
-// plank bridges to the centre, stairs up the south oak, ladders up the other two. The leaves block sight from
-// above (LOS_VOLUMES); low plank walls and crates on the decks are cover. Contested from below on all sides.
-export const LOS_VOLUMES = [];   // { x, z, r, y0, y1 }: blocks line of sight only (not movement, not spells)
-{
-  const F = FORT, C0 = [F.x, F.z];
-  boxW('fort', 'centre', F.x, F.z, 3.6, 3.6, 0, F.centre, { thick: 0.35, style: 'deck' });
-  wallW('fort', 'crate-a', F.x - 0.9, F.z + 0.9, 0.9, 0.9, 0.4, F.centre, 1.0, 'crate');
-  wallW('fort', 'crate-b', F.x + 1.0, F.z - 0.8, 0.9, 0.9, 0.9, F.centre, 1.0, 'crate');
-  F.bearings.forEach((b, i) => {
-    const u = [Math.sin(b * Math.PI / 180), Math.cos(b * Math.PI / 180)];
-    const t = TREES[TREES.length - F.bearings.length + i];
-    const yaw = Math.atan2(u[0], u[1]), half = 2.8;
-    boxW('fort', `oak${b}`, t.cx, t.cz, 2 * half, 2 * half, yaw, F.deck, { thick: 0.35, style: 'deck' });
-    // low plank wall along the outer edge (cover), leaving the corners open
-    wallW('fort', `oak${b}-wall`, t.cx + u[0] * (half - 0.12), t.cz + u[1] * (half - 0.12), 3.0, 0.24, yaw, F.deck, 1.0);
-    // the bridge from the centre deck's edge to this oak's inner edge
-    const tc = 1.8 / Math.max(Math.abs(u[0]), Math.abs(u[1]));
-    const a = [C0[0] + u[0] * (tc - 0.3), C0[1] + u[1] * (tc - 0.3), F.centre], e = [t.cx - u[0] * (half - 0.3), t.cz - u[1] * (half - 0.3), F.deck];
-    rampW('fort', `bridge${b}`, a, e, 1.3, { thick: 0.3, style: 'deck' });
-    railsW('fort', `bridge${b}`, a, e, 1.3);
-    // the way up from outside: stairs on the south oak, ladders on the others (from the outer edge, sideways)
-    const side = [u[1], -u[0]], edge = [t.cx + side[0] * half, t.cz + side[1] * half];
-    if (b === 180) rampW('fort', `stairs${b}`, [edge[0] + side[0] * 6.5, edge[1] + side[1] * 6.5, 0], [edge[0], edge[1], F.deck], 1.4, { style: 'stairs' });
-    else rampW('fort', `ladder${b}`, [edge[0] + side[0] * 1.0, edge[1] + side[1] * 1.0, 0], [edge[0], edge[1], F.deck], 0.9, { moveOnly: true, ladder: true, style: 'ladder' });
-    LOS_VOLUMES.push({ x: t.x, z: t.z, r: 0.45 * F.oakH, y0: 0.4 * F.oakH, y1: F.oakH });
-  });
-}
+// Line-of-sight-only volumes (foliage): { x, z, r, y0, y1 }. Empty since round 12 took out the canopy fort.
+export const LOS_VOLUMES = [];
 // Cover on the perches that had none: a boulder on each rock top, a broken-wall chunk on each ruin ledge's
-// altar-facing edge (never stood on; they stop spells).
+// altar-facing edge (never stood on; they stop spells). The chunks are pieces of their own ('<ledge>-wall'), so the
+// ledge's model replacing its stand-ins doesn't take their mesh with it (round 12: they were invisible).
 {
   for (const [id, dx, dz] of [['plateau-low', 0.8, 0.5], ['plateau-high', 1.2, 0.7], ['pen-rock', 1.0, 0.8]]) {
     const top = SURFACES.find(sf => sf.name === `${id}-0`);
     wallW(id, 'boulder', top.x + dx, top.z + dz, 1.0, 1.0, 0.5, top.top, 1.15, 'boulder');
   }
-  for (const id of ['ledge-a', 'ledge-b']) {
+  for (const id of ['ledge-a', 'ledge-b', 'ledge-c']) {
     const top = SURFACES.find(sf => sf.name === `${id}-top`), d = Math.hypot(ALTAR.x - top.x, ALTAR.z - top.z);
     const u = [(ALTAR.x - top.x) / d, (ALTAR.z - top.z) / d];
-    wallW(id, 'parapet', top.x + u[0] * 1.0, top.z + u[1] * 1.0, 1.8, 0.4, Math.atan2(u[1], -u[0]), top.top, 1.0, 'stone');
+    wallW(`${id}-wall`, 'parapet', top.x + u[0] * 1.0, top.z + u[1] * 1.0, 1.8, 0.4, Math.atan2(u[1], -u[0]), top.top, 1.0, 'parapet');
   }
 }
 // Does the segment a -> b ([x, y, z]) pass through foliage (LOS_VOLUMES)? For line-of-sight checks only.
@@ -671,59 +666,63 @@ export function losVolumeBlocks(a, b) {
   return false;
 }
 
-// ---- cover clusters on open ground (round 11): rock outcrops (Meshy rock_jagged) out in the meadow and the
-// blast site, hay and crate stacks in the farmyard. Twenty clusters, each at least 6 m from the next, set across
-// the longest ground sight lines. Each becomes colliders of kind 'cover' tagged with its cluster (goats route
-// round each cluster's box). type: hedge | wall | lowwall | hay | crates | rock (hedges and walls are unused).
+// ---- cover clusters on open ground (round 11): set across the longest ground sight lines, each at least 6 m from the
+// next. Each becomes colliders of kind 'cover' tagged with its cluster (goats route round each cluster's box).
+// Round 12 gave each the assets of its part of the map: round hay bales on the farm, blast rocks round the altar,
+// broken rune pillars in the magic land. type: hay | rock | pillar (hedge | wall | lowwall are unused).
 export const COVER_CLUSTERS = [
-  { id: 'c1', type: 'rock', pts: [[-18.1,4.9,2],[-19.3,5.8,2.7],[-20.8,6.2,2.4],[-22.2,6,1.8]] },
+  // the farm: round bales on end
+  { id: 'c1', type: 'hay', pts: [[-18.4,5.1],[-20.1,5.9],[-21.8,6.1]] },
   { id: 'c2', type: 'hay', pts: [[-5.6,8.9],[-6.4,7.1],[-4.6,7.4]] },
-  { id: 'c3', type: 'rock', pts: [[-19.8,-4.2,2],[-21.3,-3.9,2.7],[-22.8,-4.1,2.4],[-24,-4.9,1.8]] },
-  { id: 'c4', type: 'rock', pts: [[7,-4,2],[5.8,-4.9,2.7],[5,-6.2,2.4],[4.8,-7.6,1.8]] },   // clear of the goats' lane to the gate (z -2) and the fallen pillar's detour corner
-  { id: 'c5', type: 'crates', pts: [[4.5,11.4],[3.5,12.6],[4.7,13]] },
-  { id: 'c6', type: 'rock', pts: [[-19.9,20.6,2],[-21.4,20.3,2.7],[-22.7,19.6,2.4],[-23.5,18.4,1.8]] },
-  { id: 'c7', type: 'rock', pts: [[-5.5,-7,2.6],[-6.4,-8.8,2.2],[-4.8,-8.6,1.8]] },
-  { id: 'c8', type: 'rock', pts: [[-29.8,0,2],[-31.3,0.2,2.7],[-32.8,-0.2,2.4],[-33.9,-1.1,1.8]] },
+  { id: 'c5', type: 'hay', pts: [[4.5,11.4],[3.9,13]] },
+  { id: 'c6', type: 'hay', pts: [[-20.1,20.6],[-21.8,20.1],[-23.2,19]] },
   { id: 'c9', type: 'hay', pts: [[-3.3,17.4],[-4.7,18.6]] },
-  { id: 'c10', type: 'rock', pts: [[17.6,10.8,2],[16.2,10.4,2.7],[15,9.5,2.4],[14.2,8.3,1.8]] },
-  { id: 'c11', type: 'rock', pts: [[-17,-11.6,2.6],[-18.8,-12.3,2.2],[-17.5,-13.2,1.8]] },
-  { id: 'c12', type: 'rock', pts: [[-10.5,25.6,2],[-11.6,24.6,2.7],[-12.4,23.3,2.4],[-12.5,21.9,1.8]] },
-  { id: 'c13', type: 'rock', pts: [[28.4,-13.6,2],[27.4,-14.8,2.7],[26.8,-16.2,2.4],[26.8,-17.6,1.8]] },   // turned north-south: goats from the south-east corner get round it
-  { id: 'c14', type: 'rock', pts: [[-5.1,-28.3,2],[-5.5,-26.9,2.7],[-6.4,-25.6,2.4],[-7.6,-24.9,1.8]] },
-  { id: 'c15', type: 'rock', pts: [[-24.5,-19.5,2],[-25.4,-18.4,2.7],[-26.7,-17.6,2.4],[-28.1,-17.4,1.8]] },
-  { id: 'c16', type: 'rock', pts: [[5.8,-30.8,2],[4.5,-31.5,2.7],[3.5,-32.6,2.4],[3,-34,1.8]] },
-  { id: 'c17', type: 'rock', pts: [[35.3,3.7,2],[34.3,2.6,2.7],[33.7,1.3,2.4],[33.7,-0.2,1.8]] },
-  { id: 'c18', type: 'rock', pts: [[-27.9,11.7,2],[-29.3,12.1,2.7],[-30.8,11.9,2.4],[-32,11.2,1.8]] },
+  { id: 'c10', type: 'hay', pts: [[10.8,3.6],[12.4,4.2]] },   // between the yard and the felled silo, south of the pen gate path
+  { id: 'c12', type: 'hay', pts: [[-10.7,25.4],[-11.9,24.1],[-12.5,22.4]] },
+  { id: 'c18', type: 'hay', pts: [[-28.1,11.7],[-29.8,12],[-31.5,11.6]] },
+  { id: 'c8', type: 'hay', pts: [[-30,-0.1],[-31.7,0.1],[-33.4,-0.4]] },    // the old field's last bales, on the farm's west edge
+  { id: 'c17', type: 'hay', pts: [[35.1,3.4],[34.2,1.9],[33.9,0.2]] },      // past the pen rock's stairs
+  // the blast: jagged rocks round the altar
+  { id: 'c3', type: 'rock', pts: [[-19.8,-4.2,2],[-21.3,-3.9,2.7],[-22.8,-4.1,2.4],[-24,-4.9,1.8]] },
+  { id: 'c4', type: 'rock', pts: [[7,-4,2],[5.8,-4.9,2.7],[5,-6.2,2.4],[4.8,-7.6,1.8]] },
+  { id: 'c7', type: 'rock', pts: [[-5.5,-7,2.6],[-6.4,-8.8,2.2],[-4.8,-8.6,1.8]] },
   { id: 'h1', type: 'rock', pts: [[-4.3,1.4,2.5],[-5.8,2.1,2.1],[-3.2,2.4,1.6]] },   // hand-placed: the yard-to-altar crossing, either side of the path
   { id: 'h2', type: 'rock', pts: [[4.7,1.5,2.4],[6.2,0.9,2]] },
-];   // c*: /tmp/wa-environment/coverplace11.mjs against ground lines over 30 m, then gapfix.mjs (no 0-1 m snag gaps)
+  // the magic land: broken rune pillars, [x, z, height]
+  { id: 'c11', type: 'pillar', pts: [[-17.2,-11.7,5.2],[-18.4,-12.9,6]] },
+  { id: 'c13', type: 'pillar', pts: [[28.2,-13.8,5.4],[27.3,-15.1,6.2],[26.8,-16.6,4.8]] },
+  { id: 'c14', type: 'pillar', pts: [[-5.2,-28,5.6],[-5.7,-26.5,6.3],[-6.8,-25.4,5]] },
+  { id: 'c15', type: 'pillar', pts: [[-24.6,-19.4,5.4],[-25.8,-18.3,6.2],[-27.3,-17.6,4.9]] },
+  { id: 'c16', type: 'pillar', pts: [[5.6,-30.9,5.2],[4.3,-31.8,6],[3.4,-33.2,5.4]] },
+];   // positions: /tmp/wa-environment/coverplace11.mjs against ground lines over 30 m, then gapfix.mjs (no 0-1 m snag gaps)
 export const COVER_SPEC = {
   hedge:   { r: 0.55, h: 1.9, spacing: 0.7 },
   wall:    { r: 0.45, h: 1.8, spacing: 0.6 },
   lowwall: { r: 0.4,  h: 1.0, spacing: 0.6 },   // waist-high: you shoot over it, crouch behind it
   hay:     { r: 0.85, h: 1.7 },
-  crates:  { r: 0.7,  h: 1.7 },
   rock:    { r: 0.36, h: 1 },                    // pts are [x, z, height]: r scales with it
+  pillar:  { r: 0.75, h: 1 },                    // pts are [x, z, height]: rune_pillar.glb, the rubble at its foot inside r
 };
 export function coverColliders(cl) {
   const S = COVER_SPEC[cl.type], tag = { kind: 'cover', cluster: cl.id, type: cl.type };
   if (S.spacing) return cl.lines.flatMap(line => chain(line, S.spacing)).map(([x, z]) => ({ x, z, r: S.r, h: S.h, ...tag }));
   if (cl.type === 'rock') return cl.pts.map(([x, z, h]) => ({ x, z, r: S.r * h + 0.05, h: h * 0.95, ...tag }));
+  if (cl.type === 'pillar') return cl.pts.map(([x, z, h]) => ({ x, z, r: S.r, h: h * 0.9, ...tag }));
   return cl.pts.map(([x, z]) => ({ x, z, r: S.r, h: S.h, ...tag }));
 }
 
 // ------------------------------------------------------------ health potions (round 10)
 // Pickup spots for the spells side's healing flasks: on contested and high ground, every one at least 14 m from
-// any spawn point. Round 11 dropped the high plateau's (8 m from the loft's) to make room for an east spawn. [id, x, z]; `y` is the walkable top there (the canopy fort's deck is
-// CANOPY_DECK until its surfaces exist).
-export const CANOPY_DECK = 4.0;
+// any spawn point. Round 11 dropped the high plateau's (8 m from the loft's) to make room for an east spawn; round 12
+// moved the canopy fort's to the south-east ruin ledge. [id, x, z]; `y` is the walkable top there.
+const LEDGE_SE_TOP = SURFACES.find(sf => sf.name === 'ledge-c-top');
 export const HEAL_SPOTS = [
   ['bridge', -10.6, -9.8],        // the plank bridge's crest between the ruin ledges, over the altar's west side
-  ['canopy', 15, -16],            // the treetop fort's centre deck, south-east of the altar
+  ['ruin', LEDGE_SE_TOP.x, LEDGE_SE_TOP.z],   // the south-east ruin ledge's top, south-east of the altar
   ['loft', 21.2, 21],             // the hay loft by the barn
   ['plateau-low', 26.5, -22.5],   // the low rock plateau, south-east meadow
   ['tower', -32.8, -14.8],        // the watchtower deck
-].map(([id, x, z]) => ({ id, x, z, get y() { return surfaceHeight(x, z, 99) || (id === 'canopy' ? CANOPY_DECK : 0); } }));
+].map(([id, x, z]) => ({ id, x, z, get y() { return surfaceHeight(x, z, 99); } }));
 
 // Everything solid, as circles. Movement (players, bots, goats) collides with all of them;
 // projectiles pass over anything lower than their height (`h`); line-of-sight checks
@@ -747,14 +746,17 @@ export const COLLIDERS = [
   { x: WELL.x, z: WELL.z, r: WELL.r, h: WELL.h, kind: 'well' },
   ...CART_BLOCKS.map(([x, z]) => ({ x, z, r: 1.2, h: 2.0, kind: 'cart' })),
   ...ARCH_LEGS.map(([x, z]) => ({ x, z, r: 0.75, h: 7, kind: 'arch' })),
-  // the obelisk leans away from the altar: the stone over its foot, then higher up, farther out
-  ...[[0, 0.9, 2.2], [1.0, 0.7, 4.2], [1.6, 0.5, 5.4]].map(([k, r, h]) => ({ x: OBELISK.x + Math.sin(OBELISK.yaw) * k, z: OBELISK.z + Math.cos(OBELISK.yaw) * k, r, h, kind: 'obelisk' })),
+  // an obelisk leans along its yaw: the stone over its foot, then higher up, farther out (the first leans 0.3)
+  ...OBELISKS.flatMap(O => [[0, 0.9, 2.2], [1.0, 0.7, 4.2], [1.6, 0.5, 5.4]].map(([k, r, h]) => {
+    const kk = k * O.tilt / 0.3, hh = h * O.height / 6;
+    return { x: O.x + Math.sin(O.yaw) * kk, z: O.z + Math.cos(O.yaw) * kk, r, h: hh, kind: 'obelisk' };
+  })),
   ...TABLE_ROCKS.map(([x, z, yaw, h]) => { const [cx, cz] = place({ x, z, yaw }, [-0.25 * h / 1.2, 0]); return { x: cx, z: cz, r: 1.25 * h / 1.2, h, kind: 'rock' }; }),
   ...BLAST_STONES.map(([x, z, h, tilt]) => { const k = Math.sin(tilt) * h * 0.35, a = awayYaw(x, z); return { x: x + Math.sin(a) * k, z: z + Math.cos(a) * k, r: 0.33 * h + 0.05, h: h * Math.cos(tilt), kind: 'stone' }; }),
   { x: ALTAR.x, z: ALTAR.z, r: ALTAR.r, h: ALTAR.h, kind: 'altar' },
-  // fallen pillars: the stump, then the shaft lying beside it
-  ...FALLEN_PILLARS.flatMap(f => [{ x: f.x, z: f.z, r: 0.8, h: 1.2, kind: 'ruin' },
-    ...Array.from({ length: Math.ceil(f.len / 0.9) }, (_, i) => { const k = 1.2 + i * 0.9; return { x: f.x + Math.sin(f.yaw) * k, z: f.z + Math.cos(f.yaw) * k, r: 0.55, h: 1.0, kind: 'ruin' }; })]),
+  // fallen pillars: the rubble foot (0.42 of the length across, half buried), then the shaft lying away from it
+  ...FALLEN_PILLARS.flatMap(f => [{ x: f.x + Math.sin(f.yaw) * 0.45, z: f.z + Math.cos(f.yaw) * 0.45, r: 1.0, h: 1.7, kind: 'ruin' },
+    ...Array.from({ length: Math.ceil((f.len - 1.6) / 0.8) }, (_, i) => { const k = 1.6 + i * 0.8; return { x: f.x + Math.sin(f.yaw) * k, z: f.z + Math.cos(f.yaw) * k, r: 0.55, h: 1.1, kind: 'ruin' }; })]),
   ...HAY_STACKS.map(([x, z]) => ({ x, z, r: 0.85, h: 1.7, kind: 'hay' })),
   ...BARN_POSTS.map(([x, z]) => ({ x, z, r: 0.45, h: 4, kind: 'barn' })),
   ...SILO_BLOCKS.map(([x, z]) => ({ x, z, r: 1.8, h: 3.6, kind: 'silo' })),
@@ -769,7 +771,7 @@ export const BLAST_SHARDS = [];
   let seed = 23;
   const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
   const yard = (x, z) => (x / 13) ** 2 + ((z - 13) / 9) ** 2 < 1;
-  for (let n = 0, tries = 0; n < 26 && tries < 2000; tries++) {
+  for (let n = 0, tries = 0; n < 10 && tries < 2000; tries++) {   // 26 until round 12 (fewer rock_jagged)
     const deg = rnd() * 360, d = 6 + Math.pow(rnd(), 0.9) * 12, [x, z] = fromAltar(deg, d);
     const h = 0.45 + rnd() * 0.25 * (1.4 - d / 18), yaw = rnd() * 6.3, tilt = 0.35 + rnd() * 0.35;
     if (Math.hypot(x, z) > ARENA_RADIUS - 3 || yard(x, z) || inPen(x, z, -2.5) || (x < FIELD.x1 + 2 && z > FIELD.z0 - 2)) continue;
@@ -785,6 +787,27 @@ export const BLAST_SHARDS = [];
   }
   for (const [x, z, , h] of BLAST_SHARDS) COLLIDERS.push({ x, z, r: 0.25 * h + 0.05, h: h * 0.8, kind: 'stone' });
 }
+// Violet crystals grown out of the magic land (round 12): clusters knee to waist high.
+// Seeded like the shards. [x, z, yaw, size]; they block walking, spells fly over them.
+export const CRYSTALS = [];
+{
+  let seed = 57;
+  const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+  for (let n = 0, tries = 0; n < 14 && tries < 4000; tries++) {
+    const x = (rnd() * 2 - 1) * 36, z = -16 - rnd() * 22, size = 0.7 + rnd() * 0.5;
+    if (Math.hypot(x, z) > ARENA_RADIUS - 2.5 || Math.hypot(x - ALTAR.x, z - ALTAR.z) < BLAST_RADIUS + 1) continue;
+    if (Math.abs(x) < 2.4) continue;                                                        // the path south
+    if (COLLIDERS.some(c => Math.hypot(c.x - x, c.z - z) < c.r + 1.6)) continue;
+    if (CRYSTALS.some(([sx, sz]) => Math.hypot(sx - x, sz - z) < 4.5)) continue;
+    if (SURFACES.some(sf => { const c = Math.cos(sf.yaw || 0), n = Math.sin(sf.yaw || 0), dx = x - sf.x, dz = z - sf.z; return Math.abs(dx * c - dz * n) < sf.w / 2 + 1.4 && Math.abs(dx * n + dz * c) < sf.d / 2 + 1.4; })) continue;
+    if (PROP_SPAWNS.some(([, px, pz]) => Math.hypot(px - x, pz - z) < 1.6)) continue;
+    if (SPAWN_POINTS.some(([sx, , sz]) => Math.hypot(sx - x, sz - z) < 3)) continue;
+    if (HEAL_SPOTS.some(h => Math.hypot(h.x - x, h.z - z) < 2.5)) continue;
+    CRYSTALS.push([x, z, rnd() * 6.3, size]);
+    n++;
+  }
+  for (const [x, z, , s] of CRYSTALS) COLLIDERS.push({ x, z, r: 0.5 * s, h: 1.1 * s, kind: 'crystal' });
+}
 
 // Big solid pieces the goats walk around on their way home (world-space boxes around their colliders).
 const boxOf = (kind, near = null) => {
@@ -798,6 +821,7 @@ const PEN_HAY = (() => {
     ...PROP_SPAWNS.filter(([t, x, z]) => t === 'hay' && x > PEN.x0 - 3 && z > PEN.z0).map(([, x, z]) => ({ x, z, r: PROP_TYPES.hay.r }))];
   return { x0: Math.min(...cs.map(c => c.x - c.r)), x1: PEN.x0, z0: Math.min(...cs.map(c => c.z - c.r)), z1: Math.max(...cs.map(c => c.z + c.r)) };
 })();
-// Each fallen pillar is a low wall a goat can't step round, so it gets a box too.
+// Each fallen pillar is a low wall a goat can't step round, so it gets a box too (the obelisks' and archways'
+// circles are small enough to slide round).
 // (Platforms and ramps are routed round by their exact footprints in goats.js, not by boxes.)
 export const GOAT_DETOURS = [boxOf('barn'), boxOf('silo'), PEN_HAY, ...FALLEN_PILLARS.map(f => boxOf('ruin', f)), ...COVER_CLUSTERS.map(cl => boxOf('cover', cl))];   // each cover cluster too
