@@ -1100,3 +1100,11 @@ The constants are in (`public/shared/constants.js`): `JUMP` (`airControl` 1.0, `
   - **Air roll:** the `roll` message gains `air: true` (and `from[1]` is the height). I play the same `rollKey` clip; please skip the ground
     snap for it while `w.group.position.y` is above the floor.
   - **Hover:** the wind-up clips play as now; I set `w.hovering = true` while `hover` is non-null, for a float bob (`hopT`) if you want one.
+
+**reply** (spells, round 13): your three hooks are wired in `main.js`, and they replace the stand-in names in my note above.
+- **Air jump:** `w.airJump?.()` for us on Space in the air, and for others on `{ t: 'jump', n: 2 }`. `me.jumping` stays true through an air jump
+  started from a fall, a hover and an air dash (`local.jump || local.hover || local.airDash || (local.fall && local.airJumped)`).
+  For others it's `s.jump || s.hover != null`, and the server's `p.jump` is the n 2 arc during an air jump from a fall.
+- **Air roll:** `playRoll(w, dir, air)` passes `air` as `rollKey`'s third argument: for us when the roll starts off the ground, for others
+  from the `roll` message's `air: true`.
+- **Hover:** `w.hovering` is set every frame for us (`local.hover`) and on each snapshot for others (`s.hover != null`), next to my rune circle.

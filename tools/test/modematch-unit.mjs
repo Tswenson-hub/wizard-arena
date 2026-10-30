@@ -3,7 +3,8 @@
 // simulated clock): bot fill to 4, a human replacing a bot, a 5th human spectating until a place opens, first to 10,
 // the 8-minute cap, the results and the rematch with no vote, spawns farthest from enemies; plus the loadout rules
 // (constants.js sanitizeLoadout, presets, random loadouts, combos). Round 12 adds checks against the real server on port 4191
-// (WA_DEBUG debugPlace/debugProp): only Telekinesis lifts, Trapped Relic traps (triggers, 2 per caster, glyphs), Roll.
+// (WA_DEBUG debugPlace/debugProp): only Telekinesis lifts, Trapped Relic traps (triggers, 2 per caster, glyphs), Roll. Round 13 adds
+// the air jump, coyote time, casting on the move and in the air, the hover, and sprint-jump momentum in the speed budget.
 import { createMatch } from '../../server/match.js';
 import * as C from '../../public/shared/constants.js';
 
@@ -276,8 +277,156 @@ async function serverChecks() {
       ok(since(R, n, m => m.t === 'roll' && m.id === R.id).length === 1, `two charges, then wait (${ROLL.cooldown} s)`);
     }
     for (const c of [A, B, V, R]) c.ws.close();
+    await wait(300);
+    await agilityChecks(join, since, spots);
   } catch (e) { ok(false, `server checks: ${e.message}`); }
   finally { if (srv.exitCode === null) { srv.kill(); await new Promise(r => srv.once('exit', r)); } }   // (so a rerun can have the port)
+}
+
+// ---- round 13: the air jump, coyote time, casting on the move and in the air, the hover, sprint-jump momentum
+async function agilityChecks(join, since, spots) {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  // the arcs themselves: the air jump's apex is AIR_JUMP.height (about 1.2 m) above where it starts
+  {
+    let top = 0;
+    for (let e = 0; e < 1; e += 0.001) top = Math.max(top, C.jumpAt({ y0: C.JUMP.height, n: 2 }, e));
+    ok(Math.abs(top - C.JUMP.height - 1.2) < 0.02 && Math.abs(C.jumpApex({ y0: C.JUMP.height, n: 2 }) - 2.65) < 0.01,
+      `the air jump from the first apex peaks about 1.2 m higher (${top.toFixed(2)} m, 2.65 expected)`);
+  }
+  const J = await join('Jumper', { primary: 'spark', power: 'meteor', mobility: 'roll', utility: 'telekinesis' });
+  const F = await join('Floater', { primary: 'spark', power: 'frostfall', guard: 'firewall', ultimate: 'berserker_brew', utility: 'telekinesis' });
+  J.send({ t: 'matchDebug', size: 2 }); J.send({ t: 'removeBots' }); await wait(600);   // (no bots fill in to interfere)
+  const snap = (c) => c.msgs.filter(m => m.t === 'snap').pop()?.players.find(q => q.id === c.id);
+  const reset = async (c, x, z, yaw = 0) => { c.send({ t: 'debugPlace', p: [x, 0, z], yaw, resetCd: true }); await wait(120); };
+  // reports `p` (x, y, z) every 50 ms along a path: f(k) for k in 0..1 over `secs`
+  const walk = async (c, secs, f, extra = {}) => { const n = Math.max(1, Math.round(secs / 0.05)); for (let i = 1; i <= n; i++) { c.send({ t: 'state', p: f(i / n), yaw: 0, ...extra }); await wait(50); } };
+  const sx = spots[9]?.[0] ?? spots[0][0], sz = spots[9]?.[1] ?? spots[0][1];
+  const fx = spots[10]?.[0] ?? spots[1][0], fz = spots[10]?.[1] ?? spots[1][1];
+
+  // the air jump: once per airtime, refused a second time, back on landing
+  {
+    await reset(J, sx, sz);
+    J.send({ t: 'state', p: [sx, 0, sz], yaw: 0 }); await wait(80);
+    let n = J.msgs.length;
+    J.send({ t: 'jump', y0: 0 });
+    await walk(J, 0.2, k => [sx, 1.2 * k, sz]);
+    J.send({ t: 'jump', n: 2, y0: 1.2 }); await wait(100);
+    const aj = since(J, n, m => m.t === 'jump' && m.id === J.id && m.n === 2)[0];
+    ok(!!aj && Math.abs(aj.y0 - 1.2) < 0.01, `an air jump is accepted in a jump, broadcast with n: 2 and its height (${JSON.stringify(aj)})`);
+    await walk(J, 0.15, k => [sx, 1.2 + 1.2 * k, sz]); await wait(120);   // (the next snapshot)
+    ok(Math.abs(snap(J).p[1] - 2.4) < 0.06, `the server takes the air jump's height (${snap(J).p[1].toFixed(2)} m, 2.4 reported)`);
+    await walk(J, 0.1, () => [sx, 3.4, sz]); await wait(120);
+    ok(snap(J).p[1] <= 1.2 + C.AIR_JUMP.height + 0.21, `and no higher than its apex (${snap(J).p[1].toFixed(2)} m, 3.4 reported)`);
+    n = J.msgs.length;
+    J.send({ t: 'jump', n: 2, y0: 2.4 }); await wait(100);
+    ok(since(J, n, m => m.t === 'jumpRefused').length === 1 && !since(J, n, m => m.t === 'jump' && m.id === J.id).length,
+      `a second air jump in the same airtime is refused (${JSON.stringify(since(J, n, m => m.t === 'jumpRefused' || (m.t === 'jump' && m.id === J.id)))})`);
+    await walk(J, 0.4, k => [sx, 2.4 * (1 - k), sz]);   // down
+    await wait(100);
+    n = J.msgs.length;
+    J.send({ t: 'jump', y0: 0 }); await walk(J, 0.15, k => [sx, 1.0 * k, sz]);
+    J.send({ t: 'jump', n: 2, y0: 1.0 }); await wait(100);
+    ok(since(J, n, m => m.t === 'jump' && m.id === J.id && m.n === 2).length === 1, 'landing gives the air jump back');
+    await walk(J, 0.4, k => [sx, 1.0 * (1 - k), sz]); await wait(150);
+  }
+  // coyote time: a jump just after walking off an edge is a first jump; a moment later it's the air jump
+  {
+    let edge = null;
+    for (let x = -34; x <= 34 && !edge; x += 0.5) for (let z = -34; z <= 34 && !edge; z += 0.5) {
+      const top = C.surfaceTopAt(x, z);
+      if (top < 1.5 || top > 4 || Math.hypot(x, z) > C.ARENA_RADIUS - 4) continue;
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const ox = x + dx * 1.2, oz = z + dz * 1.2;
+        if (C.surfaceTopAt(ox, oz) < 0.05 && C.surfaceTopAt(x - dx * 0.8, z - dz * 0.8) >= top - 0.05 && C.COLLIDERS.every(c => Math.hypot(c.x - ox, c.z - oz) > c.r + 0.6)) { edge = { x, z, top, dx, dz }; break; }
+      }
+    }
+    ok(!!edge, `a ledge to walk off for the coyote test (${edge ? `${edge.x}, ${edge.z}, ${edge.top.toFixed(2)} m` : 'none'})`);
+    if (edge) {
+      const off = async () => {
+        J.send({ t: 'debugPlace', p: [edge.x - edge.dx * 0.5, edge.top, edge.z - edge.dz * 0.5], yaw: 0, resetCd: true }); await wait(120);
+        J.send({ t: 'state', p: [edge.x - edge.dx * 0.5, edge.top, edge.z - edge.dz * 0.5], yaw: 0 }); await wait(60);
+        J.send({ t: 'state', p: [edge.x + edge.dx * 0.9, edge.top - 0.05, edge.z + edge.dz * 0.9], yaw: 0 }); await wait(30);   // off the edge, starting to fall
+      };
+      await off();
+      let n = J.msgs.length;
+      J.send({ t: 'jump', y0: edge.top - 0.05 }); await wait(100);
+      const j = since(J, n, m => m.t === 'jump' && m.id === J.id)[0];
+      ok(!!j && !j.n, 'coyote time: a jump just after walking off an edge is the normal jump');
+      await walk(J, 0.6, k => [edge.x + edge.dx * 1.3, Math.max(0, edge.top - 0.05 - 3 * k), edge.z + edge.dz * 1.3]); await wait(200);
+      await off();
+      await walk(J, 0.25, k => [edge.x + edge.dx * 1.1, edge.top - 0.05 - 0.6 * k, edge.z + edge.dz * 1.1]);
+      n = J.msgs.length;
+      J.send({ t: 'jump', y0: edge.top - 0.65 }); await wait(100);
+      ok(since(J, n, m => m.t === 'jumpRefused').length === 1, 'past the grace, a plain jump in a fall is refused (the air jump it would be)');
+      J.send({ t: 'jump', n: 2, y0: edge.top - 0.7 }); await wait(100);
+      ok(since(J, n, m => m.t === 'jump' && m.id === J.id && m.n === 2).length === 1, 'and the air jump from a fall is accepted');
+      await walk(J, 0.6, k => [edge.x + edge.dx * 1.3, Math.max(0, edge.top - 0.7 - 3 * k), edge.z + edge.dz * 1.3]); await wait(200);
+    }
+  }
+  // casting on the move: a Spark while walking slows (60%), it doesn't root; a Meteor charge still roots
+  {
+    await reset(J, sx, sz);
+    J.send({ t: 'state', p: [sx, 0, sz], yaw: 0 }); await wait(400);   // (a full movement budget)
+    let n = J.msgs.length;
+    J.send({ t: 'cast', kind: 'fast', origin: [sx, 1.3, sz], dir: [0, 0, 1] });
+    await walk(J, 0.3, k => [sx, 0, sz + 0.54 * k]);   // 1.8 m/s: 60% of the walk
+    ok(since(J, n, m => m.t === 'proj' && m.owner === J.id).length === 1, 'a Spark cast while walking is accepted');
+    ok(Math.abs(snap(J).p[2] - (sz + 0.54)) < 0.05, `and the caster keeps moving at 60% through the cast (${(snap(J).p[2] - sz).toFixed(2)} of 0.54 m)`);
+    await reset(J, sx, sz); J.send({ t: 'state', p: [sx, 0, sz], yaw: 0 }); await wait(400);
+    J.send({ t: 'chargeStart' }); await wait(60);
+    await walk(J, 0.6, k => [sx, 0, sz + 1.8 * k]);
+    await wait(120);
+    ok(snap(J).p[2] - sz < 0.65, `a Meteor charge on the ground still roots (moved ${(snap(J).p[2] - sz).toFixed(2)} of 1.8 m)`);
+    await wait(900); J.send({ t: 'chargeRelease', origin: [sx, 1.3, sz], dir: [0, 0, 1] }); await wait(400);
+  }
+  // everything casts mid-jump: the primary, Frostfall, Firewall and an ultimate (which hangs in the air, then falls)
+  {
+    await reset(F, fx, fz); F.send({ t: 'state', p: [fx, 0, fz], yaw: 0 }); await wait(300);
+    const hop = async () => { F.send({ t: 'jump', y0: 0 }); await walk(F, 0.15, k => [fx, 1.0 * k, fz]); };
+    const land = async () => { await walk(F, 0.4, k => [fx, Math.max(0, 1.0 - 2 * k), fz]); await wait(150); };
+    let n = F.msgs.length;
+    await hop(); F.send({ t: 'cast', kind: 'fast', origin: [fx, 2.3, fz], dir: [0, 0, 1] }); await wait(100);
+    ok(since(F, n, m => m.t === 'proj' && m.owner === F.id).length === 1, 'a primary cast mid-jump is accepted');
+    await land(); n = F.msgs.length;
+    await hop(); F.send({ t: 'frostfall', at: [fx, fz + 8] }); await wait(100);
+    ok(since(F, n, m => m.t === 'frostfall' && m.owner === F.id).length === 1, 'Frostfall cast mid-jump is accepted');
+    await land(); n = F.msgs.length;
+    await hop(); F.send({ t: 'firewall', yaw: 0 }); await wait(100);
+    ok(since(F, n, m => m.t === 'firewall' && m.owner === F.id).length === 1, 'Firewall cast mid-jump is accepted');
+    await land();
+    F.send({ t: 'debugCharge' }); await wait(80); n = F.msgs.length;
+    await hop(); F.send({ t: 'ult' }); await wait(100);
+    ok(since(F, n, m => m.t === 'ultWindup' && m.id === F.id).length === 1, 'an ultimate cast mid-jump is accepted');
+    const hy = snap(F).hover;
+    await walk(F, 0.5, () => [fx, 1.0, fz]);
+    ok(hy != null && Math.abs(snap(F).p[1] - 1.0) < 0.05 && snap(F).hover != null, `its wind-up hangs the caster at that height (hover ${hy}, y ${snap(F).p[1].toFixed(2)})`);
+    await walk(F, 0.25, () => [fx, 1.6, fz]); await wait(120);
+    ok(snap(F).p[1] < 1.15, `no higher than where the hang began (${snap(F).p[1].toFixed(2)} m)`);
+    await walk(F, 0.75, () => [fx, 1.0, fz]);
+    await walk(F, 0.15, () => [fx, 1.0, fz]);
+    ok(snap(F).hover == null, 'the hang ends with the wind-up');
+    await walk(F, 0.4, k => [fx, 1.0 * (1 - k), fz]);
+    ok(snap(F).p[1] < 0.05, `then the caster falls (${snap(F).p[1].toFixed(2)} m)`);
+    await wait(150);
+  }
+  // the speed budget: a sprint-jump carries 5.5 m/s through the air; beyond that it's held back
+  {
+    await reset(J, sx, sz - 6); J.send({ t: 'state', p: [sx, 0, sz - 6], yaw: 0, sprint: true }); await wait(400);
+    let z = sz - 6;
+    await walk(J, 0.5, k => [sx, 0, z + 2.75 * k], { sprint: true }); z += 2.75;
+    J.send({ t: 'jump', y0: 0 });
+    const z0 = z;
+    await walk(J, 0.5, k => [sx, Math.max(0, C.jumpAt({ y0: 0, n: 1 }, 0.5 * k)), z0 + 2.75 * k]);   // no Shift: momentum only
+    z += 2.75; await wait(120);
+    ok(Math.abs(snap(J).p[2] - z) < 0.15, `a sprint-jump's 5.5 m/s is accepted in the air (server ${(snap(J).p[2] - z0).toFixed(2)} of 2.75 m)`);
+    await walk(J, 0.2, () => [sx, 0, z]); await wait(400);
+    await reset(J, sx, sz - 6); J.send({ t: 'state', p: [sx, 0, sz - 6], yaw: 0 }); await wait(400);
+    J.send({ t: 'jump', y0: 0 });
+    await walk(J, 0.5, k => [sx, Math.max(0, C.jumpAt({ y0: 0, n: 1 }, 0.5 * k)), sz - 6 + 4.5 * k]);   // 9 m/s, from a walk
+    await wait(120);
+    ok(snap(J).p[2] - (sz - 6) < 3.4, `a jump faster than it took off with is held back (server ${(snap(J).p[2] - (sz - 6)).toFixed(2)} of 4.5 m)`);
+  }
+  for (const c of [J, F]) c.ws.close();
 }
 
 console.log(fails ? `${fails} FAILED` : 'ALL PASS');
