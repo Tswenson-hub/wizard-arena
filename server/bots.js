@@ -206,6 +206,8 @@ function lowCoverToward(me, toward) {
   return null;
 }
 const cycloneWindingUp = (q) => q.cyclone && !q.cyclone.pulsed;
+// Round 13: Roll is a Utility (F) now; its charges' cooldown is cd.lift
+const rollReady = (me, t) => kit(me).utility === 'roll' && t >= me.cd.lift && !(me.flightUntil > t) && !rooted(me, t) && !(me.rollUntil > t);
 const mobilityReady = (me, t) => t >= me.cd.mobility && !(me.flightUntil > t) && !rooted(me, t);   // (round 13: in a jump too)
 const veiled = (q, t) => q.veilUntil > t;
 const veilReady = (me, t) => kit(me).guard === 'tempest_veil' && t >= me.cd.guard && !veiled(me, t);
@@ -507,7 +509,7 @@ function think(me, world, t) {
     if (K.mobility === 'mirror_step' && cfg.blinkDodge && mobilityReady(me, t) && Math.random() < 0.35 * cfg.dodge) return mirrorStep(me, away, act);
     if (K.mobility === 'blink' && cfg.blinkDodge && mobilityReady(me, t) && Math.random() < 0.35 * cfg.dodge) return blinkAway(me, away, act);
     if (K.mobility === 'smoke_screen' && mobilityReady(me, t) && Math.random() < 0.35 * Math.max(cfg.dodge, 0.5)) return smokeAway(me, away, act);
-    if (K.mobility === 'roll' && mobilityReady(me, t) && Math.random() < 0.3 * Math.max(cfg.dodge, 0.5)) return rollAway(me, away, act);
+    if (rollReady(me, t) && Math.random() < 0.3 * Math.max(cfg.dodge, 0.5)) return rollAway(me, away, act);
     if (canAirJump(me, t) && Math.random() < 0.3 * (cfg.airJump ?? 0)) return act({ t: 'jump', n: 2, y0: me.p[1] });   // round 13: up and away
     if (wallReady(me, t) && d > 3.5 && Math.random() < 0.4 * cfg.dodge) return raiseWall(me, target.p, act);
     if (K.mobility === 'ram_ride' && mobilityReady(me, t) && Math.random() < 0.35 * Math.max(cfg.dodge, 0.5)) return rideAway(me, away, act);
@@ -729,11 +731,12 @@ function reactToUltimates(me, world, t, act) {
   const run = C.speedOf() * cfg.speed * (me.slowUntil > t ? 1 - SKIM.slow : 1);
   const canMove = !rooted(me, t) && !isStunned(me, t);
   const mobOut = (dir) => {
-    if (!cfg.blinkDodge || !mobilityReady(me, t) || !canAct(me, t)) return false;
-    if (K.mobility === 'mirror_step') mirrorStep(me, dir, act);
+    if (!cfg.blinkDodge || !canAct(me, t)) return false;
+    if (rollReady(me, t)) rollAway(me, dir, act);   // (round 13: Roll is a Utility, ready apart from the mobility slot)
+    else if (!mobilityReady(me, t)) { if (canAirJump(me, t)) act({ t: 'jump', n: 2, y0: me.p[1] }); else return false; }
+    else if (K.mobility === 'mirror_step') mirrorStep(me, dir, act);
     else if (K.mobility === 'blink') blinkAway(me, dir, act);
     else if (K.mobility === 'smoke_screen') smokeAway(me, dir, act);
-    else if (K.mobility === 'roll') rollAway(me, dir, act);
     else if (canAirJump(me, t)) act({ t: 'jump', n: 2, y0: me.p[1] });   // round 13: no dash: at least the air jump's hop
     else return false;
     return true;
@@ -844,11 +847,11 @@ function reactToStampedes(me, world, t, act) {
       rec.mob = true;
       if (veilReady(me, t)) { act({ t: 'veil' }); continue; }
       if (K.mobility === 'skyward' && cfg.blinkDodge && mobilityReady(me, t)) { act({ t: 'skyward' }); continue; }
+      if (cfg.blinkDodge && rollReady(me, t) && canAct(me, t)) { rollAway(me, out, act); continue; }
       if (cfg.blinkDodge && mobilityReady(me, t) && canAct(me, t)) {
         if (K.mobility === 'blink') { blinkAway(me, out, act); continue; }
         if (K.mobility === 'mirror_step') { mirrorStep(me, out, act); continue; }
         if (K.mobility === 'smoke_screen') { smokeAway(me, out, act); continue; }
-        if (K.mobility === 'roll') { rollAway(me, out, act); continue; }
       }
     }
     if (rooted(me, t) || isStunned(me, t)) continue;
@@ -1025,7 +1028,7 @@ function respondGoat(me, world, g, vel, tc, t, act) {
   if (K.mobility === 'blink' && mobilityReady(me, t)) return blinkSideways(me, null, act, vel);
   if (K.mobility === 'mirror_step' && mobilityReady(me, t)) return mirrorStep(me, [-vel[2], 0, vel[0]], act);
   if (K.mobility === 'smoke_screen' && mobilityReady(me, t)) return smokeAway(me, [-vel[2] * b.strafe, 0, vel[0] * b.strafe], act);
-  if (K.mobility === 'roll' && mobilityReady(me, t) && tc < 0.5) return rollAway(me, [-vel[2] * b.strafe, 0, vel[0] * b.strafe], act);
+  if (rollReady(me, t) && tc < 0.5) return rollAway(me, [-vel[2] * b.strafe, 0, vel[0] * b.strafe], act);
   const l = Math.hypot(vel[0], vel[2]) || 1;
   b.dodgeVec = [-vel[2] / l * b.strafe, vel[0] / l * b.strafe];
   b.dodgeUntil = t + 0.6;
@@ -1243,7 +1246,6 @@ function evade(me, act, along) {
   if (K.mobility === 'skyward') return act({ t: 'skyward' });
   if (K.mobility === 'smoke_screen') return smokeAway(me, [-along[2] * me.bot.strafe, 0, along[0] * me.bot.strafe], act);
   if (K.mobility === 'mirror_step') return mirrorStep(me, [-along[2] * me.bot.strafe, 0, along[0] * me.bot.strafe], act);
-  if (K.mobility === 'roll') return rollAway(me, [-along[2] * me.bot.strafe, 0, along[0] * me.bot.strafe], act);
   blinkSideways(me, null, act, along);
 }
 
@@ -1303,7 +1305,7 @@ function respond(me, world, t, proj, th, act) {
   // ...so hop them: a jump in the last moment clears the shards (they fly about 0.3 m up)
   if (proj.kind === 'skim' && th.tc < 0.4 && th.tc > 0.08 && canJump(me, t) && Math.random() < (cfg.jump ?? 0)) return act({ t: 'jump' });
   // Roll: inside its 0.25 s dodge window the shot passes through (and the roll carries us off its line anyway)
-  if (K.mobility === 'roll' && mobilityReady(me, t) && th.tc < ROLL.immune && th.tc > 0.03 && Math.random() < 0.6 * cfg.dodge) return evade(me, act, proj.v);
+  if (rollReady(me, t) && th.tc < ROLL.immune && th.tc > 0.03 && Math.random() < 0.6 * cfg.dodge) return rollAway(me, [-proj.v[2] * b.strafe, 0, proj.v[0] * b.strafe], act);
   // Sparks, shards and thrown props: sidestep if there's time to clear the hit sphere, else ward.
   const clearTime = (C.HIT_RADIUS + proj.radius - th.miss + 0.3) / (C.speedOf() * cfg.speed);
   // Black Death heals on every block: when hurt, Vesper would rather soak it than dodge

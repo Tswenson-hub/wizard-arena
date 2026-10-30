@@ -1108,3 +1108,6 @@ The constants are in (`public/shared/constants.js`): `JUMP` (`airControl` 1.0, `
 - **Air roll:** `playRoll(w, dir, air)` passes `air` as `rollKey`'s third argument: for us when the roll starts off the ground, for others
   from the `roll` message's `air: true`.
 - **Hover:** `w.hovering` is set every frame for us (`local.hover`) and on each snapshot for others (`s.hover != null`), next to my rune circle.
+
+## spells → characters: Roll moved from Mobility (E) to Utility (F) (Ty, round 13)
+The roll animation keys (`roll`, `roll_back`, `roll_left`, `roll_right`, the `roll_air*` flips, `rollKey`) are unchanged; only the slot moved, so the builder's E and F rows follow `SPELL_POOL` (Utility: Telekinesis, Trapped Relic, Roll; Mobility: the other 6).

@@ -52,6 +52,14 @@ const bots = () => fighters().filter(p => p.bot);
   ok(C.LOADOUT_SLOTS.every(s => C.SPELL_POOL[s].every(id => C.spellInfo(id)?.element && C.ELEMENTS[C.spellInfo(id).element])), 'every pickable spell has card data and an element');
   const lashLo = { ...L, power: 'sanguine_lash', guard: 'black_death' };
   ok(C.hasCombo(lashLo, 'blood_lash') && !C.hasCombo({ ...lashLo, guard: 'ward' }, 'blood_lash'), 'a combo needs both spells equipped');
+  // round 13: Roll is a Utility (F) now; an old loadout with it in mobility moves it to a free utility slot, else drops it
+  ok(C.SPELLBOOK.roll.slot === 'utility' && C.SPELL_POOL.utility.includes('roll') && !C.SPELL_POOL.mobility.includes('roll') && C.SPELL_POOL.mobility.length === 6,
+    `Roll is in the Utility pool, Mobility has its other 6 (${C.SPELL_POOL.utility.join(', ')})`);
+  const old = C.sanitizeLoadout({ ...L, mobility: 'roll' });
+  ok(old && old.mobility === L.mobility && old.utility === L.utility, 'an old loadout with Roll in mobility gets the default mobility (its utility kept)');
+  const oldFree = C.sanitizeLoadout({ ...L, mobility: 'roll', utility: undefined });
+  ok(oldFree && oldFree.utility === 'roll' && oldFree.mobility === L.mobility, 'and keeps Roll in utility when that slot is free');
+  ok(C.sanitizeLoadout({ ...L, utility: 'roll' })?.utility === 'roll' && C.sanitizeLoadout({ ...L, mobility: 'blink', utility: 'roll' }) !== null, 'Roll in utility is valid');
   ok(C.combosWith('berserker_brew').length === 2 && C.spellInfo('berserker_brew').tags.includes('Combo'), 'Brew carries the Combo tag (two partners)');
   ok(C.dominantElement(C.PRESETS[0].loadout) === 'fire' && C.dominantElement({ ...L, primary: 'spark', guard: 'ward', utility: 'telekinesis', power: 'cyclone', mobility: 'blink', ultimate: 'eye_of_storm' }) === 'wind', 'the dominant element follows the mix (arcane only when nothing else)');
 }
@@ -163,7 +171,7 @@ async function serverChecks() {
     };
     const since = (c, n, pred) => c.msgs.slice(n).filter(pred);
     const A = await join('Relic', { utility: 'trapped_relic' }), B = await join('Tk', { utility: 'telekinesis' });
-    const V = await join('Victim', { utility: 'telekinesis' }), R = await join('Roller', { mobility: 'roll', utility: 'telekinesis' });
+    const V = await join('Victim', { utility: 'telekinesis' }), R = await join('Roller', { utility: 'roll' });
     A.send({ t: 'matchDebug', size: 4, warmup: 1 }); A.send({ t: 'removeBots' });
     await wait(1500);
     const place = (c, p, yaw = 0) => c.send({ t: 'debugPlace', p: [p[0], 0, p[1]], yaw });
@@ -293,7 +301,7 @@ async function agilityChecks(join, since, spots) {
     ok(Math.abs(top - C.JUMP.height - 1.2) < 0.02 && Math.abs(C.jumpApex({ y0: C.JUMP.height, n: 2 }) - 2.65) < 0.01,
       `the air jump from the first apex peaks about 1.2 m higher (${top.toFixed(2)} m, 2.65 expected)`);
   }
-  const J = await join('Jumper', { primary: 'spark', power: 'meteor', mobility: 'roll', utility: 'telekinesis' });
+  const J = await join('Jumper', { primary: 'spark', power: 'meteor', mobility: 'blink', utility: 'telekinesis' });
   const F = await join('Floater', { primary: 'spark', power: 'frostfall', guard: 'firewall', ultimate: 'berserker_brew', utility: 'telekinesis' });
   J.send({ t: 'matchDebug', size: 2 }); J.send({ t: 'removeBots' }); await wait(600);   // (no bots fill in to interfere)
   const snap = (c) => c.msgs.filter(m => m.t === 'snap').pop()?.players.find(q => q.id === c.id);

@@ -51,8 +51,7 @@ const ui = {
   soundInd: $('#soundInd'), botDiff: $('#botDiff'), botTally: $('#botTally'), volume: $('#volume'), mute: $('#mute'),
   pickNote: $('#pickNote'),
   ammo: [...document.querySelectorAll('#abilities [data-ab="fast"] .ammo i')],
-  rollPips: [...document.querySelectorAll('#abilities [data-ab="mobility"] .ammo i')],   // Roll's charges
-  trapPips: [...document.querySelectorAll('#abilities [data-ab="throw"] .ammo i')],      // Trapped Relic's armed traps
+  fPips: [...document.querySelectorAll('#abilities [data-ab="throw"] .ammo i')],   // Roll's charges, or Trapped Relic's armed traps
   ab: Object.fromEntries([...document.querySelectorAll('.ab')].map(el => [el.dataset.ab, el])),
   ultFg: $('#abilities .ult .fg'), ultPct: $('#abilities .ult .pct'),
 };
@@ -1927,21 +1926,6 @@ function updateLocal(dt) {
           local.ride = rideTimes();
           net.send({ t: 'ride', yaw: local.yaw });
         }
-      } else if (K.mobility === 'roll') {
-        // along the movement keys, backwards if none; two charges, and no root: we keep crouching or sprinting after
-        if (now >= local.rollUntil) {
-          const d = (mx || mz) ? tmp.v3.set(0, 0, 0).addScaledVector(fwd, mz).addScaledVector(right, mx).normalize() : tmp.v3.set(-Math.sin(local.yaw), 0, -Math.cos(local.yaw));
-          local.rollCharges ??= Array(ROLL.charges).fill(0);
-          local.rollCharges[local.rollCharges.indexOf(Math.min(...local.rollCharges))] = now + ROLL.cooldown;
-          local.cd.mobility = Math.min(...local.rollCharges);
-          local.rollUntil = now + ROLL.dashTime;
-          local.dash = { start: now, time: ROLL.dashTime, dist: ROLL.distance };
-          lastDashDir = [d.x, d.z];
-          net.send({ t: 'roll', dir: [d.x, 0, d.z], yaw: local.yaw, from: [local.pos.x, local.pos.y, local.pos.z] });
-          const air = startAirDash(ROLL.dashTime);   // round 13: in the air, a flipping air-dodge at this height
-          playRoll(me, [d.x, d.z], air);
-          if (!air) effects.dust([local.pos.x, local.pos.y, local.pos.z], 3);
-        }
       } else if (K.mobility === 'mirror_step') {
         // along the movement keys, forward if none; the server picks which of the three paths is us
         const d = (mx || mz) ? tmp.v3.set(0, 0, 0).addScaledVector(fwd, mz).addScaledVector(right, mx).normalize() : fwd;
@@ -1952,7 +1936,24 @@ function updateLocal(dt) {
     }
     // utility: Telekinesis lifts, hurls and sets down (props and goats); Trapped Relic only curses (F on an object, RELIC.hold)
     const relic = K.utility === 'trapped_relic';
-    if (input.justPressed('KeyF')) {
+    // round 13 (Ty): Roll is a Utility on F: along the movement keys, backwards if none; two charges (their cooldown is the
+    // F slot's, liftCdUntil), and no root: we keep crouching or sprinting after
+    if (input.justPressed('KeyF') && K.utility === 'roll') {
+      if (now >= local.rollUntil && now >= local.liftCdUntil && !rooted && !busy) {
+        const d = (mx || mz) ? tmp.v3.set(0, 0, 0).addScaledVector(fwd, mz).addScaledVector(right, mx).normalize() : tmp.v3.set(-Math.sin(local.yaw), 0, -Math.cos(local.yaw));
+        local.rollCharges ??= Array(ROLL.charges).fill(0);
+        local.rollCharges[local.rollCharges.indexOf(Math.min(...local.rollCharges))] = now + ROLL.cooldown;
+        local.liftCdUntil = Math.min(...local.rollCharges);
+        local.rollUntil = now + ROLL.dashTime;
+        local.dash = { start: now, time: ROLL.dashTime, dist: ROLL.distance };
+        lastDashDir = [d.x, d.z];
+        net.send({ t: 'roll', dir: [d.x, 0, d.z], yaw: local.yaw, from: [local.pos.x, local.pos.y, local.pos.z] });
+        const air = startAirDash(ROLL.dashTime);   // round 13: in the air, a flipping air-dodge at this height
+        playRoll(me, [d.x, d.z], air);
+        if (!air) effects.dust([local.pos.x, local.pos.y, local.pos.z], 3);
+        if (local.blocking) local.blocking = false;
+      }
+    } else if (input.justPressed('KeyF')) {
       if (me.carryingGoat) {
         // hurl the goat: like a prop, toward what the crosshair is on
         if (now >= local.cd.throw) {
@@ -2331,11 +2332,11 @@ function updateHud(dt) {
   ui.ab.power.style.setProperty('--whip', whipK.toFixed(3));
   ui.ab.power.classList.toggle('whip', whipK > 0);
   cdFill('mobility', local.cd.mobility, SPELL[K.mobility].cooldown);
-  // Roll's charges and Trapped Relic's armed traps, as pips under their slots
-  const rolls = K.mobility === 'roll' ? (local.rollCharges || [0, 0]).filter(c => c <= now).length : -1;
-  ui.rollPips.forEach((el, i) => { el.style.display = rolls >= 0 && i < ROLL.charges ? '' : 'none'; el.classList.toggle('full', i < rolls); });
+  // pips under F: Roll's charges (round 13: a Utility now), or Trapped Relic's armed traps
+  const rolls = K.utility === 'roll' ? (local.rollCharges || [0, 0]).filter(c => c <= now).length : -1;
   const traps = K.utility === 'trapped_relic' ? [...cursedProps].filter(id => props.get(id)?.data.state === 'idle').length : -1;
-  ui.trapPips.forEach((el, i) => { el.style.display = traps >= 0 && i < RELIC.traps ? '' : 'none'; el.classList.toggle('full', i < traps); el.classList.toggle('trap', true); });
+  const pips = rolls >= 0 ? [rolls, ROLL.charges] : traps >= 0 ? [traps, RELIC.traps] : [-1, 0];
+  ui.fPips.forEach((el, i) => { el.style.display = pips[0] >= 0 && i < pips[1] ? '' : 'none'; el.classList.toggle('full', i < pips[0]); el.classList.toggle('trap', traps >= 0); });
   cdFill('block', local.cd.guard, SPELL[K.guard].cooldown);
   if (!me.carrying && !me.carryingGoat && now < local.liftCdUntil) cdFill('throw', local.liftCdUntil, SPELL[K.utility].liftCooldown);   // lift cooldown
   else cdFill('throw', local.cd.throw, C.THROW_COOLDOWN);
@@ -2380,7 +2381,7 @@ function updateHud(dt) {
 
   // hint
   let hint = '';
-  tkHover = !me.dead && !holdingNow ? tkTarget() : null;
+  tkHover = !me.dead && !holdingNow && K.utility !== 'roll' ? tkTarget() : null;   // (Roll: no lift, no curse)
   if (tkHover?.goat) {
     const gp = tkHover.goat.group.position;
     tkMarker.visible = true;

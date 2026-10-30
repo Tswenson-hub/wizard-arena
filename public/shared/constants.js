@@ -474,15 +474,6 @@ export const SPELLBOOK = {
     decoyTime: 2.5,      // decoys run this long at run speed, then fade
     cooldown: 7,
   },
-  roll: {
-    id: 'roll', slot: 'mobility', name: 'Roll', short: 'Roll',
-    blurb: 'Roll 4.5 m the way you are moving (backwards if standing still). Projectiles pass through you for the first 0.25 s; area damage still lands. 2 charges.',
-    distance: 4.5,
-    dashTime: 0.35,      // a fast dash, not a teleport: it collides and steps up like walking
-    immune: 0.25,        // from the start of the roll: projectiles pass through (areas, beams and rams still hit)
-    charges: 2,          // each charge refills `cooldown` after it was spent
-    cooldown: 3.5,
-  },
   smoke_screen: {
     id: 'smoke_screen', slot: 'mobility', name: 'Smoke Screen', short: 'Smoke',
     blurb: 'Leap 6.5 m backwards, leaving a cloud of smoke for 5 s. Nobody outside can see who is inside it.',
@@ -563,6 +554,16 @@ export const SPELLBOOK = {
     staminaCost: 40,     // a ward facing the blast blocks it
     cooldown: 3,
     liftCooldown: 3,     // after each curse (p.cd.lift)
+  },
+  roll: {
+    id: 'roll', slot: 'utility', name: 'Roll', short: 'Roll',   // round 13 (Ty): a Utility (F), no longer Mobility
+    blurb: 'Roll 4.5 m the way you are moving (backwards if standing still). Projectiles pass through you for the first 0.25 s; area damage still lands. 2 charges.',
+    distance: 4.5,
+    dashTime: 0.35,      // a fast dash, not a teleport: it collides and steps up like walking
+    immune: 0.25,        // from the start of the roll: projectiles pass through (areas, beams and rams still hit)
+    charges: 2,          // each charge refills `cooldown` after it was spent
+    cooldown: 3.5,
+    liftCooldown: 3.5,   // (the F slot's cooldown: each charge's refill)
   },
 
   // ---- ultimates (Q). `ult: true` hits never charge the ultimate. Each one cannot be cancelled once cast.
@@ -894,11 +895,11 @@ export const SPELL_INFO = {
   skyward:       { element: 'ice',    tags: ['Dash'], damage: '', cooldown: S_(6), range: M_(7), windup: '', duration: 'float 2.8 s' },
   mirror_step:   { element: 'dark',   tags: ['Dash'], damage: '', cooldown: S_(7), range: M_(7), windup: '', duration: 'decoys 2.5 s' },
   ram_ride:      { element: 'earth',  tags: ['Dash', 'Summon'], damage: `${D(15)}`, cooldown: S_(8), range: M_(20), windup: S_(0.4) },
-  roll:          { element: 'arcane', tags: ['Mobility', 'Dodge'], damage: '', cooldown: '3.5 s × 2', range: M_(4.5), windup: '', duration: 'dodge 0.25 s' },
   flask_step:    { element: 'acid',   tags: ['Teleport', 'Lob', 'Wind-up'], damage: '', cooldown: S_(8), range: M_(16), windup: S_(0.6) },
   // utility (F)
   telekinesis:   { element: 'arcane', tags: ['Knockdown'], damage: `${D(22)}`, cooldown: S_(3), range: M_(16), windup: '' },
   trapped_relic: { element: 'dark',   tags: ['Area', 'Stuns'], damage: `trap ${D(45)}`, cooldown: S_(3), range: M_(16), windup: '', duration: '2 traps' },
+  roll:          { element: 'arcane', tags: ['Dash', 'Dodge'], damage: '', cooldown: '3.5 s × 2', range: M_(4.5), windup: '', duration: 'dodge 0.25 s' },
   // ultimates (Q, charged)
   meteor_rain:   { element: 'fire',   tags: ['Area', 'Wind-up'], damage: 'kill', cooldown: 'charge', range: M_(24), windup: S_(1.3) },
   eye_of_storm:  { element: 'wind',   tags: ['Area', 'Channel', 'Wind-up'], damage: `${D(8)} / 0.5 s`, cooldown: 'charge', range: M_(7), windup: S_(1.3), duration: S_(3) },
@@ -946,6 +947,12 @@ export const DEFAULT_LOADOUT = { ...WIZARDS[DEFAULT_WIZARD].kit };
 // Nothing is filled in or guessed: a bogus loadout is rejected as a whole.
 export function sanitizeLoadout(x) {
   if (!x || typeof x !== 'object' || Array.isArray(x)) return null;
+  // round 13: Roll moved from Mobility (E) to Utility (F). An old loadout with it in mobility keeps it in utility if that
+  // slot is free, and gets the default mobility spell.
+  if (x.mobility === 'roll') {
+    x = { ...x, mobility: DEFAULT_LOADOUT.mobility };
+    if (!SPELL_POOL.utility.includes(x.utility)) x.utility = 'roll';
+  }
   const out = {};
   for (const slot of LOADOUT_SLOTS) {
     const id = x[slot];

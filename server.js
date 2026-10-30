@@ -1958,14 +1958,15 @@ function handle(p, msg) {
       // Roll (round 12): a quick dash along the movement keys (backwards with none). The client moves itself, colliding and
       // stepping up like walking; the server lets it go that fast. For the first ROLL.immune s projectiles pass through
       // (areas still land). Two charges, each back ROLL.cooldown after it was spent. It doesn't root or end crouch or sprint.
-      if (kit(p).mobility !== 'roll' || !canAct(p) || isRooted(p) || p.charging || p.cyclone || p.lash || t < p.cd.mobility || t < (p.rollUntil || 0)) break;
+      // (round 13: a Utility, on F; its charges' cooldown is the F slot's, cd.lift)
+      if (kit(p).utility !== 'roll' || !canAct(p) || isRooted(p) || p.charging || p.cyclone || p.lash || t < p.cd.lift || t < (p.rollUntil || 0)) break;
       const dl = validVec(msg.dir) ? Math.hypot(msg.dir[0], msg.dir[2]) : 0;
       const yaw = Number.isFinite(msg.yaw) ? msg.yaw : p.yaw;
       const dir = dl > 0.01 ? [msg.dir[0] / dl, 0, msg.dir[2] / dl] : [-Math.sin(yaw), 0, -Math.cos(yaw)];
       p.rollCharges ??= Array(ROLL.charges).fill(0);
       const i = p.rollCharges.indexOf(Math.min(...p.rollCharges));
       p.rollCharges[i] = t + ROLL.cooldown;
-      p.cd.mobility = Math.min(...p.rollCharges);
+      p.cd.lift = Math.min(...p.rollCharges);
       p.rollUntil = t + ROLL.dashTime; p.rollImmuneUntil = t + ROLL.immune;
       const airY = airDash(p, t, msg.from?.[1], ROLL.dashTime);   // round 13: in the air, a flipping air-dodge at that height
       p.dashUntil = t + ROLL.dashTime + 0.35; p.dashSpeed = ROLL.distance / ROLL.dashTime;
