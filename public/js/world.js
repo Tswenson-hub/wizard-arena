@@ -30,6 +30,91 @@ export function groundHeight(x, z) {
 const shadowy = (o) => { o.traverse(m => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } }); return o; };
 const box = (w, h, d, material, x = 0, y = 0, z = 0) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material); m.position.set(x, y, z); return m; };
 const cyl = (rt, rb, h, seg, material, x = 0, y = 0, z = 0) => { const m = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg), material); m.position.set(x, y, z); return m; };
+// ------------------------------------------------------------ ground textures (Ty's tileable grass and dirt)
+// Sampled in world space: the grass 5 m to a tile, plus a second sample turned 34° at 13 m and low-frequency colour
+// variation so the tiling doesn't show; the magic land (z below -13) fades violet like the grass tufts. The dirt's
+// ruts run along each path (its strip's v), and its edges fade out raggedly.
+const GROUND_TEX = {};
+function groundTexture(name) {
+  if (GROUND_TEX[name]) return GROUND_TEX[name];
+  const t = new THREE.TextureLoader().load(`/textures/ground/${name}.webp`);
+  t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8;
+  return (GROUND_TEX[name] = t);
+}
+const NOISE_GLSL = `
+  float gHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+  float gNoise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(gHash(i), gHash(i + vec2(1, 0)), f.x), mix(gHash(i + vec2(0, 1)), gHash(i + vec2(1, 1)), f.x), f.y); }`;
+function worldPosVarying(sh) {
+  sh.vertexShader = sh.vertexShader.replace('void main() {', 'varying vec3 vGPos;\nvoid main() {')
+    .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\n  vGPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+}
+export const GROUND_LOOK = { grassTile: 5, grassTile2: 13, tint: [0.8, 0.86, 0.72] };
+function grassGround() {
+  const m = new THREE.MeshStandardMaterial({ map: groundTexture('grass'), roughness: 0.95, metalness: 0 });
+  m.onBeforeCompile = (sh) => {
+    worldPosVarying(sh);
+    const [tr, tg, tb] = GROUND_LOOK.tint;
+    sh.fragmentShader = sh.fragmentShader.replace('void main() {', `varying vec3 vGPos;${NOISE_GLSL}\nvoid main() {`)
+      .replace('#include <map_fragment>', `
+        vec2 gp = vGPos.xz;
+        vec3 g1 = texture2D(map, gp / ${GROUND_LOOK.grassTile.toFixed(1)}).rgb;
+        vec2 q = mat2(0.829, -0.559, 0.559, 0.829) * gp / ${GROUND_LOOK.grassTile2.toFixed(1)} + vec2(0.37, 0.71);
+        vec3 g2 = texture2D(map, q).rgb;
+        float n1 = gNoise(gp * 0.045), n2 = gNoise(gp * 0.13 + 7.3);
+        vec3 g = mix(g1, g2, 0.25 + 0.35 * n1);
+        g *= vec3(${tr}, ${tg}, ${tb}) * mix(vec3(0.86, 0.95, 0.82), vec3(1.06, 1.02, 1.08), n2);   // patches: drier, lusher
+        float magic = clamp((-13.0 - gp.y) / 7.0, 0.0, 1.0);
+        float lum = dot(g, vec3(0.3, 0.59, 0.11));
+        g = mix(vec3(lum), g, 0.82);                                     // a little less saturated than the raw tile
+        magic *= 1.0 - smoothstep(${(C.ARENA_RADIUS + 2).toFixed(1)}, ${(C.ARENA_RADIUS + 12).toFixed(1)}, length(gp));   // the arena's south, not the hills
+        g = mix(g, lum * vec3(1.12, 0.88, 1.4), magic * 0.4);
+        diffuseColor.rgb *= g;`);
+  };
+  return m;
+}
+// kind 'yard': world-space dirt with its edge faded by distance from the yard's ellipse; kind 'path': UVs along the strip
+function dirtGround(kind, layer) {
+  const m = new THREE.MeshStandardMaterial({ map: groundTexture('dirt_path'), roughness: 1, metalness: 0, transparent: true, depthWrite: false,
+    polygonOffset: true, polygonOffsetFactor: -layer, polygonOffsetUnits: -layer * 4 });
+  m.customProgramCacheKey = () => `dirt-${kind}`;   // the two kinds compile differently from the same function
+  m.onBeforeCompile = (sh) => {
+    worldPosVarying(sh);
+    const body = kind === 'yard' ? `
+        vec2 gp = vGPos.xz;
+        vec3 d1 = texture2D(map, gp / 4.0).rgb, d2 = texture2D(map, vec2(gp.y, -gp.x) / 6.5 + 0.3).rgb;
+        vec3 d = mix(d1, d2, 0.5);
+        float e = length((gp - vec2(0.0, 13.0)) / vec2(12.5, 8.5)) + (gNoise(gp * 0.9) - 0.5) * 0.12;
+        float a = 1.0 - smoothstep(0.9, 1.06, e);` : `
+        vec3 d = texture2D(map, vMapUv).rgb;
+        float across = abs(vUv.x - 0.5) * 2.0;                          // 0 in the middle, 1 at the strip's sides
+        float ends = min(vUv.y, 1.0 - vUv.y) * vEnd;                    // metres from the nearer end
+        float a = (1.0 - smoothstep(0.62, 0.98, across + (gNoise(vGPos.xz * 1.3) - 0.5) * 0.3)) * smoothstep(0.0, 0.8, ends);`;
+    sh.fragmentShader = sh.fragmentShader.replace('void main() {', `varying vec3 vGPos;${kind === 'path' ? '\nvarying vec2 vUv;\nvarying float vEnd;' : ''}${NOISE_GLSL}\nvoid main() {`)
+      .replace('#include <map_fragment>', body + `
+        d *= mix(vec3(0.9, 0.9, 0.88), vec3(1.05, 1.02, 1.0), gNoise(vGPos.xz * 0.11));
+        diffuseColor.rgb *= d; diffuseColor.a *= a;`);
+    if (kind === 'path') {
+      sh.vertexShader = sh.vertexShader.replace('void main() {', 'attribute vec2 uvRaw;\nattribute float endLen;\nvarying vec2 vUv;\nvarying float vEnd;\nvoid main() {\n  vUv = uvRaw; vEnd = endLen;');
+    }
+  };
+  return m;
+}
+// A path strip from a to b, `w` wide: 1.3 w drawn so its ragged edge fades out past the old edge; one texture tile across
+// (the two ruts about 0.5 of the width apart), as many along it as keep the dirt square, the ruts along the path.
+function dirtStrip(a, b, w, material) {
+  const len = Math.hypot(b[0] - a[0], b[1] - a[1]), W = w * 1.3;
+  const geo = new THREE.PlaneGeometry(W, len + 1.2).rotateX(-Math.PI / 2);
+  const uv = geo.attributes.uv, raw = new Float32Array(uv.array), along = (len + 1.2) / W;
+  for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i), uv.getY(i) * along);
+  geo.setAttribute('uvRaw', new THREE.BufferAttribute(raw, 2));
+  geo.setAttribute('endLen', new THREE.BufferAttribute(new Float32Array(uv.count).fill(len + 1.2), 1));
+  const m = new THREE.Mesh(geo, material);
+  m.position.set((a[0] + b[0]) / 2, 0.05, (a[1] + b[1]) / 2);
+  m.rotation.y = Math.atan2(b[0] - a[0], b[1] - a[1]);
+  m.receiveShadow = true;
+  return m;
+}
 // A flat ground rectangle from (x0, z0) to (x1, z1).
 function groundRect(x0, z0, x1, z1, material) {
   const m = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0, z1 - z0).rotateX(-Math.PI / 2), material);
@@ -99,31 +184,29 @@ export function buildWorld(scene) {
     }
     groundGeo.computeVertexNormals();
   }
-  const ground = new THREE.Mesh(groundGeo, flat(0x6fae55));
+  // Ty's tileable grass (textures/ground/grass.webp) over the arena and the hills in one mesh (see grassGround).
+  const ground = new THREE.Mesh(groundGeo, grassGround());
   ground.receiveShadow = true;
   scene.add(ground);
 
-  // Meadow floor inside the rim, a little lusher than the hills.
-  const floor = new THREE.Mesh(new THREE.CircleGeometry(C.ARENA_RADIUS + 0.5, 48).rotateX(-Math.PI / 2), decal(0x79b45c, 1));
-  floor.position.y = 0.05; floor.receiveShadow = true;
-  scene.add(floor);
-
   // Packed-earth farmyard in front of the house, with paths to the door, the barn, the gate and the field,
   // and the old way south past the altar, through the archway into the meadow.
-  const dirt = decal(0xb79c6c, 2), path = decal(0xa88d5e, 3);
+  // Ty's tileable dirt (textures/ground/dirt_path.webp, cart ruts along its v): the yard, and each path with its ruts
+  // running along it; soft, ragged edges blend into the grass.
   {
     const shape = new THREE.Shape();
-    for (let i = 0; i <= 32; i++) {
-      const a = (i / 32) * Math.PI * 2;
-      const k = 1 + Math.sin(a * 3) * 0.07 + Math.sin(a * 7 + 1) * 0.04;
+    for (let i = 0; i <= 48; i++) {
+      const a = (i / 48) * Math.PI * 2;
+      const k = 1.08 * (1 + Math.sin(a * 3) * 0.07 + Math.sin(a * 7 + 1) * 0.04);   // a little bigger: its edge fades out
       const x = Math.cos(a) * 12.5 * k, z = Math.sin(a) * 8.5 * k + 13;
       i ? shape.lineTo(x, -z) : shape.moveTo(x, -z);
     }
-    const yard = new THREE.Mesh(new THREE.ShapeGeometry(shape).rotateX(-Math.PI / 2), dirt);
+    const yard = new THREE.Mesh(new THREE.ShapeGeometry(shape).rotateX(-Math.PI / 2), dirtGround('yard', 2));
     yard.position.y = 0.05; yard.receiveShadow = true;
     scene.add(yard);
   }
-  for (const [a, b, w] of PATHS) scene.add(groundStrip(a, b, w, path));
+  const pathMat = dirtGround('path', 3);
+  for (const [a, b, w] of PATHS) scene.add(dirtStrip(a, b, w, pathMat));
   // cobbles around the well
   const cobble = new THREE.Mesh(new THREE.RingGeometry(C.WELL.r + 0.1, C.WELL.r + 1.4, 14).rotateX(-Math.PI / 2), decal(0x8d9196, 4));
   cobble.position.set(C.WELL.x, 0.05, C.WELL.z); cobble.receiveShadow = true;
