@@ -759,3 +759,37 @@ helpers. Checked: no scripted jump from the 4.25 m tower deck lands on the 5.53 
 
 Every spot is at least 17 m from any spawn point (FFA, team and Siege). The ids and x/z stay put through the round 10 map pass, and I'll tell
 you here if one moves. The draw (flask, stand), the pickup and the bots are yours.
+
+## spells → environment: the jump is 30% higher now (round 10), and ledge grab reaches 1.2 m above it
+Ty: the regular jump apex goes from 1.1 m to **1.45 m** (`C.JUMP.height`, same gravity, air time 0.63 s).
+- **Ledge grab:** `C.ledgeTarget` / `C.LEDGE.reach` = 1.2 pulls a jumping wizard up onto a standable top up to 1.45 + 1.2 = **2.65 m**
+  above the take-off floor, from within about 0.8 m of the edge. It needs room to stand 0.4 m in from the edge.
+- **What this means for the layout:**
+  - Anything you sized as "needs the stairs" at 1.2–1.5 m is now a plain jump-up.
+  - Box edges up to 2.65 m above the floor below can be climbed by a grab from anywhere along them.
+  - If a perch must only be reached by its stairs (the tower's 4.25 m deck is safe), keep its edge above 2.65 m from the ground below,
+    or mark the box `noStand`.
+- Bots use both (they jump at grabbable edges they're stuck against).
+
+## characters → spells: `knockdown` and `getup` on every hero (thrown objects knock wizards down)
+All six bodies now have two more keys, built at load from each hero's own `death` clip (looks.js `knockClips`):
+
+| key | duration | what |
+|---|---|---|
+| `knockdown` | **0.40 s** | the death clip from its standing start to the moment the body lies flat (measured per hero), squeezed to 0.4 s. It **ends lying flat**: play it **LoopOnce + clamp** and it holds the lying pose for as long as the wizard is down. |
+| `getup` | **0.40 s** | the same segment reversed, ending in the death clip's standing start, so it blends into idle/stun with your usual cross-fade |
+
+- Flat at: Cinder 1.95 s of her 2.4 s death, Gale 1.34 s, Rime 2.28 s, Vesper 2.14 s, Jeb 0.64 s, Embibe 1.32 s, each compressed to 0.4 s.
+- Lying heights: head 0.30–0.49 m, hips 0.23–0.44 m.
+- After `getup`: head 1.42–1.62 m (idle is 1.45–1.63 m).
+- **Please add `knockdown` and `getup` to the LoopOnce + clamp list** in the wizard.js constructor. As loops, the held `knockdown`
+  wraps back to standing at 0.4 s; I hit exactly that in my screenshots before setting it myself.
+- Suggested playback:
+  - `oneShot('knockdown', downTime, 1, 0)`. It clamps lying; keep it as the base state while the wizard is down.
+  - Then `oneShot('getup', 0.4, 1, 0)`, back to idle.
+  - Time-scale either one if the down time changes (for example `0.4 / riseTime`).
+- Every hero lands flat. Gale and Embibe (dying_backwards) stay upright for about the first 0.2 s, then drop, which reads as a stagger
+  and a fall. Cinder and Rime kneel on the way down.
+
+Screenshots: `/tmp/wa-characters/shots/knock-sheet.png` (in game; rows: mid-fall, down, early and late getup) and `knock-close-sheet.png`
+(close-ups, every hero).

@@ -272,6 +272,18 @@
   retargeted clip ended on its first pose. That would have stood Gale's clamped death back up. It now plays the source LoopOnce + clamp.
   This affects how `hit_waist`, `tk_*` (on everyone but Cinder) and the retargeted `stun`/`dash`/`block` end (requested note posted).
 - `tools/prepare-wizard-model.sh` now recognises Mixamo-style rigs in its inspect report. It used to say "RightHand bone: NO".
+- **Knocked down by thrown objects (Ty): `knockdown` and `getup` on all six heroes.** looks.js `knockClips` builds them at load
+  from the body's own `death` clip:
+  - `flatTime` finds the first moment the head and hips are each within 6 cm of their lowest.
+  - `knockdown` is 0..flat, resampled through each track's interpolant and squeezed to 0.4 s. Resampling matters: `subclip` drops
+    tracks with no key in the range, and the compressed clips are sparse.
+  - `getup` is the same segment reversed (`reverseClip`).
+  - Measured flat times: Cinder 1.95, Gale 1.34, Rime 2.28, Vesper 2.14, Jeb 0.64, Embibe 1.32 s.
+  - The knockdown ends lying (head 0.30–0.49 m) and the getup ends standing (head 1.42–1.62 m; idle is 1.45–1.63 m).
+  - Both must be **LoopOnce + clamp** (requested). As loops, the held knockdown wraps back to standing.
+  - Shots: `knock-sheet.png` (in game, all six: mid-fall, down, getup) and `knock-close-sheet.png`. No skin tearing.
+  - Tested on a clean `git archive HEAD` copy (`/tmp/wa-characters/tree2`) with my looks.js. The working tree didn't load at the
+    time, because of another agent's in-progress map.js (`COVER_CLUSTERS is not defined`).
 - **Cinder's Fireball uses the triple strike (Ty).** `SHARED_CLIPS` has a third Embibe set, `to: ['cinder']`.
   - The same three Triple_Combo_Attack strikes, retargeted onto Cinder's 66-bone rig.
   - The cuts start later (0.6, 1.36 and 2.14 s), so each strike lands at once: the server spawns the bolt as it receives the cast,
