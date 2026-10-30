@@ -277,7 +277,7 @@ async function serverChecks() {
     }
     for (const c of [A, B, V, R]) c.ws.close();
   } catch (e) { ok(false, `server checks: ${e.message}`); }
-  finally { srv.kill(); }
+  finally { if (srv.exitCode === null) { srv.kill(); await new Promise(r => srv.once('exit', r)); } }   // (so a rerun can have the port)
 }
 
 console.log(fails ? `${fails} FAILED` : 'ALL PASS');
