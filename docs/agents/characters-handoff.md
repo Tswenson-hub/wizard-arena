@@ -1,5 +1,72 @@
 # Characters hand-off
 
+## Round 12: the Cinder re-import, Roll, and Meteor Rain's dive
+
+### What I did
+- **Cinder re-imported** from `~/Desktop/Meshy_AI_cinder_pyromancer_rig_All_Animations (2).glb` with
+  `tools/prepare-wizard-model.sh … cinder`. It has the same 66-joint Mixamo-style rig and 18 clips (the old 14 plus
+  `Dive_Down_and_Land` 1.6 s, `Roll_Dodge` 1.83 s, `Roll_Dodge_2` 2.0 s, `Roll_Dodge_4` 3.13 s). `cinder.glb` is 2.09 MB
+  (was 1.78 MB).
+- **Clip pool re-baked** (`tools/bake-clip-pool.py 4103`): 40 clips, `clip-pool.glb` 718 KB (was 660 KB).
+- **`spellanim.js`:**
+  - **`roll`:** four 0.45 s keys cut from `cinder.Roll_Dodge` 0.55–1.8 s and time-warped: tucked by 0.08 s, over by 0.32 s
+    (the dash is 0.35 s), standing by 0.45 s.
+    - `roll` goes forward and `roll_back` is the same roll reversed. `roll_left` and `roll_right` are turned ±90°.
+    - `rollKey(dir, yaw)` picks one from the roll's world direction and the body's facing. It's unit-checked for all four.
+  - **`meteor_rain`:** wind-up, hover, dive and land keys (details below).
+- **`looks.js` pick options:** `reverse: true` plays a cut backwards. `flatY: dy` pins the Hips at their rest place, dy m above
+  standing height, which drops all root motion; it's for airborne clips on a body the server flies.
+  - The offset is converted into the hips' parent space, because Meshy armatures are Z-up and scaled by 100.
+
+**Why `Roll_Dodge` won.** It is one tight forward roll that ends standing, so it survives a 2.8× squeeze.
+- `Roll_Dodge_2` spends its first 0.7 s shuffling before it rolls, and its roll is looser.
+- `Roll_Dodge_4` is a sideways tumble that ends in a low crouch, so a 0.45 s cut ends crouched and pops to idle.
+- Contact sheet of all three: `/tmp/wa-characters/r12/rolls.png`.
+
+**Meteor Rain, and where it differs from the brief.** `Dive_Down_and_Land` has **no crouch or take-off**. It starts already in
+the air (hips about 2.2 m up), tucks, somersaults forward, and ends in a **head-first plunge**
+(`/tmp/wa-characters/r12/dive.png`). So:
+- **Wind-up (1.3 s):** it keeps the crouch-and-leap (`jeb.Sword_Judgment`, crouched at 0.55 s, leaving the ground on the 1.3 s
+  release).
+- **`hover`:** the clip's opening tuck (0–0.6 s), slowed to 4.5 s, covering the 0.5 s rise and up to 4 s of hover. It replaces
+  the shared `float`, so the `float` loop is gone from Meteor Rain.
+- **`dive`:** 0.6–1.6 s of the clip, warped to 0.6 s (= `MRAIN.dive`).
+  - She somersaults and is head-down by about 0.44 s, then holds the plunge.
+  - The head is 0.13 m off the ground when `mrainLand` fires, so the plunge lands on the impact.
+- **`land`:** after the impact she comes up out of a crouch in the blast (0.8 s, `embibe.Female_Crouch_Pick_Throw_Forward`).
+- The spells agent wired all four phases and the roll in `main.js` (`ed85e1c`), from my request in `requests.md`.
+- **The wind-up timing also changed for every ultimate:** `ultWindup` now plays each ult's `windup` phase at 1x.
+  - Before, the whole key was squeezed into 1.3 s, so releases landed about 15% early.
+  - Now Meteor Rain's leap lands on 1.3 s.
+
+### How I verified it
+- **Contact sheets** (the real `makeWizardBody` path), in `/tmp/wa-characters/r12/`:
+  - `mrain.png`: the hover, dive and landing keys, with hips and head heights per frame
+  - `roll.png`: all four roll keys
+  - `rolls.png` and `dive.png`: the raw clips
+- **In game**, `/tmp/wa-characters/r12/ingame1.py`, one headless page on port 4103 with `WA_DEBUG`:
+  - We cast through the server and `main.js`'s real hooks. The render camera is moved side-on, and the pose is held at the
+    asked time once the phase starts, because swiftshader runs at about 2 fps.
+  - **Real `main.js` (after `ed85e1c`):** `verify-r12.png` has the wind-up, release, hover at 12 m, landing frame (dive at 0.6 s,
+    on the ground), the rise, and rolls forward, left and back.
+  - **Rolls:** E with W, with A, and with nothing played `roll`, `roll_left` and `roll_back`, and each moved 4.3–4.5 m.
+  - **Clearer wind-up and release frames:** `mrain-crops.png` is the same keys from an earlier run on a HEAD snapshot. In the real
+    run a hay bale and the ult beam hide the body.
+  - **Mid-dive:** not caught in game, because the 0.6 s dive passes within one or two frames at that frame rate. The contact sheet
+    covers it.
+- `node --check` passes on `looks.js` and `spellanim.js`, and no page errors came up in the in-game runs. The server loads neither
+  file, so no botmatch was needed.
+
+### Known issues and notes
+- The somersault turns her body away from her facing for about 0.3 s. That's fine for a falling blaze, but say if Ty wants a
+  straight drop. The fix would be `dive` = `[1.2, 1.6]` only.
+- `roll_back` ends in the dip pose the forward roll starts from, then cross-fades to idle (0.25 s). A real backward roll from Meshy
+  would read better.
+- A bug I caught before committing: `pick.reverse` is true on every array pick (`Array.prototype.reverse`), so the check is
+  `=== true`.
+- **For the coordinator:** while I worked, `world.js` (environment, uncommitted) briefly threw on load:
+  `blocked` at world.js:820, "reading 'x'". It loads fine now.
+
 ## Round 11: the spell builder, the generic wizard and the spell animation table
 
 ### What I built
