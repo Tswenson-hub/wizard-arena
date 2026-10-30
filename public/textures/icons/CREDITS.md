@@ -33,3 +33,19 @@ premium version or replace these icons.**
 | `fast.png` | fc832 | Spark |
 | `flaskstep.png` | fc829 | Flask Step |
 | `skull.png` | fc862 | anything else |
+| `ward.png` | fc856 | Ward (builder card) |
+| `black_death.png` | fc859 | Black Death (builder card) |
+| `tempest_veil.png` | fc857 | Tempest Veil (builder card) |
+| `ram_guard.png` | fc853 | Ram Guard (builder card) |
+| `smoke_flask.png` | fc830 | Smoke Flask (builder card) |
+| `smoke_screen.png` | fc755 | Smoke Screen (builder card) |
+| `blink.png` | fc1077 | Blink (builder card) |
+| `skyward.png` | fc874 | Skyward Flash (builder card) |
+| `mirror_step.png` | fc1078 | Mirror Step (builder card) |
+| `ram_ride.png` | fc885 | Ram Ride (builder card) |
+| `telekinesis.png` | fc1082 | Telekinesis (builder card) |
+| `night_cage.png` | fc1180 | Night Cage (builder card) |
+| `stampede.png` | fc1045 | Stampede (builder card) |
+| `berserker_brew.png` | fc961 | Berserker Brew (builder card) |
+
+Round 11: the builder's spell cards use these too (the characters agent picked the 14 above for spells that had none).

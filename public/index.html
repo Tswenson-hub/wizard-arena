@@ -17,31 +17,36 @@
 <body>
 <canvas id="game"></canvas>
 
-<!-- Join screen -->
+<!-- Join screen (round 11): the spell builder fills the screen; name, bots and Enter sit in its footer -->
 <div id="join" class="overlay">
-  <div class="panel">
-    <h1>Wizard Arena</h1>
-    <p class="sub">Build your wizard from any spells. Four wizards, first to 10 kills.</p>
-    <form id="joinForm">
-      <input id="nameInput" maxlength="14" placeholder="Your wizard name" autocomplete="off" spellcheck="false">
-      <button type="submit" id="joinBtn">Enter the arena</button>
-    </form>
-    <div class="practice-row">
-      <label for="botDiff">Bots fill the match to 4:</label>
-      <select id="botDiff"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard</option></select>
+  <div class="join-full">
+    <header class="join-head">
+      <h1>Wizard Arena</h1>
+      <p class="sub">Build your wizard from any spells: one per slot. Four wizards, first to 10 kills.</p>
+      <p id="loadStatus" class="status">Loading wizard…</p>
+      <button type="button" id="helpBtn" class="ghost" aria-expanded="false" aria-controls="joinHelp" title="Controls and credits">?</button>
+    </header>
+    <div class="wizard-pick join-builder" id="joinPicker"></div>
+    <div id="joinFooter" class="join-footer">
+      <form id="joinForm">
+        <input id="nameInput" maxlength="14" placeholder="Your wizard name" autocomplete="off" spellcheck="false">
+        <button type="submit" id="joinBtn">Enter the arena</button>
+      </form>
+      <label class="practice-row" for="botDiff" title="Bots fill the match to 4 wizards">Bots
+        <select id="botDiff"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard</option></select>
+      </label>
     </div>
-    <h3 class="book-title">Build your wizard: one spell per slot</h3>
-    <div class="wizard-pick" id="joinPicker"></div>
-    <div class="controls">
-      <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move &nbsp; <kbd>Mouse</kbd> look &nbsp; <kbd>LMB</kbd> <kbd>RMB</kbd> <kbd>R</kbd> <kbd>E</kbd> <kbd>F</kbd> <kbd>Q</kbd> your six spells &nbsp; <kbd>Space</kbd> jump &nbsp; <kbd>C</kbd> / <kbd>Ctrl</kbd> crouch</div>
-      <div><kbd>R</kbd> your shield: hold to Ward (blocks spells from the front, drains stamina), or tap the one you picked (an ice wall, a wind veil, a firewall...)</div>
-      <div><kbd>F</kbd> Telekinesis: aim at an object to lift it, <kbd>F</kbd> again to hurl it. It shields you while held. <kbd>Q</kbd> your ultimate, once charged</div>
-      <div>Don't hit the goats. An angry goat charges and kills in one hit, unless your ward (<kbd>R</kbd>) faces it</div>
-      <div><kbd>LMB</kbd> fires 3 shots, then reloads (<kbd>T</kbd> to reload early). The 3rd shot stuns and breaks a wind-up</div>
-      <div><kbd>G</kbd> set it down &nbsp; <kbd>Tab</kbd> scoreboard &nbsp; <kbd>M</kbd> mute &nbsp; <kbd>Esc</kbd> menu</div>
+    <div id="joinHelp" class="join-help hidden">
+      <div class="controls">
+        <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move &nbsp; <kbd>Mouse</kbd> look &nbsp; <kbd>LMB</kbd> <kbd>RMB</kbd> <kbd>R</kbd> <kbd>E</kbd> <kbd>F</kbd> <kbd>Q</kbd> your six spells &nbsp; <kbd>Space</kbd> jump &nbsp; <kbd>C</kbd> / <kbd>Ctrl</kbd> crouch &nbsp; <kbd>Shift</kbd> sprint</div>
+        <div><kbd>R</kbd> your shield: hold a Ward (blocks spells from the front, drains stamina), or tap the one you picked (an ice wall, a wind veil, a firewall...)</div>
+        <div><kbd>F</kbd> Telekinesis: aim at an object to lift it, <kbd>F</kbd> again to hurl it. It shields you while held. <kbd>Q</kbd> your ultimate, once charged</div>
+        <div>Don't hit the goats. An angry goat charges and kills in one hit, unless your ward (<kbd>R</kbd>) faces it</div>
+        <div><kbd>LMB</kbd> fires a magazine, then reloads (<kbd>T</kbd> to reload early). The last shot stuns and breaks a wind-up</div>
+        <div><kbd>G</kbd> set it down &nbsp; <kbd>Tab</kbd> scoreboard &nbsp; <kbd>M</kbd> mute &nbsp; <kbd>Esc</kbd> menu (and your loadout)</div>
+      </div>
+      <p class="credits">Spell sounds: Magic Spell Full Pack by Leonardo Calvo (thesoundrack), <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>. Music: “Nordic Fantasia Lofi” by turning_pages (Pixabay). Also CC0 sounds and particles by Kenney, lentikula and OpenGameArt contributors; spell icons by Raven. <a href="/sounds/CREDITS.md" target="_blank" rel="noopener">All credits</a></p>
     </div>
-    <p id="loadStatus" class="status">Loading wizard…</p>
-    <p class="credits">Spell sounds: Magic Spell Full Pack by Leonardo Calvo (thesoundrack), <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>. Music: “Nordic Fantasia Lofi” by turning_pages (Pixabay). Also CC0 sounds and particles by Kenney, lentikula and OpenGameArt contributors. <a href="/sounds/CREDITS.md" target="_blank" rel="noopener">All credits</a></p>
   </div>
 </div>
 
@@ -79,20 +84,21 @@
   </div>
   <div id="clickToPlay" class="hidden">
     <div class="pause panel">
-      <h2>Paused</h2>
-      <button id="resumeBtn" class="primary">Resume</button>
-      <h3>Loadout <span class="book-note" id="pickNote">a change applies at your next respawn</span></h3>
-      <div class="wizard-pick" id="pausePicker"></div>
-      <h3>Bots <span class="book-note">they fill the match to 4; swap one in at another difficulty</span> <span id="botTally"></span></h3>
-      <div class="btn-row">
-        <button data-bot="easy">Easy bot</button><button data-bot="normal">Normal bot</button><button data-bot="hard">Hard bot</button>
+      <div class="pause-top">
+        <h2>Paused</h2>
+        <button id="resumeBtn" class="primary">Resume</button>
+        <span class="book-note" id="pickNote">a change applies at your next respawn</span>
+        <div class="pause-group"><span class="pause-label">Bots <span id="botTally"></span></span>
+          <div class="btn-row" title="Bots fill the match to 4; swap one in at another difficulty">
+            <button data-bot="easy">Easy</button><button data-bot="normal">Normal</button><button data-bot="hard">Hard</button>
+          </div>
+        </div>
+        <div class="pause-group vol-row"><span class="pause-label">Sound</span>
+          <input id="volume" type="range" min="0" max="100" step="1" aria-label="Volume">
+          <label><input id="mute" type="checkbox"> Mute <kbd>M</kbd></label>
+        </div>
       </div>
-      <h3>Sound</h3>
-      <div class="vol-row">
-        <input id="volume" type="range" min="0" max="100" step="1">
-        <label><input id="mute" type="checkbox"> Mute <kbd>M</kbd></label>
-      </div>
-      <p class="credits">Spell sounds: Magic Spell Full Pack by Leonardo Calvo (thesoundrack), <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>. Music: “Nordic Fantasia Lofi” by turning_pages (Pixabay). Also CC0 sounds and particles by Kenney, lentikula and OpenGameArt contributors. <a href="/sounds/CREDITS.md" target="_blank" rel="noopener">All credits</a></p>
+      <div class="wizard-pick pause-builder" id="pausePicker"></div>
     </div>
   </div>
 </div>

@@ -17,6 +17,26 @@ kbd {
 }
 
 /* ---------- join ---------- */
+/* round 11: the join screen is full-screen: a slim header, the builder filling the rest, and its footer (name, bots, Enter) */
+.join-full { position: relative; box-sizing: border-box; width: 100vw; height: 100vh; padding: 12px 20px 14px; display: grid;
+  grid-template-rows: auto minmax(0, 1fr); gap: 10px; color: var(--ink); }
+.join-head { display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap; padding-right: 44px; }
+.join-head h1 { margin: 0; font-size: 30px; letter-spacing: 2px; color: var(--gold); text-shadow: 0 0 24px rgba(255,200,87,0.4); }
+.join-head .sub { margin: 0; color: var(--dim); font-size: 14px; }
+.join-head .status { margin: 0 0 0 auto; }
+#helpBtn { position: absolute; top: 12px; right: 18px; width: 30px; height: 30px; border-radius: 50%; font: inherit; font-weight: 700;
+  color: var(--ink); background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.25); cursor: pointer; }
+#helpBtn[aria-expanded="true"] { border-color: var(--gold); color: var(--gold); }
+.join-builder { min-height: 0; overflow-y: auto; }
+.join-footer { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.join-footer #joinForm { flex: 1; min-width: 300px; }
+.join-footer #nameInput { padding: 9px 12px; font-size: 16px; }
+.join-footer #joinBtn { padding: 9px 18px; }
+.join-footer .practice-row { margin: 0; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dim); }
+.join-help { position: absolute; top: 50px; right: 18px; width: min(560px, 92vw); max-height: calc(100vh - 70px); overflow-y: auto; z-index: 3;
+  padding: 16px 18px; border-radius: 14px; background: rgba(16,12,26,0.97); border: 1px solid rgba(255,255,255,0.16); box-shadow: 0 20px 60px rgba(0,0,0,0.6); }
+.join-help .controls { margin: 0; }
+.join-help.hidden { display: none; }
 .overlay {
   position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
   background: radial-gradient(ellipse at center, rgba(40,20,60,0.55), rgba(8,6,14,0.92));
@@ -99,7 +119,20 @@ kbd {
 #scoreboard td:nth-child(3), #scoreboard td:nth-child(4), #scoreboard th:nth-child(3), #scoreboard th:nth-child(4) { text-align: right; }
 
 #clickToPlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.45); pointer-events: auto; }
-.pause.panel { width: min(92vw, 560px); padding: 24px 28px; max-height: 94vh; overflow-y: auto; }
+.pause.panel { width: min(96vw, 1600px); height: calc(100vh - 92px); max-height: none; margin-top: 76px; padding: 14px 20px; overflow: hidden;
+  display: flex; flex-direction: column; gap: 10px; background: rgba(16,12,26,0.96); }
+/* round 11: the Esc menu's top row (Resume, the pending note, bots, sound) over the builder, which fills the rest */
+.pause-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; text-align: left; }
+.pause-top h2 { margin: 0 !important; }
+#clickToPlay .pause-top button.primary { width: auto; padding: 8px 22px; }
+.pause-group { display: flex; align-items: center; gap: 8px; }
+.pause-label { font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--dim); }
+.pause-top .vol-row { margin: 0; }
+.pause-top .btn-row button { padding: 5px 10px; font-size: 12px; }
+/* the Esc menu covers the fight: the ability bar, bars and banners would show through it */
+body.paused #abilities, body.paused #bars, body.paused #mBanner, body.paused #soundInd { visibility: hidden; }
+.pause-builder { flex: 1; min-height: 0; overflow-y: auto; }
+.pause-builder > .spell-builder, .join-builder > .spell-builder { min-height: 560px; }   /* shorter windows scroll instead of squeezing the cards */
 .pause h2 { margin: 0 0 14px; font-size: 22px; letter-spacing: 2px; color: var(--gold); }
 .pause h3 { margin: 20px 0 8px; font-size: 13px; font-weight: normal; letter-spacing: 1px; text-transform: uppercase; color: var(--dim); }
 .pause button, .practice-row select {

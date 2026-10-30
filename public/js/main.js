@@ -11,6 +11,7 @@ import { registerModel, loadWizardModels } from './looks.js';
 import { Effects } from './effects.js';
 import * as Select from './select.js';
 import { loadLoadout, saveLoadout, loadVoice, saveVoice } from './loadout-store.js';
+import { spellPlay } from './spellanim.js';
 import { mountMatchUI } from './match-ui.js';
 
 // ---------------------------------------------------------------- setup
@@ -135,11 +136,13 @@ function updatePickNote() {
 }
 // The builder (select.js mountSpellBuilder, characters agent). Until it exists, six plain <select>s, the presets,
 // Randomize and the voice stand in.
-function mountPicker(el) {
+// `footer` (optional): an element for the builder's bottom bar (the join screen's name, bots and Enter).
+function mountPicker(el, footer = null) {
   if (typeof Select.mountSpellBuilder === 'function') {
-    const pk = Select.mountSpellBuilder(el, { loadout: wantLoadout, voice: wantVoice, onChange: chooseLoadout, onVoice: chooseVoice });
+    const pk = Select.mountSpellBuilder(el, { loadout: wantLoadout, voice: wantVoice, onChange: chooseLoadout, onVoice: chooseVoice, footer });
     if (el.childElementCount) return pk;
   }
+  if (footer) el.after(footer);   // the fallback keeps the footer under it
   const hexOf = (n) => '#' + n.toString(16).padStart(6, '0');
   el.innerHTML = `<div class="wiz-fallback">
     <div class="wf-presets">${C.PRESETS.map(k => `<button type="button" data-preset="${k.id}">${esc(k.name)}</button>`).join('')}<button type="button" data-random>Randomize</button></div>
@@ -173,7 +176,11 @@ function mountPicker(el) {
   show(wantLoadout);
   return { set: show, setVoice(v) { vsel.value = v; }, destroy() { el.innerHTML = ''; } };
 }
-const pickers = [mountPicker($('#joinPicker')), mountPicker($('#pausePicker'))];
+const pickers = [mountPicker($('#joinPicker'), $('#joinFooter')), mountPicker($('#pausePicker'))];
+$('#helpBtn').addEventListener('click', () => {
+  const open = $('#joinHelp').classList.toggle('hidden') === false;
+  $('#helpBtn').setAttribute('aria-expanded', open);
+});
 const spellName = (id) => SPELL[id]?.name || id;
 const shortName = (id) => SPELL[id]?.short || spellName(id);
 
@@ -235,7 +242,7 @@ function updateSoundInd() {
 function toggleMute() { sfx.muted = !sfx.muted; ui.mute.checked = sfx.muted; updateSoundInd(); feed(sfx.muted ? 'Sound muted (M)' : 'Sound on'); }
 ui.soundInd.addEventListener('click', (e) => { e.stopPropagation(); sfx.init(); sfx.resume(); toggleMute(); });
 updateSoundInd();
-input.onLockChange = (locked) => { ui.clickToPlay.classList.toggle('hidden', locked || !me); updateBotTally(); };
+input.onLockChange = (locked) => { ui.clickToPlay.classList.toggle('hidden', locked || !me); document.body.classList.toggle('paused', !locked && !!me); updateBotTally(); };
 function updateBotTally() {
   const n = [...players.values()].filter(w => w.bot).length;
   ui.botTally.textContent = n ? `(${n} in arena)` : '';
@@ -405,6 +412,14 @@ function tkGesture(w, clip) {
   else w.oneShot('cast_fast', 0.4, 2.6, 0.3);
 }
 
+// Round 11: a spell's own animation (spellanim.js, characters agent) when the body has its clip: true if it played.
+function playSpell(w, spellId, phase, n) {
+  const a = spellPlay(spellId, phase, n);
+  if (!a || !w.actions?.[a[0]]) return false;
+  w.oneShot(...a);
+  return true;
+}
+
 // A spark takes its caster's colour (constants: BOLT_COLORS).
 function withBolt(pj) {
   const owner = players.get(pj.owner);
@@ -473,7 +488,7 @@ function handleMessage(msg) {
         if ((combo || msg.kind === 'shear') && C.PRIMARY_KINDS.has(msg.kind)) effects.slash([msg.p[0] + msg.v[0] * 0.04, msg.p[1], msg.p[2] + msg.v[2] * 0.04], owner.color ?? 0xffffff, msg.fin ? 1.2 : 0.9);
         if (msg.fin && C.PRIMARY_KINDS.has(msg.kind) && !(performance.now() - (owner.finSndAt || 0) < 150)) { owner.finSndAt = performance.now(); sfx.finisher(msg.p, C.primaryElement(owner.loadout)); }   // the 3rd-shot accent, by element (once for Skim's three shards)
         if (msg.kind === 'potion') { if (!combo) owner.oneShot('cast_fast', 0.45, 2.4, 0.25); sfx.play('potion_toss', { pos: msg.p, vol: 0.8, jitter: 0.08 }); }
-        else if (msg.kind === 'toxic') { owner.oneShot('cast_fast', 0.5, 2, 0.25); sfx.play('potion_toss', { pos: msg.p, vol: 0.85, rate: 0.85 }); }
+        else if (msg.kind === 'toxic') { if (!playSpell(owner, 'toxic_flask', 'cast')) owner.oneShot('cast_fast', 0.5, 2, 0.25); sfx.play('potion_toss', { pos: msg.p, vol: 0.85, rate: 0.85 }); }
         else if (msg.kind === 'flaskstep') { sfx.play('whoosh', { pos: msg.p, vol: 0.6, rate: 1.3 }); }
         else if (msg.kind === 'fast') { if (!combo) owner.oneShot('cast_fast', 0.45, 2.6, 0.25); if (!msg.fin) sfx.castFast(msg.p); }
         else if (msg.kind === 'fireball') { if (!combo) owner.oneShot('cast_fast', 0.5, 2.3, 0.25); sfx.play('spark_cast', { pos: msg.p, vol: 0.7, rate: msg.fin ? 0.75 : 0.85 }); }
@@ -1008,10 +1023,10 @@ function handleMessage(msg) {
       break;
     }
     case 'ramWind': {
-      // Battering Ram's wind-up: Jeb stomps; a ghost ram paws the ground in front of him, kicking up dust, and snorts
+      // Battering Ram's wind-up: the caster stomps; a ghost ram paws the ground in front of him, kicking up dust, and snorts
       const w = players.get(msg.id);
       if (!w) break;
-      w.oneShot('cast_heavy', msg.left, 1.5, 1.9);
+      if (!playSpell(w, 'battering_ram', 'windup')) w.oneShot('cast_heavy', msg.left, 1.5, 1.9);   // the stomp lands on the release
       const B = SPELL.battering_ram, d = [Math.sin(msg.yaw), Math.cos(msg.yaw)], gp = w.group.position;
       ghostRams.get(msg.id)?.dispose(scene);
       const ghost = new GoatView({ id: -msg.id, p: [gp.x + d[0] * B.spawnDist, gp.z + d[1] * B.spawnDist], y: gp.y, yaw: msg.yaw, s: 'windup', summoned: true }, scene);
