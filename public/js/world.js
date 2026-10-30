@@ -61,6 +61,11 @@ const M = {
 // hills and mountains into its horizon colour.
 export const SKY = { horizon: 0x48d7f2, fog: 0x7cc9de };
 export function buildWorld(scene) {
+  // a fresh build (the editor builds again after every change): forget the last one's stand-ins and spinners, and
+  // scatter the rocks, far trees and grass for the current layout
+  for (const k in standins) delete standins[k];
+  spinners.length = 0; grassChunks.length = 0;
+  computeScatter(); computeGrass();
   scene.background = new THREE.Color(SKY.horizon);
   new THREE.TextureLoader().load('/textures/sky.jpg', (tex) => {
     tex.mapping = THREE.EquirectangularReflectionMapping;
@@ -769,40 +774,44 @@ function seeded(seed) { return () => { seed = (seed * 16807) % 2147483647; retur
 // Trees outside the arena use the *_far models (about 1-1.6k triangles, sloppy-simplified, no shadows).
 const SCATTER = { pine: [], oak: [], birch: [], pine_far: [], oak_far: [], birch_far: [], rock_jagged: [], rock_table: [] };
 const SCATTER_STANDINS = { pine: ['treeStandins'], rock_jagged: ['rimStones'] };
-for (const t of C.TREES) SCATTER[t.kind].push([t.x, t.z, t.yaw, t.h]);
-// Blast debris leans away from the altar: [x, z, yaw, height, tilt, yaw of the lean, sink]
-for (const [x, z, yaw, h, tilt] of C.TABLE_ROCKS) SCATTER.rock_table.push([x, z, yaw, h, tilt, C.awayYaw(x, z), h * 0.12]);
-for (const [x, z, h, tilt] of C.BLAST_STONES) SCATTER.rock_jagged.push([x, z, x * 3.1 + z, h, tilt, C.awayYaw(x, z), h * 0.1]);
-for (const [x, z, yaw, h, tilt] of C.BLAST_SHARDS) SCATTER.rock_jagged.push([x, z, yaw, h, tilt, C.awayYaw(x, z), 0.06]);
-// round 10 cover: tall rocks standing upright round the blast, and boulders sitting on the rock plateaus
-for (const sf of C.SURFACES) if (sf.style === 'boulder') SCATTER.rock_jagged.push([sf.x, sf.z, sf.x + sf.z, 1.35, 0.05, 0, -(sf.top - sf.thick)]);
-// the ruin ledges' parapets: two rocks side by side along the altar-facing edge, standing on the ledge
-for (const sf of C.SURFACES) if (sf.style === 'parapet') for (const k of [-1, 1]) {
-  const lx = k * sf.w * 0.24, x = sf.x + lx * Math.cos(sf.yaw), z = sf.z - lx * Math.sin(sf.yaw);
-  SCATTER.rock_jagged.push([x, z, sf.yaw + k * 1.3, 1.15 + k * 0.08, 0.06, sf.yaw, -(sf.top - sf.thick)]);
-}
-for (const cl of C.COVER_CLUSTERS) if (cl.type === 'rock') cl.pts.forEach(([x, z, h], i) => SCATTER.rock_jagged.push([x, z, x * 1.7 + z + i, h, 0.05, 0, 0.1]));
-{
-  // the rim: jagged rocks and table rocks in turn (round 12: every other one, was three in four jagged)
-  const rnd = seeded(C.SCATTER_SETTINGS.rim?.seed ?? 7), RIM_N = C.SCATTER_SETTINGS.rim?.count ?? 52;
-  for (let i = 0; i < RIM_N; i++) {
-    const a = (i / RIM_N) * Math.PI * 2, r = C.ARENA_RADIUS + 1.2 + rnd() * 0.6;
-    if (i % 2) SCATTER.rock_table.push([Math.cos(a) * r, Math.sin(a) * r, rnd() * 6.3, 0.7 + rnd() * 0.5]);
-    else SCATTER.rock_jagged.push([Math.cos(a) * r, Math.sin(a) * r, rnd() * 6.3, 1.0 + rnd() * 1.1]);
+// Recomputed by buildWorld() from the current layout (the editor rebuilds the world after every change).
+function computeScatter() {
+  for (const k in SCATTER) SCATTER[k].length = 0;
+  for (const t of C.TREES) SCATTER[t.kind].push([t.x, t.z, t.yaw, t.h]);
+  // Blast debris leans away from the altar: [x, z, yaw, height, tilt, yaw of the lean, sink]
+  for (const [x, z, yaw, h, tilt] of C.TABLE_ROCKS) SCATTER.rock_table.push([x, z, yaw, h, tilt, C.awayYaw(x, z), h * 0.12]);
+  for (const [x, z, h, tilt] of C.BLAST_STONES) SCATTER.rock_jagged.push([x, z, x * 3.1 + z, h, tilt, C.awayYaw(x, z), h * 0.1]);
+  for (const [x, z, yaw, h, tilt] of C.BLAST_SHARDS) SCATTER.rock_jagged.push([x, z, yaw, h, tilt, C.awayYaw(x, z), 0.06]);
+  // round 10 cover: tall rocks standing upright round the blast, and boulders sitting on the rock plateaus
+  for (const sf of C.SURFACES) if (sf.style === 'boulder') SCATTER.rock_jagged.push([sf.x, sf.z, sf.x + sf.z, 1.35, 0.05, 0, -(sf.top - sf.thick)]);
+  // the ruin ledges' parapets: two rocks side by side along the altar-facing edge, standing on the ledge
+  for (const sf of C.SURFACES) if (sf.style === 'parapet') for (const k of [-1, 1]) {
+    const lx = k * sf.w * 0.24, x = sf.x + lx * Math.cos(sf.yaw), z = sf.z - lx * Math.sin(sf.yaw);
+    SCATTER.rock_jagged.push([x, z, sf.yaw + k * 1.3, 1.15 + k * 0.08, 0.06, sf.yaw, -(sf.top - sf.thick)]);
   }
-  // outside the arena: oaks, birches and pines near the rim on the farm side, birches beyond the magic land,
-  // pines thickening toward the hills
-  const FT = C.SCATTER_SETTINGS.farTrees || {}, out = seeded(FT.seed ?? 42);
-  for (let i = 0; i < (FT.count ?? 90); i++) {
-    const a = out() * Math.PI * 2, r = C.ARENA_RADIUS + 5 + Math.pow(out(), 0.7) * 45;
-    const near = r < C.ARENA_RADIUS + 16, pick = out();
-    const x = Math.cos(a) * r, z = Math.sin(a) * r, magic = z < -12;
-    const kind = magic ? (pick < (near ? 0.85 : 0.5) ? 'birch' : 'pine') : near ? (pick < 0.5 ? 'oak' : 'pine') : 'pine';
-    SCATTER[kind + '_far'].push([x, z, out() * 6.3, C.TREE_KINDS[kind].h * (0.8 + out() * 0.5)]);
-  }
-  for (let i = 0; i < (FT.rocks ?? 12); i++) {
-    const a = out() * Math.PI * 2, r = C.ARENA_RADIUS + 4 + out() * 30;
-    out(); SCATTER.rock_table.push([Math.cos(a) * r, Math.sin(a) * r, out() * 6.3, 0.8 + out() * 1.6]);
+  for (const cl of C.COVER_CLUSTERS) if (cl.type === 'rock') cl.pts.forEach(([x, z, h], i) => SCATTER.rock_jagged.push([x, z, x * 1.7 + z + i, h, 0.05, 0, 0.1]));
+  {
+    // the rim: jagged rocks and table rocks in turn (round 12: every other one, was three in four jagged)
+    const rnd = seeded(C.SCATTER_SETTINGS.rim?.seed ?? 7), RIM_N = C.SCATTER_SETTINGS.rim?.count ?? 52;
+    for (let i = 0; i < RIM_N; i++) {
+      const a = (i / RIM_N) * Math.PI * 2, r = C.ARENA_RADIUS + 1.2 + rnd() * 0.6;
+      if (i % 2) SCATTER.rock_table.push([Math.cos(a) * r, Math.sin(a) * r, rnd() * 6.3, 0.7 + rnd() * 0.5]);
+      else SCATTER.rock_jagged.push([Math.cos(a) * r, Math.sin(a) * r, rnd() * 6.3, 1.0 + rnd() * 1.1]);
+    }
+    // outside the arena: oaks, birches and pines near the rim on the farm side, birches beyond the magic land,
+    // pines thickening toward the hills
+    const FT = C.SCATTER_SETTINGS.farTrees || {}, out = seeded(FT.seed ?? 42);
+    for (let i = 0; i < (FT.count ?? 90); i++) {
+      const a = out() * Math.PI * 2, r = C.ARENA_RADIUS + 5 + Math.pow(out(), 0.7) * 45;
+      const near = r < C.ARENA_RADIUS + 16, pick = out();
+      const x = Math.cos(a) * r, z = Math.sin(a) * r, magic = z < -12;
+      const kind = magic ? (pick < (near ? 0.85 : 0.5) ? 'birch' : 'pine') : near ? (pick < 0.5 ? 'oak' : 'pine') : 'pine';
+      SCATTER[kind + '_far'].push([x, z, out() * 6.3, C.TREE_KINDS[kind].h * (0.8 + out() * 0.5)]);
+    }
+    for (let i = 0; i < (FT.rocks ?? 12); i++) {
+      const a = out() * Math.PI * 2, r = C.ARENA_RADIUS + 4 + out() * 30;
+      out(); SCATTER.rock_table.push([Math.cos(a) * r, Math.sin(a) * r, out() * 6.3, 0.8 + out() * 1.6]);
+    }
   }
 }
 
@@ -821,7 +830,8 @@ export const GRASS = {
   chunk: 12,
 };
 export const GRASS_ITEMS = { tall: [], clover: [] };   // [x, z, yaw, height, tint r, g, b]
-{
+function computeGrass() {
+  GRASS_ITEMS.tall.length = 0; GRASS_ITEMS.clover.length = 0;
   const rnd = seeded(C.SCATTER_SETTINGS.grass?.seed ?? 91);
   const segDist = (x, z, [ax, az], [bx, bz]) => {
     const sx = bx - ax, sz = bz - az, k = Math.max(0, Math.min(1, ((x - ax) * sx + (z - az) * sz) / (sx * sx + sz * sz)));
@@ -995,7 +1005,7 @@ function purpleRunes(root) {
 
 // Farm pieces with a Meshy model: [stand-in name, url, height in metres, yaw that turns it to face +z].
 // A model that fails to load leaves its procedural stand-in in place.
-const FARM_MODELS = [
+const FARM_MODELS = () => [
   ['tractor', '/models/tractor.glb', 3.0, Math.PI / 2],     // exported nose toward -x
   ['cart', '/models/horse_cart.glb', C.CART.height],          // model space as measured for its colliders in map.js
   ['pillar', '/models/rune_pillar.glb', C.PILLAR_HEIGHT, 0, true],
@@ -1021,7 +1031,7 @@ export function loadModels(loader, scene) {
       scene.add(house);
       models.farmhouse = house;
     }),
-    ...FARM_MODELS.map(([name, url, h, yaw, runes, shift]) => load(url).then(g => {
+    ...FARM_MODELS().map(([name, url, h, yaw, runes, shift]) => load(url).then(g => {
       if (runes) purpleRunes(g.scene);
       models[name] = fitModel(g, h, yaw);
       if (shift) models[name].position.set(shift[0] * h, 0, shift[1] * h);
@@ -1067,6 +1077,15 @@ export function loadModels(loader, scene) {
     ...['tall', 'clover'].map(kind => load(`/models/grass_${kind}.glb`).then(g => {
       scene.add(grassMeshes(g, GRASS_ITEMS[kind]));
       scene.onBeforeRender = (renderer, sc, camera) => grassTick(camera);
+    }, () => {})),
+    // Decoration placed in the map editor (layout kind 'deco'): any model, fitted to its height.
+    ...[...new Set(C.DECOS.map(d => d.model))].map(name => load(`/models/${name}.glb`).then(g => {
+      const unit = fitModel(g, 1);
+      for (const d of C.DECOS.filter(q => q.model === name)) {
+        const holder = new THREE.Group(); holder.add(unit.clone());
+        holder.position.set(d.x, d.y, d.z); holder.rotation.y = d.yaw; holder.scale.setScalar(d.h);
+        scene.add(holder);
+      }
     }, () => {})),
     // One round bale, two sizes: the throwable prop and the big courtyard cover stacks.
     load('/models/hay.glb').then(g => {

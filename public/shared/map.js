@@ -233,6 +233,8 @@ export const LAYOUT_KINDS = {
   blastStone: ['h', 'tilt'], tableRock: ['h', 'tilt'], well: [], cart: [], tree: ['model', 'h'],
   piece: ['model', 'h', 'sx', 'sz', 'y', 'modelYaw'], leanSilo: ['len', 'y0', 'y1', 'w', 'r'], wall: ['w', 'd', 'base', 'h', 'style'],
   prop: ['type'], spawn: [], heal: ['name'], cover: ['type', 'cluster', 'h'], fenceDebris: [], path: ['len', 'w'],
+  // any model from public/models placed by the editor: `h` its height in m, `y` a lift; a collider when `r` > 0 (`colH` tall)
+  deco: ['model', 'h', 'y', 'r', 'colH'],
 };
 // Stable pretty JSON for layout.json: one entry per line, keys in a fixed order, numbers to 4 decimals (0.1 mm), so a
 // moved asset is a one-line git diff.
@@ -454,7 +456,7 @@ export const FARMHOUSE = {}, PEN = {}, GATE_LEAF = {}, SHELTER = {}, TROUGH = {}
 export const FENCE_SEGMENTS = [], FENCE_POSTS = [], GOAT_SPAWNS = [], CROPS = [], BARN_POSTS = [], BARN_POST_H = [], PILLARS = [],
   FALLEN_PILLARS = [], ARCHWAYS = [], OBELISKS = [], BLAST_STONES = [], TABLE_ROCKS = [], HAY_STACKS = [], TREES = [], PROP_SPAWNS = [],
   SPAWN_POINTS = [], LEDGE_SE = [], PIECE_MODELS = [], PIECE_COLLIDERS = [], LOS_VOLUMES = [], COVER_CLUSTERS = [], HEAL_SPOTS = [],
-  COLLIDERS = [], BLAST_SHARDS = [], CRYSTALS = [], GOAT_DETOURS = [], FENCE_DEBRIS = [], PATHS = [];
+  COLLIDERS = [], BLAST_SHARDS = [], CRYSTALS = [], GOAT_DETOURS = [], FENCE_DEBRIS = [], PATHS = [], DECOS = [];
 
 export const inPen = (x, z, margin = 0) =>
   x > PEN.x0 + margin && x < PEN.x1 - margin && z > PEN.z0 + margin && z < PEN.z1 - margin;
@@ -612,6 +614,9 @@ export function buildMap(L) {
     return [[e.x - dx, e.z - dz], [e.x + dx, e.z + dz], e.w];
   });
   out.SCATTER_SETTINGS = { ...(L.scatter || {}) };
+  // decoration placed in the editor: any model, optionally solid
+  out.DECOS = of('deco').map(e => ({ id: e.id, model: e.model, x: e.x, z: e.z, yaw: e.rotY || 0, h: (e.h || 2) * S_(e), y: e.y || 0,
+    r: (e.r || 0) * S_(e), colH: (e.colH || e.h || 2) * S_(e) }));
 
   // Everything solid, as circles. Movement (players, bots, goats) collides with all of them; projectiles pass over
   // anything lower than their height (`h`); line-of-sight checks (telekinesis, bot aiming, cover) only count colliders
@@ -653,6 +658,7 @@ export function buildMap(L) {
     ...SILO_BLOCKS.map(([x, z]) => ({ x, z, r: 1.8 * sk, h: 3.6 * sk, kind: 'silo' })),
     ...out.PIECE_COLLIDERS,
     ...out.COVER_CLUSTERS.flatMap(coverColliders),
+    ...out.DECOS.filter(d => d.r > 0).map(d => ({ x: d.x, z: d.z, r: d.r, h: d.colH, kind: 'deco' })),
   ];
 
   // Knee-high shards thrown out between the bigger pieces, thinning with distance (models/rock_jagged.glb). Seeded
@@ -733,7 +739,7 @@ export function buildMap(L) {
 const EXPORTS = { FARMHOUSE, PEN, GATE_LEAF, SHELTER, TROUGH, SCARECROW, TRACTOR, BARN, ALTAR, SILO, ARCHWAY, OBELISK, OBELISK_FURROW, WELL, CART,
   LEANING_SILO, PEN_ROCK, SCATTER_SETTINGS, FENCE_SEGMENTS, FENCE_POSTS, GOAT_SPAWNS, CROPS, BARN_POSTS, BARN_POST_H, PILLARS, FALLEN_PILLARS,
   ARCHWAYS, OBELISKS, BLAST_STONES, TABLE_ROCKS, HAY_STACKS, TREES, PROP_SPAWNS, SPAWN_POINTS, LEDGE_SE, PIECE_MODELS, PIECE_COLLIDERS,
-  LOS_VOLUMES, COVER_CLUSTERS, HEAL_SPOTS, COLLIDERS, BLAST_SHARDS, CRYSTALS, GOAT_DETOURS, FENCE_DEBRIS, PATHS, SURFACES };
+  LOS_VOLUMES, COVER_CLUSTERS, HEAL_SPOTS, COLLIDERS, BLAST_SHARDS, CRYSTALS, GOAT_DETOURS, FENCE_DEBRIS, PATHS, DECOS, SURFACES };
 export function applyLayout(L) {
   const m = buildMap(L);
   for (const [k, target] of Object.entries(EXPORTS)) {
