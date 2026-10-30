@@ -21,6 +21,7 @@ const PORT = process.env.PORT || 3000;
 
 const app = express();
 app.get('/healthz', (req, res) => res.type('text').send('ok'));
+(await import('./server/mapedit.js')).mountMapEdit(app, __dirname);   // the map editor: /?edit=1, saving only with MAP_EDIT=1 (environment)
 app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1h' }));
 // three.js is served from node_modules so the game has no CDN dependency.
 app.use('/vendor/three', express.static(path.join(__dirname, 'node_modules', 'three'), { maxAge: '7d' }));

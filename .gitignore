@@ -19,3 +19,6 @@ Thumbs.db
 test-results/
 playwright-report/
 __pycache__/
+
+# the map editor's backups of layout.json (server/mapedit.js)
+tools/layout-backups/
