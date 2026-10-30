@@ -446,7 +446,8 @@ const PEN_BOX = { x0: C.PEN.x0, x1: C.PEN.x1, z0: C.PEN.z0, z1: C.PEN.z1 };
 const BOXES = [[PEN_BOX, 0.5], ...C.GOAT_DETOURS.map(b => [b, 0.6])];   // [box, how much a route must clear it by]
 // Platforms and ramps (C.SURFACES) are rotated rectangles: a route leg must clear each by SURF_GROW, and their
 // corners pushed out by SURF_PAD are extra waypoints (the box waypoints would wall off the ground round them).
-const SURFS = C.SURFACES || [];
+// (decks high enough to walk under don't count: a goat trots underneath)
+const SURFS = (C.SURFACES || []).filter(s => !(s.thick && Math.min(s.kind === 'ramp' ? Math.min(s.y0, s.y1) : s.top) - s.thick > 1.0));
 const SURF_GROW = G.radius + 0.05, SURF_PAD = G.radius + 0.9;
 const surfLocal = (s, x, z) => { const dx = x - s.x, dz = z - s.z, c = Math.cos(s.yaw || 0), n = Math.sin(s.yaw || 0); return [dx * c - dz * n, dx * n + dz * c]; };
 function crossesSurf(a, c, s, grow) {

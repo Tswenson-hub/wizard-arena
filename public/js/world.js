@@ -140,6 +140,7 @@ export function buildWorld(scene) {
 
   buildBlastSite(scene);
   buildHighGround(scene);
+  buildCover(scene);
   buildRunePillars(scene);
   buildTrees(scene);
   buildPen(scene);
@@ -371,14 +372,16 @@ function wedgeGeometry(w, d, y0, y1) {
 const HG = {
   plank: flat(0x9a6b3f), plankDark: flat(0x6e4a2a), post: flat(0x5e3f24), hay: flat(0xd2ad55),
   ruin: flat(0x5d625b), ruinDark: flat(0x484c47), rock: flat(0x7d7f78), rockDark: flat(0x666a63),
-  earth: flat(0x7a5a38), roadTop: decal(0xa88d5e, 3),
+  earth: flat(0x7a5a38), roadTop: decal(0xa88d5e, 3), crate: flat(0xa07440), silo: flat(0x7c8288), roofMat: flat(0x5d4637),
 };
 function buildHighGround(scene) {
   // Plain stand-ins per surface, grouped by piece ('piece:<id>'), shown only until the piece's Meshy model loads.
   for (const sf of C.SURFACES) {
     const g = new THREE.Group(), ramp = sf.kind === 'ramp';
     const top = ramp ? Math.max(sf.y0, sf.y1) : sf.top;
-    const mat = { wood: HG.plank, hay: HG.hay, stone: HG.ruin, rock: HG.rock, earth: HG.earth, rail: HG.post, ladder: HG.post }[sf.style] || HG.rock;
+    const mat = { wood: HG.plank, hay: HG.hay, stone: HG.ruin, rock: HG.rock, earth: HG.earth, rail: HG.post, ladder: HG.post,
+      deck: HG.plank, 'deck-solid': HG.plank, stairs: HG.plankDark, plankwall: HG.plankDark, crate: HG.crate, silo: HG.silo }[sf.style] || HG.rock;
+    if (sf.style === 'silo' || sf.style === 'boulder') continue;   // a tilted silo model / a rock instance (SCATTER) draws these
     if (sf.style === 'rail') {                 // a thin rail at the top edge
       const len = ramp ? Math.hypot(sf.d, sf.y1 - sf.y0) : Math.max(sf.w, sf.d);
       const r = box(ramp ? 0.08 : sf.w, 0.08, ramp ? len : sf.d, mat, 0, ramp ? (sf.y0 + sf.y1) / 2 : sf.top - 0.05, 0);
@@ -393,14 +396,71 @@ function buildHighGround(scene) {
       g.add(new THREE.Mesh(new THREE.CylinderGeometry(sf.w / 2, sf.w / 2 + 0.15, top, 16).translate(0, top / 2, 0), mat));
     } else if (sf.thick) {                     // a deck slab (or a bale on one), on posts if it starts high
       const geo = ramp ? wedgeGeometry(sf.w, sf.d, sf.y0, sf.y1) : new THREE.BoxGeometry(sf.w, sf.thick, sf.d).translate(0, top - sf.thick / 2, 0);
-      const m = new THREE.Mesh(geo, mat);
-      if (ramp) { m.scale.y = 1; m.geometry = wedgeGeometry(sf.w, sf.d, sf.y0, sf.y1); }
-      g.add(m);
+      if (ramp) {   // a sloping deck: a plank slab following the slope
+        const len = Math.hypot(sf.d, sf.y1 - sf.y0), slab = box(sf.w, sf.thick, len, mat, 0, (sf.y0 + sf.y1) / 2 - sf.thick / 2, 0);
+        slab.rotation.x = -Math.atan2(sf.y1 - sf.y0, sf.d); g.add(slab);
+      } else g.add(new THREE.Mesh(geo, mat));
+      // a deck high off the ground stands on posts
+      if (sf.style === 'deck') {
+        const lo = ramp ? Math.min(sf.y0, sf.y1) : top;
+        for (const [i, k] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+          const py = ramp ? sf.y0 + (sf.y1 - sf.y0) * (k * 0.45 + 0.5) - sf.thick : lo - sf.thick;
+          if (py > 0.3) g.add(box(0.18, py, 0.18, HG.post, i * (sf.w / 2 - 0.12), py / 2, k * (sf.d / 2 - 0.12)));
+        }
+      }
     } else {
       g.add(new THREE.Mesh(ramp ? wedgeGeometry(sf.w, sf.d, sf.y0, sf.y1) : new THREE.BoxGeometry(sf.w, top, sf.d).translate(0, top / 2, 0), mat));
     }
     standin(`piece:${sf.piece}`, g, sf, scene);
   }
+  // roofs over the shed and the covered walkway: visual only (nobody can reach them), on four posts
+  for (const r of C.ROOFS || []) {
+    const g = new THREE.Group();
+    g.add(box(r.w, 0.16, r.d, HG.roofMat, 0, r.y, 0));
+    for (const [i, k] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) g.add(box(0.14, r.y - r.posts, 0.14, HG.post, i * (r.w / 2 - 0.2), (r.y + r.posts) / 2, k * (r.d / 2 - 0.2)));
+    g.position.set(r.x, 0, r.z); g.rotation.y = r.yaw;
+    scene.add(shadowy(g));
+  }
+}
+
+// ------------------------------------------------------------ cover clusters (round 10; stand-ins)
+// Hedges as leafy blocks along their lines, broken stone walls as rough blocks, crate stacks, and hay stacks
+// (the hay model). Tall rocks are instanced with the blast stones (SCATTER).
+function buildCover(scene) {
+  const leaf = flat(0x3f7f35), leafDark = flat(0x346c2d), wallStone = flat(0x8a8d86), crate = flat(0xa07440), band = flat(0x6e4a2a);
+  const hedge = [], stones = [];
+  const rnd = seeded(77);
+  for (const cl of C.COVER_CLUSTERS) {
+    const S = C.COVER_SPEC[cl.type];
+    if (cl.lines) for (const line of cl.lines) for (let i = 1; i < line.length; i++) {
+      const [a, b] = [line[i - 1], line[i]], L = Math.hypot(b[0] - a[0], b[1] - a[1]), yaw = Math.atan2(b[0] - a[0], b[1] - a[1]);
+      const n = Math.max(1, Math.round(L / (cl.type === 'hedge' ? 0.9 : 0.7)));
+      for (let k = 0; k < n; k++) {
+        const t = (k + 0.5) / n, x = a[0] + (b[0] - a[0]) * t, z = a[1] + (b[1] - a[1]) * t;
+        if (cl.type === 'hedge') hedge.push([x, z, yaw, L / n + 0.25, S.h * (0.92 + rnd() * 0.16), 2 * S.r]);
+        else {   // broken walls: blocks of uneven height, lower toward the broken end
+          const hh = S.h * (cl.type === 'lowwall' ? 1 : 0.75 + 0.25 * (1 - t) + rnd() * 0.15);
+          stones.push([x, z, yaw + (rnd() - 0.5) * 0.12, L / n + 0.05, hh, 2 * S.r * 0.9]);
+        }
+      }
+    }
+    if (cl.type === 'crates') cl.pts.forEach(([x, z], i) => {
+      const g = new THREE.Group();
+      g.add(box(1.2, 1.1, 1.2, crate, 0, 0.55, 0), box(1.24, 0.12, 1.24, band, 0, 0.55, 0), box(0.9, 0.7, 0.9, crate, 0.1, 1.45, -0.05));
+      g.position.set(x, 0, z); g.rotation.y = rnd() * 1.5; scene.add(shadowy(g));
+    });
+    if (cl.type === 'hay') cl.pts.forEach(([x, z]) => standin('haystack', makeHayStack(), { x, z, yaw: rnd() * Math.PI }, scene));
+  }
+  const inst = (list, mats, geo) => {
+    for (const [mi, mat] of mats.entries()) {
+      const items = list.filter((_, i) => i % mats.length === mi);
+      const im = new THREE.InstancedMesh(geo, mat, items.length), m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
+      items.forEach(([x, z, yaw, len, h, w], i) => im.setMatrixAt(i, m.compose(new THREE.Vector3(x, 0, z), q.setFromAxisAngle(up, yaw), new THREE.Vector3(w, h, len))));
+      im.castShadow = im.receiveShadow = true; scene.add(im);
+    }
+  };
+  inst(hedge, [leaf, leafDark], jitterGeometry(new THREE.BoxGeometry(1, 1, 1, 2, 3, 2).translate(0, 0.5, 0), 0.12));
+  inst(stones, [wallStone], jitterGeometry(new THREE.BoxGeometry(1, 1, 1, 1, 2, 1).translate(0, 0.5, 0), 0.08));
 }
 
 // Procedural trees, shown only until the Meshy trees load (they become instanced meshes, see SCATTER).
@@ -504,7 +564,8 @@ function makeTrough() {
 const crops = { mesh: null, tops: null, base: [], flatUntil: null, flatAmt: null, dirty: false, lastT: 0 };
 function buildField(scene) {
   const F = C.FIELD;
-  scene.add(groundRect(F.x0 - 0.6, F.z0 - 0.8, F.x1 + 0.6, F.z1 + 0.8, decal(0x7a5636, 2)));
+  // round 10: the crops are gone; the farmhouse annex stands on a packed-earth yard where the field was
+  scene.add(groundRect(F.x0 - 0.6, F.z0 - 0.8, F.x1 + 0.6, F.z1 + 0.8, decal(C.CROPS.length ? 0x7a5636 : 0xa98f62, 2)));
   for (const row of C.CROP_ROWS) {
     const ridge = box(1.0, 0.18, row.z1 - row.z0 + 1.0, M.soilRidge, row.x, 0.06, (row.z0 + row.z1) / 2);
     ridge.receiveShadow = true; scene.add(ridge);
@@ -696,6 +757,9 @@ for (const t of C.TREES) SCATTER[t.kind].push([t.x, t.z, t.yaw, t.h]);
 for (const [x, z, yaw, h, tilt] of C.TABLE_ROCKS) SCATTER.rock_table.push([x, z, yaw, h, tilt, C.awayYaw(x, z), h * 0.12]);
 for (const [x, z, h, tilt] of C.BLAST_STONES) SCATTER.rock_jagged.push([x, z, x * 3.1 + z, h, tilt, C.awayYaw(x, z), h * 0.1]);
 for (const [x, z, yaw, h, tilt] of C.BLAST_SHARDS) SCATTER.rock_jagged.push([x, z, yaw, h, tilt, C.awayYaw(x, z), 0.06]);
+// round 10 cover: tall rocks standing upright, and boulders sitting on the rock plateaus
+for (const sf of C.SURFACES) if (sf.style === 'boulder') SCATTER.rock_jagged.push([sf.x, sf.z, sf.x + sf.z, 1.35, 0.05, 0, -(sf.top - sf.thick)]);
+for (const cl of C.COVER_CLUSTERS) if (cl.type === 'rock') cl.pts.forEach(([x, z, h], i) => SCATTER.rock_jagged.push([x, z, x * 1.7 + z + i, h, 0.05, 0, 0.1]));
 {
   // the rim: jagged rocks with a table rock every fourth stone
   const rnd = seeded(7);
@@ -728,8 +792,8 @@ for (const [x, z, yaw, h, tilt] of C.BLAST_SHARDS) SCATTER.rock_jagged.push([x, 
 // ?low (main.js's weak-GPU flag) keeps about a third of them and fades them nearer.
 const LOW = typeof location !== 'undefined' && new URLSearchParams(location.search).has('low');
 export const GRASS = {
-  tall:   { count: LOW ? 220 : 640, h: [0.5, 0.95] },
-  clover: { count: LOW ? 280 : 800, h: [0.18, 0.32] },
+  tall:   { count: LOW ? 250 : 760, h: [0.5, 0.95] },
+  clover: { count: LOW ? 320 : 950, h: [0.18, 0.32] },
   fade: LOW ? [14, 22] : [20, 30],
   chunk: 12,
 };
@@ -952,6 +1016,19 @@ export function loadModels(loader, scene) {
         swapModel(`piece:${P.id}`, new THREE.Group());   // its surfaces' stand-ins go
       }
     }, () => {})),
+    // the silo leaning up to the hay loft: the silo model at half size, tilted so its top is the ramp's surface
+    load('/models/silo.glb').then(g => {
+      const S = C.LEANING_SILO; if (!S) return;
+      const unit = fitModel(g, 1);   // body radius 0.45 of its height, axis at y 0.45
+      const h = S.r / 0.45, dx = S.top[0] - S.foot[0], dz = S.top[1] - S.foot[1], L = Math.hypot(dx, dz);
+      const pitch = Math.atan2(S.top[2] - S.foot[2], L);
+      const outer = new THREE.Group(), inner = new THREE.Group(), body = unit.clone();
+      body.scale.setScalar(h); body.position.y = -0.45 * h;          // its axis on the inner group's origin
+      inner.add(body); inner.rotation.z = pitch; outer.add(inner);
+      outer.rotation.y = Math.atan2(-dz, dx);                         // model +x along the ramp
+      outer.position.set((S.foot[0] + S.top[0]) / 2, (S.foot[2] + S.top[2]) / 2 - S.r / Math.cos(pitch), (S.foot[1] + S.top[1]) / 2);
+      scene.add(outer);
+    }, () => {}),
     // Ty's two vases stand in for the plain pot prop, alternating.
     load('/models/vase_terracotta.glb').then(g => { models.vases[0] = fitModel(g, C.PROP_TYPES.pot.h); }, () => {}),
     load('/models/vase_teal.glb').then(g => { models.vases[1] = fitModel(g, C.PROP_TYPES.pot.h); }, () => {}),

@@ -793,3 +793,26 @@ All six bodies now have two more keys, built at load from each hero's own `death
 
 Screenshots: `/tmp/wa-characters/shots/knock-sheet.png` (in game; rows: mid-fall, down, early and late getup) and `knock-close-sheet.png`
 (close-ups, every hero).
+
+## environment → spells: round 10 map pass is in (canopy fort, annex, barn complex, cover), three things for you
+1. **`C.LOS_VOLUMES` and `C.losVolumeBlocks(a, b)`.** The canopy fort's foliage is three cylinders `{ x, z, r, y0, y1 }` (r 5.85, y 5.2–13).
+   It blocks line of sight only, not movement or spells. Please include `C.losVolumeBlocks(a, b)` wherever you test line of sight
+   (bot vision, telekinesis aim, cover), next to `C.surfaceBlocks`.
+2. **Bot ramp waypoints:** every new way up is a ramp in `C.SURFACES` (`w` ≥ 0.9, ladders flagged `ladder`), so `rampWaypoint` picks them up.
+   Some perches need two hops (your depth limit is 1):
+   - fort centre deck ← bridge from an oak deck ← that oak's stairs or ladder
+   - annex shed ← stairs from the annex deck ← its north stairs
+   - high plateau ← a bridge from the loft or the pen rock ← the loft ladder, the gallery, or the pen rock steps
+
+   The stairs-then-ladder chain to the watchtower via the shed bridge is three hops; bots reach the tower by its own ladder instead.
+   If you see bots stall under the fort, a depth of 2 would help.
+3. **Jump apex 1.45 m:** checked against every standable top. The ruin ledges went from 1.8 to 2.0 m so a ground jump (1.45 + 0.45 step-up)
+   doesn't reach them. Every cover collider is at least 1.7 m tall, so none can be hopped. Nothing else changed reachability.
+
+Also:
+- **Pen:** a third of its old area (x 18..28, z −8..3); the gate is unchanged.
+- **Crops:** removed (`C.CROPS` is empty, so `trampleCrops` is a no-op).
+- **Spawns:** the TDM Frost spawns moved to the south rim. `HEAL_SPOTS` `canopy` moved to (15, −16), the fort's centre deck (y 4.2).
+- **The watchtower parapet** now blocks spells (it's cover).
+- **`C.COVER_CLUSTERS`:** 44 clusters, colliders of kind `cover`, all at least 1.7 m tall.
+- **Siege spawns:** the Ember Siege spawns moved east of the tractor (−12, 14 and around); `spawnPointFor` reads them as before.

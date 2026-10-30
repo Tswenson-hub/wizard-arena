@@ -1,5 +1,112 @@
 # Environment hand-off: the farmstead
 
+## Round 10: a dense, connected, vertical map (plus Ty's pen and stairs-into-rock notes)
+**`HEAL_SPOTS`** (committed first, abfded1): six potion spots, all at least 17 m from every spawn.
+- bridge crest 2.45
+- canopy centre deck (15, −16) 4.2
+- loft 2.28
+- high plateau 2.5
+- low plateau 1.5
+- watchtower 4.25
+
+**New pieces** (all stand-ins drawn from their surfaces, except the reused Meshy models):
+- **Canopy fort** (`FORT`, south-east of the altar):
+  - three 13 m oaks (`TREES` 12–14) on bearings 60/180/300° at 5.5 m round a centre deck (4.2 m)
+  - a deck round each trunk (3.9 m), bridged to the centre
+  - stairs up the south oak, ladders up the other two
+  - low plank walls and crates on the decks as cover
+  - the foliage is `LOS_VOLUMES` (line of sight only)
+  - Not moved onto a Siege zone: Ember's Siege spawns are about 48 m of walking from it, Frost's about 25 m.
+- **Farmhouse annex** (replaces the crop field; scarecrow and pumpkins kept):
+  - annex deck (1.5 m, crates on it)
+  - a walled shed on posts (3.0 m, walls west/north/south, open toward the altar, roof)
+  - a plank bridge from the shed to the watchtower (a gap cut in the parapet)
+  - a covered walkway from the deck onto the cart road's crest
+  - a porch (0.9 m) on the farmhouse's west wall
+  - Ways up: the deck's north stairs, the walkway, stairs deck→shed, the shed's ladder, the tower's ladder.
+- **Barn complex:**
+  - the loft extended into a gallery along the barn's east wall (2.28 m)
+  - wooden stairs (Meshy) up to it from the pen side
+  - a ladder down toward the courtyard
+  - a hay bale on it as cover
+  - a silo leaning up to the loft (silo.glb at half size, tilted; its top is the ramp)
+  - a plank bridge (Meshy) from the loft to the high plateau
+- **Pen rock** (Ty's "stairs leading into rock"): ruin steps up onto a rock plateau (2.5 m) on ground the smaller pen freed, bridged north to
+  the high plateau. That makes one high route: pen side → pen rock → high plateau → loft → gallery → down by the barn.
+  - The high plateau's own wooden stairs went (their spot is the bridge); its ways up are the two bridges.
+  - No new stairs-into-rock file was on the Desktop, so it pairs `ruin_steps` and `rock_plateau`.
+- **Pen:** a third of the area (x 18..28, z −8..3); the gate is unchanged; the shelter, trough and goat spawns moved inside.
+- **Cover clusters** (`COVER_CLUSTERS`, 44, colliders of kind `cover`; `h1`, `h2`, `h4` are hand-placed for Siege fairness, see below):
+  - hedges (1.9 m), broken stone walls (1.8 m), hay stacks, crate stacks and tall rocks
+  - The greedy placer (`/tmp/wa-environment/coverplace.mjs`) put them where the most long chest-height lines crossed, set across those
+    lines and typed by area: hay and crates in the farmyard, rocks and walls at the blast site, hedges and walls elsewhere.
+  - They're kept off paths, zone cores (they may ring a zone's edge), spawns, heal spots, the pen, the gate approach, props and the archway lane.
+  - `gapfix.mjs` then nudged clusters so no gap to anything is between 0 and 1.05 m (no snag pockets).
+- **Cover on every perch:**
+  - a boulder on each rock top
+  - a broken-wall chunk on each ruin ledge
+  - the tower parapet now blocks spells
+  - hay on the loft and gallery
+  - crates and walls on the fort and annex
+- **Grass:** 760 tall + 950 clover (was 640 + 800).
+
+**Sight lines at chest height** (1.3 m; a 2 m grid of free ground, 48 directions; `/tmp/wa-environment/sightlines.mjs`, reports `sight_before.json`
+and `sight_after.json`):
+
+| | before | after |
+|---|---|---|
+| median line | 14.5 m | 6.9 m |
+| p90 | 41.8 m | 22.4 m |
+| p99 | 65.4 m | 42.3 m |
+| rays > 25 m | 12,518 of 43,776 (29%) | 3,065 (8%) |
+| rays > 40 m | 4,946 | 533 |
+| grid points with a line > 35 m | 909 of 912 | 522 |
+| archway lane | 60 m | 60 m (kept) |
+
+- **The 25 m target is not fully met.** A few rim-to-rim diagonals (up to 76 m) still thread the deliberately open places: the Altar and
+  Barn Passage zone cores, the main paths, and the goats' gate approach.
+- Closing them means cover inside the zone cores or on the paths. That's a call for Ty/the coordinator; the placer is ready to run with those allowed.
+
+**Checks:**
+- No perch overlooks a spawn within 15 m (`perchcheck.mjs`). The TDM Frost spawns moved to the south rim, so TDM Frost now averages 29 m to the
+  altar against Ember's 21 m.
+- **Jump apex 1.45:** see requests.md. The ledges were raised to 2.0 m; no cover can be hopped.
+- **Goats:** all 49 test spots get home with no ghosting (longest 36.9 s).
+  - Routing now ignores decks a goat walks under.
+  - The gallery ladder moved off the barn wall (it trapped goats).
+  - Each cover cluster is a detour box.
+  - Goat throw and summoned-ram tests pass; the orbit test moved to a lane the new hedges didn't block.
+- `surface_test`: 29 checks pass.
+- **Botmatch 90 s:** no errors.
+- **Stuck-watch, 5 bots × 120 s:** 9 kills (fewer than before: much more cover), one 6.3 s stall by the road.
+- **Siege (`modematch siege 300 hard` ×3, MATCH_DEBUG=1):**
+  - **First pass:** Frost swept, worse than before (0.5–100, 45.9–100, 69.3–98.7). The annex, the tractor and three new clusters sat in
+    Ember's lanes, and Ember bots took about 4 s longer to reach zones.
+  - **Fix 1:** the Ember Siege spawns moved east of the tractor, to (−12, 14) and around (r 17–20). The three lane clusters were removed.
+    - Grid shortest walks are now Ember 6.4 / 7.8 / 10.1 s, Frost 8.2 / 9.4 / 9.5 s (altar / barn / silo).
+    - Ember's altar walk is under the 8 s penalty target. It offsets the steering losses bots take on Ember's cluttered side; in practice
+      respawn-to-zone is even.
+    - **Result:** respawn-to-zone came out even (about 9 s), but Frost still won 3 of 3. Frost had about 2:1 K/D whichever bots it drew.
+  - **The cause:** a death map (`deathmap.mjs`) showed Ember dying at the zones' open north edges while Frost fought from the cover south of them.
+  - **Fix 2:** three hand-placed broken walls on Ember's approaches (`h1`/`h2` flanking the Altar path and the Barn Passage's north-west rim,
+    `h4` north of the Silo zone).
+  - **Final:** Frost 100–12.6, a near tie at the cap (Ember 82.9 – Frost 91.9), Ember 100–68.5. 0 friendly fire, no stalls near spawns,
+    every respawn at its own siege spawn.
+- **Screenshots**, all looked at: `r10_aerial`, `r10_top`, `r10_fort`, `r10_fort_eye`, `r10_annex`, `r10_annex_eye`, `r10_barn`,
+  `r10_barn_eye`, `r10_pen`, `r10_meadow_eye`, `r10_yard_eye`.
+
+**Meshy pieces Ty could make to replace stand-ins:**
+- wooden deck or porch section (the annex deck, porch, gallery and fort decks)
+- a shed on stilts (the annex shed)
+- covered walkway or balcony section (the walkway, the gallery)
+- hedge segment
+- broken stone wall segment
+- a rope ladder (fort, gallery, shed)
+- a long wooden stair, about 4 m rise (the fort's south stairs)
+- a crate stack
+- a standing broken silo (not used yet)
+
+
 ## Round 9: platforms and ramps (walkable surfaces + Ty's Meshy high-ground pieces)
 **Surface model** (`map.js`, re-exported by constants.js; spells wires movement, projectiles and LOS to it):
 - `SURFACES`: boxes and ramps with options `round`, `thick` (a deck you can walk under), `moveOnly` (ladders and rails: no effect on shots)
