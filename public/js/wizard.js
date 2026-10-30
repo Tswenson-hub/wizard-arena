@@ -17,6 +17,12 @@ const NATURAL_SPEED = { run: 4.6, walk_fight: 0.73, back: 0.56 };
 // Normal movement is a walk (Ty): the fight walk forward and sideways, the backward walk backward, each time-scaled
 // to the ground speed by its measured gait speed. 'run' only plays for a body without the fight walk.
 
+// Round 13: casting on the move. A cast that doesn't root plays on the upper body while the legs keep walking: each
+// is a copy of its clip with only its own bones' tracks (LEG_BONES: the hips and legs; everything else is upper body),
+// so every bone has exactly one action driving it. Whole-body moves never split (jumps, flips, rolls, falls, hits).
+const LEG_BONES = new Set(['Hips', ...['Left', 'Right'].flatMap(s => ['UpLeg', 'Leg', 'Foot', 'ToeBase'].map(b => s + b))]);
+const WHOLE_BODY = /^(jump|double_jump|land|roll|dash|death|stun|knockdown|getup|hit_waist|mrain_|ride|spin|arrival|flask_step|float|lash|ult$)/;
+
 // Sanguine Lash: the whip coiling around the caster during the wind-up (a helix of blood-red light).
 const coilGeo = (() => {
   const pts = [];
@@ -312,12 +318,81 @@ export class Wizard {
   oneShot(name, duration, timeScale = 1, startAt = 0) {
     const a = this.actions[name];
     if (!a) return;
+    if (this.layered) this.unsplit(false, !WHOLE_BODY.test(name));
     const prev = this.current ? this.actions[this.current] : null;
     a.reset(); a.time = startAt; a.setEffectiveTimeScale(timeScale); a.setEffectiveWeight(1);
     if (prev && prev !== a) prev.crossFadeTo(a, 0.08, false);
     else a.fadeIn(0.08);
     this.current = name;
     this.oneShotUntil = performance.now() / 1000 + duration;
+  }
+
+  // The upper-body ('up') or legs ('legs') copy of a clip's action, made the first time it's asked for.
+  part(name, which) {
+    const key = `${name}^${which}`;
+    if (this.actions[key]) return this.actions[key];
+    const src = this.actions[name];
+    if (!src) return null;
+    const clip = src.getClip().clone();
+    clip.tracks = clip.tracks.filter(t => LEG_BONES.has(t.name.split('.')[0]) === (which === 'legs'));
+    const a = this.mixer.clipAction(clip);
+    a.setLoop(src.loop, Infinity); a.clampWhenFinished = src.clampWhenFinished;
+    a.enabled = true; a.setEffectiveWeight(0); a.play();
+    return (this.actions[key] = a);
+  }
+
+  // Split the playing cast: its upper half carries on, the legs walk (`loco`'s legs, faded in).
+  split(loco) {
+    const full = this.actions[this.current], up = this.part(this.current, 'up');
+    if (!full || !up) return;
+    up.stopFading(); up.enabled = true; up.time = full.time; up.paused = full.paused;
+    up.setEffectiveTimeScale(full.getEffectiveTimeScale()); up.setEffectiveWeight(1);
+    full.stopFading(); full.fadeOut(0.15);       // the upper body is the same pose in both, so only the legs blend
+    this.layered = { name: this.current, up, legs: null };
+    this.walkLegs(loco);
+  }
+
+  // The legs under a split cast: `loco`'s legs (idle's when standing), cross-faded when it changes. Legs kept from
+  // the shot before (a primary's next shot) carry on in stride.
+  walkLegs(loco) {
+    const L = this.layered, legs = this.part(loco, 'legs');
+    if (!legs || L.legs === legs) return;
+    if (L.legs) L.legs.fadeOut(0.15);
+    if (this.heldLegs === legs) { legs.stopFading(); legs.setEffectiveWeight(1); }
+    else { legs.stopFading(); legs.reset(); legs.enabled = true; legs.setEffectiveWeight(1); legs.fadeIn(0.15); }
+    L.legs = legs;
+    this.heldLegs = null;
+  }
+
+  // Back to whole-body clips. `keep`: the cast goes on (we stopped or left the ground), so its full clip takes the legs
+  // back. `holdLegs`: a new cast is starting; the walking legs keep going for a frame in case it splits too.
+  unsplit(keep, holdLegs) {
+    const L = this.layered;
+    if (!L) return;
+    const full = this.actions[L.name];
+    if (keep && full) { full.stopFading(); full.time = L.up.time; full.setEffectiveWeight(1); }
+    L.up.stopFading(); L.up.fadeOut(0.15);
+    if (L.legs && holdLegs) this.heldLegs = L.legs;
+    else if (L.legs) { L.legs.stopFading(); L.legs.fadeOut(0.15); }
+    this.layered = null;
+  }
+
+  // Each frame: split the cast in progress while we move on the ground; rejoin it when it ends or we leave the ground.
+  updateSplit(m) {
+    const name = this.inOneShot() ? this.current : null;
+    const ok = name && !this.dead && !WHOLE_BODY.test(name) && !this.castRooted && !this.riding && !(this.inAir ?? this.group.position.y > 0.3);
+    if (this.layered && this.layered.name !== name) this.unsplit(false);       // the cast ended
+    const loco = ok ? this.locomotion(m, false) : null;
+    if (!this.layered) { if (loco) this.split(loco); }
+    else if (!ok) this.unsplit(true);
+    else this.walkLegs(loco || 'idle');                                         // stopped mid-cast: the legs stand
+    if (this.heldLegs) { this.heldLegs.fadeOut(0.15); this.heldLegs = null; }  // the new cast didn't split
+    const legs = this.layered?.legs;
+    if (legs) {
+      const base = Object.keys(NATURAL_SPEED).find(k => this.actions[`${k}^legs`] === legs);
+      const n = base && (this.actions[base].getClip().userData?.speed || NATURAL_SPEED[base]);
+      legs.setEffectiveTimeScale(n ? Math.min(6, Math.max(0.3, m.speed / n)) : 1);
+    }
   }
 
   inOneShot() { return performance.now() / 1000 < this.oneShotUntil; }
@@ -488,6 +563,7 @@ export class Wizard {
     // the clip's own measured gait speed (looks.js: clip.userData.speed), else the table above
     const nat = NATURAL_SPEED[this.current] && (this.actions[this.current].getClip().userData?.speed || NATURAL_SPEED[this.current]);
     if (nat && !this.inOneShot()) this.actions[this.current].setEffectiveTimeScale(Math.min(6, Math.max(0.3, m.speed / nat)));
+    this.updateSplit(m);
     this.mixer.update(dt);
     // no crouch clip yet: sink the body a little (scaled from the feet) while crouched
     if (this.model && !(this.actions.crouch || this.actions.crouch_walk)) {
