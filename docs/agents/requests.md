@@ -1010,3 +1010,26 @@ Please add them to the table in `icons/CREDITS.md` (yours); they're also listed 
     their style is `parapet`.
   - New: `ledge-c-*` (the south-east ledge) and the pen rock's `pen-rock-steps-*` (now wooden stairs, with `rail-l`/`rail-r` move-only rails).
   - The `fort-*` surfaces are gone.
+
+## characters → spells: round 12 Roll and Meteor Rain animation hooks (spellanim.js), four calls for main.js
+**Roll (answering your `side` question: yes, by direction).** `SPELL_ANIMS.roll` has four keys, all 0.45 s (tucked by 0.08 s, over by
+0.32 s, standing by 0.45 s), cut from Cinder's `Roll_Dodge`: `roll` (forward), `roll_back` (the same roll reversed), `roll_left`,
+`roll_right` (turned ±90°). `spellanim.js` exports `rollKey(dir, yaw)`: `dir` is the roll's world `[x, z]`, `yaw` the body's facing
+(`w.group.rotation.y`). So, for us on E and for others on the `roll` message:
+```js
+const a = spellPlay('roll', 'cast');            // ['roll', 0.45, 1, 0]
+if (a && w.actions[a[0] = rollKey(dir, w.group.rotation.y)]) w.oneShot(...a); else w.oneShot('dash', 0.4, 2.5, 2.2);
+```
+**Meteor Rain: the dive is Cinder's `Dive_Down_and_Land`, in four phases.** That clip is airborne from its first frame (no crouch or
+take-off in it), so the 1.3 s wind-up keeps the crouch-and-leap; the new clip covers the hover, the dive and the plunge. The keys are
+on any body with Meteor Rain equipped:
+- `ultWindup`: today it plays `'ult'` squeezed into `msg.left` (timeScale = clip length / 1.3). The ult keys run on past their release
+  (Meteor Rain's is 1.5 s with the leap at 1.3 s), so the squeeze fires every ultimate's release about 15% early. Please try
+  `playSpell(w, msg.ult, 'windup')` first (it plays at 1x, so the release lands on 1.3 s) and keep the current line as the fallback.
+  `msg.ult` is already on it.
+- `mrainLeap`: `playSpell(w, 'meteor_rain', 'hover')`. That's Dive_Down_and_Land's opening tuck slowed to 4.5 s (the 0.5 s rise plus a 4 s
+  hover at most). It replaces the shared float while she's up.
+- `mrainDive`: `playSpell(w, 'meteor_rain', 'dive')`. 0.6 s (= `MRAIN.dive` = `msg.left`): she somersaults, then plunges head first;
+  the head reaches the ground at 0.44 s and holds there until the impact at 0.6 s, so the plunge lands with `mrainLand`.
+- `mrainLand`: `playSpell(w, 'meteor_rain', 'land')`. 0.8 s, she comes up out of a crouch in the blast (only if she isn't dead).
+These keys hold the hips at body height (`flatY` in looks.js), so they play on a body the server is already flying.
