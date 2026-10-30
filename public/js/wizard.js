@@ -125,7 +125,7 @@ export class Wizard {
     this.actions.stun.setLoop(THREE.LoopOnce); this.actions.stun.clampWhenFinished = true;
     this.actions.dash.setLoop(THREE.LoopOnce); this.actions.dash.clampWhenFinished = true;
     // optional clips some bodies have (looks.js): a death fall, Gale's cyclone sweep
-    for (const k of ['death', 'spin', 'lash', 'float', 'tk_lift', 'tk_throw', 'hit_waist', 'knockdown', 'getup']) if (this.actions[k]) { this.actions[k].setLoop(THREE.LoopOnce); this.actions[k].clampWhenFinished = true; }
+    for (const k of ['death', 'spin', 'lash', 'float', 'tk_lift', 'tk_throw', 'hit_waist', 'knockdown', 'getup', 'jump', 'double_jump', 'land']) if (this.actions[k]) { this.actions[k].setLoop(THREE.LoopOnce); this.actions[k].clampWhenFinished = true; }
 
     this.current = null;
     this.oneShotUntil = 0;
@@ -388,6 +388,14 @@ export class Wizard {
     this.nameplate = np;
   }
 
+  // Round 13: the air jump (main.js calls it on our Space in the air and on a `jump` with n: 2): the tucked front
+  // somersault (spellanim double_jump), then the float. The landing that ends this airtime plays the land kneel.
+  airJump() {
+    if (this.dead) return;
+    this.flipped = true;
+    if (this.actions.double_jump) this.oneShot('double_jump', 0.45, 1, 0);
+  }
+
   // Eye of the Storm's fling: the body is thrown up and lands (visual only; the server keeps feet on the ground).
   launch(h) { this.hopT = 0; this.hopH = h; }
   // Eye of the Storm: Gale turns as a tornado. Each call is one more spin of the clip (main.js repeats it).
@@ -433,18 +441,35 @@ export class Wizard {
     return this.actions.walk_fight ? 'walk_fight' : 'run';
   }
 
+  // Round 13: the first jump's push-off as it leaves the ground, and the land kneel when an airtime with an air jump
+  // in it ends. `jumping` is mirrored from the server (or our own jump), so this works for every wizard.
+  updateJumpPoses(m) {
+    const jumping = !!this.jumping && !this.dead;
+    if (jumping && !this.wasJumping && !this.flipped && !this.inOneShot() && this.actions.jump) this.oneShot('jump', 0.2, 1, 0);
+    if (!jumping && this.wasJumping && this.flipped && !this.dead && this.actions.land) {
+      // a 0.3 s kneel-and-rise; landing on the run it's squeezed to 0.15 s so the feet don't slide for long
+      const d = m.speed > 1.5 ? 0.15 : 0.28;
+      if (!this.inOneShot() || this.current === 'double_jump' || this.current === 'float') this.oneShot('land', d, 0.3 / d, 0);
+    }
+    if (!jumping && !(this.inAir ?? this.group.position.y > 0.3)) this.flipped = false;
+    if (this.dead) this.flipped = false;
+    this.wasJumping = jumping;
+  }
+
   updateAnimation(moving, dt) {
     const m = this.measureVelocity(dt);
     // Skyward Flash descent: a body with a float clip (Rime) holds its airborne pose until it lands
     const floating = !this.dead && this.actions.float && (this.inAir ?? this.group.position.y > 0.3);
     if (floating) this.floatT = (this.floatT ?? 0) + dt; else this.floatT = 0;
+    this.updateJumpPoses(m);
     if (this.dead) { this.setBase(this.actions.death ? 'death' : 'stun', 0.1); }
     else if (this.riding && !this.inOneShot()) this.setBase(this.actions.ride ? 'ride' : 'idle', 0.15);   // Jeb's Ram Ride: seated
-    // Round 9: a jump holds an airborne pose (a jump clip when one exists, else the float clip)
-    else if (this.jumping && !this.inOneShot() && (this.actions.jump || this.actions.float)) this.setBase(this.actions.jump ? 'jump' : 'float', 0.08);
+    // a jump holds the float pose (round 13: after the jump's push-off or the air jump's flip, both one-shots); a hover
+    // (a rooting wind-up started in the air) keeps the wind-up's pose instead
+    else if (this.jumping && !this.hovering && !this.inOneShot() && this.actions.float) this.setBase('float', 0.12);
     // crouched: crouch clips when the characters agent adds them (crouch idle, crouch walk); the squash below stands in
     else if (this.crouch && !this.inOneShot() && (this.actions.crouch || this.actions.crouch_walk)) this.setBase(m.speed > 0.4 && this.actions.crouch_walk ? 'crouch_walk' : this.actions.crouch ? 'crouch' : 'crouch_walk', 0.15);
-    else if (floating && !this.inOneShot()) {
+    else if (floating && !this.hovering && !this.inOneShot()) {
       const back = this.current !== 'float';
       this.setBase('float', 0.2);
       // returning to it after a cast mid-air: skip the fall straight to the held pose
@@ -526,7 +551,10 @@ export class Wizard {
     }
     // on a ram (Ram Ride): he sits up on its back while mounted
     this.rideLift = (this.rideLift ?? 0) + ((this.riding && !this.dead ? C.SPELLBOOK.ram_ride.height : 0) - (this.rideLift ?? 0)) * Math.min(1, dt * 10);
-    this.model.position.y = -this.dissolve * 1.6 + hop + this.rideLift;
+    // hanging in the air through a rooting wind-up (main.js sets `hovering`): a slow float bob
+    this.hoverK = (this.hoverK ?? 0) + ((this.hovering && !this.dead ? 1 : 0) - (this.hoverK ?? 0)) * Math.min(1, dt * 6);
+    const bob = this.hoverK > 0.001 ? this.hoverK * (0.06 + Math.sin(performance.now() / 1000 * 5.2) * 0.06) : 0;
+    this.model.position.y = -this.dissolve * 1.6 + hop + this.rideLift + bob;
     this.model.rotation.x = this.dissolve * 0.5;
   }
 
