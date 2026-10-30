@@ -178,6 +178,8 @@ The server reads `PORT` from the environment.
 ## Credits
 
 - **Characters, props and scenery:** made by Ty with Meshy AI.
+- **Spell models and textures:** the Glacial Bulwark ice wall (`models/ice_wall.glb`) and the Toxic Flask acid puddle
+  (`textures/fx/acid_puddle.webp`, cut out of a concept render) were made by Ty with Meshy AI.
 - **Magic sound effects:** *Magic Spell SFX Soundpack* by **Leonardo Calvo** ([thesoundrack](https://thesoundrack.itch.io/freemagicspellsfx)),
   licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Clips were trimmed, loudness-matched and re-encoded.
 - **Other sound effects:** *Basic Spell Impacts* (lentikula, CC0), *80 CC0 RPG SFX* (OpenGameArt, CC0), Kenney audio packs (CC0),
