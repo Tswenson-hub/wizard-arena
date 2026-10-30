@@ -520,7 +520,7 @@ export class Wizard {
   // in it ends. `jumping` is mirrored from the server (or our own jump), so this works for every wizard.
   updateJumpPoses(m) {
     const jumping = !!this.jumping && !this.dead;
-    if (jumping && !this.wasJumping && !this.flipped && !this.inOneShot() && this.actions.jump) this.oneShot('jump', 0.2, 1, 0);
+    if (jumping && !this.wasJumping && !this.flipped && !this.hovering && !this.inOneShot() && this.actions.jump) this.oneShot('jump', 0.2, 1, 0);
     if (!jumping && this.wasJumping && this.flipped && !this.dead && this.actions.land) {
       // a 0.3 s kneel-and-rise; landing on the run it's squeezed to 0.15 s so the feet don't slide for long
       const d = m.speed > 1.5 ? 0.15 : 0.28;
