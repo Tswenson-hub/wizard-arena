@@ -43,7 +43,7 @@ const DIFFICULTY = {
 
 const CYC = C.SPELLBOOK.cyclone, SKY = C.SPELLBOOK.skyward, LASH = C.SPELLBOOK.sanguine_lash;
 const BULWARK = C.SPELLBOOK.glacial_bulwark, SKIM = C.SPELLS.skim, RELIC = C.SPELLBOOK.trapped_relic, FROST = C.SPELLBOOK.frostfall;
-const SMOKE = C.SPELLBOOK.smoke_screen;
+const SMOKE = C.SPELLBOOK.smoke_screen, ROLL = C.SPELLBOOK.roll;
 const EYE = C.SPELLBOOK.eye_of_storm, CAGE = C.SPELLBOOK.night_cage, BLIZ = C.SPELLBOOK.blizzard, MRAIN = C.SPELLBOOK.meteor_rain;
 const SHEAR = C.SPELLS.shear, HEX = C.SPELLS.hex, FIRE = C.SPELLS.fireball;
 const SHEAR_RANGE = SHEAR.speed * SHEAR.life;
@@ -94,6 +94,7 @@ export function createBot(difficulty) {
     decoyId: null,               // the Mirror Step decoy we were fooled into chasing
     seenDecoys: new Set(),
     burned: new Map(),           // prop id -> time a Trapped Relic blew up on us (Hard bots remember)
+    trapsSeen: new Map(),        // `${prop id}:${cursedAt}` -> whether we noticed that enemy trap's glyph (we keep clear)
     nextCurse: 0,
     stuckT: 0, lastPos: null,
   };
@@ -110,9 +111,9 @@ export function botPull(p, v, until) {
   p.bot.pull = { v, until };
 }
 
-// Smoke Screen: the server moves a bot through its backward dash (clients do this themselves).
-export function botDash(p, dir, until) {
-  p.bot.dash = { dir, until };
+// Smoke Screen and Roll: the server moves a bot through its dash (clients do this themselves), at `speed` m/s.
+export function botDash(p, dir, until, speed = SMOKE.distance / SMOKE.dashTime) {
+  p.bot.dash = { dir, until, speed };
 }
 
 // A Trapped Relic went off as this bot lifted it.
@@ -499,6 +500,7 @@ function think(me, world, t) {
     if (K.mobility === 'mirror_step' && cfg.blinkDodge && mobilityReady(me, t) && Math.random() < 0.35 * cfg.dodge) return mirrorStep(me, away, act);
     if (K.mobility === 'blink' && cfg.blinkDodge && mobilityReady(me, t) && Math.random() < 0.35 * cfg.dodge) return blinkAway(me, away, act);
     if (K.mobility === 'smoke_screen' && mobilityReady(me, t) && Math.random() < 0.35 * Math.max(cfg.dodge, 0.5)) return smokeAway(me, away, act);
+    if (K.mobility === 'roll' && mobilityReady(me, t) && Math.random() < 0.3 * Math.max(cfg.dodge, 0.5)) return rollAway(me, away, act);
     if (wallReady(me, t) && d > 3.5 && Math.random() < 0.4 * cfg.dodge) return raiseWall(me, target.p, act);
     if (K.mobility === 'ram_ride' && mobilityReady(me, t) && Math.random() < 0.35 * Math.max(cfg.dodge, 0.5)) return rideAway(me, away, act);
     if (K.mobility === 'flask_step' && mobilityReady(me, t) && Math.random() < 0.35 * Math.max(cfg.dodge, 0.5)) return flaskEscape(me, target, away, act);
@@ -506,18 +508,19 @@ function think(me, world, t) {
 
   if (Math.random() > cfg.aggression) return;
 
-  // ---- Trapped Relic: curse a prop lying near the enemy, for them to pick up
+  // ---- Trapped Relic (traps only): with a trap to spare, or both far from the fight, curse a prop where they're likely to walk
   if (K.utility === 'trapped_relic' && t >= b.nextCurse && t >= me.cd.lift && !target.decoy) {
-    b.nextCurse = t + rand(3, 6);
-    const mine = [...world.props.values()].find(pr => pr.cursedBy === me.id);
-    if (!mine || mine.state !== 'idle' || dist2D([mine.x, 0, mine.z], target.p) > 9) {
-      const prop = curseCandidate(me, target, world);
-      if (prop) { b.cursing = { prop: prop.id, at: t + RELIC.hold }; b.nextCurse = t + rand(8, 14); me.yaw = yawTo(me.p, [prop.x, 0, prop.z]); return; }
+    b.nextCurse = t + rand(2, 4);
+    const mine = [...world.props.values()].filter(pr => pr.cursedBy === me.id && pr.state === 'idle');
+    if (mine.length < RELIC.traps || mine.every(pr => dist2D([pr.x, 0, pr.z], target.p) > 14)) {
+      const prop = curseCandidate(me, target, world, mine);
+      if (prop) { b.cursing = { prop: prop.id, at: t + RELIC.hold }; b.nextCurse = t + rand(4, 8); me.yaw = yawTo(me.p, [prop.x, 0, prop.z]); return; }
     }
   }
+  const tk = K.utility === 'telekinesis';   // round 12: only Telekinesis lifts and throws
 
   // ---- telekinesis: Normal and Hard bots sometimes grab a calm goat close by to hurl at the target
-  if (cfg.goatAware && !me.carrying && t >= me.cd.lift && d < 18 && Math.random() < cfg.tk * 0.5) {
+  if (tk && cfg.goatAware && !me.carrying && t >= me.cd.lift && d < 18 && Math.random() < cfg.tk * 0.5) {
     const g = world.goats.find(x => ['graze', 'wander', 'return', 'recover', 'dizzy', 'stumble'].includes(x.state) && !x.holder
       && Math.hypot(x.x - me.p[0], x.z - me.p[2]) < C.TK.range - 1 && hasLOS(me.p, [x.x, 0, x.z]));
     if (g) {
@@ -530,7 +533,7 @@ function think(me, world, t) {
   }
 
   // ---- telekinesis: grab a prop that's roughly between us and them
-  if (t >= me.cd.lift && Math.random() < cfg.tk) {
+  if (tk && t >= me.cd.lift && Math.random() < cfg.tk) {
     const prop = pickProp(me, target, world, t);
     if (prop) {
       aimProp(me, prop, (from, dir) => act({ t: 'pickup', aimOrigin: from, aimDir: dir }));
@@ -716,6 +719,7 @@ function reactToUltimates(me, world, t, act) {
     if (K.mobility === 'mirror_step') mirrorStep(me, dir, act);
     else if (K.mobility === 'blink') blinkAway(me, dir, act);
     else if (K.mobility === 'smoke_screen') smokeAway(me, dir, act);
+    else if (K.mobility === 'roll') rollAway(me, dir, act);
     else return false;
     return true;
   };
@@ -829,6 +833,7 @@ function reactToStampedes(me, world, t, act) {
         if (K.mobility === 'blink') { blinkAway(me, out, act); continue; }
         if (K.mobility === 'mirror_step') { mirrorStep(me, out, act); continue; }
         if (K.mobility === 'smoke_screen') { smokeAway(me, out, act); continue; }
+        if (K.mobility === 'roll') { rollAway(me, out, act); continue; }
       }
     }
     if (rooted(me, t) || isStunned(me, t)) continue;
@@ -1005,6 +1010,7 @@ function respondGoat(me, world, g, vel, tc, t, act) {
   if (K.mobility === 'blink' && mobilityReady(me, t)) return blinkSideways(me, null, act, vel);
   if (K.mobility === 'mirror_step' && mobilityReady(me, t)) return mirrorStep(me, [-vel[2], 0, vel[0]], act);
   if (K.mobility === 'smoke_screen' && mobilityReady(me, t)) return smokeAway(me, [-vel[2] * b.strafe, 0, vel[0] * b.strafe], act);
+  if (K.mobility === 'roll' && mobilityReady(me, t) && tc < 0.5) return rollAway(me, [-vel[2] * b.strafe, 0, vel[0] * b.strafe], act);
   const l = Math.hypot(vel[0], vel[2]) || 1;
   b.dodgeVec = [-vel[2] / l * b.strafe, vel[0] / l * b.strafe];
   b.dodgeUntil = t + 0.6;
@@ -1045,15 +1051,23 @@ function pickProp(me, target, world, t) {
   return best;
 }
 
-// A prop for a Trapped Relic: one the target is likely to grab (close to them), that we can reach.
-function curseCandidate(me, target, world) {
+// A prop for a Trapped Relic, on a path the target is likely to take: between them and us (they come for us), by cover,
+// a spawn or a heal spot; not right under their feet (they'd see it flare and step back) and not next to our other trap.
+const HOT_SPOTS = [...(C.HEAL_SPOTS || []).map(h => [h[1], h[2]]), ...C.SPAWN_POINTS.map(s => [s[0], s[2]])];
+const TALL_COVER = C.COLLIDERS.filter(c => c.h >= C.LOS_HEIGHT);
+function curseCandidate(me, target, world, mine = []) {
   let best = null, bs = Infinity;
   for (const prop of world.props.values()) {
-    if (prop.state !== 'idle') continue;
+    if (prop.state !== 'idle' || prop.cursedBy != null) continue;
     const pp = [prop.x, 0, prop.z];
     const dm = dist2D(me.p, pp), dt = dist2D(target.p, pp);
-    if (dm > C.TK.range - 1 || dt > 8 || dm < 3 || !hasLOS(me.p, pp)) continue;
-    if (dt < bs) { bs = dt; best = prop; }
+    if (dm > C.TK.range - 1 || dm < 3 || dt > 16 || dt < RELIC.trigger + 1 || !hasLOS(me.p, pp)) continue;
+    if (mine.some(pr => Math.hypot(pr.x - prop.x, pr.z - prop.z) < 5)) continue;
+    const lane = segDist(target.p, me.p, { x: prop.x, z: prop.z });
+    const hot = Math.min(...HOT_SPOTS.map(h => Math.hypot(h[0] - prop.x, h[1] - prop.z)));
+    const cover = TALL_COVER.some(c => Math.hypot(c.x - prop.x, c.z - prop.z) < c.r + 2);
+    const score = lane + dt * 0.25 - (hot < 4 ? 3 : 0) - (cover ? 1.5 : 0);
+    if (score < bs) { bs = score; best = prop; }
   }
   return best;
 }
@@ -1101,6 +1115,11 @@ function smokeAway(me, dir, act) {
   const d = inward(me, dir);
   me.yaw = Math.atan2(-d[0], -d[2]);
   act({ t: 'smoke', yaw: me.yaw, from: me.p.slice() });
+}
+
+// Roll along `dir` (any way: it goes along the movement keys, so we keep facing the fight).
+function rollAway(me, dir, act) {
+  act({ t: 'roll', dir: inward(me, dir), yaw: me.yaw, from: me.p.slice() });
 }
 
 // Glacial Bulwark between us and `toward`.
@@ -1209,6 +1228,7 @@ function evade(me, act, along) {
   if (K.mobility === 'skyward') return act({ t: 'skyward' });
   if (K.mobility === 'smoke_screen') return smokeAway(me, [-along[2] * me.bot.strafe, 0, along[0] * me.bot.strafe], act);
   if (K.mobility === 'mirror_step') return mirrorStep(me, [-along[2] * me.bot.strafe, 0, along[0] * me.bot.strafe], act);
+  if (K.mobility === 'roll') return rollAway(me, [-along[2] * me.bot.strafe, 0, along[0] * me.bot.strafe], act);
   blinkSideways(me, null, act, along);
 }
 
@@ -1265,6 +1285,8 @@ function respond(me, world, t, proj, th, act) {
   if (proj.kind === 'skim' && airborne(me, t)) return;
   // ...so hop them: a jump in the last moment clears the shards (they fly about 0.3 m up)
   if (proj.kind === 'skim' && th.tc < 0.4 && th.tc > 0.08 && canJump(me, t) && Math.random() < (cfg.jump ?? 0)) return act({ t: 'jump' });
+  // Roll: inside its 0.25 s dodge window the shot passes through (and the roll carries us off its line anyway)
+  if (K.mobility === 'roll' && mobilityReady(me, t) && th.tc < ROLL.immune && th.tc > 0.03 && Math.random() < 0.6 * cfg.dodge) return evade(me, act, proj.v);
   // Sparks, shards and thrown props: sidestep if there's time to clear the hit sphere, else ward.
   const clearTime = (C.HIT_RADIUS + proj.radius - th.miss + 0.3) / (C.speedOf() * cfg.speed);
   // Black Death heals on every block: when hurt, Vesper would rather soak it than dodge
@@ -1290,9 +1312,9 @@ function moveBot(me, dt, world, t) {
     me.p[1] = Math.max(C.surfaceHeight(me.p[0], me.p[2], me.p[1]), me.p[1] - rate * dt);
   }
 
-  // Smoke Screen dash: straight back at dash speed, colliding as usual
+  // Smoke Screen / Roll dash: straight along it at dash speed, colliding as usual
   if (b.dash && t < b.dash.until && !stunned) {
-    const v = SMOKE.distance / SMOKE.dashTime;
+    const v = b.dash.speed;
     b.vel = [b.dash.dir[0] * v, b.dash.dir[2] * v];
   } else b.dash = null;
 
@@ -1393,6 +1415,19 @@ function moveBot(me, dt, world, t) {
       const l = C.firewallLocal(w, me.p);
       if (Math.abs(l.along) < FIREWALL.width / 2 + 0.8 && Math.abs(l.across) < 1.6) { const sgn = Math.sign(l.across) || 1; wx += Math.sin(w.yaw) * sgn * 2.5; wz += Math.cos(w.yaw) * sgn * 2.5; }
     }
+    // keep clear of enemy Trapped Relics whose glyph we've noticed (within RELIC.seen; Hard bots always notice, and
+    // remember one that blew up on them), so we don't walk into the trigger
+    for (const pr of world.props.values()) {
+      if (pr.state !== 'idle' || pr.cursedBy == null || pr.cursedBy === me.id || !foeId(me, pr.cursedBy)) continue;
+      const dx = me.p[0] - pr.x, dz = me.p[2] - pr.z, dd = Math.hypot(dx, dz);
+      if (dd > RELIC.seen) continue;
+      const key = `${pr.id}:${pr.cursedAt}`;
+      if (!b.trapsSeen.has(key)) b.trapsSeen.set(key, cfg.relicMemory || Math.random() < Math.max(0.4, cfg.dodge));
+      if (!b.trapsSeen.get(key) && !(t - (b.burned.get(pr.id) ?? -Infinity) < 40)) continue;
+      const keep = RELIC.trigger + 0.6;
+      if (dd < keep + 0.8) { const k = (keep + 0.8 - dd) * 2.5; wx += (dd > 0.05 ? dx / dd : 1) * k; wz += (dd > 0.05 ? dz / dd : 0) * k; }
+    }
+    if (b.trapsSeen.size > 64) b.trapsSeen.clear();
     // keep off enemy ice walls: touching one freezes
     for (const c of C.COLLIDERS) {
       if (c.kind !== 'bulwark') continue;
