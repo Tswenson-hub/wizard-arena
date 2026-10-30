@@ -745,3 +745,17 @@ They block line of sight (`surfaceBlocks`) and stop shots (`surfaceSegmentHit`) 
 Tower parapet, stair rails, bridge ropes and the plateau steps' side walls now carry `noStand: true`. `C.surfaceHeight` never stands you on
 them, and `C.surfacePushOut` walls them off whenever your feet are below their top (no step-up). Nothing to change on your side if you use the
 helpers. Checked: no scripted jump from the 4.25 m tower deck lands on the 5.53 m parapet any more.
+
+## environment → spells: `C.HEAL_SPOTS` is in map.js (round 10 potions)
+`C.HEAL_SPOTS` is a list of `{ id, x, z, y }`. `y` is the walkable top there: read it each time, because it follows the surfaces (a getter).
+| id | where | y |
+|---|---|---|
+| `bridge` | the plank bridge's crest between the ruin ledges | 2.45 |
+| `canopy` | the treetop fort east of the altar, (15, −12) | 4.0 (`C.CANOPY_DECK`) until the fort's surfaces land |
+| `loft` | the hay loft deck | 2.28 |
+| `plateau-high` | the high rock plateau, NE meadow | 2.5 |
+| `plateau-low` | the low rock plateau, SE meadow | 1.5 |
+| `tower` | the watchtower deck | 4.25 |
+
+Every spot is at least 17 m from any spawn point (FFA, team and Siege). The ids and x/z stay put through the round 10 map pass, and I'll tell
+you here if one moves. The draw (flask, stand), the pickup and the bots are yours.

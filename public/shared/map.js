@@ -573,6 +573,20 @@ function piece(id, model, at, parts) {
   piece('road-n', 'embankment', { x: -10.5, z: 6.38, yaw: 0, h: 1.0, sx: 1.3, sz: 1.3 }, roadParts);
 }
 
+// ------------------------------------------------------------ health potions (round 10)
+// Pickup spots for the spells side's healing flasks: on contested and high ground, every one at least 17 m from
+// any spawn point (FFA, team and Siege). [id, x, z]; `y` is the walkable top there (the canopy fort's deck is
+// CANOPY_DECK until its surfaces exist).
+export const CANOPY_DECK = 4.0;
+export const HEAL_SPOTS = [
+  ['bridge', -10.6, -9.8],        // the plank bridge's crest between the ruin ledges, over the altar's west side
+  ['canopy', 15, -12],            // the treetop fort east of the altar
+  ['loft', 21.2, 21],             // the hay loft by the barn
+  ['plateau-high', 29, 18.5],     // the high rock plateau, north-east meadow
+  ['plateau-low', 26.5, -22.5],   // the low rock plateau, south-east meadow
+  ['tower', -32.8, -14.8],        // the watchtower deck
+].map(([id, x, z]) => ({ id, x, z, get y() { return surfaceHeight(x, z, 99) || (id === 'canopy' ? CANOPY_DECK : 0); } }));
+
 // Everything solid, as circles. Movement (players, bots, goats) collides with all of them;
 // projectiles pass over anything lower than their height (`h`); line-of-sight checks
 // (telekinesis, bot aiming, cover) only count colliders at least LOS_HEIGHT tall.
