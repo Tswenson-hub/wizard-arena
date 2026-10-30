@@ -564,8 +564,8 @@ function makeTrough() {
 const crops = { mesh: null, tops: null, base: [], flatUntil: null, flatAmt: null, dirty: false, lastT: 0 };
 function buildField(scene) {
   const F = C.FIELD;
-  // round 10: the crops are gone; the farmhouse annex stands on a packed-earth yard where the field was
-  scene.add(groundRect(F.x0 - 0.6, F.z0 - 0.8, F.x1 + 0.6, F.z1 + 0.8, decal(C.CROPS.length ? 0x7a5636 : 0xa98f62, 2)));
+  // round 11: no crops and no annex; the old field is meadow again (the scarecrow and the pumpkins stay)
+  if (C.CROPS.length) scene.add(groundRect(F.x0 - 0.6, F.z0 - 0.8, F.x1 + 0.6, F.z1 + 0.8, decal(0x7a5636, 2)));
   for (const row of C.CROP_ROWS) {
     const ridge = box(1.0, 0.18, row.z1 - row.z0 + 1.0, M.soilRidge, row.x, 0.06, (row.z0 + row.z1) / 2);
     ridge.receiveShadow = true; scene.add(ridge);
@@ -804,9 +804,9 @@ export const GRASS_ITEMS = { tall: [], clover: [] };   // [x, z, yaw, height, ti
     const sx = bx - ax, sz = bz - az, k = Math.max(0, Math.min(1, ((x - ax) * sx + (z - az) * sz) / (sx * sx + sz * sz)));
     return Math.hypot(ax + sx * k - x, az + sz * k - z);
   };
-  const spawns = [...C.SPAWN_POINTS, ...C.TEAM_SPAWNS.ember, ...C.TEAM_SPAWNS.frost, ...(C.SIEGE_SPAWNS ? [...C.SIEGE_SPAWNS.ember, ...C.SIEGE_SPAWNS.frost] : [])];
+  const spawns = C.SPAWN_POINTS;
   const F = C.FIELD;
-  const fieldDist = (x, z) => Math.hypot(Math.max(F.x0 - x, 0, x - F.x1), Math.max(F.z0 - z, 0, z - F.z1));
+  const fieldDist = (x, z) => C.CROPS.length ? Math.hypot(Math.max(F.x0 - x, 0, x - F.x1), Math.max(F.z0 - z, 0, z - F.z1)) : Infinity;   // no crops: meadow
   const near = C.COLLIDERS.filter(c => ['tree', 'rock', 'stone', 'silo', 'obelisk', 'arch', 'pillar', 'ruin', 'scarecrow', 'hay'].includes(c.kind) && c.r > 0.3);
   const blocked = (x, z) => {
     const r = Math.hypot(x, z);
@@ -814,7 +814,6 @@ export const GRASS_ITEMS = { tall: [], clover: [] };   // [x, z, yaw, height, ti
     if (PATHS.some(([a, b, w]) => segDist(x, z, a, b) < w / 2 + 0.35)) return true;
     if ((x / 13) ** 2 + ((z - 13) / 9) ** 2 < 1) return true;                         // the farmyard
     if (Math.hypot(x - C.ALTAR.x, z - C.ALTAR.z) < C.BLAST_RADIUS - 1.5) return true;  // the scorch
-    if ((C.SIEGE_ZONES || []).some(zn => Math.hypot(x - zn.x, z - zn.z) < zn.r + 0.5)) return true;
     if (spawns.some(([sx, , sz]) => Math.hypot(sx - x, sz - z) < 2.5)) return true;
     if (C.inPen(x, z, -0.4) || fieldDist(x, z) < 0.4) return true;                     // the pen floor and the crops
     if (C.PROP_SPAWNS.some(([, px, pz]) => Math.hypot(px - x, pz - z) < 1.0)) return true;

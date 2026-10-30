@@ -227,7 +227,7 @@ export function dizzyGoat(g, ctx) {
 // A ward stops the goat if the wizard is facing it (within the usual block cone).
 function wardFacing(p, g) {
   if (!p.blocking || p.st <= 0) return false;
-  if (C.SPELLBOOK[C.kitOf(p.wizard)?.guard]?.allSides) return true;   // Vesper's Black Death covers every side
+  if (C.SPELLBOOK[p.loadout?.guard]?.allSides) return true;   // an all-round shield (Black Death) covers every side
   const fx = Math.sin(p.yaw), fz = Math.cos(p.yaw);
   const dx = g.x - p.p[0], dz = g.z - p.p[2];
   return (fx * dx + fz * dz) / (Math.hypot(dx, dz) || 1) >= Math.cos((C.BLOCK_CONE_DEG / 2) * Math.PI / 180);
