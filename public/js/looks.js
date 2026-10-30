@@ -494,6 +494,55 @@ function measureSpeed(scene, clip, scale) {
 }
 const GAIT_KEYS = ['run', 'walk', 'walk_fight', 'back'];
 
+// Knocked down by a thrown object (Ty): 'knockdown' is the body's own death clip from its standing start to the moment
+// it lies flat, squeezed to KNOCK s (play LoopOnce + clamp: it holds the lying pose); 'getup' is the same segment reversed,
+// ending in the death clip's standing start. The flat moment is measured: the first time the head is within 6 cm of its
+// lowest height in the clip (and the hips within 6 cm of theirs).
+const KNOCK = 0.4;
+function flatTime(scene, clip) {
+  const body = skeletonClone(scene);
+  const head = body.getObjectByName('Head'), hips = body.getObjectByName('Hips');
+  if (!head || !hips) return clip.duration;
+  const mixer = new THREE.AnimationMixer(body);
+  const a = mixer.clipAction(clip); a.setLoop(THREE.LoopOnce); a.clampWhenFinished = true; a.play();
+  const sc = new THREE.Vector3(); scene.getWorldScale(sc);
+  const N = 90, samples = [];
+  for (let i = 0; i <= N; i++) {
+    const t = clip.duration * i / N;
+    mixer.setTime(t); body.updateMatrixWorld(true);
+    samples.push([t, head.getWorldPosition(_a).y, hips.getWorldPosition(_b).y]);
+  }
+  const minH = Math.min(...samples.map(q => q[1])), minP = Math.min(...samples.map(q => q[2]));
+  const tol = 0.06 / (HEIGHT / (scene.userData.waHeight || HEIGHT));   // 6 cm on the normalised 1.8 m body, in model units
+  return samples.find(q => q[1] < minH + tol && q[2] < minP + tol)?.[0] ?? clip.duration;
+}
+function reverseClip(clip, key) {
+  const c = clip.clone(); c.name = key;
+  for (const t of c.tracks) {
+    const n = t.times.length, w = t.getValueSize(), times = new Float32Array(n), vals = new Float32Array(t.values.length);
+    for (let i = 0; i < n; i++) {
+      times[i] = c.duration - t.times[n - 1 - i];
+      vals.set(t.values.subarray((n - 1 - i) * w, (n - i) * w), i * w);
+    }
+    t.times = times; t.values = vals;
+  }
+  return c;
+}
+function knockClips(scene, death) {
+  const flat = flatTime(scene, death);
+  // resample every track through its interpolant (subclip drops tracks with no key in the range, and the compressed
+  // clips are sparse), 0..flat onto 0..KNOCK at 30 fps
+  const N = Math.max(2, Math.round(KNOCK * 30)) + 1;
+  const tracks = death.tracks.map(t => {
+    const ip = t.createInterpolant(), w = t.getValueSize(), times = new Float32Array(N), vals = new Float32Array(N * w);
+    for (let i = 0; i < N; i++) { times[i] = KNOCK * i / (N - 1); vals.set(ip.evaluate(flat * i / (N - 1)), i * w); }
+    return new t.constructor(t.name, times, vals);
+  });
+  const down = new THREE.AnimationClip('knockdown', KNOCK, tracks);
+  down.userData = { flatAt: +flat.toFixed(2) };
+  return { knockdown: down, getup: reverseClip(down, 'getup') };
+}
+
 // SHARED_CLIPS for wizard `id`: picked from its own clips when it is the source, otherwise retargeted
 // from the source model (when both are Mixamo-style rigs). `loaded`: every loaded gltf by wizard id.
 function sharedClips(id, scene, animations, loaded) {
@@ -547,6 +596,8 @@ export async function loadWizardModels(loader) {
         c.userData ??= {};      // AnimationClip has no userData in three r170
         c.userData.speed ??= +measureSpeed(scene, c, scale).toFixed(2);
       }
+      scene.userData.waHeight = box.max.y - box.min.y;
+      if (clips.death) clips = { ...clips, ...knockClips(scene, clips.death) };
       models[id] = { scene, clips, scale, offsetY: -box.min.y * scale };
       const cfg = PROPS[id];
       if (cfg) await loader.loadAsync(cfg.url).then(g => { models[id].prop = fitProp(cfg, g.scene, scene, clips[cfg.pose || 'idle'], scale); })
