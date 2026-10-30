@@ -48,6 +48,13 @@ edge of every standable surface (`/tmp/wa-environment/reach2.mjs`, `reach3.mjs`)
   - **Leftover:** the bubbles (in the update loop, which isn't mine) still spawn at y 0.15 rather than at the pool's height on a raised
     surface.
 
+**Update: the Toxic pool now uses Ty's 3D puddle model** (`public/models/acid_puddle.glb`: 8 MB and 14k tris down to 502 KB and 5.7k tris).
+- **Size and placement:** scaled to 2.4 R across and flattened to 0.45 of that height so the vial lies low, on `surfaceHeight`.
+- **Fade and glow:** the mesh's `onBeforeRender` drives its own fade from `endAt` and a green emissive pulse (0.3 ± 0.15), so the shared
+  update loop is untouched.
+- **Fallback:** the decal above shows until the model loads.
+- **Shots:** `pool.png`, `pool_low.png` and `pool_end.png` (faded); no console errors.
+
 **Verified** (port 4102; the HEAD server crashed on spells' half-landed constants while I tested the assets, so those shots ran from a
 copy of `10bc641` plus my files):
 - **Ice wall:** `wall_fresh.png`, `wall_fresh_angle.png`, `wall_half.png`, `wall_damaged.png`, `wall_shatter.png`.
