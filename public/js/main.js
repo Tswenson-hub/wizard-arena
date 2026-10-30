@@ -12,6 +12,7 @@ import { Effects } from './effects.js';
 import * as Select from './select.js';
 import { loadLoadout, saveLoadout, loadVoice, saveVoice } from './loadout-store.js';
 import { spellPlay } from './spellanim.js';
+import * as spellanim from './spellanim.js';   // (rollKey: round 12, may not be there yet)
 import { mountMatchUI } from './match-ui.js';
 
 // ---------------------------------------------------------------- setup
@@ -49,7 +50,9 @@ const ui = {
   scoreboard: $('#scoreboard'), scoreBody: $('#scoreboard tbody'), clickToPlay: $('#clickToPlay'),
   soundInd: $('#soundInd'), botDiff: $('#botDiff'), botTally: $('#botTally'), volume: $('#volume'), mute: $('#mute'),
   pickNote: $('#pickNote'),
-  ammo: [...document.querySelectorAll('#abilities .ammo i')],
+  ammo: [...document.querySelectorAll('#abilities [data-ab="fast"] .ammo i')],
+  rollPips: [...document.querySelectorAll('#abilities [data-ab="mobility"] .ammo i')],   // Roll's charges
+  trapPips: [...document.querySelectorAll('#abilities [data-ab="throw"] .ammo i')],      // Trapped Relic's armed traps
   ab: Object.fromEntries([...document.querySelectorAll('.ab')].map(el => [el.dataset.ab, el])),
   ultFg: $('#abilities .ult .fg'), ultPct: $('#abilities .ult .pct'),
 };
@@ -71,7 +74,8 @@ const local = {
   slowUntil: 0,                // Glacial Skim slow
   rootUntil: 0,                // bound by a lash, or recovering from our own missed lash
   silenceUntil: 0,             // bound: no spells, ward or telekinesis
-  dash: null,                  // { start, dir } during our own Smoke Screen dash
+  dash: null,                  // { start, time, dist } during our own Smoke Screen or Roll dash (along lastDashDir)
+  rollCharges: null, rollUntil: 0,   // Roll: when each charge is back (predicted), and the current roll's end
   liftCdUntil: 0, wasHolding: false,       // telekinesis: no new lift for a while after letting go
   ammo: 3, reloadUntil: 0, lastShot: 0,   // primary magazine (predicted; the server's copy wins)
   frostAim: false,             // RMB held with Frostfall: aiming the circle
@@ -106,7 +110,7 @@ const kit = () => me?.loadout || wantLoadout;
 // Berserker Brew halves every cooldown of hers (the server's rule; we predict with it)
 const cdMul = () => me?.brewing ? C.SPELLBOOK.berserker_brew.cooldownMul : 1;
 const SPELL = C.SPELLBOOK;
-const FROST = SPELL.frostfall, SMOKE = SPELL.smoke_screen;
+const FROST = SPELL.frostfall, SMOKE = SPELL.smoke_screen, ROLL = SPELL.roll;
 const EYE = SPELL.eye_of_storm, CAGE = SPELL.night_cage, BLIZ = SPELL.blizzard, MRAIN = SPELL.meteor_rain, ULT_WIND = C.ULT_CHARGE.windup;
 const ULT_KINDS = new Set(['eye_of_storm', 'eye_burst', 'blizzard_freeze', 'meteor_rain_hit']);
 const STAMP = SPELL.stampede, RIDE = SPELL.ram_ride, RGUARD = SPELL.ram_guard;
@@ -410,6 +414,13 @@ function tkGesture(w, clip) {
   const a = w.actions[clip];
   if (a) w.oneShot(clip, Math.min(0.9, a.getClip().duration), 1, 0);
   else w.oneShot('cast_fast', 0.4, 2.6, 0.3);
+}
+
+// Roll (round 12): the roll clip for its direction against the body's facing (spellanim.rollKey), else a dash.
+function playRoll(w, dir) {
+  const a = spellPlay('roll', 'cast');
+  if (a && spellanim.rollKey) a[0] = spellanim.rollKey(dir, w.group.rotation.y);
+  if (a && w.actions?.[a[0]]) w.oneShot(...a); else w.oneShot('dash', 0.4, 2.5, 2.2);
 }
 
 // Round 11: a spell's own animation (spellanim.js, characters agent) when the body has its clip: true if it played.
@@ -761,19 +772,39 @@ function handleMessage(msg) {
       walls.delete(msg.id);
       break;
     }
-    case 'curse':
-      // only ever sent to the curser
-      if (msg.id && msg.id !== cursedProp) sfx.curse();
-      cursedProp = msg.id;
+    case 'curse': {
+      // only ever sent to the curser: the props we have trapped now
+      const ids = new Set(msg.ids || []);
+      if ([...ids].some(id => !cursedProps.has(id))) sfx.curse();
+      cursedProps = ids;
       break;
+    }
+    case 'glyphs':
+      // enemy traps close enough to us to see (RELIC.seen)
+      seenTraps = new Set(msg.ids || []);
+      break;
+    case 'relicFuse': {
+      // a trap lit by an enemy close by: a flare, then it blows RELIC.fuse s later
+      effects.relicFuse(msg.p, msg.fuse ?? RELIC.fuse);
+      sfx.relicFuse(msg.p);
+      break;
+    }
     case 'relicBlast': {
       effects.relicBlast(msg.p, RELIC.radius);
       sfx.relicBlast(msg.p);
       const d = Math.hypot(msg.p[0] - local.pos.x, msg.p[2] - local.pos.z);
       shake(d < RELIC.radius + 1 ? 0.9 : 0.6 / (1 + d * 0.2));
-      const by = players.get(msg.by), victim = players.get(msg.victim);
+      const by = players.get(msg.by), victim = msg.victim != null ? players.get(msg.victim) : null;
       if (victim === me) feed(`It was a trap! <b>${esc(by?.name || '?')}</b> cursed that object`);
-      else if (by === me) feed(`Your relic went off in <b>${esc(victim?.name || '?')}</b>'s hands`);
+      else if (by === me) feed(victim ? `Your trap went off in <b>${esc(victim.name)}</b>'s hands` : 'Your trap went off');
+      else if (!me.dead && d < RELIC.radius + 0.5) feed(`It was a trap! <b>${esc(by?.name || '?')}</b> cursed that object`);
+      break;
+    }
+    case 'roll': {
+      // Roll: our own was played when we pressed E; others tumble here (their position comes in the snapshots)
+      const w = players.get(msg.id);
+      if (w && w !== me) playRoll(w, [msg.dir[0], msg.dir[2]]);
+      effects.dust([msg.from[0], msg.from[1] || 0, msg.from[2]], 3);
       break;
     }
     case 'tp': {
@@ -917,7 +948,8 @@ function handleMessage(msg) {
       const w = players.get(msg.id);
       if (!w) break;
       w.ultWinding = true;
-      w.oneShot(w.actions.ult ? 'ult' : 'cast_heavy', msg.left, w.actions.ult ? w.actions.ult.getClip().duration / msg.left : 0.9, w.actions.ult ? 0 : 0.3);
+      // the ultimate's own wind-up at 1x (its release lands on 1.3 s), else the shared ult clip squeezed into the wind-up
+      if (!playSpell(w, msg.ult, 'windup')) w.oneShot(w.actions.ult ? 'ult' : 'cast_heavy', msg.left, w.actions.ult ? w.actions.ult.getClip().duration / msg.left : 0.9, w.actions.ult ? 0 : 0.3);
       effects.ultTell(w.group, msg.left, C.loadoutBolt(w.loadout));
       sfx.ultWindup(wpos(w));   // the shared sting; it peaks on the release
       if (w === me && !local.ultWind) local.ultWind = { start: now };
@@ -961,6 +993,7 @@ function handleMessage(msg) {
       effects.fireLaunch(msg.p, msg.top);
       sfx.play('meteor_rain_launch', { pos: [msg.p[0], 1, msg.p[2]], vol: 1.1, jitter: 0 });
       w.mrainAura = effects.flameAura(w.group);
+      playSpell(w, 'meteor_rain', 'hover');   // Dive_Down_and_Land's opening tuck, held through the hover
       if (w === me) { local.ultWind = null; local.mrain = { phase: 'rise', start: now, from: [msg.p[0], msg.p[2]], top: msg.top, rise: msg.rise, hoverUntil: now + msg.rise + msg.hover, lastAim: 0 }; }
       break;
     }
@@ -975,6 +1008,7 @@ function handleMessage(msg) {
     case 'mrainDive': {
       const w = players.get(msg.id);
       effects.blazeDive(msg.from, msg.to, msg.left);
+      if (w) playSpell(w, 'meteor_rain', 'dive');   // the somersault and plunge (its head lands with mrainLand)
       sfx.play('meteor_rain_dive', { pos: msg.to, vol: 1.2, jitter: 0 });
       if (w?.mrainMark) { w.mrainMark.visible = true; w.mrainMark.position.set(msg.to[0], 0, msg.to[2]); }
       if (msg.id === myId && local.mrain) Object.assign(local.mrain, { phase: 'dive', diveFrom: msg.from, diveTo: msg.to, diveStart: now, dive: msg.left });
@@ -989,6 +1023,7 @@ function handleMessage(msg) {
       const d = Math.hypot(msg.p[0] - local.pos.x, msg.p[2] - local.pos.z);
       shake(d < MRAIN.radius + 2 ? 1 : 0.6 / (1 + d * 0.15));
       endMrain(w);
+      if (w && !w.dead) playSpell(w, 'meteor_rain', 'land');   // up out of the crouch in the blast
       if (msg.id === myId) { local.mrain = null; local.pos.set(msg.p[0], 0, msg.p[2]); local.vel.set(0, 0, 0); }
       break;
     }
@@ -1308,9 +1343,10 @@ function updateSmokeHiding(dt) {
   for (const d of decoys.values()) check(d.wiz);
 }
 
-// Trapped Relic: the prop we've cursed (the server tells only us), marked with a faint glyph.
-let cursedProp = null;
-const curseMark = effects.curseGlyph();
+// Trapped Relic: the props we've trapped (the server tells only us) and the enemy traps near enough to see, each
+// marked with a glyph (ours plainly, theirs fainter).
+let cursedProps = new Set(), seenTraps = new Set();
+const curseMarks = [];   // a pool of glyph sprites, grown as needed
 
 // ---------------------------------------------------------------- UI helpers
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
@@ -1532,8 +1568,8 @@ function tkTarget() {
     const score = cos - l * 0.002;
     if (score > bestScore) { bestScore = score; best = e; }
   }
-  // liftable goats compete with props (server: tkTarget). A goat comes back as { goat }.
-  for (const g of goats.values()) {
+  // liftable goats compete with props (server: tkTarget), for Telekinesis. A goat comes back as { goat }.
+  if (kit().utility === 'telekinesis') for (const g of goats.values()) {
     if (g.summoned || !LIFTABLE_GOAT_STATES.has(g.state)) continue;
     const gp = g.group.position;
     const d2 = Math.hypot(gp.x - p[0], gp.z - p[2]);
@@ -1549,6 +1585,8 @@ function tkTarget() {
   }
   return best || near;
 }
+// Trapped Relic: an object we can curse (not a goat, not a trap already)
+const curseable = (h) => !!h && !h.goat && !cursedProps.has(h.data.id) && !seenTraps.has(h.data.id);
 const LIFTABLE_GOAT_STATES = new Set(['graze', 'wander', 'return', 'recover', 'dizzy', 'stumble']);
 
 // What the crosshair is pointing at (wizard, pillar, tree or ground), for aiming hurled props.
@@ -1800,8 +1838,8 @@ function updateLocal(dt) {
       } else if (K.mobility === 'smoke_screen') {
         // a fast dash straight back from where we face; the smoke stays where we stood
         local.cd.mobility = now + SMOKE.cooldown;
-        local.dash = { start: now, dir: [-Math.sin(local.yaw), -Math.cos(local.yaw)] };
-        lastDashDir = local.dash.dir;
+        local.dash = { start: now, time: SMOKE.dashTime, dist: SMOKE.distance };
+        lastDashDir = [-Math.sin(local.yaw), -Math.cos(local.yaw)];
         net.send({ t: 'smoke', yaw: local.yaw, from: [local.pos.x, 0, local.pos.z] });
       } else if (K.mobility === 'flask_step') {
         // a 0.6 s wind-up, then the potion flies along our aim and we arrive where it lands
@@ -1816,6 +1854,20 @@ function updateLocal(dt) {
           local.ride = rideTimes();
           net.send({ t: 'ride', yaw: local.yaw });
         }
+      } else if (K.mobility === 'roll') {
+        // along the movement keys, backwards if none; two charges, and no root: we keep crouching or sprinting after
+        if (now >= local.rollUntil) {
+          const d = (mx || mz) ? tmp.v3.set(0, 0, 0).addScaledVector(fwd, mz).addScaledVector(right, mx).normalize() : tmp.v3.set(-Math.sin(local.yaw), 0, -Math.cos(local.yaw));
+          local.rollCharges ??= Array(ROLL.charges).fill(0);
+          local.rollCharges[local.rollCharges.indexOf(Math.min(...local.rollCharges))] = now + ROLL.cooldown;
+          local.cd.mobility = Math.min(...local.rollCharges);
+          local.rollUntil = now + ROLL.dashTime;
+          local.dash = { start: now, time: ROLL.dashTime, dist: ROLL.distance };
+          lastDashDir = [d.x, d.z];
+          net.send({ t: 'roll', dir: [d.x, 0, d.z], yaw: local.yaw, from: [local.pos.x, local.pos.y, local.pos.z] });
+          playRoll(me, [d.x, d.z]);
+          effects.dust([local.pos.x, local.pos.y, local.pos.z], 3);
+        }
       } else if (K.mobility === 'mirror_step') {
         // along the movement keys, forward if none; the server picks which of the three paths is us
         const d = (mx || mz) ? tmp.v3.set(0, 0, 0).addScaledVector(fwd, mz).addScaledVector(right, mx).normalize() : fwd;
@@ -1824,7 +1876,7 @@ function updateLocal(dt) {
       }
       if (local.blocking) { local.blocking = false; }
     }
-    // utility: lift / hurl / set down; with Trapped Relic, holding F on an object curses it instead
+    // utility: Telekinesis lifts, hurls and sets down (props and goats); Trapped Relic only curses (F on an object, RELIC.hold)
     const relic = K.utility === 'trapped_relic';
     if (input.justPressed('KeyF') && !jumping) {
       if (me.carryingGoat) {
@@ -1841,14 +1893,13 @@ function updateLocal(dt) {
           net.send({ t: 'throw', dir: aimDir.toArray(), target: aimPoint() }); local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.tk);
         }
       } else if (!busy && !local.blocking && tkHover && now >= local.liftCdUntil) {
-        if (relic && !tkHover.goat) local.fHold = { start: now };   // goats can't be cursed: they just lift
+        if (relic) { if (curseable(tkHover)) local.fHold = { start: now }; }   // a tap or a hold: the curse takes RELIC.hold
         else sendPickup();
       }
     }
     if (local.fHold) {
-      if (holding || busy || local.blocking || !tkHover || tkHover.goat) local.fHold = null;
+      if (holding || busy || local.blocking || !curseable(tkHover)) local.fHold = null;
       else if (now - local.fHold.start >= RELIC.hold) { local.fHold = null; local.liftCdUntil = now + RELIC.liftCooldown; camera.getWorldDirection(camDir); net.send({ t: 'curse', aimOrigin: camera.position.toArray(), aimDir: camDir.toArray() }); local.castRootUntil = Math.max(local.castRootUntil, now + C.CAST_ROOT.curse); }
-      else if (!input.down('KeyF')) { local.fHold = null; sendPickup(); }
     }
     if (input.justPressed('KeyG') && holding) net.send({ t: 'drop' });
   } else {
@@ -1967,13 +2018,13 @@ function updateLocal(dt) {
   const accel = Math.min(1, dt * 12 * (local.jump ? C.JUMP.airControl : 1));   // in a jump: 60% steering
   local.vel.x += (wish.x - local.vel.x) * accel;
   local.vel.z += (wish.z - local.vel.z) * accel;
-  // Smoke Screen dash: straight back, covering the distance over dashTime of real time (so a slow
+  // Smoke Screen / Roll dash: along lastDashDir, covering the distance over its time in real time (so a slow
   // frame rate doesn't shorten it), in small steps that collide like walking
   let dashMove = 0;
   if (local.dash) {
-    const end = local.dash.start + SMOKE.dashTime;
+    const end = local.dash.start + local.dash.time;
     const t0 = Math.min(local.dash.last ?? local.dash.start, end), t1 = Math.min(now, end);
-    if (!stunned && !rooted && !me.dead) dashMove = Math.max(0, t1 - t0) * SMOKE.distance / SMOKE.dashTime;
+    if (!stunned && !rooted && !me.dead) dashMove = Math.max(0, t1 - t0) * local.dash.dist / local.dash.time;
     local.dash.last = t1;
     if (now >= end || stunned || rooted || me.dead) local.dash = null;
     local.vel.set(0, 0, 0);
@@ -2054,6 +2105,12 @@ function updateLocal(dt) {
     for (let i = 0; i < n; i++) {
       local.pos.x += lastDashDir[0] * step; local.pos.z += lastDashDir[1] * step;
       for (const c of C.COLLIDERS) if (y < c.h) pushOut(c.x, c.z, c.r);
+      if (C.SURFACES.length && !local.jump && !local.flight) {
+        // ramps and stairs: step up (STEP_UP at most) like walking; a platform's side stops us
+        const fl = groundAt(local.pos.x, local.pos.z, local.pos.y);
+        if (fl >= local.pos.y - 0.02) local.pos.y = fl;
+        const q = C.surfacePushOut(local.pos.x, local.pos.z, local.pos.y, pr); local.pos.x = q[0]; local.pos.z = q[1];
+      }
     }
   }
   for (const c of C.COLLIDERS) if (y < c.h) pushOut(c.x, c.z, c.r);
@@ -2155,6 +2212,11 @@ function updateHud(dt) {
   ui.ab.power.style.setProperty('--whip', whipK.toFixed(3));
   ui.ab.power.classList.toggle('whip', whipK > 0);
   cdFill('mobility', local.cd.mobility, SPELL[K.mobility].cooldown);
+  // Roll's charges and Trapped Relic's armed traps, as pips under their slots
+  const rolls = K.mobility === 'roll' ? (local.rollCharges || [0, 0]).filter(c => c <= now).length : -1;
+  ui.rollPips.forEach((el, i) => { el.style.display = rolls >= 0 && i < ROLL.charges ? '' : 'none'; el.classList.toggle('full', i < rolls); });
+  const traps = K.utility === 'trapped_relic' ? [...cursedProps].filter(id => props.get(id)?.data.state === 'idle').length : -1;
+  ui.trapPips.forEach((el, i) => { el.style.display = traps >= 0 && i < RELIC.traps ? '' : 'none'; el.classList.toggle('full', i < traps); el.classList.toggle('trap', true); });
   cdFill('block', local.cd.guard, SPELL[K.guard].cooldown);
   if (!me.carrying && !me.carryingGoat && now < local.liftCdUntil) cdFill('throw', local.liftCdUntil, SPELL[K.utility].liftCooldown);   // lift cooldown
   else cdFill('throw', local.cd.throw, C.THROW_COOLDOWN);
@@ -2183,12 +2245,18 @@ function updateHud(dt) {
   ultEl.classList.toggle('active', local.cataAim || !!local.ultWind || !!local.mrain || now < local.eyeUntil || now < local.blizzUntil || [...cages.values()].some(c => c.owner === myId));
   ultEl.classList.toggle('disabled', bound || holdingNow);
 
-  // our cursed prop: a faint red glyph above it
-  const cp = cursedProp && props.get(cursedProp);
-  curseMark.visible = !!cp && cp.data.state === 'idle';
-  if (curseMark.visible) {
-    curseMark.position.set(cp.data.x, C.PROP_TYPES[cp.data.type].h + 0.45 + Math.sin(now * 2) * 0.06, cp.data.z);
-    curseMark.material.opacity = 0.4 + Math.sin(now * 3) * 0.12;
+  // Trapped Relics: a red glyph over each of ours, a fainter one over an enemy trap we're close enough to see
+  {
+    const shown = [...[...cursedProps].map(id => [id, true]), ...[...seenTraps].map(id => [id, false])]
+      .map(([id, mine]) => [props.get(id), mine]).filter(([e]) => e && e.data.state === 'idle');
+    while (curseMarks.length < shown.length) curseMarks.push(effects.curseGlyph());
+    curseMarks.forEach((m, i) => {
+      const [e, mine] = shown[i] || [];
+      m.visible = !!e;
+      if (!e) return;
+      m.position.set(e.data.x, C.PROP_TYPES[e.data.type].h + 0.45 + Math.sin(now * 2 + i) * 0.06, e.data.z);
+      m.material.opacity = mine ? 0.4 + Math.sin(now * 3) * 0.12 : 0.22 + Math.sin(now * 3 + i) * 0.06;
+    });
   }
 
   // hint
@@ -2200,9 +2268,10 @@ function updateHud(dt) {
     tkMarker.position.set(gp.x, gp.y + C.GOAT.hitY, gp.z);
     tkMarker.scale.setScalar(C.GOAT.radius + 0.45 + Math.sin(now * 6) * 0.04);
     tkMarker.rotation.y += dt * 1.5;
-  } else if (tkHover) {
+  } else if (tkHover && (K.utility === 'telekinesis' || curseable(tkHover))) {
     const spec = C.PROP_TYPES[tkHover.data.type];
     tkMarker.visible = true;
+    tkMarker.material.color.setHex(K.utility === 'trapped_relic' ? 0xff4060 : 0xb48cff);
     tkMarker.position.set(tkHover.data.x, spec.h * 0.5, tkHover.data.z);
     tkMarker.scale.setScalar(spec.r + 0.3 + Math.sin(now * 6) * 0.04);
     tkMarker.rotation.y += dt * 1.5;
@@ -2251,7 +2320,8 @@ function updateHud(dt) {
   else if (now < local.stunUntil) hint = 'Stunned!';
   else if (local.fHold) hint = 'Cursing…';
   else if (tkHover?.goat) hint = 'F lift goat';
-  else if (tkHover) hint = K.utility === 'trapped_relic' ? (tkHover.data.id === cursedProp ? 'Your relic · F lift (removes the curse)' : 'F lift · hold F to curse') : 'F lift';
+  else if (tkHover && K.utility === 'trapped_relic') hint = cursedProps.has(tkHover.data.id) ? 'Your trap' : seenTraps.has(tkHover.data.id) ? 'A trap! Keep clear' : 'F curse';
+  else if (tkHover) hint = 'F lift';
   else if (slowed) hint = 'Slowed by frost';
   else if (local.reloadUntil && now - local.lastShot < 1) hint = 'Reloading…';
   ui.hint.textContent = hint; ui.hint.classList.toggle('on', !!hint); ui.hint.classList.toggle('danger', hunted || ((inFrost || inMeteor || inBlizzard || caged || inLaneNow || inPool) && !bound));
@@ -2371,4 +2441,4 @@ function frame(t) {
 requestAnimationFrame(frame);
 
 // Debug handle (used by the automated smoke test; harmless in production).
-window.__wa = { renderer, input, net, local, players, props, goats, effects, scene, camera, sfx, decoys, walls, frosts, frostMark, mrainMark, flaskMark, cageMark, laneMark, cages, firewalls, stampedeFx, C, get cursedProp() { return cursedProp; } };
+window.__wa = { renderer, input, net, local, players, props, goats, effects, scene, camera, sfx, decoys, walls, frosts, frostMark, mrainMark, flaskMark, cageMark, laneMark, cages, firewalls, stampedeFx, C, get cursedProps() { return cursedProps; }, get seenTraps() { return seenTraps; } };

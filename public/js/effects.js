@@ -648,7 +648,22 @@ export class Effects {
     this.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0, maxLife: 0.35, grav: 0, grow: (radius - 0.5) / 0.35, still: true });
   }
 
-  // The faint red glyph over a prop we've cursed (only its curser ever sees it).
+  // Trapped Relic lit by an enemy close by: a crimson flare that tightens over the fuse, then the blast (relicBlast).
+  relicFuse(p, fuse) {
+    const pos = new THREE.Vector3(p[0], p[1], p[2]);
+    this.burst(pos, 0xff2a3c, 18, 3, 0.35, 1.5);
+    const orb = new THREE.Mesh(this.sphereGeo, this.mat(0xff5060, { opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }));
+    orb.position.copy(pos); orb.scale.setScalar(1.1);
+    this.scene.add(orb);
+    this.particles.push({ mesh: orb, vel: new THREE.Vector3(), life: 0, maxLife: fuse, grav: 0, grow: -0.8 / fuse, still: true });
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.85, 1, 40).rotateX(-Math.PI / 2),
+      this.mat(0xff3048, { opacity: 0.9, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
+    ring.position.set(p[0], 0.12, p[2]); ring.scale.setScalar(1.8);
+    this.scene.add(ring);
+    this.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0, maxLife: fuse, grav: 0, grow: -1.2 / fuse, still: true });
+  }
+
+  // The red glyph over a Trapped Relic: one we laid (always shown to us), or an enemy's we're close enough to see.
   curseGlyph() {
     const c = document.createElement('canvas'); c.width = c.height = 128;
     const g = c.getContext('2d');

@@ -47,5 +47,6 @@ premium version or replace these icons.**
 | `night_cage.png` | fc1180 | Night Cage (builder card) |
 | `stampede.png` | fc1045 | Stampede (builder card) |
 | `berserker_brew.png` | fc961 | Berserker Brew (builder card) |
+| `roll.png` | fc1079 | Roll (builder card; round 12, spells agent) |
 
 Round 11: the builder's spell cards use these too (the characters agent picked the 14 above for spells that had none).

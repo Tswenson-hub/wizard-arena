@@ -200,6 +200,7 @@ body.paused #abilities, body.paused #bars, body.paused #mBanner, body.paused #so
 .ab .ammo i { width: 7px; height: 7px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.45); background: transparent; }
 .ab .ammo i.full { background: #9adfff; border-color: #9adfff; }
 .ab .ammo i.full.fin { background: #ffc94a; border-color: #ffe08a; box-shadow: 0 0 6px #ffc94a; }
+.ab .ammo i.full.trap { background: #ff4060; border-color: #ff8090; box-shadow: 0 0 6px #ff2040; }   /* Trapped Relic: an armed trap */
 .ab[data-ab=fast] { justify-content: flex-start; padding-top: 10px; }
 .ab.reloading .name { color: #ffc94a; }
 
