@@ -47,15 +47,26 @@ export const COMMON_ANIMS = {
   tk_lift: { clip: 'cinder.mage_soell_cast_6', warp: [[0, 0], [0.7, 0.1], [1.2, 0.35], [2.3, 1.1]] },
   tk_throw: { clip: 'cinder.mage_soell_cast_4', warp: [[0, 0], [0.45, 0.08], [0.65, 0.18], [2.2, 1.0]] },
   death: 'embibe.dying_backwards',           // staggers back, flat by about 1.4 s (knockdown and getup are cut from it)
-  // Round 13 agility. The first jump's push-off: Jeb's leap (legs driving straight, the staff arm going up) squeezed into
-  // 0.2 s, then the shared float. Its root motion is dropped (flatY): the jump arc moves the body.
-  jump: { clip: 'jeb.Sword_Judgment', from: 0.6, to: 0.9, warp: [[0.6, 0], [0.9, 0.2]], flatY: 0 },
-  // The air jump: Cinder's Roll_Dodge played in the air with the hips pinned (flatY), so the tuck-and-roll becomes a
-  // tucked front somersault (head lowest at 0.1 s, upright again by 0.3 s), 0.45 s, then the float. Dive_Down_and_Land
-  // was tried first: its 0.2-0.5 s is a static tuck with no turn, and its somersault ends head-down (it is a dive).
-  double_jump: { ...ROLL, warp: [[0.55, 0], [0.86, 0.06], [1.47, 0.33], [1.8, 0.45]], flatY: 0.1 },
-  // After a double jump: Jeb's landing kneel (the staff driven down), crouched by 0.04 s, held to 0.12 s, up by 0.3 s.
-  land: { clip: 'jeb.Sword_Judgment', from: 1.16, to: 2.5, warp: [[1.16, 0], [1.3, 0.04], [1.6, 0.12], [2.5, 0.3]] },
+  // Round 13 agility, cut from Ty's second Jeb export (jeb2.*: Basic_Jump, Backflip, Dive_Down_and_Land_2, Jumping_Punch,
+  // Crouch_Walk_with_Torch). Airborne cuts pin the hips (flatY: the jump arc moves the body); landings and the crouch
+  // keep the hips' rise and fall but not their drift (pinXZ).
+  // The push-off: Basic_Jump from the end of its crouch, the legs driving straight and the arms coming up, in 0.25 s.
+  jump: { clip: 'jeb2.Basic_Jump', from: 1.72, to: 2.25, warp: [[1.72, 0], [2.25, 0.25]], flatY: 0 },
+  // The air jump: a layout front flip (Backflip played backwards: it starts in its landing tuck, turns forward through
+  // inverted at 0.2 s, and opens out arms up) and, jumping backwards, the backflip itself; 0.45 s each, then the float.
+  double_jump: { clip: 'jeb2.Backflip', from: 0.6, to: 1.4, warp: [[0.6, 0], [1.4, 0.45]], flatY: 0.1, reverse: true },
+  double_jump_back: { clip: 'jeb2.Backflip', from: 0.6, to: 1.4, warp: [[0.6, 0], [1.4, 0.45]], flatY: 0.1 },
+  // A plain jump's landing: Basic_Jump's dip and rise (crouched by 0.04 s, up by 0.3 s)
+  land_soft: { clip: 'jeb2.Basic_Jump', from: 2.42, to: 3.6, warp: [[2.42, 0], [2.55, 0.04], [2.9, 0.12], [3.6, 0.3]], pinXZ: true },
+  // A hard landing (after an air jump, or a drop of 3 m or more): Dive_Down_and_Land_2's three-point crouch, one hand
+  // down and the staff out, then up (crouched by 0.05 s, held to 0.17 s, standing by 0.4 s)
+  land: { clip: 'jeb2.Dive_Down_and_Land_2', from: 0.58, to: 1.8, warp: [[0.58, 0], [0.7, 0.05], [1.1, 0.17], [1.8, 0.4]], pinXZ: true },
+  // Casting in the air: Jumping_Punch's in-air strike, knees tucked, the strike at 0.1 s (wizard.js plays it in place
+  // of a cast's own clip while airborne)
+  air_cast: { clip: 'jeb2.Jumping_Punch', from: 0.95, to: 1.45, warp: [[0.95, 0], [1.2, 0.1], [1.45, 0.45]], flatY: 0 },
+  // Crouching (C / Ctrl): Crouch_Walk_with_Torch, its walk and a held frame of it
+  crouch_walk: { clip: 'jeb2.Crouch_Walk_with_Torch', warp: [[0, 0], [1.1, 1.1]], pinXZ: true },
+  crouch: { clip: 'jeb2.Crouch_Walk_with_Torch', from: 0.25, to: 0.3, warp: [[0.25, 0], [0.3, 1.0]], pinXZ: true },
 };
 
 export const SPELL_ANIMS = {
@@ -182,10 +193,10 @@ export const SPELL_ANIMS = {
     need: 'a fast forward dash (a sprint-start lunge); the decoys run with the run clip',
   },
   smoke_screen: {
-    grade: 'missing', release: 0,
-    keys: { smoke_screen: ['cinder.Walk_Fight_Back', 0, 0.85, 0.35] },
-    play: { cast: ['smoke_screen', 0.35, 1, 0] },
-    need: 'a backflip or a backward leap (it is a 6.5 m leap; now it is a quick backpedal)',
+    grade: 'good', release: 0,
+    // jeb2's Backflip from the take-off to the landing crouch: over by 0.3 s (the 0.25 s dash), up by 0.5 s
+    keys: { smoke_screen: { clip: 'jeb2.Backflip', from: 0.6, to: 1.97, warp: [[0.6, 0], [1.31, 0.3], [1.97, 0.5]], pinXZ: true } },
+    play: { cast: ['smoke_screen', 0.5, 1, 0] },
   },
   roll: {
     grade: 'good', release: 0,
@@ -290,7 +301,7 @@ export const SPELL_ANIMS = {
       meteor_rain: windup('jeb.Sword_Judgment', 0.2, 0.83, 1.3, 0.2),
       mrain_hover: { clip: 'cinder.Dive_Down_and_Land', from: 0, to: 0.6, warp: [[0, 0], [0.6, 4.5]], flatY: 0 },
       mrain_dive: { clip: 'cinder.Dive_Down_and_Land', from: 0.6, to: 1.6, warp: [[0.6, 0], [1.0, 0.18], [1.6, 0.6]], flatY: -0.45 },   // head 10 cm off the ground at the impact
-      mrain_land: { clip: 'embibe.Female_Crouch_Pick_Throw_Forward', from: 3.45, to: 4.6, warp: [[3.45, 0], [4.6, 0.8]] },   // up from the crouch
+      mrain_land: { clip: 'jeb2.Dive_Down_and_Land_2', from: 0.6, to: 2.1, warp: [[0.6, 0], [1.2, 0.35], [2.1, 0.8]], pinXZ: true },   // the three-point landing, then up
     },
     // windup: on ultWindup; hover: on mrainLeap (rise + hover, at most 4.5 s; mrainDive cuts it); dive: on mrainDive
     // (msg.left = 0.6 s, so the plunge lands with mrainLand); land: on mrainLand
