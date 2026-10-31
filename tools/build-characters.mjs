@@ -157,7 +157,7 @@ const CLIPS = {
     'Melee_2H_Attack_Chop', 'Melee_2H_Attack_Slice', 'Melee_2H_Attack_Spin', 'Melee_2H_Attack_Spinning', 'Melee_Block', 'Melee_Block_Attack', 'Melee_Block_Hit', 'Melee_Blocking',
     'Melee_Unarmed_Attack_Kick', 'Melee_Unarmed_Attack_Punch_A'],
   Special: ['Skeletons_Awaken_Floor', 'Skeletons_Awaken_Standing', 'Skeletons_Death', 'Skeletons_Death_Resurrect', 'Skeletons_Idle', 'Skeletons_Taunt', 'Skeletons_Spawn_Ground'],
-  Simulation: ['Lie_Down', 'Lie_StandUp', 'Cheering'],
+  Simulation: ['Lie_Down', 'Lie_StandUp', 'Cheering', 'Sit_Chair_Idle', 'Sit_Floor_Idle'],
 };
 
 async function buildClips() {
