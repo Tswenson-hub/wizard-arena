@@ -4,6 +4,9 @@ import * as C from '../shared/constants.js';
 import { makePropMesh, makeFragments } from './world.js';
 import { SpriteFX } from './sprites.js';
 
+// Round 15 (the castle): the floor under a point (a wall-walk, a roof, else the ground): where a placed effect sits.
+const floorUnder = (p) => (C.surfaceHeight ? C.surfaceHeight(p[0], p[2], (p[1] || 0) + 0.3) : 0);
+
 const SPELL_COLORS = { fast: 0x7ad8ff, heavy: 0xff7a2a, prop: 0xb48cff, skim: 0xbfeaff, lash: 0xff2a3c, fireball: 0xff6a1e, shear: 0xd8c8ff, hex: 0xff1f3d, sling: 0xd8c8a8, potion: 0xa050e0, toxic: 0x7fd34a, flaskstep: 0xc080ff };
 const HEX_SHAPES = [3, 4, 0];   // Hex Shards: a triangle, a diamond, then a crescent (0)
 const BULWARK = C.SPELLBOOK.glacial_bulwark, FROST = C.SPELLBOOK.frostfall, SMOKE = C.SPELLBOOK.smoke_screen;
@@ -164,12 +167,13 @@ export class Effects {
   }
   // A burn mark on the ground that fades out at the end of its `life`.
   scorchDecal(p, r, life = 8, color = 0x140c08, alpha = 0.8) {
-    return this.S(Math.random() < 0.5 ? 'scorch_01' : 'scorch_02', { p: [p.x ?? p[0], 0.035 + Math.random() * 0.01, p.z ?? p[2]], mode: 'flat', size: [r * 2, r * 2.1], life,
+    const fy = floorUnder([p.x ?? p[0], p.y ?? p[1] ?? 0, p.z ?? p[2]]);   // (round 15: on a wall-walk too)
+    return this.S(Math.random() < 0.5 ? 'scorch_01' : 'scorch_02', { p: [p.x ?? p[0], fy + 0.035 + Math.random() * 0.01, p.z ?? p[2]], mode: 'flat', size: [r * 2, r * 2.1], life,
       color, alpha, add: false, fadeIn: 0.01, fadePow: 0.25 });
   }
   // A ring of smoke or dust spreading on the ground (landings, Meteor Rain).
   groundRing(p, r, color = 0x8a7a64, alpha = 0.55, life = 0.9) {
-    this.S('smoke_10', { p: [p.x ?? p[0], 0.3, p.z ?? p[2]], mode: 'flat', size: [r * 0.4, r * 2.4], life, spin: 0.6, color, alpha, add: false, fadeIn: 0.05 });
+    this.S('smoke_10', { p: [p.x ?? p[0], floorUnder([p.x ?? p[0], p.y ?? p[1] ?? 0, p.z ?? p[2]]) + 0.3, p.z ?? p[2]], mode: 'flat', size: [r * 0.4, r * 2.4], life, spin: 0.6, color, alpha, add: false, fadeIn: 0.05 });
   }
   // A cast's muzzle flash: a flame-shaped burst along the shot, in the shot's colour.
   muzzle(msg) {
@@ -199,7 +203,7 @@ export class Effects {
     const a = Math.random() * Math.PI * 2;
     this.S('star_06', { p: [pos.x + Math.sin(a) * 0.55, pos.y + 0.1 + Math.random() * 0.4, pos.z + Math.cos(a) * 0.55], v: [0, 1 + Math.random() * 0.8, 0],
       life: 0.8, size: [0.28, 0.06], color, alpha: 0.95, optional: true });
-    if (Math.random() < 0.12) this.S('circle_02', { p: [pos.x, 0.1, pos.z], mode: 'flat', size: [0.6, 2.2], life: 0.9, color, alpha: 0.6 });
+    if (Math.random() < 0.12) this.S('circle_02', { p: [pos.x, floorUnder([pos.x, pos.y, pos.z]) + 0.1, pos.z], mode: 'flat', size: [0.6, 2.2], life: 0.9, color, alpha: 0.6 });
   }
   // Tempest Veil: wind twirling round Gale while it lasts. Returns the sprites (kill them when it ends).
   veilSwirl(follow, life) {
@@ -404,8 +408,8 @@ export class Effects {
   // Kicked-up dirt at `pos` (hooves, landings, stampedes): clods and a puff of dust.
   dust(pos, count = 2) {
     for (let i = 0, N = this.n(count); i < N; i++) {
-      const x = pos.x + (Math.random() - 0.5) * 0.6, z = pos.z + (Math.random() - 0.5) * 0.6;
-      this.S(i % 2 ? 'dirt_01' : 'dirt_02', { p: [x, 0.15, z], v: [(Math.random() - 0.5) * 1.5, 1 + Math.random() * 1.5, (Math.random() - 0.5) * 1.5], grav: 4, floor: 0.06,
+      const x = (pos.x ?? pos[0]) + (Math.random() - 0.5) * 0.6, z = (pos.z ?? pos[2]) + (Math.random() - 0.5) * 0.6, fy = floorUnder([x, pos.y ?? pos[1] ?? 0, z]);   // (arrays or vectors)
+      this.S(i % 2 ? 'dirt_01' : 'dirt_02', { p: [x, fy + 0.15, z], v: [(Math.random() - 0.5) * 1.5, 1 + Math.random() * 1.5, (Math.random() - 0.5) * 1.5], grav: 4, floor: fy + 0.06,
         life: 0.55 + Math.random() * 0.3, size: [0.45 + Math.random() * 0.35, 0.75], spin: (Math.random() - 0.5) * 4, color: 0x8a6c48, alpha: 0.95, add: false });
       if (i % 2 === 0) this.S('smoke_07', { p: [x, 0.3, z], v: [(Math.random() - 0.5) * 0.6, 0.5, (Math.random() - 0.5) * 0.6], drag: 1, life: 0.8 + Math.random() * 0.4,
         size: [0.6, 1.8], spin: (Math.random() - 0.5), color: 0xb89c78, alpha: 0.45, add: false, optional: true });
@@ -561,7 +565,7 @@ export class Effects {
   // and crystals standing in until it loads (or if it fails). Returns { group, setHp(hp) }.
   wall(w) {
     const g = new THREE.Group();
-    g.position.set(w.x, 0, w.z);
+    g.position.set(w.x, w.y || 0, w.z);
     g.rotation.y = w.yaw;
     const iceMat = new THREE.MeshStandardMaterial({ color: 0xaee6ff, emissive: 0x3a8fc8, emissiveIntensity: 0.35, roughness: 0.15, metalness: 0.1, transparent: true, opacity: 0.72 });
     const standIn = new THREE.Group();
@@ -655,7 +659,7 @@ export class Effects {
     for (let i = 0; i < 34; i++) {
       const k = (Math.random() - 0.5) * BULWARK.width;
       const m = new THREE.Mesh(new THREE.TetrahedronGeometry(0.12 + Math.random() * 0.16, 0), shardMat);
-      m.position.set(w.x + rx * k, 0.2 + Math.random() * BULWARK.height, w.z + rz * k);
+      m.position.set(w.x + rx * k, (w.y || 0) + 0.2 + Math.random() * BULWARK.height, w.z + rz * k);
       this.scene.add(m);
       this.debris.push({
         mesh: m, life: 0, maxLife: 1.4 + Math.random() * 0.8,
@@ -678,7 +682,7 @@ export class Effects {
     this.particles.push({ mesh: orb, vel: new THREE.Vector3(), life: 0, maxLife: 0.3, grav: 0, grow: (radius - 0.5) / 0.3, still: true });
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.85, 1, 48).rotateX(-Math.PI / 2),
       this.mat(0xff3048, { opacity: 0.9, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
-    ring.position.set(p[0], 0.13, p[2]); ring.scale.setScalar(0.5);
+    ring.position.set(p[0], floorUnder(p) + 0.13, p[2]); ring.scale.setScalar(0.5);
     this.scene.add(ring);
     this.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0, maxLife: 0.35, grav: 0, grow: (radius - 0.5) / 0.35, still: true });
   }
@@ -693,7 +697,7 @@ export class Effects {
     this.particles.push({ mesh: orb, vel: new THREE.Vector3(), life: 0, maxLife: fuse, grav: 0, grow: -0.8 / fuse, still: true });
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.85, 1, 40).rotateX(-Math.PI / 2),
       this.mat(0xff3048, { opacity: 0.9, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
-    ring.position.set(p[0], 0.12, p[2]); ring.scale.setScalar(1.8);
+    ring.position.set(p[0], floorUnder(p) + 0.12, p[2]); ring.scale.setScalar(1.8);
     this.scene.add(ring);
     this.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0, maxLife: fuse, grav: 0, grow: -1.2 / fuse, still: true });
   }
@@ -744,7 +748,7 @@ export class Effects {
   // down, for `left` seconds, then a SMOKE.fade fade. Timed on the real clock.
   smoke(p, left) {
     const g = new THREE.Group();
-    g.position.set(p[0], 0, p[2]);
+    g.position.set(p[0], floorUnder(p), p[2]);
     const puffs = [];
     const N = 34;
     for (let i = 0; i < N; i++) {
@@ -777,7 +781,7 @@ export class Effects {
   // block of ice dropping out of the sky for the last FROST.fall seconds. `left` = seconds to impact.
   frostfall(p, left) {
     const g = new THREE.Group();
-    g.position.set(p[0], 0, p[2]);
+    g.position.set(p[0], p[1] || 0, p[2]);
     const shadow = new THREE.Mesh(new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2),
       new THREE.MeshBasicMaterial({ map: frostShadowTexture(), transparent: true, depthWrite: false }));
     shadow.position.y = 0.14; shadow.renderOrder = 2;
@@ -811,7 +815,7 @@ export class Effects {
     const shardMat = this.mat(0xd8f2ff, { opacity: 0.95 });
     for (let i = 0; i < 40; i++) {
       const m = new THREE.Mesh(new THREE.TetrahedronGeometry(0.12 + Math.random() * 0.22, 0), shardMat);
-      m.position.set(p[0] + (Math.random() - 0.5) * 2, 0.3 + Math.random() * 1.2, p[2] + (Math.random() - 0.5) * 2);
+      m.position.set(p[0] + (Math.random() - 0.5) * 2, (p[1] || 0) + 0.3 + Math.random() * 1.2, p[2] + (Math.random() - 0.5) * 2);
       this.scene.add(m);
       const a = Math.random() * Math.PI * 2, sp = 3 + Math.random() * 6;
       this.debris.push({ mesh: m, life: 0, maxLife: 1.2 + Math.random() * 0.9,
@@ -827,7 +831,7 @@ export class Effects {
     this.S('window_04', { p: pos, size: [2.5, 0.5], life: 0.3, color: 0xffffff, alpha: 0.9 });
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.85, 1, 64).rotateX(-Math.PI / 2),
       this.mat(0xdff6ff, { opacity: 0.9, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
-    ring.position.set(p[0], 0.15, p[2]); ring.scale.setScalar(1);
+    ring.position.set(p[0], (p[1] || 0) + 0.15, p[2]); ring.scale.setScalar(1);
     this.scene.add(ring);
     this.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0, maxLife: 0.4, grav: 0, grow: (FROST.radius + 1.5) / 0.4, still: true });
     this.burst(pos, 0xffffff, 20, 6, 0.5, 4);
@@ -905,7 +909,7 @@ export class Effects {
   // from it. `left` = seconds it stands.
   nightCage(p, left) {
     const g = new THREE.Group();
-    g.position.set(p[0], 0, p[2]);
+    g.position.set(p[0], p[1] || 0, p[2]);
     const obsidian = new THREE.MeshStandardMaterial({ color: 0x0c0810, emissive: 0x3a0010, emissiveIntensity: 0.6, roughness: 0.25, metalness: 0.4, flatShading: true });
     const spikes = new THREE.Group();
     let seed = 7;
@@ -946,7 +950,7 @@ export class Effects {
   firewall(w) {
     const F = C.SPELLBOOK.firewall;
     const g = new THREE.Group();
-    g.position.set(w.x, 0, w.z);
+    g.position.set(w.x, w.y || 0, w.z);
     g.rotation.y = w.yaw;
     // round 10 (Ty: "rough and boxy"): no sheets; a curtain of flame billboards spawned in update(), feathered at the
     // ends and the top, over a glowing base, with embers, sparks and smoke. Only the light lives in the group.
@@ -959,7 +963,7 @@ export class Effects {
     const glows = [];
     for (let i = 0; i < 5; i++) {
       const a = (i / 4 - 0.5) * F.width * 0.85, edge = Math.cos(Math.PI * a / (F.width * 1.1));
-      glows.push(this.S('circle_05', { p: [w.x + along[0] * a, 0.06, w.z + along[1] * a], mode: 'flat', size: [0.5, 2.2 * edge + 0.6], life: w.left + 0.4, color: 0xff6a1e, alpha: 0.55 * edge + 0.15, fadeIn: 0.06, fadePow: 0.3 }));
+      glows.push(this.S('circle_05', { p: [w.x + along[0] * a, (w.y || 0) + 0.06, w.z + along[1] * a], mode: 'flat', size: [0.5, 2.2 * edge + 0.6], life: w.left + 0.4, color: 0xff6a1e, alpha: 0.55 * edge + 0.15, fadeIn: 0.06, fadePow: 0.3 }));
     }
     const e = { group: g, light, glows, along, x: w.x, z: w.z, born: realNow(), endAt: realNow() + w.left, flame: 0, ember: 0, smoke: 0 };
     (this.firewalls ??= new Set()).add(e);
@@ -992,7 +996,7 @@ export class Effects {
   // dust as the rams pass. Anchored at `p`, running `length` along `dir`.
   stampedeLane(p, dir, width, length, left) {
     const g = new THREE.Group();
-    g.position.set(p[0], 0, p[2]);
+    g.position.set(p[0], floorUnder(p), p[2]);
     g.rotation.y = Math.atan2(dir[0], dir[2]);
     const fill = new THREE.Mesh(new THREE.PlaneGeometry(width, length).rotateX(-Math.PI / 2).translate(0, 0, length / 2),
       new THREE.MeshBasicMaterial({ color: 0xc8902a, transparent: true, opacity: 0, depthWrite: false }));
@@ -1082,11 +1086,11 @@ export class Effects {
   fireLaunch(p, top) {
     const streak = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.7, top + 2, 14, 1, true),
       this.mat(0xff7a1e, { opacity: 0.85, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
-    streak.position.set(p[0], (top + 2) / 2, p[2]);
+    streak.position.set(p[0], floorUnder(p) + (top + 2) / 2, p[2]);
     this.scene.add(streak);
     this.particles.push({ mesh: streak, vel: new THREE.Vector3(), life: 0, maxLife: 0.3, grav: 0, growXZ: -2, still: true });
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.8, 1, 48).rotateX(-Math.PI / 2), this.mat(0xffa040, { opacity: 0.9, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
-    ring.position.set(p[0], 0.15, p[2]);
+    ring.position.set(p[0], floorUnder(p) + 0.15, p[2]);
     this.scene.add(ring);
     this.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0, maxLife: 0.4, grav: 0, grow: 12, still: true });
     this.burst(new THREE.Vector3(p[0], 0.8, p[2]), 0xff5a1e, 30, 7, 0.6, -4);
@@ -1127,7 +1131,7 @@ export class Effects {
     this.burst(pos, 0xffd080, 20, 6, 0.5, 0);
     for (let i = 0; i < 10; i++) this.dust(pos, 3);
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.85, 1, 64).rotateX(-Math.PI / 2), this.mat(0xffa040, { opacity: 0.9, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
-    ring.position.set(p[0], 0.17, p[2]);
+    ring.position.set(p[0], floorUnder(p) + 0.17, p[2]);
     this.scene.add(ring);
     this.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0, maxLife: 0.45, grav: 0, grow: (MRAIN.radius + 2) / 0.45, still: true });
     this.fireBurst(pos, 2, 12);
@@ -1170,7 +1174,7 @@ export class Effects {
     this.burst(pos, 0xa050e0, 16, 4, 0.35, 8);
     this.burst(pos, 0xe8d0ff, 8, 3, 0.2, 10);
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.7, 1, 32).rotateX(-Math.PI / 2), this.mat(0xb060ff, { opacity: 0.8, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
-    ring.position.set(p[0], 0.15, p[2]);
+    ring.position.set(p[0], floorUnder(p) + 0.15, p[2]);
     this.scene.add(ring);
     this.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0, maxLife: 0.3, grav: 0, grow: radius / 0.3, still: true });
   }
@@ -1245,7 +1249,7 @@ export class Effects {
   smokeFlask(p, left) {
     const SF = C.SPELLBOOK.smoke_flask;
     const g = new THREE.Group();
-    g.position.set(p[0], 0, p[2]);
+    g.position.set(p[0], p[1] || 0, p[2]);
     const puffs = [];
     for (let i = 0; i < 18; i++) {
       const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: puffTexture(), color: i % 3 ? 0x7a4aaa : 0xb890e0, transparent: true, opacity: 0, depthWrite: false }));

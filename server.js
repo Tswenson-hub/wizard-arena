@@ -53,7 +53,7 @@ C.PROP_SPAWNS.forEach(([type, x, z], i) => {
 });
 
 function propPublic(p) {
-  return { id: p.id, type: p.type, x: p.x, z: p.z, state: p.state, carrier: p.carrier };
+  return { id: p.id, type: p.type, x: p.x, y: p.y || 0, z: p.z, state: p.state, carrier: p.carrier };
 }
 const isHeld = (prop) => prop.state === 'lifting' || prop.state === 'carried';
 
@@ -425,6 +425,7 @@ function dropProp(p, destroy, reason = null) {
     const hp = C.holdPoint(p.p, p.yaw);
     prop.state = 'idle';
     prop.x = clamp(hp[0], -C.ARENA_RADIUS, C.ARENA_RADIUS); prop.z = clamp(hp[2], -C.ARENA_RADIUS, C.ARENA_RADIUS);
+    prop.y = groundAt(prop.x, prop.z, p.p[1] + 0.3);   // (round 15: set down on the floor there, a wall-walk too)
     broadcast({ t: 'prop', prop: propPublic(prop) });
   }
 }
@@ -537,8 +538,8 @@ function cyclonePulse(p) {
     hits.push({ id: q.id, dmg, blocked });
   }
   for (const id of wallsHit) damageWall(id, CYCLONE.damage);
-  for (const d of [...decoys.values()]) if (enemyOf(d.owner, p) && dist2D(d.p, p.p) < CYCLONE.radius + C.PLAYER_RADIUS && p.p[1] < CYCLONE.height) endDecoy(d, true);
-  if (p.p[1] < 1) {
+  for (const d of [...decoys.values()]) if (enemyOf(d.owner, p) && dist2D(d.p, p.p) < CYCLONE.radius + C.PLAYER_RADIUS && Math.abs(d.p[1] - p.p[1]) < CYCLONE.height) endDecoy(d, true);
+  if (aboveFloor(p) < 1) {   // (round 15: over his own floor)
     for (const prop of props.values()) {
       if (prop.state !== 'idle') continue;
       if (dist2D(p.p, [prop.x, 0, prop.z]) < CYCLONE.radius + C.PROP_TYPES[prop.type].r) breakProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z], p.id);
@@ -661,12 +662,12 @@ function decoyAt(pos, r, ownerId) {
 }
 
 // ---------------------------------------------------------------- Glacial Bulwark walls
-function wallPublic(w) { return { id: w.id, owner: w.owner, x: w.x, z: w.z, yaw: w.yaw, hp: w.hp }; }
+function wallPublic(w) { return { id: w.id, owner: w.owner, x: w.x, y: w.y, z: w.z, yaw: w.yaw, hp: w.hp }; }
 function raiseWall(p, yaw) {
   const [x, z] = C.bulwarkCentre(p.p, yaw);
-  const w = { id: nextFxId++, owner: p.id, x, z, yaw, hp: BULWARK.hp, until: now() + BULWARK.life };
+  const w = { id: nextFxId++, owner: p.id, x, y: groundAt(x, z, p.p[1]), z, yaw, hp: BULWARK.hp, until: now() + BULWARK.life };   // (round 15: on his floor)
   walls.set(w.id, w);
-  C.addWallColliders(w.id, x, z, yaw);
+  C.addWallColliders(w.id, x, z, yaw, w.y);
   broadcast({ t: 'wallUp', wall: wallPublic(w) });
 }
 // ---------------------------------------------------------------- Embibe
@@ -696,11 +697,11 @@ function potionSplash(proj, directId) {
     applyHit(q, { kind: 'potion_splash', owner: proj.owner, dmg: base, v: [dx / l, 0, dz / l] });
   }
 }
-const poolPublic = (pl) => ({ id: pl.id, owner: pl.owner, p: [pl.x, 0, pl.z], left: Math.max(0, pl.until - now()) });
+const poolPublic = (pl) => ({ id: pl.id, owner: pl.owner, p: [pl.x, pl.y, pl.z], left: Math.max(0, pl.until - now()) });
 function makePool(proj) {
   const TF = C.SPELLBOOK.toxic_flask, t = now();
   const x = clamp(proj.p[0], -C.ARENA_RADIUS, C.ARENA_RADIUS), z = clamp(proj.p[2], -C.ARENA_RADIUS, C.ARENA_RADIUS);
-  const pl = { id: nextFxId++, owner: proj.owner, x, z, until: t + TF.life, next: t + TF.tick };
+  const pl = { id: nextFxId++, owner: proj.owner, x, y: groundAt(x, z, proj.p[1] + 0.3), z, until: t + TF.life, next: t + TF.tick };   // (round 15: the floor it broke on)
   pools.set(pl.id, pl);
   broadcast({ t: 'pool', ...poolPublic(pl) });
 }
@@ -712,7 +713,7 @@ function updatePools(t) {
     pl.next += TF.tick;
     const owner = players.get(pl.owner);
     for (const q of players.values()) {
-      if (q.dead || q.p[1] > 1 || !enemies(owner, q) || q.id === pl.owner || Math.hypot(q.p[0] - pl.x, q.p[2] - pl.z) > TF.radius) continue;
+      if (q.dead || q.p[1] - pl.y > 1 || q.p[1] < pl.y - 0.5 || !enemies(owner, q) || q.id === pl.owner || Math.hypot(q.p[0] - pl.x, q.p[2] - pl.z) > TF.radius) continue;
       applyHit(q, { kind: 'toxic_pool', owner: pl.owner, v: [0, 0, 1] });
     }
   }
@@ -723,7 +724,7 @@ function smokeFlaskAt(ownerId, pos) {
   for (const c of smokeFlasks.values()) {
     if (!enemies(shooter, players.get(c.owner)) && c.owner !== ownerId) continue;
     if (c.owner === ownerId) continue;
-    if (pos[1] < SF.height && Math.hypot(pos[0] - c.x, pos[2] - c.z) < SF.radius) return c;
+    if (pos[1] < c.y + SF.height && pos[1] > c.y - 0.5 && Math.hypot(pos[0] - c.x, pos[2] - c.z) < SF.radius) return c;   // (round 15: from its floor)
   }
   return null;
 }
@@ -765,10 +766,10 @@ function flaskArrive(proj, surface) {
 // Cinder's Firewall: a sheet of flame across her aim. It isn't solid: enemy projectiles (and thrown props) that cross it
 // burn up, and an enemy walking through takes a burn once per wall.
 const FIREWALL = C.SPELLBOOK.firewall;
-const firewallPublic = (w) => ({ id: w.id, owner: w.owner, x: w.x, z: w.z, yaw: w.yaw, left: Math.max(0, w.until - now()) });
+const firewallPublic = (w) => ({ id: w.id, owner: w.owner, x: w.x, y: w.y, z: w.z, yaw: w.yaw, left: Math.max(0, w.until - now()) });
 function raiseFirewall(p, yaw) {
   const [x, z] = C.firewallCentre(p.p, yaw);
-  const w = { id: nextFxId++, owner: p.id, x, z, yaw, until: now() + FIREWALL.life, burned: new Set() };
+  const w = { id: nextFxId++, owner: p.id, x, y: groundAt(x, z, p.p[1]), z, yaw, until: now() + FIREWALL.life, burned: new Set() };   // (round 15: on her floor)
   firewalls.set(w.id, w);
   broadcast({ t: 'firewall', ...firewallPublic(w) });
 }
@@ -776,7 +777,7 @@ function raiseFirewall(p, yaw) {
 function firewallCrossed(ownerId, a, b, r) {
   for (const w of firewalls.values()) {
     if (!enemyOf(w.owner, players.get(ownerId))) continue;
-    if (Math.max(a[1], b[1]) > FIREWALL.height + r && Math.min(a[1], b[1]) > FIREWALL.height + r) continue;
+    if (Math.min(a[1], b[1]) > w.y + FIREWALL.height + r || Math.max(a[1], b[1]) < w.y - r) continue;   // (round 15: from its floor)
     const la = C.firewallLocal(w, a), lb = C.firewallLocal(w, b);
     const crosses = Math.sign(la.across) !== Math.sign(lb.across) || Math.abs(lb.across) < FIREWALL.thickness / 2 + r;
     if (!crosses) continue;
@@ -791,7 +792,7 @@ function updateFirewalls(t) {
     if (t >= w.until) { firewalls.delete(w.id); broadcast({ t: 'firewallEnd', id: w.id }); continue; }
     const owner = players.get(w.owner);
     for (const q of players.values()) {
-      if (q.dead || w.burned.has(q.id) || !enemies(owner, q) || q.p[1] > FIREWALL.height) continue;
+      if (q.dead || w.burned.has(q.id) || !enemies(owner, q) || q.p[1] - w.y > FIREWALL.height || q.p[1] < w.y - 1) continue;
       const l = C.firewallLocal(w, q.p);
       // touching it, or having crossed it since the last tick (a position update can step right over the thin sheet)
       const side = Math.sign(l.across), prev = (w.side ??= new Map()).get(q.id);
@@ -809,7 +810,7 @@ function bulwarkTouch(w, t) {
   const owner = players.get(w.owner);
   w.touched ??= new Map();
   for (const q of players.values()) {
-    if (q.dead || q.id === w.owner || !enemies(owner, q) || q.p[1] > BULWARK.height) continue;
+    if (q.dead || q.id === w.owner || !enemies(owner, q) || q.p[1] - w.y > BULWARK.height || q.p[1] < w.y - 1) continue;
     if (t < (w.touched.get(q.id) ?? -Infinity) + BULWARK.refreeze) continue;
     const touching = C.COLLIDERS.some(c => c.wall === w.id && Math.hypot(q.p[0] - c.x, q.p[2] - c.z) < c.r + C.PLAYER_RADIUS + 0.15);
     if (!touching) continue;
@@ -842,16 +843,16 @@ function wallBetween(a, b) {
 }
 
 // ---------------------------------------------------------------- Frostfall
-const smokePublic = (c) => ({ id: c.id, owner: c.owner, p: [c.x, 0, c.z], left: Math.max(0, c.until - now()) });
-const frostPublic = (f) => ({ id: f.id, owner: f.owner, p: [f.x, 0, f.z], left: Math.max(0, f.at - now()) });
+const smokePublic = (c) => ({ id: c.id, owner: c.owner, p: [c.x, c.y || 0, c.z], left: Math.max(0, c.until - now()) });
+const frostPublic = (f) => ({ id: f.id, owner: f.owner, p: [f.x, f.y, f.z], left: Math.max(0, f.at - now()) });
 // The ice lands: everyone in the circle on (or near) the ground is crushed and frozen. Wards and walls
 // don't help: it comes from above.
 function frostfallImpact(f) {
   frostfalls.delete(f.id);
-  const at = [f.x, 0, f.z];
+  const at = [f.x, f.y, f.z];
   const hits = [];
   for (const q of players.values()) {
-    if (q.dead || q.id === f.owner || !enemyOf(f.owner, q) || aboveFloor(q) > FROST.height || dist2D(q.p, at) > FROST.radius) continue;
+    if (q.dead || q.id === f.owner || !enemyOf(f.owner, q) || q.p[1] - f.y > FROST.height || q.p[1] < f.y - 1 || dist2D(q.p, at) > FROST.radius) continue;
     const dx = q.p[0] - f.x, dz = q.p[2] - f.z, l = Math.hypot(dx, dz);
     const { dmg } = applyHit(q, { kind: 'frostfall', owner: f.owner, v: l > 0.05 ? [dx / l, 0, dz / l] : [0, 0, 1] });
     hits.push({ id: q.id, dmg });
@@ -1228,17 +1229,17 @@ function updateEye(p, t) {
 
 // Vesper, Night Cage: a ring that enemies can't cross for CAGE.duration. Those inside at the cast stay in; everyone
 // else stays out. Vesper and her teammates cross freely; spells pass through. Flying over it (above CAGE.flyOver) is allowed.
-const cagePublic = (c) => ({ id: c.id, owner: c.owner, p: [c.x, 0, c.z], left: Math.max(0, c.until - now()), inside: [...c.inside], foes: [...c.foes] });
+const cagePublic = (c) => ({ id: c.id, owner: c.owner, p: [c.x, c.y, c.z], left: Math.max(0, c.until - now()), inside: [...c.inside], foes: [...c.foes] });
 function castNightCage(p, at) {
   let [x, z] = at;
   const d = Math.hypot(x - p.p[0], z - p.p[2]);
   if (d > CAGE.range) { x = p.p[0] + (x - p.p[0]) * CAGE.range / d; z = p.p[2] + (z - p.p[2]) * CAGE.range / d; }
   [x, z] = inArena(x, z, 0);
-  const c = { id: nextFxId++, owner: p.id, x, z, until: now() + CAGE.duration, inside: new Set(), foes: new Set() };
+  const c = { id: nextFxId++, owner: p.id, x, y: C.topFloorAt(x, z), z, until: now() + CAGE.duration, inside: new Set(), foes: new Set() };   // (round 15: on the floor at the aim)
   for (const q of players.values()) {
     if (q === p || !enemies(p, q)) continue;
     c.foes.add(q.id);
-    if (!q.dead && Math.hypot(q.p[0] - x, q.p[2] - z) < CAGE.radius) c.inside.add(q.id);
+    if (!q.dead && Math.hypot(q.p[0] - x, q.p[2] - z) < CAGE.radius && Math.abs(q.p[1] - c.y) < CAGE.flyOver) c.inside.add(q.id);
   }
   cages.set(c.id, c);
   broadcast({ t: 'cage', ...cagePublic(c) });
@@ -1247,8 +1248,8 @@ function castNightCage(p, at) {
 function cageKeep(q) {
   let moved = false;
   for (const c of cages.values()) {
-    if (q.dead || !enemyOf(c.owner, q)) continue;
-    if (q.p[1] > CAGE.flyOver) {
+    if (q.dead || !enemyOf(c.owner, q) || q.p[1] < c.y - 1) continue;   // (a cage up on a wall-walk doesn't hold anyone below it)
+    if (q.p[1] - c.y > CAGE.flyOver) {
       // over the top: whichever side it comes down on is its side now
       const inNow = Math.hypot(q.p[0] - c.x, q.p[2] - c.z) < CAGE.radius;
       if (inNow !== c.inside.has(q.id)) { inNow ? c.inside.add(q.id) : c.inside.delete(q.id); broadcast({ t: 'cageSide', id: c.id, pid: q.id, inside: inNow }); }
@@ -1264,10 +1265,10 @@ function updateCages(t) {
     // Vesper and her teammates inside the ring heal
     const dt = Math.min(0.1, t - (c.healAt ?? t)); c.healAt = t;
     for (const q of players.values()) {
-      if (q.dead || enemyOf(c.owner, q) || q.p[1] > CAGE.flyOver || Math.hypot(q.p[0] - c.x, q.p[2] - c.z) >= CAGE.radius) continue;
+      if (q.dead || enemyOf(c.owner, q) || q.p[1] - c.y > CAGE.flyOver || q.p[1] < c.y - 1 || Math.hypot(q.p[0] - c.x, q.p[2] - c.z) >= CAGE.radius) continue;
       heal(q, CAGE.heal * dt, t, 0.25);
     }
-    for (const q of players.values()) if (q.bot || q.p[1] > CAGE.flyOver) cageKeep(q);   // humans: in their state updates
+    for (const q of players.values()) if (q.bot || q.p[1] - c.y > CAGE.flyOver) cageKeep(q);   // humans: in their state updates
   }
 }
 
@@ -1380,7 +1381,7 @@ function mrainDive(p) {
   const M = p.mrain, t = now();
   if (!M.at) M.at = M.from.slice();
   M.phase = 'dive'; M.diveStart = t; M.hit = new Set();
-  M.diveFrom = [M.from[0], MRAIN.height, M.from[1]]; M.diveTo = [M.at[0], 0, M.at[1]];
+  M.diveFrom = [M.from[0], MRAIN.height, M.from[1]]; M.diveTo = [M.at[0], C.topFloorAt(M.at[0], M.at[1]), M.at[1]];   // (round 15: onto a wall-walk or roof too)
   broadcast({ t: 'mrainDive', id: p.id, from: M.diveFrom, to: M.diveTo, left: MRAIN.dive });
 }
 function mrainKnockedDown(p) {
@@ -1432,7 +1433,7 @@ function updateMeteorRain(p, t, dt) {
   // the landing: the kill ring kills; the rest of the circle takes a splash falling off to its edge (round 15)
   const hits = [];
   for (const q of players.values()) {
-    if (q === p || !enemies(p, q) || q.dead || aboveFloor(q) > 2.5 || p.mrain.hit.has(q.id)) continue;
+    if (q === p || !enemies(p, q) || q.dead || q.p[1] - M.diveTo[1] > 2.5 || q.p[1] < M.diveTo[1] - 1 || p.mrain.hit.has(q.id)) continue;
     const d = dist2D(q.p, M.diveTo);
     if (d > MRAIN.radius + C.PLAYER_RADIUS) continue;
     if (d <= MRAIN.killRadius + C.PLAYER_RADIUS) { mrainKill(p, q, outward(M.diveTo, q)); continue; }
@@ -1442,7 +1443,7 @@ function updateMeteorRain(p, t, dt) {
   }
   for (const id of p.mrain.hit) hits.push(id);
   crushArea(p.id, M.diveTo[0], M.diveTo[2], MRAIN.radius);
-  p.p = [M.diveTo[0], 0, M.diveTo[2]]; p.justTeleported = true;
+  p.p = [M.diveTo[0], M.diveTo[1], M.diveTo[2]]; p.justTeleported = true;
   p.mrain = null;
   broadcast({ t: 'mrainLand', id: p.id, p: p.p, hits });
 }
@@ -1671,7 +1672,7 @@ function simulate(dt) {
       // (at most once per tick per prop: the first enemy in reach lights it, then the fuse runs whatever they do)
       for (const q of players.values()) {
         if (q.dead || q.id === prop.cursedBy || !enemyOf(prop.cursedBy, q)) continue;
-        if (q.p[1] > 1.6 || dist2D(q.p, [prop.x, 0, prop.z]) > RELIC.trigger) { prop.near?.delete(q.id); continue; }   // (flying over it is safe)
+        if (q.p[1] - (prop.y || 0) > 1.6 || q.p[1] < (prop.y || 0) - 1 || dist2D(q.p, [prop.x, 0, prop.z]) > RELIC.trigger) { prop.near?.delete(q.id); continue; }   // (flying over it is safe)
         if (prop.near?.has(q.id)) continue;   // was standing here when it was laid: not until they step out and back
         prop.fuseAt = t + RELIC.fuse;
         broadcast({ t: 'relicFuse', id: prop.id, p: [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z], by: prop.cursedBy, fuse: RELIC.fuse });
@@ -1890,7 +1891,7 @@ function handle(p, msg) {
         for (let i = 0; i < SKIM.shards; i++) {
           const a = base + (i - (SKIM.shards - 1) / 2) * SKIM.spreadDeg * Math.PI / 180;
           const dir = [Math.sin(a), 0, Math.cos(a)];
-          spawnProjectile(p, 'skim', [p.p[0] + dir[0] * 0.5, C.SPELLS.skim.height, p.p[2] + dir[2] * 0.5], dir, null, fin);
+          spawnProjectile(p, 'skim', [p.p[0] + dir[0] * 0.5, groundAt(p.p[0], p.p[2], p.p[1]) + C.SPELLS.skim.height, p.p[2] + dir[2] * 0.5], dir, null, fin);   // (round 15: above his floor, not y 0)
         }
       } else if (kind === 'hex') {
         // a curved glyph to the aim point: from the left, from the right, then a lob
@@ -1978,7 +1979,7 @@ function handle(p, msg) {
       [x, z] = inArena(x, z, 0);
       p.cd.power = t + FROST.cooldown;
       castSlow(p);
-      const f = { id: nextFxId++, owner: p.id, x, z, at: t + FROST.delay };
+      const f = { id: nextFxId++, owner: p.id, x, y: C.topFloorAt(x, z), z, at: t + FROST.delay };   // (round 15: the ice lands on whatever is there: a wall-walk, a roof)
       frostfalls.set(f.id, f);
       broadcast({ t: 'frostfall', ...frostPublic(f) });
       break;
@@ -1988,14 +1989,14 @@ function handle(p, msg) {
       // leaving a cloud where it started
       if (kit(p).mobility !== 'smoke_screen' || !canAct(p) || isRooted(p) || p.charging || p.cyclone || p.lash || t < p.cd.mobility) break;
       const yaw = Number.isFinite(msg.yaw) ? msg.yaw : p.yaw;
-      const from = validVec(msg.from) && dist2D(msg.from, p.p) < 3 ? [msg.from[0], 0, msg.from[2]] : p.p.slice();
+      const from = validVec(msg.from) && dist2D(msg.from, p.p) < 3 ? [msg.from[0], p.p[1], msg.from[2]] : p.p.slice();
       airDash(p, t, msg.from?.[1], SMOKE.dashTime);   // round 13: in the air, a level dash, then a fall
       const dir = [-Math.sin(yaw), 0, -Math.cos(yaw)];
       p.cd.mobility = t + SMOKE.cooldown;
       p.dashUntil = t + SMOKE.dashTime + 0.35; p.dashSpeed = SMOKE.distance / SMOKE.dashTime;
       if (p.blocking) { p.blocking = false; p.blockReleasedAt = t; }
       if (p.bot) botDash(p, dir, t + SMOKE.dashTime, p.dashSpeed);
-      const c = { id: nextFxId++, owner: p.id, x: from[0], z: from[2], until: t + SMOKE.life };
+      const c = { id: nextFxId++, owner: p.id, x: from[0], y: groundAt(from[0], from[2], from[1]), z: from[2], until: t + SMOKE.life };
       smokes.set(c.id, c);
       broadcast({ t: 'smoke', ...smokePublic(c), dir });
       break;
@@ -2096,9 +2097,9 @@ function handle(p, msg) {
       if (kit(p).guard !== 'smoke_flask' || !canAct(p) || t < p.cd.guard) break;
       p.cd.guard = t + C.SPELLBOOK.smoke_flask.cooldown * cdMul(p);
       castSlow(p);
-      const c = { id: nextFxId++, owner: p.id, x: p.p[0], z: p.p[2], until: t + C.SPELLBOOK.smoke_flask.life };
+      const c = { id: nextFxId++, owner: p.id, x: p.p[0], y: groundAt(p.p[0], p.p[2], p.p[1]), z: p.p[2], until: t + C.SPELLBOOK.smoke_flask.life };   // (round 15: at her feet, a wall-walk too)
       smokeFlasks.set(c.id, c);
-      broadcast({ t: 'smokeFlask', id: c.id, owner: p.id, p: [c.x, 0, c.z], left: C.SPELLBOOK.smoke_flask.life });
+      broadcast({ t: 'smokeFlask', id: c.id, owner: p.id, p: [c.x, c.y, c.z], left: C.SPELLBOOK.smoke_flask.life });
       break;
     }
     case 'rideStop': {
@@ -2181,7 +2182,7 @@ function handle(p, msg) {
       p.flightStart = t; p.flightUntil = t + C.FLIGHT_MAX_TIME;
       p.p = [p.p[0], SKY.height, p.p[2]];
       if (p.blocking) { p.blocking = false; p.blockReleasedAt = t; }
-      broadcast({ t: 'skyward', id: p.id, p: [p.p[0], 0, p.p[2]], top: SKY.height });
+      broadcast({ t: 'skyward', id: p.id, p: [p.p[0], groundAt(p.p[0], p.p[2], p.p[1]), p.p[2]], top: SKY.height });
       break;
     }
     case 'teleport': {
@@ -2328,7 +2329,7 @@ function tkTarget(p, aimOrigin, aimDir) {
     const d2 = dist2D(p.p, [prop.x, 0, prop.z]);
     if (d2 < nd) { nd = d2; near = prop; }
     if (d2 > C.TK.range) continue;
-    const c = [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z];
+    const c = [prop.x, (prop.y || 0) + C.PROP_TYPES[prop.type].h * 0.5, prop.z];
     const v = [c[0] - o[0], c[1] - o[1], c[2] - o[2]];
     const l = len3(v) || 1;
     const cos = (v[0] * dir[0] + v[1] * dir[1] + v[2] * dir[2]) / l;
@@ -2399,7 +2400,7 @@ wss.on('connection', (ws) => {
         firewalls: [...firewalls.values()].map(firewallPublic),
         pools: [...pools.values()].map(poolPublic),
         potions: potions.map(potionPublic),
-        smokeFlasks: [...smokeFlasks.values()].map(c => ({ id: c.id, owner: c.owner, p: [c.x, 0, c.z], left: Math.max(0, c.until - now()) })),
+        smokeFlasks: [...smokeFlasks.values()].map(c => ({ id: c.id, owner: c.owner, p: [c.x, c.y, c.z], left: Math.max(0, c.until - now()) })),
         decoys: [...decoys.values()].map(decoyPublic),
         ...match.welcomeExtras(p),
       }));

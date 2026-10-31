@@ -558,6 +558,55 @@ async function blackDeathChecks(join, since) {
   ok(!!blocked && healed >= want - 1, `a blocked hit heals ${Math.round(BD.healPerDamage * 100)}% of what it absorbed (absorbed ${blocked?.absorbed}, healed ${healed} incl. the mend)`);
   D.send({ t: 'block', on: false });
   for (const c of [S, D]) c.ws.close();
+  await wait(300);
+  await wallWalkChecks(join, since);
+}
+
+// ---- round 15 (Ty: spells cast on the wall-walk fell to the ground below it): cast from up on the wall-walk, Glacial Skim
+// travels and Smoke Flask, Frostfall, Toxic Flask and Firewall land at the wall-walk's height, not y 0
+async function wallWalkChecks(join, since) {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  // an 8 m straight stretch of wall-walk (a standable top 2.5 m up or more, the same height all along, nothing solid on it)
+  let walk = null;
+  for (let x = -26; x <= 26 && !walk; x += 0.5) for (let z = -26; z <= 26 && !walk; z += 0.5) for (const [dx, dz] of [[1, 0], [0, 1]]) {
+    const y = C.topFloorAt(x, z);
+    if (y < 2.5) continue;
+    let ok2 = true;
+    for (let k = 0; k <= 8 && ok2; k += 0.5) for (const s of [-0.7, 0, 0.7]) {
+      const px = x + dx * k + dz * s, pz = z + dz * k + dx * s;
+      if (Math.abs(C.topFloorAt(px, pz) - y) > 0.05 || Math.abs(C.surfaceHeight(px, pz, y) - y) > 0.05 || C.surfaceSolidAt(px, y + 0.5, pz, true) || C.surfaceSolidAt(px, y + 1.6, pz, true)) ok2 = false;
+    }
+    if (ok2) walk = { x, z, y, dir: [dx, dz], yaw: Math.atan2(dx, dz) };
+  }
+  ok(!!walk, `an 8 m stretch of wall-walk for the height checks (${walk ? `${walk.x}, ${walk.z} at ${walk.y.toFixed(2)} m` : 'none'})`);
+  if (!walk) return;
+  const at = (k) => [walk.x + walk.dir[0] * k, walk.y, walk.z + walk.dir[1] * k];
+  const A = await join('UpA', { primary: 'glacial_skim', power: 'frostfall', guard: 'smoke_flask', utility: 'telekinesis' });
+  const B = await join('UpB', { primary: 'spark', power: 'toxic_flask', guard: 'firewall', utility: 'telekinesis' });
+  A.send({ t: 'matchDebug', size: 2 }); A.send({ t: 'removeBots' }); await wait(600);
+  A.send({ t: 'debugPlace', p: at(0), yaw: walk.yaw, resetCd: true }); B.send({ t: 'debugPlace', p: at(1.5), yaw: walk.yaw, resetCd: true });
+  await wait(1600);
+  const near = (y) => Math.abs(y - walk.y) < 0.6;
+  let n = A.msgs.length;
+  A.send({ t: 'cast', kind: 'skim', origin: [at(0)[0], walk.y + 1.3, at(0)[2]], dir: [walk.dir[0], 0, walk.dir[1]] }); await wait(200);
+  const shard = since(A, n, m => m.t === 'proj' && m.owner === A.id && m.kind === 'skim')[0];
+  const shardEnd = since(A, n, m => m.t === 'projEnd' && m.id === shard?.id)[0];
+  ok(!!shard && shard.p[1] > walk.y && shard.p[1] < walk.y + 1, `Glacial Skim skims the wall-walk (shards at ${shard?.p[1]?.toFixed(2)} m)`);
+  // (the toxic lob first: an enemy's Smoke Flask cloud swallows it)
+  n = B.msgs.length; const ta = at(7.5), o = [at(1.5)[0], walk.y + 1.3, at(1.5)[2]];
+  B.send({ t: 'toxic', origin: o, dir: [walk.dir[0], 0.3, walk.dir[1]], target: [ta[0], walk.y, ta[2]] }); await wait(1500);
+  const pool = since(B, n, m => m.t === 'pool' && m.owner === B.id)[0];
+  ok(!!pool && near(pool.p[1]), `Toxic Flask's pool spreads on the wall-walk (${pool?.p?.[1]?.toFixed(2)} m)`);
+  n = A.msgs.length; A.send({ t: 'smokeFlask' }); await wait(150);
+  const sf = since(A, n, m => m.t === 'smokeFlask' && m.owner === A.id)[0];
+  ok(!!sf && near(sf.p[1]), `Smoke Flask's cloud sits on the wall-walk (${sf?.p?.[1]?.toFixed(2)} m)`);
+  n = A.msgs.length; const fa = at(7); A.send({ t: 'frostfall', at: [fa[0], fa[2]] }); await wait(150);
+  const ff = since(A, n, m => m.t === 'frostfall' && m.owner === A.id)[0];
+  ok(!!ff && near(ff.p[1]), `Frostfall lands on the wall-walk (${ff?.p?.[1]?.toFixed(2)} m)`);
+  n = B.msgs.length; B.send({ t: 'firewall', yaw: walk.yaw }); await wait(150);
+  const fw = since(B, n, m => m.t === 'firewall' && m.owner === B.id)[0];
+  ok(!!fw && near(fw.y), `Firewall stands on the wall-walk (${fw?.y?.toFixed(2)} m)`);
+  for (const c of [A, B]) c.ws.close();
 }
 
 console.log(fails ? `${fails} FAILED` : 'ALL PASS');

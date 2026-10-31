@@ -1066,7 +1066,7 @@ function handleMessage(msg) {
       const w = players.get(msg.id);
       if (!w) break;
       w.mrainMark ??= effects.cataAim(MRAIN.radius, 0xff3a0a, 0xff8040, MRAIN.killRadius / MRAIN.radius);
-      w.mrainMark.visible = true; w.mrainMark.position.set(msg.at[0], 0, msg.at[1]);
+      w.mrainMark.visible = true; w.mrainMark.position.set(msg.at[0], C.topFloorAt?.(msg.at[0], msg.at[1]) ?? 0, msg.at[1]);
       break;
     }
     case 'mrainDive': {
@@ -1074,7 +1074,7 @@ function handleMessage(msg) {
       effects.blazeDive(msg.from, msg.to, msg.left);
       if (w) playSpell(w, 'meteor_rain', 'dive');   // the somersault and plunge (its head lands with mrainLand)
       sfx.play('meteor_rain_dive', { pos: msg.to, vol: 1.2, jitter: 0 });
-      if (w?.mrainMark) { w.mrainMark.visible = true; w.mrainMark.position.set(msg.to[0], 0, msg.to[2]); }
+      if (w?.mrainMark) { w.mrainMark.visible = true; w.mrainMark.position.set(msg.to[0], msg.to[1] || 0, msg.to[2]); }
       if (msg.id === myId && local.mrain) Object.assign(local.mrain, { phase: 'dive', diveFrom: msg.from, diveTo: msg.to, diveStart: now, dive: msg.left });
       break;
     }
@@ -1695,11 +1695,15 @@ function groundTarget(range) {
   let x, z;
   if (camDir.y < -0.02) { const t = -o.y / camDir.y; x = o.x + camDir.x * t; z = o.z + camDir.z * t; }
   else { x = local.pos.x + Math.sin(local.yaw) * range; z = local.pos.z + Math.cos(local.yaw) * range; }
+  // round 15 (the castle): the camera ray stops at the first wall, wall-walk or roof it meets, not the y 0 plane beyond it
+  const far = camDir.y < -0.02 ? -o.y / camDir.y : range + 10;
+  const sh = C.surfaceSegmentHit?.([o.x, o.y, o.z], [o.x + camDir.x * far, o.y + camDir.y * far, o.z + camDir.z * far]);
+  if (sh) { x = sh.p[0] - camDir.x * 0.05; z = sh.p[2] - camDir.z * 0.05; }
   const d = Math.hypot(x - local.pos.x, z - local.pos.z);
   if (d > range) { x = local.pos.x + (x - local.pos.x) * range / d; z = local.pos.z + (z - local.pos.z) * range / d; }
   const r = Math.hypot(x, z);
   if (r > C.ARENA_RADIUS) { x *= C.ARENA_RADIUS / r; z *= C.ARENA_RADIUS / r; }
-  return [x, 0, z];
+  return [x, C.topFloorAt ? C.topFloorAt(x, z) : 0, z];   // (y: the floor there, for the markers)
 }
 
 // Round 13: a cast slows us (C.CAST_SLOW) instead of rooting; the server applies the same slow to its speed check
@@ -2054,12 +2058,12 @@ function updateLocal(dt) {
   if (aimedUlt && mark === laneMark) {
     // the lane runs from us toward the crosshair's spot on the ground
     const at = groundTarget(aimedUlt.range);
-    laneMark.position.set(local.pos.x, 0, local.pos.z);
+    laneMark.position.set(local.pos.x, groundAt(local.pos.x, local.pos.z, local.pos.y), local.pos.z);
     laneMark.rotation.y = Math.atan2(at[0] - local.pos.x, at[2] - local.pos.z);
-  } else if (aimedUlt) { const at = groundTarget(aimedUlt.range); mark.position.set(at[0], 0, at[2]); }
+  } else if (aimedUlt) { const at = groundTarget(aimedUlt.range); mark.position.set(at[0], at[1], at[2]); }
   // the targeting circle follows the crosshair while aiming
   frostMark.visible = local.frostAim;
-  if (local.frostAim) { const at = frostTarget(); frostMark.position.set(at[0], 0, at[2]); }
+  if (local.frostAim) { const at = frostTarget(); frostMark.position.set(at[0], at[1], at[2]); }
 
   // ---- Flask Step's wind-up: the throw follows the crosshair until it leaves the hand; preview where it comes down
   flaskMark.visible = false;
@@ -2087,7 +2091,7 @@ function updateLocal(dt) {
       let at = groundTarget(60);
       const d = Math.hypot(at[0] - M.from[0], at[2] - M.from[1]);
       if (d > MRAIN.range) at = [M.from[0] + (at[0] - M.from[0]) * MRAIN.range / d, 0, M.from[1] + (at[2] - M.from[1]) * MRAIN.range / d];
-      mrainMark.visible = true; mrainMark.position.set(at[0], 0, at[2]);
+      mrainMark.visible = true; mrainMark.position.set(at[0], at[1] ?? 0, at[2]);
       if (now - M.lastAim > 0.2) { M.lastAim = now; net.send({ t: 'mrainAim', at: [at[0], at[2]] }); }
       if (M.phase === 'hover' && (input.lmbPressed || input.justPressed('KeyQ'))) net.send({ t: 'mrainDive', at: [at[0], at[2]] });
     }

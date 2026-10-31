@@ -110,7 +110,7 @@ export function createMatch(ctx) {
       const carrier = pr.carrier && players.get(pr.carrier);
       if (carrier && carrier.carrying === pr.id) carrier.carrying = null;
       const sp = C.PROP_SPAWNS[pr.id - 1];
-      if (sp) { pr.x = sp[1]; pr.z = sp[2]; }
+      if (sp) { pr.x = sp[1]; pr.z = sp[2]; pr.y = 0; }   // (props spawn on the ground)
       pr.state = 'idle'; pr.carrier = null; pr.respawnAt = 0; pr.trap = null;
       ctx.broadcast({ t: 'prop', prop: ctx.propPublic(pr) });
     }

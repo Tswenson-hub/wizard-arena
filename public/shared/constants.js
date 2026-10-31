@@ -905,9 +905,18 @@ export function bulwarkCentre(p, yaw) {
   return [p[0] + Math.sin(yaw) * B.dist, p[2] + Math.cos(yaw) * B.dist];
 }
 // Add / remove a wall's circles in the shared collider list (everything collides against it).
-export function addWallColliders(id, x, z, yaw) {
+// `y`: the floor the wall stands on (round 15: a wall raised on a wall-walk); its circles' h is then y + height (the top).
+export function addWallColliders(id, x, z, yaw, y = 0) {
   removeWallColliders(id);
-  COLLIDERS.push(...bulwarkCircles(id, x, z, yaw));
+  COLLIDERS.push(...bulwarkCircles(id, x, z, yaw).map(c => ({ ...c, h: c.h + y, y0: y })));
+}
+// Round 15 (the castle): the highest floor at (x, z) something falling from the sky lands on (a wall-walk, a roof, a tower top,
+// else the ground): every standable top, but not the invisible move-only edges.
+let _floorList = null, _floorSrc = null, _floorN = -1;
+export function topFloorAt(x, z) {
+  if (!MAPNS.SURFACES || !MAPNS.surfaceTopAt) return 0;
+  if (_floorSrc !== MAPNS.SURFACES || _floorN !== MAPNS.SURFACES.length) { _floorSrc = MAPNS.SURFACES; _floorN = _floorSrc.length; _floorList = _floorSrc.filter(s => !s.moveOnly && !s.noStand); }
+  return MAPNS.surfaceTopAt(x, z, _floorList);
 }
 export function removeWallColliders(id) {
   for (let i = COLLIDERS.length - 1; i >= 0; i--) if (COLLIDERS[i].wall === id) COLLIDERS.splice(i, 1);
@@ -917,16 +926,17 @@ export function removeWallColliders(id) {
 // Clouds are { x, z } with SPELLBOOK.smoke_screen.radius; anything above the cloud's top sees over it.
 export function smokeBlocks(a, b, clouds) {
   const S = SPELLBOOK.smoke_screen;
-  if ((a[1] || 0) > S.height && (b[1] || 0) > S.height) return false;
   const sx = b[0] - a[0], sz = b[2] - a[2], ll = sx * sx + sz * sz || 1;
   for (const c of clouds) {
+    const cy = c.y || 0;   // round 15: a cloud on a wall-walk stands on it (heights from its floor)
+    if (((a[1] || 0) > cy + S.height && (b[1] || 0) > cy + S.height) || ((a[1] || 0) < cy - 1 && (b[1] || 0) < cy - 1)) continue;
     const k = Math.max(0, Math.min(1, ((c.x - a[0]) * sx + (c.z - a[2]) * sz) / ll));
     if (Math.hypot(a[0] + sx * k - c.x, a[2] + sz * k - c.z) < S.radius) return true;
   }
   return false;
 }
-export const inSmoke = (p, clouds) => (p[1] || 0) < SPELLBOOK.smoke_screen.height
-  && clouds.some(c => Math.hypot(p[0] - c.x, p[2] - c.z) < SPELLBOOK.smoke_screen.radius);
+export const inSmoke = (p, clouds) => clouds.some(c => (p[1] || 0) < (c.y || 0) + SPELLBOOK.smoke_screen.height && (p[1] || 0) > (c.y || 0) - 1
+  && Math.hypot(p[0] - c.x, p[2] - c.z) < SPELLBOOK.smoke_screen.radius);
 
 // ---------------------------------------------------------------- loadouts (round 11: the spell builder)
 // No heroes: every player is the same generic wizard (WALK_SPEED, SPRINT.speed, MAX_HP, one hitbox) with a free
