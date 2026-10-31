@@ -39,7 +39,7 @@ The join screen (and the `Esc` menu) is the **spell builder**: six rows of spell
 shows the spell's element, damage, cooldown, range, wind-up and tags (Projectile, Area, Wind-up, Interrupts,
 Combo...). The preview wizard on the right takes on the colours of your spells' dominant element.
 
-- **Presets**: one click loads the six original kits (Cinder's, Gale's, Rime's, Vesper's, Jeb's, Embibe's).
+- **Presets**: one click loads six ready-made kits (Pyromancer, Stormcaller, Frost Warden, Hemomancer, Beastcaller, Alchemist).
 - **Randomize** rolls a full loadout. **Three save slots** keep your favourites in the browser.
 - **Voice**: male or female hurt and death voices.
 - Loadout changes made in game apply at your next respawn.

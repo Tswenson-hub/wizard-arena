@@ -1013,7 +1013,7 @@ export function spellInfo(id) {
 }
 
 // Presets: the old heroes' kits by name, as one-click starting points (wizards.js `kit`).
-export const PRESETS = Object.values(WIZARDS).map(w => ({ id: w.id, name: `${w.name}'s`, hero: w.name, loadout: { ...w.kit } }));
+export const PRESETS = Object.values(WIZARDS).map(w => ({ id: w.id, name: w.preset, hero: w.name, loadout: { ...w.kit } }));
 export const DEFAULT_LOADOUT = { ...WIZARDS[DEFAULT_WIZARD].kit };
 
 // A clean loadout from anything (a message, localStorage): every slot an id from SPELL_POOL[slot], else null.

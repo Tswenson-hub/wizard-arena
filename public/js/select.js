@@ -56,7 +56,7 @@ const DEMO = ['windup', 'cast', 'release', 'channel', 'loop', 'hold'];
 function builderHTML() {
   return `<div class="sb-top">
       <div class="sb-group sb-presets" role="group" aria-label="Presets"><span class="sb-label">Presets</span>${C.PRESETS.map(p =>
-        `<button type="button" class="sb-chip" data-preset="${p.id}" title="${esc(p.hero)}'s old kit: ${esc(C.LOADOUT_SLOTS.map(s => C.SPELLBOOK[p.loadout[s]]?.name).join(', '))}">${esc(p.name)}</button>`).join('')}
+        `<button type="button" class="sb-chip" data-preset="${p.id}" title="${esc(p.name)}: ${esc(C.LOADOUT_SLOTS.map(s => C.SPELLBOOK[p.loadout[s]]?.name).join(', '))}">${esc(p.name)}</button>`).join('')}
         <button type="button" class="sb-chip sb-random" data-random title="A random spell in every slot">🎲 Randomize</button>
         <button type="button" class="sb-chip sb-howto" data-howto title="Controls and the goal">How to play</button></div>
       <div class="sb-group sb-saved" role="group" aria-label="Saved loadouts"><span class="sb-label">Saved</span>${Array.from({ length: MAX_SAVED }, (_, i) =>
