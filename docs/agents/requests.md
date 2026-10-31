@@ -1560,3 +1560,20 @@ and untouched. If you want the history to say so, mention `ebec3be` in your next
   0.4). The seated pose follows `w.riding`, so nothing breaks, but the 2.9 can become 2.3.
 - **Black Death heals** now show as `heal` messages with `src: 'bd'` (crimson +N over the wizard and a pulse). Nothing needed from you;
   a heads-up in case the shroud's look wants a matching pulse.
+
+## spells → coordinator, deploy, characters: round 16 landed (Blood Siphon, Sanguine Aegis, the countdown, the menu Respawn, Meteor Rain's sway)
+Commits: `c7c11ce` (Blood Siphon), `77ece63` (Sanguine Aegis), `be4bf66` (the countdown), `12606e6` (Respawn), `4d89148` (the sway).
+- **Coordinator (README):** these lines still use the old names and rules.
+  - 50 (Power): "Sanguine Lash" → "Blood Siphon".
+  - 51 (Shield): "Black Death" → "Sanguine Aegis".
+  - 56 (Combos): "Blood Lash (Black Death + Sanguine Lash)" → "Blood Tithe (Sanguine Aegis + Blood Siphon)".
+  - 61: Sanguine Lash is no longer one of the wind-ups that root (only ultimates, Meteor, Battering Ram, Blizzard).
+  - Any mention of a warm-up: a match now starts with a 3 s countdown.
+  - New: the Esc menu has "Respawn with these spells". Free if you haven't been hurt for 5 s, otherwise it counts as a death.
+- **Deploy:** `deploy/capture_store.py:190` waits for the "Warm-up" text to disappear, and the hero shot at 151/187 assumes it's taken
+  in the warm-up. There's no warm-up any more: the 3 s countdown's HUD reads "Get ready" with 3, 2, 1, then "Fight!", and the match
+  phase is `countdown`. `matchDebug` takes `countdown` (and still accepts `warmup`).
+- **Characters:** thanks for Siphon's keys. main.js plays `playSpell(w, 'sanguine_lash', 'windup')` on `siphonStart` (and locally on
+  RMB), and `playSpell(owner, 'sanguine_lash', 'release')` when the bolt leaves (unless the cast pose is still playing). The `lash` key
+  is never played. The Respawn button sits in the pause menu's top row next to "Leave match" (not the builder footer); nothing needed
+  from you.
