@@ -1,11 +1,11 @@
 // The match (round 11: one mode only). A 4-player free-for-all: humans first, bots fill up to 4, a 5th human
-// watches as a spectator until a place opens. First to 10 kills, or the most kills at the 8-minute cap.
+// watches as a spectator until a place opens. First to 15 kills, or the most kills at the 7-minute cap.
 // Loop: warmup (10 s, nothing scores) → live → end (results, 8 s) → an immediate rematch (warmup ...).
 // Spells agent (round 11; it was the modes agent's).
 //
 // Hooks: server.js calls these.
 //   isEnemy(a, b)            players: may a hurt b? (anyone but yourself, outside the intermission)
-//   spawnPointFor(p)         [x, 0, z]: the FFA spawn farthest from every living enemy
+//   spawnPointFor(p)         [x, 0, z, yaw]: an FFA spawn near the fight but not on it (C.SPAWN_CHOICE)
 //   onJoin(p) / onLeave(p)   a human or bot entered or left (a bot with no room is removed again at once)
 //   onDamage(target, attacker, dmg)   attacker may be undefined (goats, environment)
 //   onKill(target, attacker, cause)
@@ -23,7 +23,7 @@
 
 import * as C from '../public/shared/constants.js';
 
-export const FFA = { name: 'Free-for-all', size: 4, target: 10, cap: 480 };
+export const FFA = { name: 'Free-for-all', size: 4, target: 15, cap: 420 };   // round 14 (pacing): 10 / 480
 const TIMES = { warmup: 10, end: 8 };
 const DEBUG = !!process.env.MATCH_DEBUG;
 const DIFFS = ['easy', 'normal', 'hard'];
@@ -161,20 +161,24 @@ export function createMatch(ctx) {
     return { id: best[0].id, kills: best[0].kills };
   }
 
-  // The spawn farthest from every living enemy (a little randomness so equal spots alternate).
-  function farthestSpawn(p) {
-    let best = null, bd = -1;
-    for (const sp of spawnList()) {
-      let d = Infinity;
-      for (const q of players.values()) {
-        if (q === p || q.dead || q.spectator) continue;
-        d = Math.min(d, Math.hypot(q.p[0] - sp[0], q.p[2] - sp[2]));
-      }
-      if (d === Infinity) d = 1000;
-      d += Math.random() * 2;
-      if (d > bd) { bd = d; best = sp; }
+  // Round 14 (pacing: the farthest spawn put you 37 m from anyone, 11 s from your first hit): among the spawns
+  // C.SPAWN_CHOICE.min–max m from the nearest living enemy, the farthest; with none in that band, the 2nd-farthest
+  // overall (the farthest when there's only one). A little randomness so equal spots alternate.
+  function nearestEnemyAt(p, sp) {
+    let d = Infinity;
+    for (const q of players.values()) {
+      if (q === p || q.dead || q.spectator) continue;
+      d = Math.min(d, Math.hypot(q.p[0] - sp[0], q.p[2] - sp[2]));
     }
-    return best;
+    return d === Infinity ? 1000 : d;
+  }
+  function chooseSpawn(p) {
+    const { min, max } = C.SPAWN_CHOICE;
+    const ranked = spawnList().map(sp => ({ sp, d: nearestEnemyAt(p, sp) }))
+      .map(r => ({ ...r, key: r.d + Math.random() * 2 })).sort((a, b) => b.key - a.key);
+    if (ranked[0].d >= 1000) return ranked[Math.floor(Math.random() * ranked.length)].sp;   // nobody else alive
+    const band = ranked.find(r => r.d >= min && r.d <= max);
+    return (band || ranked[Math.min(1, ranked.length - 1)]).sp;
   }
 
   return {
@@ -187,7 +191,7 @@ export function createMatch(ctx) {
     },
     spawnPointFor(p) {
       if (p.spectator) return SPECTATE_AT.slice();
-      return farthestSpawn(p);
+      return chooseSpawn(p);
     },
     onJoin(p) {
       p.kills = 0; p.deaths = 0; p.mDmg = 0;

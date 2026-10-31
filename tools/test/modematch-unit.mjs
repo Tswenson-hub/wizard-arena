@@ -1,7 +1,7 @@
 // usage: MATCH_DEBUG=1 node tools/test/modematch-unit.mjs
 // Rule checks for server/match.js (round 11: a 4-player free-for-all only) against a fake server ctx (no network,
 // simulated clock): bot fill to 4, a human replacing a bot, a 5th human spectating until a place opens, first to 10,
-// the 8-minute cap, the results and the rematch with no vote, spawns farthest from enemies; plus the loadout rules
+// the 7-minute cap, the results and the rematch with no vote, spawns farthest from enemies; plus the loadout rules
 // (constants.js sanitizeLoadout, presets, random loadouts, combos). Round 12 adds checks against the real server on port 4191
 // (WA_DEBUG debugPlace/debugProp): only Telekinesis lifts, Trapped Relic traps (triggers, 2 per caster, glyphs), Roll. Round 13 adds
 // the air jump, coyote time, casting on the move and in the air, the hover, and sprint-jump momentum in the speed budget.
@@ -76,7 +76,7 @@ const [b1, b2] = bots();
 ok(match.isEnemy(h, b1) && match.isEnemy(b1, b2) && !match.isEnemy(h, h), 'everyone else is an enemy, never yourself');
 run(9);
 ok(S.phase === 'live', 'warm-up (10 s) → live');
-ok(match.matchPublic().target === 10 && match.matchPublic().mode === 'ffa', 'first to 10, mode ffa');
+ok(match.matchPublic().target === 15 && match.matchPublic().mode === 'ffa', 'first to 15, mode ffa');
 
 // ---- a 2nd human takes a bot's place; 3rd and 4th too; a 5th spectates
 const h2 = join(mk(false)); run(0.1);
@@ -99,9 +99,9 @@ ok(fighters().length === 4 && [h, h2, h3].every(p => players.has(p.id)), 'an ext
 
 // ---- kills, the target, results, rematch
 for (const p of players.values()) { p.kills = 0; p.deaths = 0; }
-h.kills = 9; match.onKill(b1, h); ok(S.phase === 'live', '9 kills: still live');
-h.kills = 10; h2.kills = 4; match.onKill(h2, h);
-ok(S.phase === 'end' && S.results.winner === h.id && S.results.reason === 'target', 'the 10th kill ends the match, the leader wins');
+h.kills = 14; match.onKill(b1, h); ok(S.phase === 'live', '14 kills: still live');
+h.kills = 15; h2.kills = 4; match.onKill(h2, h);
+ok(S.phase === 'end' && S.results.winner === h.id && S.results.reason === 'target', 'the 15th kill ends the match, the leader wins');
 ok(S.results.players[0].id === h.id && S.results.players.length === 4 && S.results.players[0].loadout, 'results list the 4 fighters, best first, with loadouts');
 ok(!match.isEnemy(h, h2), 'no fighting on the results screen');
 ok(sent.some(m => m.t === 'matchEnd'), 'matchEnd broadcast');
@@ -111,15 +111,15 @@ ok(fighters().every(p => p.kills === 0 && p.deaths === 0), 'the rematch starts f
 ok(fighters().every(p => (ult.get(p.id) || 0) === 0), 'ultimate charge reset');
 run(10.1); ok(S.phase === 'live', 'rematch goes live');
 
-// ---- the 8-minute cap
-ok(Math.abs(S.phaseEnd - clock - 480) < 0.2, 'the live phase lasts 8 minutes');
+// ---- the 7-minute cap
+ok(Math.abs(S.phaseEnd - clock - 420) < 0.2, 'the live phase lasts 7 minutes');
 h.kills = 3; h2.kills = 5; clock = S.phaseEnd - 0.01; run(0.1);
 ok(S.phase === 'end' && S.results.reason === 'time' && S.results.winner === h2.id, 'at the cap the most kills wins');
 run(8.1); run(10.1);
 h.kills = 2; h2.kills = 2; clock = S.phaseEnd - 0.01; run(0.1);
 ok(S.phase === 'end' && S.results.winner === null, 'a tie at the cap: no winner');
 
-// ---- spawns: the FFA spawn farthest from every living enemy
+// ---- spawns (round 14): the farthest spawn 20–30 m from the nearest enemy, else the 2nd-farthest overall
 {
   const list = match.spawnList();
   ok(list.length >= 4, `at least 4 spawn points (${list.length})`);
@@ -129,10 +129,12 @@ ok(S.phase === 'end' && S.results.winner === null, 'a tie at the cap: no winner'
     // enemies stand at random spawns; the pick must be (near) the best by distance to the nearest enemy
     for (const q of enemies) { const s = list[Math.floor(Math.random() * list.length)]; q.p = [s[0], 0, s[2]]; q.dead = false; }
     const near = (sp) => Math.min(...enemies.map(q => Math.hypot(q.p[0] - sp[0], q.p[2] - sp[2])));
-    const best = Math.max(...list.map(near)), got = near(match.spawnPointFor(p));
-    if (got >= best - 2.01) good++;
+    const ds = list.map(near).sort((a, b) => b - a), band = ds.filter(d => d >= C.SPAWN_CHOICE.min && d <= C.SPAWN_CHOICE.max);
+    const want = band.length ? band[0] : ds[1], got = near(match.spawnPointFor(p));
+    // (the 2 m jitter can swap two spots within 2 m of each other)
+    if (band.length ? got >= C.SPAWN_CHOICE.min && got <= C.SPAWN_CHOICE.max && got >= want - 2.01 : Math.abs(got - want) <= 2.01) good++;
   }
-  ok(good === 30, `respawn picks the spot farthest from enemies (${good}/30 within the 2 m jitter)`);
+  ok(good === 30, `respawn picks the farthest spot in the 20–30 m band, else the 2nd-farthest (${good}/30)`);
   for (const q of enemies) q.dead = true;
   ok(!!match.spawnPointFor(p), 'with every enemy dead it still picks a spawn');
 }

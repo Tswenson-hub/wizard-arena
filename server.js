@@ -123,6 +123,7 @@ function playerPublic(p) {
     sprint: !!p.sprinting, castRoot: castRooted(p), crouch: !!p.crouch, jump: !!p.jump, hover: p.hover ? +p.hover.y.toFixed(2) : null, grab: !!p.grab, ramWind: !!p.ramWind, regen: !!p.regen, knocked: p.knockUntil > now(),
     ride: p.ride ? (now() < p.ride.rideAt ? 'mount' : now() < p.ride.dismountAt ? 'ride' : 'dismount') : null,
     ramGuard: p.ramGuardUntil > now(),
+    prot: p.protUntil > now(),   // round 14: spawn protection
     bot: p.bot ? p.bot.difficulty : undefined,
   };
 }
@@ -147,6 +148,9 @@ const MIRROR = C.SPELLBOOK.mirror_step, BULWARK = C.SPELLBOOK.glacial_bulwark, R
 const ROLL = C.SPELLBOOK.roll;
 const SKIM = C.SPELLBOOK.glacial_skim, FROST = C.SPELLBOOK.frostfall, SMOKE = C.SPELLBOOK.smoke_screen, VEIL = C.SPELLBOOK.tempest_veil;
 const isVeiled = (p) => p.veilUntil > now();
+// Round 14: spawn protection (C.SPAWN_PROTECT): no damage taken for a moment after a respawn, ended early by an attack.
+const spawnProtected = (p) => p.protUntil > now();
+const PROT_ENDS = new Set(['cast', 'chargeStart', 'cyclone', 'lashStart', 'frostfall', 'ult', 'toxic', 'curse', 'pickup', 'throw', 'ram', 'ride', 'ramGuard']);
 const holding = (p) => !!(p.carrying || p.carryingGoat);   // a prop or a goat floats beside us
 const EYE = C.SPELLBOOK.eye_of_storm, CAGE = C.SPELLBOOK.night_cage, BLIZ = C.SPELLBOOK.blizzard, MRAIN = C.SPELLBOOK.meteor_rain;
 // Eye of the Storm and Absolute Zero's flare can't be interrupted (no stun, cancel, bind, slow or knockback)
@@ -250,6 +254,11 @@ function applyHit(target, proj) {
   const attacker = players.get(proj.owner);
   // game modes: no friendly fire
   if (attacker && attacker !== target && !match.isEnemy(attacker, target)) return { dmg: 0, blocked: false, friendly: true };
+  // round 14: just respawned: nothing lands (shown like a block, with its own shimmer)
+  if (spawnProtected(target)) {
+    broadcast({ t: 'hit', target: target.id, attacker: proj.owner, kind: proj.kind, dmg: 0, blocked: true, prot: true, kb: 0, dir: norm3([proj.v[0], 0, proj.v[2]]), int: false });
+    return { dmg: 0, blocked: true };
+  }
   // primary fire only interrupts (stun, cancel) with the last shot of a magazine
   // (an ultimate's drain never interrupts; Gale's tornado and Rime's flare can't be interrupted)
   const steady = unstoppable(target);
@@ -377,6 +386,7 @@ function killPlayer(target, attacker, cause = null, kind = cause) {   // kind: t
   for (const d of [...decoys.values()]) if (d.owner === target.id) endDecoy(d, false);
   target.flightUntil = 0; target.p[1] = 0;
   target.blocking = false;
+  target.protUntil = 0;
   target.deaths++;
   target.respawnAt = now() + C.RESPAWN_TIME;
   if (target.carrying) dropProp(target, true);
@@ -395,6 +405,7 @@ function respawn(p) {
   p.slowUntil = p.rootUntil = p.silenceUntil = p.frozenUntil = 0;
   p.ammo = C.primaryMag(kit(p).primary).magazine; p.reloadUntil = 0;
   p.rollImmuneUntil = 0;
+  p.protUntil = now() + C.SPAWN_PROTECT.time;
   endUltimates(p);
   endRide(p);
   flushPendingLoadout(p);   // round 11: a loadout picked during the last life starts now
@@ -600,7 +611,8 @@ function launchRam(p, t) {
   p.cd.power = t + BRAM.cooldown;
   castSlow(p);
   p.yaw = W.yaw;
-  summonRam({ x: p.p[0] + W.dir[0] * BRAM.spawnDist, z: p.p[2] + W.dir[2] * BRAM.spawnDist, yaw: W.yaw, ownerId: p.id, mode: 'charge', maxTime: BRAM.maxTime });
+  const r = summonRam({ x: p.p[0] + W.dir[0] * BRAM.spawnDist, z: p.p[2] + W.dir[2] * BRAM.spawnDist, yaw: W.yaw, ownerId: p.id, mode: 'charge', maxTime: BRAM.maxTime });
+  if (r) r.spell = 'battering_ram';   // round 14: it hits for damage and a knockdown, no longer a kill (ramStrike)
   broadcast({ t: 'batteringRam', id: p.id, yaw: W.yaw });
 }
 function cancelRamWind(p) {
@@ -976,8 +988,28 @@ function ramHits(r, p, t) {
   broadcast({ t: 'goatRam', id: r.id, target: p.id, blocked: false, dir, p: [p.p[0], 1, p.p[2]] });
   const owner = players.get(r.owner);
   p.lastHitBy = owner ? owner.id : null;
-  killPlayer(p, owner || null, 'ram');
+  ramStrike(p, owner || null, 'ram', r);
   r.state = 'recover'; r.until = t + G_.recoverTime;
+}
+// A goat or ram that got through to wizard `p` (the goat rules already ruled out a ward, wall or Veil): a kill, except
+// during spawn protection, and except a Battering Ram, which hits for its damage plus a knockdown (round 14).
+function ramStrike(p, attacker, cause, g) {
+  if (p.dead || spawnProtected(p)) return;
+  if (g?.spell === 'battering_ram') {
+    applyHit(p, { kind: 'battering_ram', owner: attacker ? attacker.id : null, v: [Math.sin(g.yaw), 0, Math.cos(g.yaw)] });
+    return;
+  }
+  killPlayer(p, attacker, cause);
+}
+// goats.js's ctx.killPlayer doesn't name the goat (yet): the Battering Ram charging into `p` is the one right there.
+function strikingRam(p) {
+  let best = null, bd = 3;
+  for (const g of allGoats()) {
+    if (g.spell !== 'battering_ram' || g.state !== 'charge') continue;
+    const d = Math.hypot(g.x - p.p[0], g.z - p.p[2]);
+    if (d < bd) { bd = d; best = g; }
+  }
+  return best;
 }
 function updateRams(dt, t) {
   for (const r of [...rams]) {
@@ -1658,6 +1690,7 @@ function handle(p, msg) {
   const t = now();
   if ((inUltimate(p) || p.ride || p.flaskWind) && ULT_LOCKED.has(msg.t)) return;   // a tornado, a rune flare or a ram ride: nothing else
   if (p.ramWind && RAMWIND_LOCKED.has(msg.t) && !(msg.t === 'block' && !msg.on)) return;   // winding up the ram: nothing else
+  if (PROT_ENDS.has(msg.t) && p.protUntil > t) p.protUntil = 0;   // round 14: attacking ends spawn protection
   switch (msg.t) {
     case 'ult': {
       castUltimate(p, msg);
@@ -2291,7 +2324,10 @@ const goatCtx = {
   isEnemy: (a, b) => enemies(a, b),   // Jeb's rams pass their owner and his team
   breakProp,
   // a Tempest Veil survives a ram (goats.js treats the veil as a ward once that request is in; this is the fallback)
-  killPlayer: (p, attacker, cause) => { if (cause === 'goat' && isVeiled(p)) return; killPlayer(p, attacker, cause); },
+  killPlayer: (p, attacker, cause, g) => {
+    if (cause === 'goat' && isVeiled(p)) return;
+    ramStrike(p, attacker, cause, g || (cause === 'ram' ? strikingRam(p) : null));
+  },
   // humans apply goat knockback themselves from the goatRam message
   knockback: (p, dir, kb) => { if (p.bot) botKnockback(p, dir, kb); else { p.kbUntil = now() + 0.8; p.kbSpeed = kb; } },
   // a hurled goat hits a wizard exactly like a thrown prop (kind 'goat'), credited to the thrower

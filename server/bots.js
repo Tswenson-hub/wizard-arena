@@ -210,6 +210,7 @@ const cycloneWindingUp = (q) => q.cyclone && !q.cyclone.pulsed;
 const rollReady = (me, t) => kit(me).utility === 'roll' && t >= me.cd.lift && !(me.flightUntil > t) && !rooted(me, t) && !(me.rollUntil > t);
 const mobilityReady = (me, t) => t >= me.cd.mobility && !(me.flightUntil > t) && !rooted(me, t);   // (round 13: in a jump too)
 const veiled = (q, t) => q.veilUntil > t;
+const shielded = (q, t) => q.protUntil > t;   // round 14: spawn protection (nothing lands for 1.5 s, or until they attack)
 const veilReady = (me, t) => kit(me).guard === 'tempest_veil' && t >= me.cd.guard && !veiled(me, t);
 const wallReady = (me, t) => kit(me).guard === 'glacial_bulwark' && t >= me.cd.guard;
 const firewallReady = (me, t) => kit(me).guard === 'firewall' && t >= me.cd.guard;
@@ -309,6 +310,7 @@ function think(me, world, t) {
       if (!q.bot) s -= 3;
       if (!hasLOS(me.p, q.p)) s += 6;
       if (q.knockUntil > t) s -= 10;   // round 10: knocked flat, a free punish
+      if (shielded(q, t)) s += 12;     // just respawned: shoot someone else meanwhile
       if (s < bs) { bs = s; best = q; }
     }
     if (best?.id !== b.targetId) b.decoyId = null;
@@ -452,6 +454,7 @@ function think(me, world, t) {
 
   // a veiled Gale swallows everything for 3 s: don't waste shots, wait it out (movement backs off)
   if (veiled(target, t)) return;
+  if (shielded(target, t)) return;   // spawn protection: hold fire (it ends the moment they attack)
   // a Ram Guard turns our shots into rams charging back at us: hold fire until it's gone
   if (guarded(target, t) && !target.decoy) return;
 
@@ -596,7 +599,9 @@ function think(me, world, t) {
   } else if (K.power === 'battering_ram' && powerReady && !targetAir && !me.carrying && d > 3 && d < C.GOAT.chargeSpeed * BRAM.maxTime - 3) {
     // Battering Ram: a straight line the target can't easily leave (stuck, busy, slowed) or from close in; not into a ward
     const stuck = targetStunned || rooted(target, t) || busyCasting(target) || target.slowUntil > t;
-    if ((stuck || d < 9 || Math.random() < 0.25) && !targetWarded && !veiled(target, t)) {
+    // round 14: no longer a one-shot (70 and a knockdown): best as a finisher, or to set one up from close in
+    const finisher = target.hp <= C.D(BRAM.damage);
+    if ((stuck || d < 9 || (finisher && Math.random() < 0.6) || Math.random() < 0.25) && !targetWarded && !veiled(target, t)) {
       const from = [me.p[0], 0.7, me.p[2]];
       const dir = aimAt(me, from, target, C.GOAT.chargeSpeed, 0, cfg);
       if (!lowLineBlocked([me.p[0], 0.7, me.p[2]], [dir[0], 0, dir[2]], d, C.GOAT.radius * 0.6)) {

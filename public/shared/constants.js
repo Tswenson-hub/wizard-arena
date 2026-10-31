@@ -19,7 +19,7 @@ export const HIT_RADIUS = 0.75;
 export const DAMAGE_SCALE = 1.3;
 export const D = (n) => Math.round(n * DAMAGE_SCALE);
 // Round 10: out of combat (no damage taken for `delay` s), health comes back at `rate` HP a second, up to full.
-export const REGEN = { delay: 5, rate: 8 };
+export const REGEN = { delay: 7, rate: 6 };   // round 14 (pacing): 5 s / 8 HP/s let most fights reset into full regen
 // Round 10: health potions at map.js HEAL_SPOTS: 35 HP on touch (only when hurt), back after 20 s.
 export const POTION = { heal: 35, respawn: 20, radius: 0.9, height: 1.0 };
 // Round 10: ledge grab. Jumping at an edge whose top is out of the jump's reach (but at most `reach` above its apex)
@@ -27,7 +27,7 @@ export const POTION = { heal: 35, respawn: 20, radius: 0.9, height: 1.0 };
 export const LEDGE = { reach: 1.2, time: 0.45, rise: 0.3 };
 // Round 10 (Ty): a thrown object (a prop, a potion barrel, hay, a goat) that hits an unblocked wizard knocks them down:
 // flung back about 2 m, they fall (fall), lie there (down) and get up (getup), unable to move, act or shield throughout.
-export const KNOCKDOWN = { kinds: ['prop', 'goat'], fall: 0.4, down: 0.8, getup: 0.4, fling: 24 };   // fling: m/s, decays to ~2 m
+export const KNOCKDOWN = { kinds: ['prop', 'goat', 'battering_ram'], fall: 0.4, down: 0.8, getup: 0.4, fling: 24 };   // fling: m/s, decays to ~2 m
 KNOCKDOWN.total = KNOCKDOWN.fall + KNOCKDOWN.down + KNOCKDOWN.getup;
 import { surfaceHeight as _sh, STEP_UP as _step } from './map.js';
 // From feet at p ([x, y, z]) facing dir ([x, z], unit), in a jump peaking at apexY: where we'd end up standing, or null.
@@ -77,11 +77,17 @@ export const STAMINA_REGEN_DELAY = 0.8;     // seconds after block released
 export const BLOCK_CONE_DEG = 110;          // spells arriving inside this frontal cone are blockable
 export const BLOCK_BREAK_STUN = 1.1;        // stun when stamina runs out mid-block
 
-export const RESPAWN_TIME = 3.0;
+export const RESPAWN_TIME = 2.0;      // round 14 (pacing): was 3
+// Round 14: after a respawn, `time` s of no damage taken (ends early when you cast an attack). The respawn picks the
+// spawn farthest from enemies among those `min`–`max` m from the nearest one (else the 2nd-farthest overall).
+export const SPAWN_PROTECT = { time: 1.5 };
+export const SPAWN_CHOICE = { min: 20, max: 30 };
+// Round 14: every primary's magazine reloads in this long (was 1.5 s).
+export const PRIMARY_RELOAD = 1.2;
 
 export const SPELLS = {
   fast: {
-    damage: 9,
+    damage: 12,          // round 14 (pacing): 9; even out the primaries' time to kill
     stun: 0.55,
     speed: 30,
     radius: 0.28,
@@ -93,10 +99,10 @@ export const SPELLS = {
   heavy: {
     damage: 44,          // round 6: +15 %
     stun: 0.25,
-    speed: 19,
+    speed: 26,           // round 14: 19 (sidestepped at a walk from 25 m)
     radius: 0.65,
-    life: 3.0,
-    cooldown: 1.2,
+    life: 57 / 26,       // about 57 m
+    cooldown: 4,         // round 14: 1.2
     chargeTime: 1.25,    // wind-up before the bolt leaves the hand
     staminaCost: 45,
     knockback: 6.5,
@@ -112,7 +118,7 @@ export const SPELLS = {
     knockback: 4,
   },
   skim: {                // Glacial Skim: one of three ice shards skimming along the ground
-    damage: 11,
+    damage: 9,           // round 14: 11 (three shards a volley: it led the primaries)
     stun: 0,
     speed: 26,
     radius: 0.2,
@@ -135,12 +141,12 @@ export const SPELLS = {
     bind: 1.25,          // rooted and silenced
   },
   fireball: {           // Cinder's primary: a big, hot, slower bolt
-    damage: 18,          // round 10 (dense map, 1.3x scale): 20 had Cinder on top in 3 of 3 runs (23 kills / 9 deaths)
-    finDamage: 26,       // the 3rd shot of the magazine
+    damage: 16,          // round 14: 18 / 26 (round 10: 20 had Cinder on top in 3 of 3 runs)
+    finDamage: 24,       // the 3rd shot of the magazine
     stun: 0.55,
-    speed: 24,
+    speed: 30,           // round 14: 24
     radius: 0.45,
-    life: 1.3,           // about 31 m
+    life: 31 / 30,       // about 31 m
     cooldown: 0.5,
     staminaCost: 16,
     knockback: 2,
@@ -157,7 +163,7 @@ export const SPELLS = {
     knockback: 3,
   },
   sling: {               // Jeb's primary: a sling stone; a hit calls a ram on the target
-    damage: 7,
+    damage: 10,          // round 14: 7
     stun: 0.45,
     speed: 32,
     radius: 0.22,
@@ -170,7 +176,7 @@ export const SPELLS = {
     damage: 16,
     finDamage: 14,       // the 2nd throw hits a little softer, but stuns (the magazine's last)
     stun: 0.55,
-    speed: 20,
+    speed: 24,           // round 14: 20
     gravity: 9,
     radius: 0.3,
     life: 2.2,
@@ -200,9 +206,9 @@ export const SPELLS = {
     maxElev: 1.3,        // rad: steepest throw (high onto or over cover)
   },
   hex: {                 // Vesper's primary: a crimson glyph flying a curved path to the aim point
-    damage: 11,
+    damage: 14,          // round 14: 11
     stun: 0.55,
-    speed: 22,           // along the curve
+    speed: 28,           // along the curve (round 14: 22)
     radius: 0.3,
     life: 2,
     cooldown: 0.45,
@@ -317,8 +323,8 @@ export const SLOT_INFO = {
 export const ULT_CHARGE = {
   max: 100,
   perDamage: 1 / 3,    // % per point of damage dealt to an enemy
-  passive: 0.5,        // % per second while alive
-  kill: 5,             // % per kill
+  passive: 1.0,        // % per second while alive (round 14: 0.5)
+  kill: 10,            // % per kill (round 14: 5): an ultimate about every 40 s
   windup: 1.3,         // every ultimate: a readable 1.3 s cast first, interrupted like any wind-up...
   fizzleKeep: 50,      // ...and an interrupted one fizzles, keeping this much charge
 };
@@ -328,32 +334,32 @@ export const SPELLBOOK = {
     id: 'spark', slot: 'primary', name: 'Spark', short: 'Spark',
     blurb: 'Quick bolts, 3 to a charge, then a reload. The 3rd stuns and breaks a wind-up.',
     cooldown: SPELLS.fast.cooldown,
-    magazine: 3, reload: 1.5, idleReload: 2,   // see PRIMARY_MAGAZINE
+    magazine: 3, reload: PRIMARY_RELOAD, idleReload: 2,   // see PRIMARY_MAGAZINE
   },
   glacial_skim: {
     id: 'glacial_skim', slot: 'primary', name: 'Glacial Skim', short: 'Skim',
     blurb: 'Three ice shards skim the ground and slow by 35% for 2 s. 3 volleys, then a reload; the 3rd breaks a wind-up.',
     shards: 3, spreadDeg: 6,
     cooldown: 0.6,
-    magazine: 3, reload: 1.5, idleReload: 2,
+    magazine: 3, reload: PRIMARY_RELOAD, idleReload: 2,
   },
   fireball: {
     id: 'fireball', slot: 'primary', name: 'Fireball', short: 'Fireball',
-    blurb: `Big, hot bolts, 3 to a charge, then a reload. ${D(18)} damage; the 3rd hits for ${D(26)}, stuns and breaks a wind-up.`,
+    blurb: `Big, hot bolts, 3 to a charge, then a reload. ${D(SPELLS.fireball.damage)} damage; the 3rd hits for ${D(SPELLS.fireball.finDamage)}, stuns and breaks a wind-up.`,
     cooldown: SPELLS.fireball.cooldown,
-    magazine: 3, reload: 1.5, idleReload: 2,
+    magazine: 3, reload: PRIMARY_RELOAD, idleReload: 2,
   },
   gale_shear: {
     id: 'gale_shear', slot: 'primary', name: 'Gale Shear', short: 'Shear',
     blurb: `A blade of wind out to 8 m (${D(16)} damage), 3 to a charge. The 3rd is a wide crescent that breaks a wind-up.`,
     cooldown: SPELLS.shear.cooldown,
-    magazine: 3, reload: 1.5, idleReload: 2,
+    magazine: 3, reload: PRIMARY_RELOAD, idleReload: 2,
   },
   potion_toss: {
     id: 'potion_toss', slot: 'primary', name: 'Potion Toss', short: 'Potion',
     blurb: `Arcing potions, 2 to a belt, then a reload. ${D(16)} damage with a small splash; the 2nd hits for ${D(14)} and stuns.`,
     cooldown: SPELLS.potion.cooldown,
-    magazine: 2, reload: 1.5, idleReload: 2,
+    magazine: 2, reload: PRIMARY_RELOAD, idleReload: 2,
   },
   toxic_flask: {
     id: 'toxic_flask', slot: 'power', name: 'Toxic Flask', short: 'Toxic',
@@ -379,7 +385,7 @@ export const SPELLBOOK = {
     id: 'sling', slot: 'primary', name: "Shepherd's Sling", short: 'Sling',
     blurb: 'Sling stones, 2 to a pouch. A hit calls the nearest calm goat to charge the target. The 2nd breaks a wind-up.',
     cooldown: SPELLS.sling.cooldown,
-    magazine: 2, reload: 1.5, idleReload: 2,
+    magazine: 2, reload: PRIMARY_RELOAD, idleReload: 2,
     callRange: 22,       // a calm map goat this close to the target answers the call
     callLockout: 6,      // seconds before the same target can have another ram called on it (balance match: 3 was too many)
   },
@@ -387,7 +393,7 @@ export const SPELLBOOK = {
     id: 'hex_shards', slot: 'primary', name: 'Hex Shards', short: 'Hex',
     blurb: 'Crimson glyphs that curve in on the aim point: from the left, from the right, then a high lob that breaks a wind-up.',
     cooldown: SPELLS.hex.cooldown,
-    magazine: 3, reload: 1.5, idleReload: 2,
+    magazine: 3, reload: PRIMARY_RELOAD, idleReload: 2,
   },
   meteor: {
     id: 'meteor', slot: 'power', name: 'Meteor', short: 'Meteor',
@@ -412,7 +418,7 @@ export const SPELLBOOK = {
     blurb: '1.5 s wind-up, then a piercing whip: binds everyone it hits for 1.25 s. Miss and you are rooted.',
     windup: 1.5,         // can't ward, move at CHARGE_MOVE_SPEED; being hit cancels it
     missRoot: 1.0,       // the caster's recovery when the whip hits nobody
-    cooldown: 13,
+    cooldown: 9,         // round 14: 13
   },
   frostfall: {
     id: 'frostfall', slot: 'power', name: 'Frostfall', short: 'Frostfall',
@@ -429,15 +435,18 @@ export const SPELLBOOK = {
     bind: 1.5,           // frozen: rooted and silenced, like the lash's bind
     unblockable: true,   // it comes from above: wards and ice walls don't stop it
     airCast: true,       // the one power spell Rime can cast during a Skyward Flash
-    cooldown: 14,
+    cooldown: 10,        // round 14: 14
   },
   battering_ram: {
     id: 'battering_ram', slot: 'power', name: 'Battering Ram', short: 'Ram',
-    blurb: 'Stomp for 0.8 s (a hit stops you), then a ram bursts out in front of you and charges dead straight along your aim. It flattens the first enemy it meets, unless a ward, wall or Veil stops it.',
+    blurb: `Stomp for 0.8 s (a hit stops you), then a ram bursts out in front of you and charges dead straight along your aim. The first enemy it meets takes ${D(54)} and is knocked flat, unless a ward, wall or Veil stops it.`,
     windup: 0.8,         // round 10 (Ty: too strong): a stomp and a ghost ram pawing the ground first; cast-rooted, interruptible
     interruptCd: 3,      // the cooldown an interrupted wind-up leaves
     spawnDist: 1.4,
     maxTime: 3,          // the charge runs at GOAT.chargeSpeed for at most this long
+    // round 14 (Ty): no longer a one-shot. What the charge does to an enemy (a hit kind, 'battering_ram'): D(54) = 70
+    // and a knockdown (KNOCKDOWN.kinds). The goat module already decided a ward, wall or Veil stopped it.
+    damage: 54, stun: 0, knockback: 0, staminaCost: 0, unblockable: true,
     cooldown: 12,        // balance match: 9 left Jeb on top (most of his kills were ram one-shots)
   },
   ram_ride: {
@@ -502,9 +511,9 @@ export const SPELLBOOK = {
   },
   black_death: {
     id: 'black_death', slot: 'guard', name: 'Black Death', short: 'Black Death', ward: true, allSides: true,
-    blurb: 'Hold: a black shroud blocks spells from every side, for about 3 s of stamina. Each block heals you for 30% of the damage it absorbed and charges your next Lash.',
+    blurb: 'Hold: a black shroud blocks spells from every side, for about 3.5 s of stamina. Each block heals you for 30% of the damage it absorbed and charges your next Lash.',
     cooldown: 0,
-    drainMul: 2.5,          // stamina drains this much faster than the base ward rate (about 3 s from full)...
+    drainMul: 2.0,          // stamina drains this much faster than the base ward rate (about 3.6 s from full; round 14: 2.5, 2.9 s)...
     hitCostMul: 2,          // ...and each blocked hit costs this much more (2.5 left Vesper last in the balance match)
     lashCdPerDamage: 0.1,   // each absorbed point cuts Sanguine Lash's cooldown by this (s)...
     bonusPerDamage: 0.5,    // ...and stores this much bonus damage for the next Lash...
@@ -516,7 +525,7 @@ export const SPELLBOOK = {
     blurb: 'Tap: a wind bubble wraps you for 2 s and swallows every spell, from any side. Move and cast freely.',
     duration: 2,         // Ty: shields much shorter (was 3 s)
     noRoot: true,        // no cast root: you keep moving (round 11: the spell's property, not Gale's)
-    cooldown: 10,        // from activation; it can't be refreshed while up
+    cooldown: 7,         // from activation; it can't be refreshed while up (round 14: 10)
   },
   ram_guard: {
     id: 'ram_guard', slot: 'guard', name: 'Ram Guard', short: 'Ram Guard',
@@ -526,10 +535,10 @@ export const SPELLBOOK = {
   },
   glacial_bulwark: {
     id: 'glacial_bulwark', slot: 'guard', name: 'Glacial Bulwark', short: 'Bulwark',
-    blurb: 'Tap to raise a 6 m ice wall ahead that blocks everything and freezes enemies who touch it. 5 s or 120 damage.',
+    blurb: 'Tap to raise a 6 m ice wall ahead that blocks everything and freezes enemies who touch it. 5 s or 80 damage.',
     dist: 2.8, width: 6, height: 4,
     circles: 9, r: 0.4,   // collider chain
-    life: 5, hp: 120,     // Ty: shields much shorter (was 10 s, 220)
+    life: 5, hp: 80,      // round 14: 120 (Ty: shields much shorter, was 10 s, 220)
     freeze: 1.5,          // an enemy touching it is frozen this long (Frostfall's freeze)...
     refreeze: 3,          // ...at most once per wall per enemy this often
     cooldown: 12,
@@ -552,8 +561,8 @@ export const SPELLBOOK = {
     stun: 0.4,
     knockback: 7,
     staminaCost: 40,     // a ward facing the blast blocks it
-    cooldown: 3,
-    liftCooldown: 3,     // after each curse (p.cd.lift)
+    cooldown: 6,         // round 14: 3
+    liftCooldown: 6,     // after each curse (p.cd.lift)
   },
   roll: {
     id: 'roll', slot: 'utility', name: 'Roll', short: 'Roll',   // round 13 (Ty): a Utility (F), no longer Mobility
@@ -867,26 +876,26 @@ export const ELEMENTS = {
 const S_ = (n) => `${n} s`, M_ = (n) => `${n} m`;
 export const SPELL_INFO = {
   // primaries (magazine; the last shot of a magazine is the finisher)
-  spark:         { element: 'arcane', tags: ['Projectile', 'Hitscan-like', 'Interrupts'], damage: `${D(9)}`, cooldown: S_(0.45), range: M_(54), windup: '' },
-  fireball:      { element: 'fire',   tags: ['Projectile', 'Interrupts'], damage: `${D(18)} / ${D(26)}`, cooldown: S_(0.5), range: M_(31), windup: '' },
+  spark:         { element: 'arcane', tags: ['Projectile', 'Hitscan-like', 'Interrupts'], damage: `${D(SPELLS.fast.damage)}`, cooldown: S_(SPELLS.fast.cooldown), range: M_(54), windup: '' },
+  fireball:      { element: 'fire',   tags: ['Projectile', 'Interrupts'], damage: `${D(SPELLS.fireball.damage)} / ${D(SPELLS.fireball.finDamage)}`, cooldown: S_(SPELLS.fireball.cooldown), range: M_(Math.round(SPELLS.fireball.speed * SPELLS.fireball.life)), windup: '' },
   gale_shear:    { element: 'wind',   tags: ['Projectile', 'Hitscan-like', 'Interrupts'], damage: `${D(16)}`, cooldown: S_(0.42), range: M_(8), windup: '' },
-  glacial_skim:  { element: 'ice',    tags: ['Projectile', 'Slows', 'Interrupts'], damage: `3 × ${D(11)}`, cooldown: S_(0.6), range: M_(22), windup: '' },
-  hex_shards:    { element: 'dark',   tags: ['Projectile', 'Interrupts'], damage: `${D(11)}`, cooldown: S_(0.45), range: M_(28), windup: '' },
-  sling:         { element: 'earth',  tags: ['Projectile', 'Hitscan-like', 'Summon', 'Interrupts'], damage: `${D(7)} + ram`, cooldown: S_(0.4), range: M_(32), windup: '' },
-  potion_toss:   { element: 'acid',   tags: ['Projectile', 'Lob', 'Area', 'Stuns'], damage: `${D(16)} / ${D(14)}`, cooldown: S_(0.5), range: M_(26), windup: '' },
+  glacial_skim:  { element: 'ice',    tags: ['Projectile', 'Slows', 'Interrupts'], damage: `3 × ${D(SPELLS.skim.damage)}`, cooldown: S_(SPELLBOOK.glacial_skim.cooldown), range: M_(22), windup: '' },
+  hex_shards:    { element: 'dark',   tags: ['Projectile', 'Interrupts'], damage: `${D(SPELLS.hex.damage)}`, cooldown: S_(SPELLS.hex.cooldown), range: M_(SPELLS.hex.range), windup: '' },
+  sling:         { element: 'earth',  tags: ['Projectile', 'Hitscan-like', 'Summon', 'Interrupts'], damage: `${D(SPELLS.sling.damage)} + ram`, cooldown: S_(SPELLS.sling.cooldown), range: M_(32), windup: '' },
+  potion_toss:   { element: 'acid',   tags: ['Projectile', 'Lob', 'Area', 'Stuns'], damage: `${D(SPELLS.potion.damage)} / ${D(SPELLS.potion.finDamage)}`, cooldown: S_(SPELLS.potion.cooldown), range: M_(SPELLS.potion.range), windup: '' },
   // powers (RMB)
-  meteor:        { element: 'fire',   tags: ['Projectile', 'Wind-up'], damage: `${D(44)}`, cooldown: S_(1.2), range: M_(57), windup: S_(1.25) },
+  meteor:        { element: 'fire',   tags: ['Projectile', 'Wind-up'], damage: `${D(SPELLS.heavy.damage)}`, cooldown: S_(SPELLS.heavy.cooldown), range: M_(Math.round(SPELLS.heavy.speed * SPELLS.heavy.life)), windup: S_(SPELLS.heavy.chargeTime) },
   cyclone:       { element: 'wind',   tags: ['Area', 'Wind-up', 'Stuns'], damage: `${D(28)}`, cooldown: S_(5), range: M_(5.5), windup: S_(0.45) },
-  frostfall:     { element: 'ice',    tags: ['Area', 'Roots'], damage: `${D(50)}`, cooldown: S_(14), range: M_(24), windup: S_(1.75), duration: 'freeze 1.5 s' },
-  sanguine_lash: { element: 'dark',   tags: ['Projectile', 'Wind-up', 'Roots'], damage: `${D(12)}`, cooldown: S_(13), range: M_(22), windup: S_(1.5), duration: 'bind 1.25 s' },
-  battering_ram: { element: 'earth',  tags: ['Summon', 'Wind-up', 'Knockdown'], damage: 'kill', cooldown: S_(12), range: M_(36), windup: S_(0.8) },
+  frostfall:     { element: 'ice',    tags: ['Area', 'Roots'], damage: `${D(SPELLBOOK.frostfall.damage)}`, cooldown: S_(SPELLBOOK.frostfall.cooldown), range: M_(SPELLBOOK.frostfall.range), windup: S_(1.75), duration: 'freeze 1.5 s' },
+  sanguine_lash: { element: 'dark',   tags: ['Projectile', 'Wind-up', 'Roots'], damage: `${D(SPELLS.lash.damage)}`, cooldown: S_(SPELLBOOK.sanguine_lash.cooldown), range: M_(22), windup: S_(1.5), duration: 'bind 1.25 s' },
+  battering_ram: { element: 'earth',  tags: ['Summon', 'Wind-up', 'Knockdown'], damage: `${D(SPELLBOOK.battering_ram.damage)}`, cooldown: S_(SPELLBOOK.battering_ram.cooldown), range: M_(36), windup: S_(SPELLBOOK.battering_ram.windup) },
   toxic_flask:   { element: 'acid',   tags: ['Lob', 'Area'], damage: `${D(12)} + ${D(12)}/s`, cooldown: S_(8), range: M_(18), windup: '', duration: S_(5) },
   // shields (R)
   ward:          { element: 'arcane', tags: ['Shield'], damage: '', cooldown: 'hold', range: '', windup: '', duration: 'about 3 s' },
   firewall:      { element: 'fire',   tags: ['Shield', 'Area'], damage: `${D(15)} to walk through`, cooldown: S_(10), range: M_(5), windup: '', duration: S_(2.5) },
-  tempest_veil:  { element: 'wind',   tags: ['Shield'], damage: '', cooldown: S_(10), range: '', windup: '', duration: S_(2) },
+  tempest_veil:  { element: 'wind',   tags: ['Shield'], damage: '', cooldown: S_(SPELLBOOK.tempest_veil.cooldown), range: '', windup: '', duration: S_(SPELLBOOK.tempest_veil.duration) },
   glacial_bulwark: { element: 'ice',  tags: ['Shield', 'Roots'], damage: '', cooldown: S_(12), range: M_(6), windup: '', duration: S_(5) },
-  black_death:   { element: 'dark',   tags: ['Shield', 'Heal'], damage: '', cooldown: 'hold', range: '', windup: '', duration: 'about 3 s' },
+  black_death:   { element: 'dark',   tags: ['Shield', 'Heal'], damage: '', cooldown: 'hold', range: '', windup: '', duration: 'about 3.5 s' },
   ram_guard:     { element: 'earth',  tags: ['Shield', 'Summon'], damage: 'kill', cooldown: S_(10), range: '', windup: '', duration: S_(3) },
   smoke_flask:   { element: 'acid',   tags: ['Shield', 'Area'], damage: '', cooldown: S_(10), range: M_(2.4), windup: '', duration: S_(2) },
   // mobility (E)
@@ -898,7 +907,7 @@ export const SPELL_INFO = {
   flask_step:    { element: 'acid',   tags: ['Teleport', 'Lob', 'Wind-up'], damage: '', cooldown: S_(8), range: M_(16), windup: S_(0.6) },
   // utility (F)
   telekinesis:   { element: 'arcane', tags: ['Knockdown'], damage: `${D(22)}`, cooldown: S_(3), range: M_(16), windup: '' },
-  trapped_relic: { element: 'dark',   tags: ['Area', 'Stuns'], damage: `trap ${D(45)}`, cooldown: S_(3), range: M_(16), windup: '', duration: '2 traps' },
+  trapped_relic: { element: 'dark',   tags: ['Area', 'Stuns'], damage: `trap ${D(SPELLBOOK.trapped_relic.damage)}`, cooldown: S_(SPELLBOOK.trapped_relic.cooldown), range: M_(16), windup: '', duration: '2 traps' },
   roll:          { element: 'arcane', tags: ['Dash', 'Dodge'], damage: '', cooldown: '3.5 s × 2', range: M_(4.5), windup: '', duration: 'dodge 0.25 s' },
   // ultimates (Q, charged)
   meteor_rain:   { element: 'fire',   tags: ['Area', 'Wind-up'], damage: 'kill', cooldown: 'charge', range: M_(24), windup: S_(1.3) },
