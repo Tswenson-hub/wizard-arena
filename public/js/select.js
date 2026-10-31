@@ -187,6 +187,9 @@ function makeBuilderPreview(el) {
     const d = pv.demo;
     if (d && d.back && now > d.back && pv.cur !== pv.idle) { pv.cur.crossFadeTo(pv.idle.reset().play(), 0.25, false); pv.cur = pv.idle; d.back = 0; }
     pv.mixer.update(dt);
+    // the staff upright while idling, KayKit's grip while a spell plays (looks.js updateGrip)
+    pv.gripW = (pv.gripW ?? 1) + ((pv.cur === pv.idle ? 1 : 0) - (pv.gripW ?? 1)) * Math.min(1, dt * 12);
+    pv.body.updateGrip?.(pv.gripW);
     // a slow sway around a three-quarter view, so casts read from the front
     pv.body.model.rotation.y = pv.yaw + Math.sin(now / 2400) * 0.35;
     camera.aspect = W / H;

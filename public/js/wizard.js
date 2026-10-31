@@ -47,6 +47,8 @@ const WARD = { r: 1.25, h: 1.3, y: 1.05 };
 // so every bone has exactly one action driving it. Whole-body moves never split (jumps, flips, rolls, falls, hits).
 const LEG_BONES = new Set([BONES.root, BONES.hips, ...BONES.legs]);
 const WHOLE_BODY = /^(jump|double_jump|land|roll|dash|death|stun|knockdown|getup|hit_waist|mrain_|ride|spin|arrival|flask_step|float|lash|ult$|air_cast|crouch|smoke_screen|blink|mirror_step|skyward|spawn|ledge_climb)/;
+// States in which a staff is carried upright like a walking staff (everything else, casts above all, uses KayKit's grip).
+const STAFF_UPRIGHT = /^(idle|run|walk|walk_fight|back|strafe_|crouch|float|jump|land|ride|stun|hit|knockdown|getup|arrival|blink|mirror_step|spawn|dash|roll|double_jump|skyward)/;
 // Looping clips (every other key plays once and holds its last frame until the one-shot ends).
 const LOOPS = new Set(['idle', 'run', 'walk', 'walk_fight', 'back', 'strafe_left', 'strafe_right', 'crouch', 'crouch_walk', 'block', 'shroud', 'cast_heavy', 'float', 'ride', 'spin']);
 // Round 15: main.js's older calls into the Meshy clips by offset (oneShot('cast_heavy', d, 1.5, 1.9) and the like), translated to
@@ -640,6 +642,10 @@ export class Wizard {
     if (nat && !this.inOneShot()) this.actions[this.current].setEffectiveTimeScale(Math.min(6, Math.max(0.3, m.speed / nat)));
     this.updateSplit(m);
     this.mixer.update(dt);
+    // the staff stands upright (head up) in locomotion and plain reactions, and takes KayKit's grip for casts (looks.js updateGrip)
+    const upright = !this.dead && STAFF_UPRIGHT.test(this.current || 'idle') ? 1 : 0;
+    this.gripW = (this.gripW ?? upright) + (upright - (this.gripW ?? upright)) * Math.min(1, dt * 12);
+    this.body.updateGrip?.(this.gripW);
     // no crouch clip yet: sink the body a little (scaled from the feet) while crouched
     if (this.model && !(this.actions.crouch || this.actions.crouch_walk)) {
       this.crouchBaseY ??= this.model.scale.y;

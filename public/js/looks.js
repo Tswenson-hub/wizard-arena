@@ -583,6 +583,35 @@ export const clipsFor = (loadout, kind) => genericClips(loadout || {}, kind);
 
 // ---------------------------------------------------------------- bodies
 
+// The walking-staff grip (round 15): KayKit's hand slot holds a staff like a sword, so with the arm hanging (idle, walk, run) its
+// head points forward and down. updateGrip(body, w) turns the grip so the staff stands upright beside the body, head up and leaning
+// a little forward and out, its foot kept off the floor; w (0..1) blends it in. wizard.js and the builder preview call it after the
+// mixer each frame, with w eased towards 1 in locomotion and towards 0 for casts (the KayKit cast poses aim the staff themselves).
+const STAFF_UP = new THREE.Vector3(-0.58, 1, 0.3).normalize();   // in the body's frame: up, leaning out (-x: right) and forward
+                                                                  // (+z), so the head clears the hat's brim
+const STAFF_FOOT = 0.75;        // m from the grip down to the staff's foot
+const _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _qi = new THREE.Quaternion(), _d = new THREE.Vector3(), _ax = new THREE.Vector3();
+const _hp = new THREE.Vector3(), _sc = new THREE.Vector3(), _id = new THREE.Quaternion();
+function updateGrip(body, w) {
+  const g = body.grip;
+  if (!g || !body.staff) return;
+  if (w <= 0.001) { g.quaternion.identity(); g.position.set(0, 0, 0); return; }
+  const hand = body.hand;
+  hand.updateWorldMatrix(true, false);
+  hand.getWorldQuaternion(_q);
+  _d.copy(STAFF_UP).applyQuaternion(body.model.getWorldQuaternion(_q2));          // the wanted axis, in the world
+  _ax.set(0, 1, 0).applyQuaternion(_q);                                            // the staff's axis with the plain grip
+  _q2.setFromUnitVectors(_ax, _d);                                                 // the turn from one to the other (world)
+  _qi.copy(_q).invert();
+  _q2.premultiply(_qi).multiply(_q);                                               // that turn in the hand's frame
+  g.quaternion.slerpQuaternions(_id, _q2, w);
+  // slide the staff up through the hand when its foot would go through the floor
+  hand.getWorldPosition(_hp); hand.getWorldScale(_sc);
+  const body0 = body.model.parent ? body.model.parent.getWorldPosition(_ax).y : 0;
+  const lift = Math.max(0, STAFF_FOOT * _d.y - (_hp.y - body0) + 0.03) * w;
+  g.position.copy(_d).multiplyScalar(lift / (_sc.y || 1)).applyQuaternion(_qi);
+}
+
 // A skeleton kind for a bot, from any number or string (stable for the same seed).
 export function botBody(seed) {
   let h = 0;
@@ -617,6 +646,16 @@ export function makeWizardBody(loadout = {}, { body: kind = 'mage' } = {}) {
     model, kind, loadout, look: null, clips: genericClips(loadout, kind),
     hand: bone(model, 'hand'), head: bone(model, 'head'), tip: bone(model, 'tip') || bone(model, 'hand'),
   };
+  // The weapon (and its tip) sit in a `grip` group under the hand slot, so a staff can be swung upright (updateGrip).
+  const slot = body.hand;
+  if (slot) {
+    const grip = new THREE.Group(); grip.name = 'grip';
+    for (const c of [...slot.children]) if (!c.isBone) grip.add(c);
+    slot.add(grip);
+    body.grip = grip;
+  }
+  body.staff = kind === 'mage' || kind === 'skeleton_mage';
+  body.updateGrip = (w) => updateGrip(body, w);
   body.setLook = (lo) => {
     body.loadout = lo || {};
     const look = body.look = lookOf(body.loadout);
