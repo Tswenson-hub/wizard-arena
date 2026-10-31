@@ -6,6 +6,9 @@
 #     exports have so many UV seams that the regular simplifier stalls around 4k; sloppy ignores seams
 #     (fine for trees and rocks, which repeat dozens of times). Installs its npm deps in a temp dir.
 #     -> public/models/<name>.glb (defaults: ratio 0.35, 1024 px; aim for < 1 MB, ~10k tris for props)
+#   tools/optimize-models.sh kit <src-gltf-dir> <subdir> name...
+#     round 15: KayKit / Quaternius glTF pieces -> public/models/<subdir>/<name>.glb, meshopt, images stripped (world.js
+#     gives each kit one shared material set: castle/dungeon_texture.webp, village/*.webp)
 #   tools/optimize-models.sh pack <name> [maps-px] [simplify-ratio]
 #     meshopt-compress public/models/<name>.glb in place (EXT_meshopt_compression: world.js and the editor set
 #     three's MeshoptDecoder on their GLTFLoaders), shrinking its normal/roughness maps to maps-px (default 512;
@@ -70,7 +73,37 @@ shrink() { # src dst simplify-ratio texture-size [simplify-error] [target-tris]
   $G webp "$TMP/c.glb" "$TMP/d.glb" --quality 80
   pack "$TMP/d.glb" "$2" "$(( $4 > 1024 ? 1024 : 512 ))"
 }
-if [ "$1" = pack ]; then
+kitpack() { # dst-dir src.gltf... : glTF -> meshopt GLB without its images (world.js gives each kit one shared material set)
+  [ -d "$TMP/kit/node_modules/meshoptimizer" ] || npm i --silent --prefix "$TMP/kit" @gltf-transform/core@4 @gltf-transform/extensions@4 @gltf-transform/functions@4 meshoptimizer@1.3 >/dev/null
+  cat > "$TMP/kit/kit.mjs" <<'JS'
+import { NodeIO } from '@gltf-transform/core';
+import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
+import { meshopt, prune, weld, dedup } from '@gltf-transform/functions';
+import { MeshoptEncoder } from 'meshoptimizer';
+import path from 'node:path';
+const [dst, ...srcs] = process.argv.slice(2);
+await MeshoptEncoder.ready;
+const io = new NodeIO().registerExtensions(ALL_EXTENSIONS).registerDependencies({ 'meshopt.encoder': MeshoptEncoder });
+for (const src of srcs) {
+  const doc = await io.read(src);
+  for (const t of doc.getRoot().listTextures()) t.dispose();     // materials keep their names (and factors); textures go
+  await doc.transform(dedup(), weld(), prune(), meshopt({ encoder: MeshoptEncoder, level: 'high', quantizePosition: 14, quantizeNormal: 8 }));
+  const out = path.join(dst, path.basename(src).replace(/\.gltf$/, '.glb'));
+  await io.write(out, doc);
+  console.log(out);
+}
+JS
+  D="$(cd "$1" && pwd)"; shift
+  ABS=""; for f in "$@"; do ABS="$ABS $(cd "$(dirname "$f")" && pwd)/$(basename "$f")"; done
+  (cd "$TMP/kit" && node kit.mjs "$D" $ABS)
+}
+if [ "$1" = kit ]; then
+  # tools/optimize-models.sh kit <src-gltf-dir> <public/models subdir> name... : the kit pieces the layout uses (round 15: castle/, village/)
+  SRC="$2"; SUB="$3"; shift 3
+  mkdir -p "$OUT/$SUB"
+  FILES=""; for n in "$@"; do FILES="$FILES $SRC/$n.gltf"; done
+  kitpack "$OUT/$SUB" $FILES
+elif [ "$1" = pack ]; then
   cp "$OUT/$2.glb" "$TMP/in.glb"
   pack "$TMP/in.glb" "$OUT/$2.glb" "$3" "$4"
   ls -la "$OUT/$2.glb"
