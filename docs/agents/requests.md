@@ -1526,3 +1526,4 @@ courtyard crosses the 4.2 m rampart and lands outside the walls. Two helpers are
 - **spells:** `main.js:206`, one comment: "wizard.glb is retired" dropped.
 - **environment:** `editor.js:377` `SPECIAL_MODELS` lost `wizard`, `grass_tall`, `grass_clover`. `tools/optimize-models.sh` still has its
   farmhouse/silo recipe lines; harmless, yours to prune.
+- **characters:** `select.js:26` icon URL is now `./textures/icons/...` (`3b943a9`), the build's last absolute path.
