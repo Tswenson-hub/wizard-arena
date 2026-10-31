@@ -1,5 +1,115 @@
 # Characters hand-off
 
+## Round 15: the KayKit Mage, the Skeleton bots and the animation remap
+
+### Commits
+- `a6ca00d`: requests.md, the body API, the scale confirmation and the named phases.
+- `bed8d42`: the models. This adds `public/models/characters/` (1.3 MB) and `tools/build-characters.mjs`.
+- `edf8221`: the code. It touches looks.js, spellanim.js, wizard.js (the parts the brief gave me) and select.js.
+- `5550268`: Shoot's release time, and the preview framing.
+
+### What I built
+- **Models** (`node tools/build-characters.mjs [packsDir]`, which reads Ty's packs in ~/Downloads):
+  - Five bodies:
+    - `mage.glb` (116 KB)
+    - `skeleton_mage.glb` (115 KB)
+    - `skeleton_warrior.glb` (144 KB)
+    - `skeleton_rogue.glb` (121 KB)
+    - `skeleton_minion.glb` (107 KB)
+  - Each body's skinned parts are joined into one mesh per material, so the Mage is one draw call plus its staff. The hat is
+    kept.
+  - Weapons are baked under the hand slot, each with a `tip` node at its far end:
+    - Mage: the KayKit `staff`
+    - Skeleton Mage: the skeleton staff
+    - Warrior: the axe, with a shield in the left hand
+    - Rogue: the crossbow
+    - Minion: the blade
+  - The atlas is a 512 webp, and everything is meshopt-compressed.
+  - Node names lose their dots (`handslot.r` becomes `handslot_r`), because three strips dots.
+- **`clips.glb`** (757 KB, about 240 KB gzipped): 62 Rig_Medium clips from General, MovementBasic/Advanced,
+  CombatRanged/Melee, Special and Simulation (Lie_StandUp).
+  - It holds the skeleton only. Tracks that never leave the rest pose are dropped, and rotations are normalized int16.
+  - The clip pool, `bakeClipPool`/`retargetClip`, `MODEL_CLIPS`, `SHARED_CLIPS`, `POOL_SOURCES`, `PROPS`, `WHIPS`,
+    `POTIONS` and the hero bodies are gone from looks.js.
+- **looks.js:**
+  - `BODY_SCALE = 1.8/2.16` (0.8333). It's agreed with environment and matches map.js's `KIT_SCALE`.
+  - `BONES` and `bone(model, role)`, `BODY_TOP` (2.21 m, the hat tip).
+  - `makeWizardBody(loadout, { body })` returns `{ model, clips, kind, look, setLook, hand, head, tip }`.
+  - `botBody(seed)`; the pick DSL (cut, warp, reverse, flatY, pinXZ, yaw) is now on the KayKit rig.
+  - `registerModel` is a no-op. main.js still loads `wizard.glb` until spells drops it.
+- **Element tint by atlas region:** KayKit's atlas is flat swatches, so the shader re-hues three UV rectangles of
+  `mage_texture` and keeps their gradient:
+  - robe, sleeves and hat
+  - the cape: it takes the second element when two or more spells share it
+  - the staff gem: the element's bolt colour
+  - Arcane keeps KayKit's purple. The auras are kept and hang off `BONES` (fire and arcane at the staff tip, ice shards
+    on the shoulders).
+  - Skeletons have no tint. Their eyes (the `Glow` material) burn in the element colour, with half-strength auras.
+- **spellanim.js:** every key is remapped to KayKit clips per the brief's table. Releases were measured as the staff tip's
+  speed peak (`/tmp/wa-characters/r15/tr.py`).
+  - **Primaries:** every shot strikes at 0.08 s.
+  - **Wind-ups:** meteor's tip peak is at 1.22 s (target 1.25), the ultimates' at 1.28 (target 1.3), Lash at 1.57 (target
+    1.5), cyclone at 0.45 (target 0.45).
+  - **Summons** (Battering Ram, Night Cage, Stampede) drive the staff into the ground on the release.
+  - New: `PHASES` (named phases for main.js), `FLIPS` (procedural flips) and `SKELETON_ANIMS` (taunt, spawn, death, idle).
+- **wizard.js:**
+  - `LEG_BONES` reads from `BONES`; one-shots play once and clamp, while the loops are listed.
+  - `pose(name, duration, {fit})`.
+  - The old offset calls (`cast_fast` from 0.25, `cast_heavy` from 1.9, `stun`, `dash`) are translated to phases, so main.js
+    works unchanged.
+  - **Procedural flip:** a full turn on `model.rotation.x` about the body's middle (0.85 m) for `double_jump`(_back),
+    `roll_air`(_back) and `smoke_screen`. Meteor Rain's dive pitches the body head-first.
+  - Strafe clips play when moving sideways.
+  - **On a respawn,** a skeleton awakens and a Mage plays the Spawn_Air drop. A skeleton taunts when its kill count rises.
+  - The ward is 1.25 / 1.3 at 1.05 m and encloses the hat. The nameplate is at 2.61 m, the health bar at 2.38 m.
+  - The charge orb and the TK beam start at `tip`.
+- **select.js:** the preview frames the Mage (3.0 m × 2.8 m), idles at 1x and plays the spell clips on hover.
+
+### Verified (port 4103, headless Chromium; everything is in `/tmp/wa-characters/r15/`)
+- **Game, 3 bots:** loads with **no console errors or warnings**. Players are `mage`; bots are `skeleton_warrior` and
+  `skeleton_minion` with skeleton names (`game1.png`, `join.png`).
+- **`looks_row.png`:** all seven element looks.
+- **`skel_row.png`:** the four skeletons, with element eyes.
+- **`acts.png`** (the real `Wizard` class in a test scene), one row each:
+  - a walk
+  - a fireball shot
+  - the meteor wind-up and thrust
+  - a legacy `cast_heavy` call becoming the release
+  - the ward bubble
+  - the double-jump flip
+  - a roll left
+  - a knockdown, then Lie_StandUp
+  - the Mage's death
+  - a skeleton taunt
+  - a skeleton's death collapse
+- **`g-flip.png`:** the forward flip in a live game (`rotation.x` 1.66 at 0.15 s).
+- **`bp.png`:** the builder preview playing Battering Ram, Frostfall and Gale Shear.
+- Key timings are listed above (`keytrace` in `trace.html`).
+
+### Left over, or for others
+- **Spells (requests.md):**
+  - aim from `me.tip`
+  - drop the `wizard.glb` load
+  - replace the offset calls with `w.pose(...)`; the translation covers them meanwhile
+  - main.js `case 'smoke'` still plays the `back` walk; `playSpell(w, 'smoke_screen', 'cast')` gives the backflip
+  - the server's `body` field is already in; the constructor uses it
+- **Phase B can delete:**
+  - `wizard.glb` and `models/wizards/*`
+  - `tools/bake-clip-pool.py` and `tools/prepare-wizard-model.sh`
+  - Nothing reads them once main.js stops loading `wizard.glb`.
+- **Clips that still read weakly:**
+  - Roll: KayKit's Dodge_* is a 0.4 s lean, not a roll. Air rolls get the procedural flip, ground rolls don't.
+  - Ram Ride: Crouching stands in for a seat.
+  - Black Death: the plain block.
+  - Sanguine Lash: a slowed backhand.
+  - Glacial Skim: the block-push.
+  - Hex Shards: sword slashes.
+  - Blink and Mirror Step: Spawn_Air's drop.
+  - The Throw-based primaries are fine.
+- **Suggestions:** add KayKit's `Rig_Medium_Simulation` `Sit_Chair_Idle` to the build for Ram Ride (one line in `CLIPS`). A
+  roll or a flip would need a pack with them on Rig_Medium; KayKit's Character Animations doesn't have one.
+- `NATURAL_SPEED` in wizard.js is only a fallback; each gait's speed is measured.
+
 ## Round 14: the first-run experience, the builder at three sizes, the Ward bubble
 
 ### What I did

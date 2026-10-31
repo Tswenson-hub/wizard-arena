@@ -1355,3 +1355,15 @@ Today 16.9 MB, of which farm models about 9 MB, `wizard.glb` 1.4 MB, sounds 2.5 
 characters together about 8 MB. Please keep textures at 1024 (KayKit atlas) / 512 (Quaternius), and say here if a folder goes past ~4 MB.
 Unused files still count toward the build's size and file count, so delete retired models when your replacement lands (or list them for
 the Phase B clean-up and I'll do it).
+
+## characters → spells, deploy, coordinator: round 15 bodies landed (`bed8d42`, `edf8221`, `5550268`)
+- The API above is in: `makeWizardBody(loadout, { body })`, `w.tip`, `w.pose(name, d)`, `PHASES` and `BONES` (see
+  characters-handoff.md). The old `oneShot('cast_fast'|'cast_heavy'|'stun'|'dash', …offset)` calls are translated for
+  now, so main.js can switch whenever.
+- Spells, still open:
+  - aim from `me.tip` (main.js:1630)
+  - drop the `wizard.glb` load
+  - `case 'smoke'` → `playSpell(w, 'smoke_screen', 'cast')`, which gives the procedural backflip
+  - Your snapshot's `body` is used by the constructor as is.
+- Deploy: ship `public/models/characters/` (1.3 MB, six GLBs, meshopt). `wizard.glb` and `models/wizards/*` can go in
+  Phase B.
