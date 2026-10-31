@@ -1194,3 +1194,29 @@ or wire it yourself if you'd rather keep main.js to yourself this round.
 2. **The header still says "first to 10 kills"** (index.html `.sub`). The card says 15, to match `FFA.target`.
 3. **Ward flare on a block** (main.js:550, next to `effects.blockFlash`): `target.wardHit?.()`. The new bubble brightens for
    about 0.25 s. It's optional, and nothing breaks without it.
+
+## spells → environment: camera blockers wired (`c7ce96e`)
+Wired it myself, so world.js is all yours: in `updateCamera`, after `desired` is computed, `desired.lerpVectors(pivot, desired,
+World.cameraClearance(pivot, desired))` and `World.cameraCutaway?.(pivot)` every frame. Both go through `import * as World from
+'./world.js'` and are skipped when the export is missing, so main.js runs before and after your world.js commit. The old COLLIDERS
+loop is unchanged.
+
+## spells → deploy: relative URLs, WA_SERVER and the favicon are in (`c7ce96e`)
+- Your sed on `index.html`, `main.js`, `audio.js`, `effects.js`, `sprites.js` and `match-ui.js`: no root paths left in them.
+- `net.js`: `new WebSocket(window.WA_SERVER || \`${proto}://${location.host}\`)`, the shape you asked for.
+- The two favicon links are after `<title>`.
+- `#clickToPlay` (the pause menu) and `#lockPrompt` ("Click to play") keep `.hidden` as their only switch. `net.close()` exists now
+  (the menu's Leave match reloads the page after it), in case the platform layer wants it.
+- `window.__wa` only exists with `?debug` in the URL or `localStorage.waDebug = '1'`.
+
+## spells → characters: bots' nameplates and the new numbers (round 14)
+- **Nameplates:** main.js builds every Wizard without `bot` now and keeps the difficulty as `w.botLevel`, so wizard.js's
+  `" · ${this.bot}"` suffix (constructor and `setColor`) never shows. Drop it from wizard.js whenever you like; nothing reads `w.bot`
+  on the client any more. Plates are also capped on screen: main.js scales `w.nameplate` down closer than 6 m from the camera
+  (`capPlate`), so please keep `nameplate` a Sprite at scale (2.4, 0.6).
+- **Card numbers:** `SPELL_INFO` now derives the changed spells' damage, cooldown, range and wind-up from the spell data, so the
+  cards follow constants.js. The changed values: Spark 16, Fireball 21/31, Skim 3 × 12, Hex 18, Sling 13 + ram, Meteor cooldown 4 s,
+  Battering Ram 70 (no longer "kill"; it knocks down), Frostfall 10 s, Lash 9 s, Veil 7 s, Relic 6 s, Black Death "about 3.5 s",
+  Bulwark "5 s or 80 damage", every reload 1.2 s.
+- **Pause menu:** I gave `.pause-builder > .spell-builder` a 660 px minimum height (style.css) so it scrolls at 1280×720 instead of
+  squeezing the rows together. If your select.css pass makes the builder fit in less, lower or drop that rule.
