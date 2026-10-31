@@ -3,7 +3,7 @@
 # usage: python3 deploy/smoke.py <base url> [screenshot path]
 #   python3 deploy/smoke.py http://localhost:3000
 #   python3 deploy/smoke.py https://wizard-arena.onrender.com /tmp/wa-deploy/live.png
-import asyncio, sys, time, urllib.request
+import asyncio, json, sys, time, urllib.request
 from playwright.async_api import async_playwright
 
 BASE = sys.argv[1].rstrip('/')
@@ -24,10 +24,15 @@ async def main():
         errs, sockets, frames = [], [], {'sent': 0, 'recv': 0}
         pg.on('pageerror', lambda e: errs.append(str(e)))
         pg.on('console', lambda m: errs.append(m.text) if m.type == 'error' else None)
+        last_snap = {}
+        def on_frame(payload):
+            frames['recv'] += 1
+            if isinstance(payload, str) and payload.startswith('{"t":"snap"'):
+                last_snap['players'] = json.loads(payload)['players']
         def on_ws(ws):
             sockets.append(ws.url)
             ws.on('framesent', lambda _: frames.__setitem__('sent', frames['sent'] + 1))
-            ws.on('framereceived', lambda _: frames.__setitem__('recv', frames['recv'] + 1))
+            ws.on('framereceived', on_frame)
         pg.on('websocket', on_ws)
         t = time.time()
         await pg.goto(BASE + '/', timeout=120000)
@@ -40,27 +45,35 @@ async def main():
             print('load failed:', status); ok = False
         print(f'page ready (assets loaded) in {time.time() - t:.1f}s')
         b_ = await pg.evaluate("""() => { const q = s => document.querySelectorAll('#joinPicker ' + s).length;
-          const r = document.querySelector('#joinPicker .sb-main')?.getBoundingClientRect();
+          const r = document.querySelector('#joinPicker')?.getBoundingClientRect();
           return { rows: q('.sb-row'), cards: q('.sb-card'), presets: q('.sb-presets .sb-chip'), visible: !!r && r.width > 0 && r.height > 0 }; }""")
         builder_ok = b_['rows'] >= 4 and b_['cards'] >= 8 and b_['visible']
         print('spell builder:', b_, 'ok' if builder_ok else 'FAIL')
         ok = ok and builder_ok
         if SHOT:
             await pg.screenshot(path=SHOT.replace('.png', '-builder.png'), timeout=120000)
+        # first visit: the "How to play" card (round 14) covers the builder until it's dismissed
+        if await pg.locator('.htp-close').count():
+            await pg.click('.htp-close'); print('how-to-play card: dismissed')
         await pg.fill('#nameInput', 'smoketest')
         await pg.click('#joinBtn')
-        await pg.wait_for_function("window.__wa && window.__wa.local && window.__wa.players.size >= 4", timeout=30000)
-        await pg.wait_for_timeout(3000)
-        st = await pg.evaluate("""() => { const w = window.__wa; const ps = [...w.players.values()];
-          return { players: ps.length, bots: ps.filter(p => p.bot).map(p => p.name + ' (' + p.bot + ')'),
-                   status: document.querySelector('#status')?.textContent || '' }; }""")
+        # the server's own snapshots say who's in the match (window.__wa, the old debug hook, is off since round 14)
+        await pg.wait_for_function("!document.querySelector('#hud').classList.contains('hidden')", timeout=30000)
+        for _ in range(60):
+            if len(last_snap.get('players', [])) >= 4: break
+            await pg.wait_for_timeout(500)
+        await pg.wait_for_timeout(2000)
+        ps = last_snap.get('players', [])
+        st = { 'players': len(ps), 'bots': [f"{p.get('name')} ({p['bot']})" for p in ps if p.get('bot')],
+               'status': await pg.evaluate("document.querySelector('#status')?.textContent || ''") }
         print('joined:', st)
         ok = ok and st['players'] >= 4 and len(st['bots']) >= 3
         if SHOT:
             await pg.screenshot(path=SHOT, timeout=120000); print('screenshot:', SHOT)
+        before = frames['recv']
         await pg.wait_for_timeout(2000)
-        connected = await pg.evaluate("window.__wa.net.connected")
-        print('still connected after screenshot:', connected)
+        connected = frames['recv'] > before
+        print('still connected after screenshot:', connected, f"({frames['recv'] - before} frames in 2 s)")
         await b.close()
     want = 'wss://' if BASE.startswith('https') else 'ws://'
     ws_ok = any(u.startswith(want) for u in sockets) and frames['recv'] > 10 and connected
