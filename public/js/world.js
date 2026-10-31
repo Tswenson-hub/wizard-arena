@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import * as C from '../shared/constants.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const flat = (color, extra = {}) => new THREE.MeshStandardMaterial({ color, flatShading: true, roughness: 0.9, metalness: 0.0, ...extra });
 
@@ -141,9 +142,9 @@ function mountainVista() {
 export const spinners = [];
 
 // ------------------------------------------------------------ models
-// Optimised copies (see tools/optimize-models.sh). `models` holds the ones other modules clone: the potion barrel, the
-// prop pieces (by PROP_TYPES type) and, until the spells agent's rams.js lands, the goat body for goats.js.
-export const models = { goat: null, potion: null, props: {} };
+// Optimised copies (see tools/optimize-models.sh). `models` holds the ones other modules clone: the potion barrel and the
+// prop pieces (by PROP_TYPES type).
+export const models = { potion: null, props: {} };
 
 // Scale a model to `height` metres with its base on y = 0, centred on x/z, turned by `yaw` so it faces +z.
 function fitModel(gltf, height, yaw = 0) {
@@ -162,9 +163,10 @@ function fitModel(gltf, height, yaw = 0) {
 // ------------------------------------------------------------ trees outside the walls (instanced scenery)
 // Seeded so every client draws the same scatter.
 function seeded(seed) { return () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }; }
-// [x, z, yaw, height] per instance, by model. Pines and oaks close round the castle, the *_far models (about 1-1.6k
-// triangles, sloppy-simplified, no shadows) farther out and up the hills.
-const SCATTER = { pine: [], oak: [], pine_far: [], oak_far: [], birch_far: [] };
+// [x, z, yaw, height] per instance, by model: the low-poly *_far trees (about 1-1.6k triangles, sloppy-simplified) only,
+// a loose ring close round the castle and more out on the hills. From the wall-walk they're 7 m and more away, and they
+// keep the scene's triangles and the download down (the full Meshy trees were 4-5k triangles each).
+const SCATTER = { pine_far: [], oak_far: [], birch_far: [] };
 const TREE_H = { pine: 9, oak: 7.5, birch: 8 };
 // Recomputed by buildWorld() from the current layout (the editor rebuilds the world after every change).
 function computeScatter() {
@@ -175,9 +177,9 @@ function computeScatter() {
   // a loose ring of full trees round the castle, seen from the wall-walk
   for (let i = 0, n = 0; n < (FT.near ?? 26) && i < 2000; i++) {
     const a = rnd() * Math.PI * 2, r = C.ARENA_RADIUS - 6 + rnd() * 16, x = Math.cos(a) * r, z = Math.sin(a) * r;
-    if (!outside(x, z) || SCATTER.pine.concat(SCATTER.oak).some(([tx, tz]) => Math.hypot(tx - x, tz - z) < 4.5)) continue;
+    if (!outside(x, z) || SCATTER.pine_far.concat(SCATTER.oak_far).some(([tx, tz]) => Math.hypot(tx - x, tz - z) < 4.5)) continue;
     const kind = rnd() < 0.55 ? 'pine' : 'oak';
-    SCATTER[kind].push([x, z, rnd() * 6.3, TREE_H[kind] * (0.8 + rnd() * 0.45)]);
+    SCATTER[kind + '_far'].push([x, z, rnd() * 6.3, TREE_H[kind] * (0.8 + rnd() * 0.45)]);
     n++;
   }
   for (let i = 0; i < (FT.count ?? 90); i++) {
@@ -224,19 +226,57 @@ function kitTexture(url, repeat = false) {
   return (kitTex[url] = t);
 }
 const kitMats = {};
-function kitMaterial(model, original) {
+// Torches: the warm texels of the palette (the flame) glow. Tinted pieces (a white banner in an element's colour): the
+// near-white texels take the tint, the pole and fittings keep theirs.
+const torchTime = { value: 0 };
+function castleMaterial(kind, tint) {
+  const m = new THREE.MeshStandardMaterial({ map: kitTexture('./models/castle/dungeon_texture.webp'), roughness: 0.7, metalness: 0 });
+  if (kind === 'torch') {
+    m.customProgramCacheKey = () => 'kit-torch';
+    m.onBeforeCompile = (sh) => {
+      sh.uniforms.uTime = torchTime;
+      sh.fragmentShader = sh.fragmentShader.replace('void main() {', 'uniform float uTime;\nfloat flameGlow = 0.0;\nvoid main() {')
+        .replace('#include <map_fragment>', `#include <map_fragment>
+          flameGlow = smoothstep(0.25, 0.5, diffuseColor.r - diffuseColor.b) * step(0.55, diffuseColor.r);`)
+        .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+          totalEmissiveRadiance += diffuseColor.rgb * flameGlow * (1.6 + 0.35 * sin(uTime * 13.0) * sin(uTime * 7.3 + 1.0));`);
+    };
+  } else if (tint != null) {
+    const c = new THREE.Color(tint);
+    m.customProgramCacheKey = () => 'kit-tint';
+    m.onBeforeCompile = (sh) => {
+      sh.uniforms.uTint = { value: c };
+      sh.fragmentShader = sh.fragmentShader.replace('void main() {', 'uniform vec3 uTint;\nvoid main() {')
+        .replace('#include <map_fragment>', `#include <map_fragment>
+          float tLum = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11));
+          float tSat = max(diffuseColor.r, max(diffuseColor.g, diffuseColor.b)) - min(diffuseColor.r, min(diffuseColor.g, diffuseColor.b));
+          diffuseColor.rgb = mix(diffuseColor.rgb, uTint * (0.35 + 0.75 * tLum), smoothstep(0.55, 0.75, tLum) * (1.0 - smoothstep(0.08, 0.2, tSat)));`);
+    };
+  }
+  return m;
+}
+const KIT_TORCH = /torch/;
+function kitMaterial(model, original, tint = null) {
   const kit = model.split('/')[0];
-  if (kit === 'castle') return kitMats.castle ??= new THREE.MeshStandardMaterial({ map: kitTexture('./models/castle/dungeon_texture.webp'), roughness: 0.7, metalness: 0 });
+  if (kit === 'castle') {
+    const kind = KIT_TORCH.test(model) ? 'torch' : tint != null ? `tint${tint}` : 'plain';
+    return kitMats[`castle:${kind}`] ??= castleMaterial(kind === 'torch' ? 'torch' : 'plain', kind === 'torch' ? null : tint);
+  }
+  // Quaternius: its MI_* material names pick a 512 px tiling base colour (models/village/*.webp); every face both sides
   const name = original?.name || 'default';
   return kitMats[`${kit}:${name}`] ??= (() => {
-    const tex = VILLAGE_TEX[name];
-    const m = new THREE.MeshStandardMaterial({ color: tex ? 0xffffff : (original?.color?.getHex?.() ?? 0xbbbbbb), roughness: 0.85, metalness: 0,
-      side: original?.side ?? THREE.FrontSide, map: tex ? kitTexture(`./models/village/${tex}.webp`, true) : null });
-    return m;
+    const V = VILLAGE_MAT[name] || {};
+    return new THREE.MeshStandardMaterial({ color: V.color ?? 0xffffff, roughness: V.roughness ?? 0.88, metalness: V.metalness ?? 0, side: THREE.DoubleSide,
+      map: V.tex ? kitTexture(`./models/village/${V.tex}.webp`, true) : null, alphaTest: V.alphaTest ?? 0, transparent: !!V.opacity, opacity: V.opacity ?? 1 });
   })();
 }
-// Quaternius material name -> base colour texture in models/village (512 px webp)
-const VILLAGE_TEX = {};
+// Quaternius material name -> how it's drawn (the pack's 2048 PBR base colours shrunk to 512 px webp, no other maps)
+const VILLAGE_MAT = {
+  MI_WoodTrim: { tex: 'woodtrim' }, MI_WoodTrim_Wear: { tex: 'woodtrim' }, MI_Plaster: { tex: 'plaster' }, MI_UnevenBrick: { tex: 'unevenbrick' },
+  MI_RoundTiles: { tex: 'roundtiles' }, MI_RockTrim: { tex: 'rocktrim' }, MI_Brick: { tex: 'brick' },
+  MI_Vine: { tex: 'vine', color: 0x4a8a2a, alphaTest: 0.5 }, MI_MetalOrnaments: { color: 0x3c3f46, metalness: 0.5, roughness: 0.5 },
+  MI_WindowGlass: { color: 0x9cc8e0, opacity: 0.35, roughness: 0.2 },
+};
 // A geometry with its node's transform baked in. Meshopt stores positions and normals as normalized integers with the
 // scale on the node, so they're widened to floats first (baking into an int16 attribute would clamp it to -1..1).
 function bakedGeometry(o) {
@@ -255,15 +295,14 @@ const kitGeo = {};
 function kitMeshes(model, gltf) {
   gltf.scene.updateMatrixWorld(true);
   const out = [];
-  gltf.scene.traverse(o => { if (o.isMesh) out.push([bakedGeometry(o), kitMaterial(model, o.material)]); });
+  gltf.scene.traverse(o => { if (o.isMesh) out.push([bakedGeometry(o), o.material]); });
   return (kitGeo[model] = out);
 }
-const KIT_EMISSIVE = /torch_lit|torch_mounted|candle/;
 // One InstancedMesh per mesh of `model` for the given placements { x, y, z, yaw, s }.
-function kitInstances(model, meshes, items, { shadows = true } = {}) {
+function kitInstances(model, meshes, items, { shadows = true, tint = null } = {}) {
   const group = new THREE.Group(), m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), p = new THREE.Vector3(), s = new THREE.Vector3();
-  for (const [geo, mat] of meshes) {
-    const im = new THREE.InstancedMesh(geo, mat, items.length);
+  for (const [geo, original] of meshes) {
+    const im = new THREE.InstancedMesh(geo, kitMaterial(model, original, tint), items.length);
     items.forEach((it, i) => im.setMatrixAt(i, m.compose(p.set(it.x, it.y, it.z), q.setFromAxisAngle(up, it.yaw), s.setScalar(it.s))));
     im.castShadow = shadows; im.receiveShadow = true;
     im.computeBoundingSphere();
@@ -272,7 +311,38 @@ function kitInstances(model, meshes, items, { shadows = true } = {}) {
   }
   return group;
 }
-// A floor entry tiled with its model (and a sprinkle of `mix` models), every tile turned a random quarter.
+// The game merges the castle instead: it never moves, so every piece sharing a material (and a shadow and camera
+// setting) becomes one mesh, one draw call, about 20 for the whole castle instead of hundreds. The editor keeps the
+// instances (it rebuilds after every change and moves what's dragged). Each bucket: [material, shadows, solid, geometries].
+const MERGE_ATTRS = ['position', 'normal', 'uv'];
+function bucketPieces(buckets, model, meshes, items, { shadows = true, tint = null, solid = true } = {}) {
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), p = new THREE.Vector3(), s = new THREE.Vector3();
+  for (const [geo, original] of meshes) {
+    const mat = kitMaterial(model, original, tint), key = `${mat.uuid}|${shadows}|${solid}`;
+    const b = buckets.get(key) || buckets.set(key, [mat, shadows, solid, []]).get(key);
+    const base = new THREE.BufferGeometry();
+    for (const a of MERGE_ATTRS) {
+      if (geo.attributes[a]) base.setAttribute(a, geo.attributes[a]);
+      else base.setAttribute(a, new THREE.BufferAttribute(new Float32Array(geo.attributes.position.count * (a === 'uv' ? 2 : 3)), a === 'uv' ? 2 : 3));
+    }
+    if (geo.index) base.setIndex(geo.index);
+    const flat = base.index ? base.toNonIndexed() : base;
+    for (const it of items) b[3].push(flat.clone().applyMatrix4(m.compose(p.set(it.x, it.y, it.z), q.setFromAxisAngle(up, it.yaw), s.setScalar(it.s))));
+  }
+}
+function mergedPieces(buckets) {
+  const group = new THREE.Group();
+  for (const [mat, shadows, solid, geos] of buckets.values()) {
+    const mesh = new THREE.Mesh(mergeGeometries(geos), mat);
+    mesh.castShadow = shadows; mesh.receiveShadow = true;
+    if (solid) mesh.userData.cam = 'solid';
+    group.add(mesh);
+    for (const g of geos) g.dispose();
+  }
+  return group;
+}
+// A floor entry tiled with its model and a sprinkle of `mix` models (mostly in its outer rings, by the walls), every tile
+// turned a random quarter.
 function floorTiles(F) {
   const b = C.KIT_MODELS[F.model], s = C.kitScale(F.model);
   if (!b) return [];
@@ -280,14 +350,98 @@ function floorTiles(F) {
   const rnd = seeded(F.seed * 7919 + 1), c = Math.cos(F.yaw), n = Math.sin(F.yaw), out = [];
   for (let i = 0; i < nx; i++) for (let j = 0; j < nz; j++) {
     const lx = (i + 0.5) * tw - nx * tw / 2, lz = (j + 0.5) * td - nz * td / 2;
-    const pick = F.mix.length && rnd() < 0.14 ? F.mix[Math.floor(rnd() * F.mix.length)] : F.model;
+    const edge = Math.min(i, j, nx - 1 - i, nz - 1 - j) < 1.5;   // the outer two rings: worn, rocky, earthy
+    const pick = F.mix.length && rnd() < (edge ? 0.38 : 0.05) ? F.mix[Math.floor(rnd() * F.mix.length)] : F.model;
     out.push({ model: pick, x: F.x + lx * c + lz * n, y: 0.002, z: F.z - lx * n + lz * c, yaw: F.yaw + Math.floor(rnd() * 4) * Math.PI / 2, s: C.kitScale(pick) });
   }
   return out;
 }
 
-// `cameraGrid: false` skips the camera blockers (the editor, which rebuilds the world after every change).
-export function loadModels(loader, scene, { cameraGrid = true } = {}) {
+// ------------------------------------------------------------ torch flames and the rune circle
+// Every torch's flame: an additive glow sprite (one Points draw call for all of them, flickering in its shader) and, for
+// up to TORCH_LIGHTS of them (layout `light: 1` first, then the ones nearest the courtyard's middle, at least 8 m apart),
+// a real point light. FLAME_AT: where the flame is in each torch model's own units.
+const FLAME_AT = { 'castle/torch_mounted': [0, 0.58, 0.42], 'castle/torch_lit': [0, 0.62, 0], 'castle/torch': [0, 0.55, 0] };
+export const TORCH_LIGHTS = 6;
+const torchLights = [], flameItems = [];
+let glowTex = null;
+function glowTexture() {
+  if (glowTex) return glowTex;
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const g = c.getContext('2d'), r = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  r.addColorStop(0, 'rgba(255,236,190,1)'); r.addColorStop(0.25, 'rgba(255,170,70,0.75)'); r.addColorStop(1, 'rgba(255,110,30,0)');
+  g.fillStyle = r; g.fillRect(0, 0, 64, 64);
+  return (glowTex = new THREE.CanvasTexture(c));
+}
+function addTorchFlames(scene, model, items) {
+  const f = FLAME_AT[model] || [0, 0.5, 0], pos = [];
+  for (const it of items) {
+    const c = Math.cos(it.yaw), n = Math.sin(it.yaw);
+    const p = [it.x + (f[0] * c + f[2] * n) * it.s, it.y + f[1] * it.s, it.z + (-f[0] * n + f[2] * c) * it.s];
+    pos.push(...p); flameItems.push({ p, light: !!it.light });
+  }
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  const mat = new THREE.PointsMaterial({ map: glowTexture(), size: 1.5, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, color: 0xffb060 });
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uTime = torchTime;
+    sh.vertexShader = sh.vertexShader.replace('void main() {', 'uniform float uTime;\nvoid main() {')
+      .replace('gl_PointSize = size;', 'gl_PointSize = size * (0.85 + 0.15 * sin(uTime * 11.0 + position.x * 3.1 + position.z * 1.7) * sin(uTime * 6.7 + position.x));');
+  };
+  const pts = new THREE.Points(geo, mat); pts.frustumCulled = false; pts.renderOrder = 5;
+  scene.add(pts);
+  // the flame itself (KayKit's mounted torch is an unlit holder): a small bright cone in each, one draw call
+  const cone = new THREE.InstancedMesh(new THREE.ConeGeometry(0.075, 0.3, 6).translate(0, 0.13, 0), new THREE.MeshBasicMaterial({ color: 0xffb347 }), items.length);
+  const m4 = new THREE.Matrix4();
+  for (let i = 0; i < items.length; i++) cone.setMatrixAt(i, m4.makeTranslation(pos[3 * i], pos[3 * i + 1], pos[3 * i + 2]));
+  cone.computeBoundingSphere();
+  scene.add(cone);
+  const pick = [...flameItems].sort((a, b) => (b.light - a.light) || (Math.hypot(a.p[0], a.p[2]) - Math.hypot(b.p[0], b.p[2])));
+  for (const fl of pick) {
+    const at = new THREE.Vector3(...fl.p);
+    if (torchLights.length >= TORCH_LIGHTS || torchLights.some(l => l.position.distanceTo(at) < 8)) continue;
+    const L = new THREE.PointLight(0xff9a48, 6, 9, 1.6); L.position.copy(at); L.userData.base = 6; L.userData.ph = torchLights.length * 1.7;
+    torchLights.push(L); scene.add(L);
+  }
+}
+function torchTick() {
+  const t = performance.now() / 1000;
+  torchTime.value = t;
+  for (const L of torchLights) L.intensity = L.userData.base * (0.82 + 0.1 * Math.sin(t * 9.0 + L.userData.ph) + 0.08 * Math.sin(t * 23.0 + L.userData.ph * 2.0));
+}
+// Rune circles (layout kind 'rune'): a glowing ring of runes on the floor, `r` m across, slowly pulsing, and a crystal
+// hovering `h` m up over it, turning.
+function buildRunes(scene) {
+  for (const R of C.RUNES) {
+    const g = new THREE.Group();
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0xa070ff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+      polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
+    ringMat.onBeforeCompile = (sh) => {
+      sh.uniforms.uTime = torchTime;
+      sh.vertexShader = sh.vertexShader.replace('void main() {', 'varying vec2 vRp;\nvoid main() {\n  vRp = position.xz;');
+      sh.fragmentShader = sh.fragmentShader.replace('void main() {', 'uniform float uTime;\nvarying vec2 vRp;\nvoid main() {')
+        .replace('#include <color_fragment>', `#include <color_fragment>
+          float rr = length(vRp) / ${(R.r / 2).toFixed(3)}, a = atan(vRp.y, vRp.x);
+          float band = smoothstep(0.86, 0.9, rr) * (1.0 - smoothstep(0.97, 1.0, rr)) + smoothstep(0.6, 0.63, rr) * (1.0 - smoothstep(0.66, 0.69, rr));
+          float glyph = step(0.5, fract(a * 3.8197 + uTime * 0.05)) * step(0.7, rr) * (1.0 - step(0.84, rr)) * step(0.35, fract(rr * 9.0 + a * 1.9));
+          diffuseColor.a *= (band + glyph * 0.8) * (0.7 + 0.3 * sin(uTime * 1.6));`);
+    };
+    const ring = new THREE.Mesh(new THREE.CircleGeometry(R.r / 2, 96).rotateX(-Math.PI / 2), ringMat);
+    ring.position.y = 0.07;
+    const crystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.55, 0).scale(0.75, 1.5, 0.75),
+      new THREE.MeshStandardMaterial({ color: 0xc4a4ff, emissive: 0x7a40ff, emissiveIntensity: 1.4, flatShading: true, roughness: 0.25 }));
+    crystal.position.y = R.h; crystal.castShadow = true;
+    const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0xb080ff, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    halo.scale.setScalar(3.2); halo.position.y = R.h;
+    g.add(ring, crystal, halo); g.position.set(R.x, 0, R.z);
+    spinners.push(crystal);
+    scene.add(g);
+  }
+}
+
+// `cameraGrid: false` skips the camera blockers (the editor, which rebuilds the world after every change); `merge` (on in
+// the game) merges the kit pieces by material, see bucketPieces.
+export function loadModels(loader, scene, { cameraGrid = true, merge = cameraGrid } = {}) {
+  const buckets = new Map();
   loader.setMeshoptDecoder?.(MeshoptDecoder);   // the map's models are meshopt-compressed (tools/optimize-models.sh)
   const load = (url) => new Promise((res, rej) => loader.load(url, res, undefined, rej));
   const solid = (o) => { o.userData.cam = 'solid'; return o; };   // the camera boom stops at it (see cameraClearance)
@@ -296,9 +450,10 @@ export function loadModels(loader, scene, { cameraGrid = true } = {}) {
   const put = (model, it) => (placed.get(model) || placed.set(model, []).get(model)).push(it);
   for (const P of C.KIT_PIECES) put(P.model, P);
   for (const F of C.FLOORS) for (const t of floorTiles(F)) put(t.model, { ...t, floor: true });
+  torchLights.length = 0; flameItems.length = 0;
+  buildRunes(scene);
   const propModels = Object.entries(C.PROP_TYPES).filter(([, T]) => T.model);
   return Promise.all([
-    load('./models/ram.glb').then(g => { models.goat = fitModel(g, 1.25); }, () => {}),
     load('./models/potion.glb').then(g => { models.potion = fitModel(g, C.PROP_TYPES.potion.h); }, () => {}),
     ...propModels.map(([type, T]) => load(`./models/${T.model}.glb`).then(g => {
       for (const o of g.scene.children) o.traverse(m => { if (m.isMesh) m.material = kitMaterial(T.model, m.material); });
@@ -307,9 +462,15 @@ export function loadModels(loader, scene, { cameraGrid = true } = {}) {
     ...[...placed].map(([model, items]) => load(`./models/${model}.glb`).then(g => {
       const meshes = kitMeshes(model, g);
       const floors = items.filter(it => it.floor), pieces = items.filter(it => !it.floor);
-      // ground tiles: no shadows cast, not in the camera grid; pieces: solid to the camera
-      if (floors.length) scene.add(kitInstances(model, meshes, floors, { shadows: false }));
-      if (pieces.length) scene.add((KIT_EMISSIVE.test(model) ? (x) => x : solid)(kitInstances(model, meshes, pieces)));
+      // ground tiles: no shadows cast, not in the camera grid; pieces: solid to the camera, one set per tint (an
+      // element-coloured banner); torches aren't solid to the camera and get a flame glow
+      if (floors.length) { if (merge) bucketPieces(buckets, model, meshes, floors, { shadows: false, solid: false }); else scene.add(kitInstances(model, meshes, floors, { shadows: false })); }
+      for (const tint of new Set(pieces.map(it => it.tint ?? null))) {
+        const set = pieces.filter(it => (it.tint ?? null) === tint), torch = KIT_TORCH.test(model);
+        if (merge) bucketPieces(buckets, model, meshes, set, { tint, solid: !torch });
+        else { const inst = kitInstances(model, meshes, set, { tint }); scene.add(torch ? inst : solid(inst)); }
+      }
+      if (KIT_TORCH.test(model) && pieces.length) addTorchFlames(scene, model, pieces);
     }, (err) => console.warn(`kit model ${model} failed to load`, err))),
     // trees round the castle: one InstancedMesh per model; their canopies cut a hole between the camera and us
     ...Object.entries(SCATTER).filter(([, items]) => items.length).map(([name, items]) => load(`./models/${name}.glb`).then(g => {
@@ -328,14 +489,11 @@ export function loadModels(loader, scene, { cameraGrid = true } = {}) {
       }
     }, () => {})),
   ]).then(() => {
-    scene.onBeforeRender = () => cutawayTick();
+    if (merge) scene.add(mergedPieces(buckets));
+    scene.onBeforeRender = () => { cutawayTick(); torchTick(); };
     if (cameraGrid) buildCameraGrid(scene);
   });
 }
-
-// The farm's crops are gone; goats.js still calls these until the spells agent's commit removes it.
-export function trampleCrops() {}
-export function updateCrops() {}
 
 // ------------------------------------------------------------ camera blockers
 // The third-person camera mustn't end up inside a Meshy model. Once the models are placed, the triangles of every model

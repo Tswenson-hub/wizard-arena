@@ -78,7 +78,7 @@ kitpack() { # dst-dir src.gltf... : glTF -> meshopt GLB without its images (worl
   cat > "$TMP/kit/kit.mjs" <<'JS'
 import { NodeIO } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
-import { meshopt, prune, weld, dedup } from '@gltf-transform/functions';
+import { meshopt, prune, weld } from '@gltf-transform/functions';
 import { MeshoptEncoder } from 'meshoptimizer';
 import path from 'node:path';
 const [dst, ...srcs] = process.argv.slice(2);
@@ -87,7 +87,7 @@ const io = new NodeIO().registerExtensions(ALL_EXTENSIONS).registerDependencies(
 for (const src of srcs) {
   const doc = await io.read(src);
   for (const t of doc.getRoot().listTextures()) t.dispose();     // materials keep their names (and factors); textures go
-  await doc.transform(dedup(), weld(), prune({ keepAttributes: true }), meshopt({ encoder: MeshoptEncoder, level: 'high', quantizePosition: 14, quantizeNormal: 8 }));
+  await doc.transform(weld(), prune({ keepAttributes: true }), meshopt({ encoder: MeshoptEncoder, level: 'high', quantizePosition: 14, quantizeNormal: 8 }));
   const out = path.join(dst, path.basename(src).replace(/\.gltf$/, '.glb'));
   await io.write(out, doc);
   console.log(out);

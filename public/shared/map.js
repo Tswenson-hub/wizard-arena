@@ -30,16 +30,6 @@ export const KIT_SCALE = 1.8 / 2.16;
 export const KIT_GRID = 2 * KIT_SCALE;    // the editor's snap: half a KayKit tile (a wall is 4 units, a small tile 2)
 export const kitScale = (model) => KIT_SCALE;
 
-// Goats are gone (round 15). These stay, empty, only until the spells agent's commit stops reading them (server.js,
-// main.js, server/goats.js, public/js/goats.js); then they go.
-export const GOAT = { count: 0, radius: 0.6, hitY: 0.7, walkSpeed: 1.3, trotSpeed: 2.6, windup: 0.7, chargeSpeed: 12.5, chargeTime: 3.0, turnRate: 2.0,
-  dizzyTime: 2.2, recoverTime: 1.2, blockCost: 50, blockKnockback: 7, rammableBelow: 1.0, throwSpeed: 24, throwGravity: 6, stumbleTime: 0.5,
-  ramScale: 1.15, orbitRadius: 2.2, orbitLap: 1.5, orbitTime: 3.0, ramLife: 9 };
-export const PEN = { x0: 1e4, x1: 1e4, z0: 1e4, z1: 1e4, gate: { z0: 1e4, z1: 1e4 }, gateOut: [1e4, 1e4], gateIn: [1e4, 1e4] };
-export const FENCE_SEGMENTS = [], GOAT_SPAWNS = [], GOAT_DETOURS = [];
-export const inPen = () => false;
-export const fenceDistance = () => Infinity;
-
 // ------------------------------------------------------------ walkable surfaces (platforms and ramps)
 // High ground you can stand on: boxes (a flat top) and ramps (a top sloping along the piece's local +z).
 //   { kind: 'box',  x, z, w, d, yaw, top,    name }   footprint w (local x) by d (local z)
@@ -208,7 +198,10 @@ export const LAYOUT = await readLayout();
 
 // The kinds an entry may have, and the fields the editor shows for each (x, z, rotY and scale are common to all).
 //   kit     a kit piece (`model` 'castle/wall', 'village/Roof_RoundTiles_4x4', ...) at KIT_SCALE x `scale`; `y` lifts it
-//           (stacking: wall-walk floors, a wall on a wall); `solid: 0` makes it decoration only
+//           (stacking: wall-walk floors, a wall on a wall); `solid: 0` makes it decoration only; `tint` ('#b46cff')
+//           recolours its near-white parts (a white banner in an element's colour); `light: 1` on a torch asks for one
+//           of the few real flickering lights
+//   rune    a glowing rune circle on the floor, `r` m across, with a crystal hovering `h` m up (drawn only)
 //   floor   a rectangle of ground tiles (`model`, `w` x `d` m), drawn only: the ground is at 0 under it. `mix`: other tile
 //           models sprinkled in ('castle/a,castle/b'), `seed` for where
 //   block   an invisible box (`w` x `d`, from `y` up `h`): blocks movement only (an edge you can't walk or jump off),
@@ -218,7 +211,7 @@ export const LAYOUT = await readLayout();
 //           a spawn or heal spot stands on top of what's there unless its `y` says otherwise (under a deck, inside the hall)
 //   bounds  the playable rectangle (`w` x `d`): blinks and thrown wizards are kept inside it (ARENA_BOUNDS)
 export const LAYOUT_KINDS = {
-  kit: ['model', 'y', 'solid'], floor: ['model', 'w', 'd', 'mix', 'seed'], block: ['w', 'd', 'y', 'h', 'shots', 'stand'],
+  kit: ['model', 'y', 'solid', 'tint', 'light'], rune: ['r', 'h'], floor: ['model', 'w', 'd', 'mix', 'seed'], block: ['w', 'd', 'y', 'h', 'shots', 'stand'],
   deco: ['model', 'h', 'y', 'r', 'colH'], prop: ['type'], spawn: ['y'], heal: ['name', 'y'], bounds: ['w', 'd'],
 };
 // Stable pretty JSON for layout.json: one entry per line, keys in a fixed order, numbers to 4 decimals (0.1 mm), so a
@@ -274,7 +267,12 @@ export const LOS_HEIGHT = 1.6;
 //   moveOnly: true (blocks movement only; spells and sight pass)
 // A model not listed here is solid inside its bounding box (KIT_MODELS); KIT_DECOR models have no parts at all. Parts
 // that end up no higher than 0.12 m (a floor tile on the ground) are dropped: the ground is already there.
-const KIT_DECOR = /(^|\/)(banner|torch|candle|Prop_Vine|Window|WindowShutters)/;
+const KIT_DECOR = /(^|\/)(banner|torch|candle|sword_shield|Prop_Vine|Prop_Support|Window|DoorFrame|Door_\d|Corner_Exterior)/;
+// a Quaternius wall with a door: the jambs and the lintel, the opening a little wider than the frame (1.25 m)
+const doorWall = [{ name: 'jamb-l', box: [-1, -0.75, -0.31, 0.09], y: [0, 3.12] }, { name: 'jamb-r', box: [0.75, 1, -0.31, 0.09], y: [0, 3.12] },
+  { name: 'lintel', box: [-0.75, 0.75, -0.31, 0.09], y: [2.6, 3.12] }];
+// roofs and gables: solid, never stood on (the camera and spells stop at them; nobody perches on a ridge)
+const roof = (model) => { const b = KIT_MODELS[model]; return b ? [{ name: 'roof', box: [b[0], b[1], b[4], b[5]], y: [b[2], b[3]], noStand: true }] : []; };
 const stairsParts = (w, rail) => [
   { name: 'treads', ramp: [-w, w], lz: [4, 0], y: [0, 4] },
   ...(rail ? [{ name: 'rail-l', ramp: [-2.5, -w], lz: [4, 0], y: [1, 5.1], noStand: true }, { name: 'rail-r', ramp: [w, 2.5], lz: [4, 0], y: [1, 5.1], noStand: true }] : []),
@@ -293,7 +291,12 @@ export const KIT_PARTS = {
   // rubble: a pile you can jump onto, a little lower than its peaks
   'castle/rubble_large': [{ box: [-3.6, 3.6, -1.3, 0.7], y: [0, 2.9] }],
   'castle/rubble_half': [{ box: [0, 3.6, -1.2, 0.6], y: [0, 2.9] }],
+  // Quaternius: doorways you walk through, balcony rails you lean on but don't stand on, roofs
+  'village/Wall_UnevenBrick_Door_Round': doorWall, 'village/Wall_Plaster_Door_Round': doorWall,
+  'village/Balcony_Cross_Straight': [{ box: [-1, 1, 0.9, 1.1], y: [0, 1.12], noStand: true }],
+  'village/Balcony_Cross_Corner': [{ box: [-1, 1.1, 0.9, 1.1], y: [0, 1.12], noStand: true }, { box: [0.9, 1.1, -1, 1], y: [0, 1.12], noStand: true }],
 };
+for (const m of ['village/Roof_RoundTiles_6x14', 'village/Roof_RoundTiles_6x8', 'village/Roof_Front_Brick6', 'village/Roof_Tower_RoundTiles']) KIT_PARTS[m] = roof(m);
 export function kitParts(model) {
   if (model in KIT_PARTS) return KIT_PARTS[model];
   const b = KIT_MODELS[model];
@@ -304,7 +307,7 @@ export function kitParts(model) {
 const SEAM = 0.01;
 function buildKit(out, e) {
   const k = kitScale(e.model) * S_(e), y = e.y || 0, P = { x: e.x, z: e.z, yaw: e.rotY || 0 };
-  out.KIT_PIECES.push({ id: e.id, model: e.model, x: e.x, y, z: e.z, yaw: P.yaw, s: k });
+  out.KIT_PIECES.push({ id: e.id, model: e.model, x: e.x, y, z: e.z, yaw: P.yaw, s: k, ...(e.tint != null ? { tint: e.tint } : {}), ...(e.light ? { light: 1 } : {}) });
   if (e.solid === 0) return;
   kitParts(e.model).forEach((pt, i) => {
     const extra = { name: `${e.id}-${pt.name || i}`, piece: e.id, model: e.model, style: 'kit', ...(pt.noStand ? { noStand: true } : {}), ...(pt.moveOnly ? { moveOnly: true } : {}) };
@@ -330,7 +333,7 @@ function buildKit(out, e) {
 // mix, seed }; DECOS: editor-placed models; ARENA_BOUNDS: { x0, x1, z0, z1 } (the whole arena circle's square when the
 // layout has no bounds entry).
 export const SCATTER_SETTINGS = {}, ARENA_BOUNDS = {};
-export const PROP_SPAWNS = [], SPAWN_POINTS = [], HEAL_SPOTS = [], COLLIDERS = [], LOS_VOLUMES = [], KIT_PIECES = [], FLOORS = [], DECOS = [];
+export const PROP_SPAWNS = [], SPAWN_POINTS = [], HEAL_SPOTS = [], COLLIDERS = [], LOS_VOLUMES = [], KIT_PIECES = [], FLOORS = [], DECOS = [], RUNES = [];
 // Keep a point inside ARENA_BOUNDS, `margin` m in from its edges (for blinks, thrown wizards, landings).
 export function clampToArena(x, z, margin = 0.5) {
   const B = ARENA_BOUNDS;
@@ -352,6 +355,7 @@ export function buildMap(L) {
   }
   out.FLOORS = of('floor').map(e => ({ id: e.id, model: e.model, x: e.x, z: e.z, w: e.w * S_(e), d: e.d * S_(e), yaw: e.rotY || 0,
     mix: e.mix ? String(e.mix).split(',').map(s => s.trim()).filter(Boolean) : [], seed: e.seed ?? 1 }));
+  out.RUNES = of('rune').map(e => ({ id: e.id, x: e.x, z: e.z, r: (e.r ?? 6) * S_(e), h: (e.h ?? 5) * S_(e) }));
   const bo = of('bounds')[0];
   out.ARENA_BOUNDS = bo ? { x0: bo.x - bo.w / 2, x1: bo.x + bo.w / 2, z0: bo.z - bo.d / 2, z1: bo.z + bo.d / 2 }
     : { x0: -ARENA_RADIUS, x1: ARENA_RADIUS, z0: -ARENA_RADIUS, z1: ARENA_RADIUS };
@@ -376,7 +380,7 @@ export function buildMap(L) {
 
 // Rebuild every export from `L` in place: arrays keep their identity (emptied and refilled), objects are cleared and
 // reassigned, so every module holding a reference sees the new layout.
-const EXPORTS = { SCATTER_SETTINGS, ARENA_BOUNDS, PROP_SPAWNS, SPAWN_POINTS, HEAL_SPOTS, COLLIDERS, LOS_VOLUMES, KIT_PIECES, FLOORS, DECOS, SURFACES };
+const EXPORTS = { SCATTER_SETTINGS, ARENA_BOUNDS, PROP_SPAWNS, SPAWN_POINTS, HEAL_SPOTS, COLLIDERS, LOS_VOLUMES, KIT_PIECES, FLOORS, DECOS, RUNES, SURFACES };
 export function applyLayout(L) {
   const m = buildMap(L);
   for (const [k, target] of Object.entries(EXPORTS)) {
