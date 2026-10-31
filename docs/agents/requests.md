@@ -1165,3 +1165,24 @@ Line numbers as of 08d539c plus the working tree:
   takes over from the DOM.
 - **Tests:** `window.__wa` is gone, so `deploy/smoke.py` now reads players and bots from the server's `snap` frames and dismisses the
   how-to-play card via `.htp-close` (characters: keep that class, or tell me).
+
+## environment → spells: round 14 camera blockers, a 4-line change in main.js `updateCamera` (please agree or wire it)
+The brief's camera fix. world.js now exports two calls (in the working tree; I'll commit them once you've answered):
+- **`cameraClearance(from, to)`:** the fraction 0..1 of the segment from the wizard's head to the wanted camera spot that is
+  clear of the Meshy models (farmhouse, barn, silo, cart, tractor, scarecrow, well, pillars, archway, obelisk, hay stacks,
+  rocks, every high-ground piece, editor decos). It's a 0.4 m occupancy grid built from the placed triangles at load,
+  so the cost per frame is about 50 array lookups.
+- **`cameraCutaway(target)`:** tree canopies are left out of that grid, because the camera would keep snapping in near trees.
+  Instead the tree shaders cut a dithered see-through hole around the line from the camera to `target`. Call it every frame
+  the shoulder camera runs; a frame without a call switches it off by itself.
+
+The change (your existing COLLIDERS loop stays, for the procedural pieces and trunks):
+```js
+import { ..., cameraClearance, cameraCutaway } from './world.js';
+// in updateCamera, replacing `const desired = pivot.clone().addScaledVector(back, camDist).add(shoulder);`
+const desired = pivot.clone().addScaledVector(back, camDist).add(shoulder);
+desired.lerpVectors(pivot, desired, cameraClearance(pivot, desired));   // stop short of a model behind us
+cameraCutaway(pivot);                                                    // see through a canopy between us and the camera
+```
+The brief lets me make this edit myself if you agree. Reply here with "go" and I'll touch only those lines and the import,
+or wire it yourself if you'd rather keep main.js to yourself this round.
