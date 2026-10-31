@@ -2379,9 +2379,10 @@ function updateCamera(dt) {
 }
 
 // Round 15: props (barrels, crates, kegs, chests, potion barrels) are small and move, so they aren't camera blockers: a prop
-// near the line from our wizard to the camera fades to see-through instead (each faded prop gets its own material copies the
+// near a sight line from the camera to our wizard fades to see-through instead (each faded prop gets its own material copies the
 // first time, so the others of its type stay solid). Held props count too.
-const PROP_FADE = { alpha: 0.22, pad: 0.35, rate: 10 };
+const camDirFade = new THREE.Vector3();
+const PROP_FADE = { alpha: 0.22, pad: 0.6, close: 2.2, rate: 10 };
 const segDist3 = (p, a, b) => {
   const abx = b.x - a.x, aby = b.y - a.y, abz = b.z - a.z, L2 = abx * abx + aby * aby + abz * abz || 1;
   const k = Math.max(0, Math.min(1, ((p.x - a.x) * abx + (p.y - a.y) * aby + (p.z - a.z) * abz) / L2));
@@ -2389,14 +2390,18 @@ const segDist3 = (p, a, b) => {
 };
 function fadeBlockingProps(dt) {
   const eye = camera.position, body = tmp.fadeBody ??= new THREE.Vector3(), c = tmp.fadeC ??= new THREE.Vector3();
-  body.set(local.pos.x, local.pos.y + 1.1, local.pos.z);
+  // sight lines from the camera to our feet, waist, chest and hat: a prop on any of them hides part of us
+  camera.getWorldDirection(camDirFade);
+  const near = (pt) => { let d = Infinity; for (const h of [0.25, 0.7, 1.2, 1.9]) { body.set(local.pos.x, local.pos.y + h, local.pos.z); d = Math.min(d, segDist3(pt, body, eye)); } return d; };
   for (const e of props.values()) {
     const m = e.mesh;
     if (!m) continue;
     const spec = C.PROP_TYPES[e.data.type] || { r: 0.5, h: 1 };
     c.copy(m.position); c.y += spec.h * 0.5 * m.scale.y;
     // between us and the camera (or around the camera itself), within its own size of the line
-    const block = m.visible && segDist3(c, body, eye) < Math.max(spec.r, spec.h * 0.5) + PROP_FADE.pad;
+    // on a sight line, or right in front of the camera (it would fill the view even off the lines)
+    const ahead = (c.x - eye.x) * camDirFade.x + (c.y - eye.y) * camDirFade.y + (c.z - eye.z) * camDirFade.z;
+    const block = m.visible && (near(c) < Math.max(spec.r, spec.h * 0.5) + PROP_FADE.pad || (ahead > -0.3 && c.distanceTo(eye) < PROP_FADE.close + spec.r));
     const want = block ? PROP_FADE.alpha : 1;
     e.fade = (e.fade ?? 1) + (want - (e.fade ?? 1)) * Math.min(1, dt * PROP_FADE.rate);
     if (e.fade > 0.995 && !e.fadeMats) continue;
