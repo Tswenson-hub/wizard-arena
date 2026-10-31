@@ -8,6 +8,77 @@
 - **Live commit:** `e416f68` (rounds 12b-13: Roll on F, the map editor, Ty's assets, mountains, ground textures,
   jeb2 animations), pushed by the coordinator with Ty's approval. Earlier: `29602cc` (deploy took ~45 s).
 
+## Round 14: the CrazyGames build
+**Build:** `npm run build:crazygames -- --ref HEAD` (use `--ref` for the upload, so only committed files ship; without it the
+working tree is used and uncommitted changes under `public/` are listed as a warning). Output: `dist/crazygames/` and
+`dist/crazygames.zip` (index.html at the zip's root; `dist/` is gitignored). `tools/build-crazygames.mjs` does this:
+- copies `public/` without the map editor (`edit.html`, `js/editor.js`)
+- makes every URL relative: anything still root-absolute in the sources is rewritten in the copy and listed as a warning,
+  and the build fails if one survives. The per-owner list for fixing the sources is in `requests.md`
+  ("deploy → spells, characters, environment").
+- vendors three.js: only the files the client imports, followed through the addons' own imports (5 files today:
+  three.module.js (the minified build), GLTFLoader, BufferGeometryUtils, SkeletonUtils, meshopt_decoder), plus three's LICENSE
+- writes `config.js` with `window.WA_SERVER = 'wss://wizard-arena-76od.onrender.com'` (`--server` to change it). net.js
+  doesn't read it yet, so the build patches that one line in its copy until spells adds `window.WA_SERVER ||`.
+- adds the SDK (`https://sdk.crazygames.com/crazygames-sdk-v3.js`) and `deploy/crazygames/platform.js`, the guarded shim:
+  `SDK.init()`, `loadingStart` / `loadingStop` (at main.js's "Ready…"), `gameplayStart` while the HUD is up and none of
+  `#clickToPlay`, `#lockPrompt` or `#mEnd` shows, `gameplayStop` otherwise. Every call is in try/catch; with no SDK it's a
+  no-op. `?cgdebug` logs each event to the console. Our own site never loads either file.
+- checks CrazyGames' limits and prints files, sizes and the largest files.
+
+**Server:** the `ws` server has no Origin check, so sockets from CrazyGames' domains are accepted. The CrazyGames build makes
+no cross-origin HTTP requests (every file comes from CrazyGames' host; only the socket goes to Render), so no CORS
+change was needed. The map editor: `/?edit=1`, `/edit.html`, `/js/editor.js` and `/api/map/models` answer 404 without
+`MAP_EDIT=1` (environment's `28b023b`; checked on my port 4105: 404, 404, 404, 404, with `/`, `/healthz`, `/favicon.ico` 200).
+
+**Favicon:** `public/favicon.ico` (16/32/48) and `public/favicon.png` (180 px), a purple wizard hat with a gold band and
+star. The `<link rel="icon">` lines are requested from spells (index.html); the build adds them if missing.
+
+**Verified (2026-10-30):**
+- Build from `08d539c`: 311 files (limit 1,500), 42.0 MB unzipped, 29.8 MB zip. From the working tree with
+  environment's meshopt models: 313 files, 30.4 MB unzipped.
+- Initial download of the build, served from a subpath, with the working tree's meshopt models: **17.0 MB in 389
+  responses** at "Ready", the same 5 s into the match (desktop limit 50 MB, mobile homepage 20 MB). Uncompressed
+  transfer from a plain static server; CrazyGames' CDN may compress the text files further.
+- `python3 deploy/subpath_test.py http://localhost:4199/game/` with the build served by `tools/serve-subpath.mjs` on 4199
+  under `/game/` and the game server on 4105: PASS. 287 requests to the page host, none outside `/game/`, no failed
+  requests, `ws://localhost:4105/` with 907 frames, the builder's 35 cards, a 4-wizard FFA "first to 15", no console errors,
+  SDK shim `init ok (environment local)`, `loadingStop`, `gameplayStart`, `gameplayStop`. Screenshot `/tmp/wa-deploy/subpath.png`.
+- Same with `--block-sdk` (the SDK script fails to load): PASS, the game loads and plays, no errors.
+- The Render build (`wss://wizard-arena-76od.onrender.com`) served from `localhost:4198/game/`: PASS, 716 frames from
+  Render, so Render accepts a socket from a foreign origin. (That joined one live match briefly as "subpath"; live still
+  runs `e416f68`.) Screenshot `/tmp/wa-deploy/subpath-render.png`.
+- `deploy/smoke.py http://localhost:4105`: PASS (4 players, bots Zaltar, Morgra and Ebonyx at normal, 845 frames, no errors).
+
+**smoke.py:** the builder selectors (`.sb-row`, `.sb-card`, `.sb-presets .sb-chip`) are still current. `window.__wa` is gone
+this round, so players and bots now come from the server's `snap` frames, "still connected" means frames keep arriving,
+and the first-visit how-to-play card is dismissed (`.htp-close`) before joining.
+
+### CrazyGames submission checklist (developer.crazygames.com → Submit game)
+1. **Build from the approved commit:** `npm run build:crazygames -- --ref <sha>`. It must print no
+   "rewrote … absolute path" warning you didn't expect and no error. Run `deploy/subpath_test.py` against it once.
+2. **The server first:** the build talks to Render, so Render must run the **same commit's** server (the protocol changes
+   between rounds). Push that commit to `main` (Ty's go-ahead) before or with the upload.
+3. **Upload:** `dist/crazygames.zip` as an HTML5 game (index.html at the root of the zip).
+4. **Form:**
+   - **Multiplayer:** yes, real-time online, **lobby size 4** (free-for-all, bots fill empty seats instantly, so
+     nobody waits).
+   - **Devices:** **desktop only** (keyboard and mouse; the builder shows a desktop notice under ~900 px). Mobile off.
+   - **Orientation:** landscape.
+   - **SDK:** v3 integrated, Basic Launch: `gameplayStart` / `gameplayStop`, `loadingStart` / `loadingStop`. No ads, no
+     Data or User module.
+   - Their limits: 250 MB total, 1,500 files, initial download ≤ 50 MB desktop (≤ 20 MB for the mobile homepage),
+     relative paths only. We're at about 313 files and 17 MB initial.
+   - Cover art and a gameplay video are asked for in the form; screenshots from Ty's own play look best.
+5. **T&C / privacy:** CrazyGames asks for Terms and a Privacy Policy notice when a game collects personal data beyond the
+   SDK's events. We store only the wizard name, loadout and sound settings in localStorage and send the typed name to our
+   server for the match; nothing is logged or kept after the match. A short privacy note (what's sent, nothing stored, a
+   contact address) linked from the "?" help would cover it; Ty decides whether to add one before submitting.
+6. **Moderation:** player names are typed by players and shown to others. CrazyGames requires moderation for chat and
+   user-generated content; a names profanity filter on the server (spells, `join`) is the safe minimum. **Not done.**
+7. **Licensing before upload:** the Pixabay menu music and goat bleats are being replaced this round (spells); check
+   `sounds/CREDITS.md` has no Pixabay files left before building.
+
 ## Pushes (each on the coordinator's go-ahead, always `git push origin <sha>:main`, fast-forward only)
 `ac71367` (initial) → `16afaad` → `4b4089e` → `5c4a3c1` → `09fdfa9` → `7677394` → `4c54e6c` → `d96ee39`
 → `6b00b54` → `8d8a19b` → `29602cc`, then the coordinator pushed `e416f68` (which includes my `c52534a`). Never pushed anything newer than the approved commit or anyone's

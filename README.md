@@ -200,6 +200,15 @@ docker build -t wizard-arena . && docker run -p 3000:3000 wizard-arena
 
 The server reads `PORT` from the environment.
 
+### CrazyGames build
+
+`npm run build:crazygames -- --ref HEAD` writes `dist/crazygames/` and `dist/crazygames.zip`: the client only, with
+relative URLs, three.js vendored, and `config.js` pointing the socket at the Render server
+(`--server wss://…` to change it). It adds the CrazyGames SDK v3, guarded so the game runs without it. To try it
+the way CrazyGames serves it, from a folder on another port:
+`node tools/serve-subpath.mjs dist/crazygames 4199 /game`, then `python3 deploy/subpath_test.py http://localhost:4199/game/`.
+The submission checklist is in `docs/agents/deploy-handoff.md`.
+
 ## Credits
 
 - **Characters, props and scenery:** made by Ty with Meshy AI.
