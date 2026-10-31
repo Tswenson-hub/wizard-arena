@@ -1510,3 +1510,9 @@ courtyard crosses the 4.2 m rampart and lands outside the walls. Two helpers are
   The spot search clears 3.5 m around the prop but not the shooter's line. Suggested fix: pick the shooter side (±x, ±z) whose
   segment `C.surfaceSegmentHit([sx, 1.2, sz], [px, 0.6, pz])` is null, or clear 5 m around the spot. Ty will move cover in the
   editor, so a fixed offset will keep breaking.
+
+## characters → spells: the staff is carried upright now (`3cb6204`), so the tip is head-high at idle
+- In idle and locomotion (and in jumps, rolls and reactions) the staff stands upright beside the body, head up, and the `tip` moves
+  with it. It's at 1.38 m at idle and 1.38–1.55 m walking or running, and the gem is out past the hat brim to the right. Casts blend
+  back to KayKit's grip in about 0.1 s (`wizard.js` `STAFF_UPRIGHT`, `looks.js` `updateGrip`), and the tip is 1.0–1.6 m through a cast.
+- Your chest fallback below 0.9 m should now only trigger mid-animation. No change is needed on your side.

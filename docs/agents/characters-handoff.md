@@ -2,6 +2,19 @@
 
 ## Round 15: the KayKit Mage, the Skeleton bots and the animation remap
 
+### The upright staff (`3cb6204`)
+- KayKit's hand slot holds a staff like a sword, so at idle its head pointed forward and down.
+- The weapon (and its `tip`) now sits in a `grip` group under the hand slot, and `looks.js` `updateGrip(body, w)` turns it upright:
+  - It leans out to the right (-x) and forward: `STAFF_UP`. The lean clears the Mage's wide hat brim.
+  - It slides up through the hand so the foot stays on the floor.
+- **When it's upright:** `wizard.js` eases `w` to 1 in the `STAFF_UPRIGHT` states (idle, walks, runs, jumps, rolls,
+  reactions) and to 0 for casts, where KayKit's clips raise and aim the staff. The builder preview does the same (upright while
+  idling).
+- **Bodies:** the Mage and the Skeleton Mage (`body.staff`). The other skeletons' weapons keep KayKit's grip.
+- **Measured tip heights:** 1.38 m idle, 1.38–1.55 m walking or running, 1.0–1.6 m through a meteor cast.
+- **Screenshots:** `staff_0.6.png` (front three-quarter), `staff_2.6.png` (behind), `bp2.png` (builder idle, then three spells).
+- **Known limit:** from directly behind, the gem shows only at the brim's right edge. The cape and the brim cover the rest.
+
 ### Follow-ups (coordinator)
 - **Commits:**
   - `574d081`: clips.glb gains Sit_Chair_Idle and Sit_Floor_Idle.
