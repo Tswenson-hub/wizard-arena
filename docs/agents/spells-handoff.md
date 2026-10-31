@@ -55,6 +55,14 @@ recursion fix in wizard.js), `190a8c3` (names filter), `8b4f50a` / `e609576` (re
     into the wall, but the body is then out of frame.
   - Screenshots: `/tmp/wa-spells/r15/cam/` (`courtyard_north.png`, `courtyard_east.png`, `wallwalk_south.png`, `wallwalk_along.png`,
     `backed_north_wall.png`, `backed_corner.png`, each with a `_shot` frame).
+- **Props fade** (`fadeBlockingProps` in main.js, called at the end of `updateCamera`):
+  - A prop near a sight line from the camera to our feet, waist, chest or hat (within its size + 0.6 m), or within 2.2 m in front of the
+    camera, fades to 22% opacity. Each faded prop gets its own material copies the first time.
+  - Measured with the prop 2 m behind the shoulder, then right at the camera, then clear: barrel 0.25 / 0.22 / 0.99, crate
+    0.29 / 0.22 / 0.98, keg 0.24 / 0.22 / 0.98, chest 0.24 / 0.22 / 0.98.
+  - Screenshots: `/tmp/wa-spells/r15/fade/`.
+  - Static kit pieces don't fade (world.js merges them by material); on the boom they push the camera in through environment's camera
+    grid.
 - **The staff tip is at the staff head** (checked from the side with a second camera: the tip projects onto the orb). The KayKit idle
   carries the staff low at the hip, 0.4 m up, which is why it read low. At a cast's release the orb is at body-local
   (right 0.36, up 0.91, ahead 1.22).
