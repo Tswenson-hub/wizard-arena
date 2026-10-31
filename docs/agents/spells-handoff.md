@@ -1,5 +1,103 @@
 # Spells hand-off
 
+## Round 15: goats out, rams on their own, Skeleton bots, castle physics, named animation phases, the fun pass, CC0 audio
+Commits: `50ff0ad` (interfaces in requests), `0149403` (goats removed, rams.js, Skeleton names and body flag, the HEAL_SPOTS fix,
+spawn heights), `30f52a0` (castle physics, unit test on the castle), `cd06689` (main.js on named phases, staff-tip aim, the pose()
+recursion fix in wizard.js), `190a8c3` (names filter), `8b4f50a` / `e609576` (requests replies, index.html help), `091edae` (CC0 audio),
+`05d7548` (Phase C balance), plus this hand-off.
+
+### Phase A
+- **Goats are gone** from server.js, bots.js, main.js, audio.js and constants.js (`SPELLS.goat`, the goat kinds, TK goat lifts, goat
+  stirring, `goatHitPlayer`, the pen-side bot logic). Nothing of mine imports `server/goats.js` or `public/js/goats.js`.
+- **Rams stay**, simulated by server.js alone (`C.RAM` in constants.js holds the old `GOAT` ram numbers):
+  - Ram Guard, the Battering Ram, Stampede, Ram Ride, and the Sling's call.
+  - Rendering moved to a new **`public/js/rams.js`** (RamView: the gilded body from `models/ram.glb`, falling back to `goat.glb`).
+  - Net: the snapshot's `goats` is now `rams`, and the messages are renamed `ramGone`, `ramBonk`, `ramAngry` and `ramHit` (were
+    `goatRam`). `ramCalled` carries `ram`.
+- **The Sling's call:** with no map goats, a hit summons a ram 7 m from the target (`SLING.callDist`), off to a flank with a clear run on
+  the target's own floor. It rears for 0.7 s (the `'!'` and the "A ram is charging you!" hint), then homes in. Herd Call (Sling + Ram
+  Guard) also sends a circling guard ram.
+- **Bots are Skeletons:** `p.body` goes into `playerPublic` (`'mage'` for humans; `skeleton_mage|warrior|rogue|minion` for bots), and
+  main.js passes it to `new Wizard({ ...info, body })`. Names: Rattlebones, Sir Marrow, Grimshank, Ossia, Skulldred, Femurus, Lady Tibia,
+  Hollowjaw, Cragrib, Duke Mandible, each with its body, picked at random among the free ones.
+- **Bug fix:** bots.js `HOT_SPOTS` read `HEAL_SPOTS` as arrays (NaN); it now reads `{ x, z }`.
+- **Named phases:** every Meshy clip-offset fallback in main.js is now `w.pose(name, d)` (characters' API). Smoke Screen's backflip,
+  Stampede, Brew and Flask Step try their spell keys first. The `wizard.glb` load is gone.
+- **wizard.js fix:** `pose()` on a fitted `stun` phase (`bound`) recursed through `legacyPhase` ("Maximum call stack size exceeded").
+  `oneShot` takes a 5th `raw` argument that `pose()` passes.
+- **Staff tip:** aim from `me.tip`, falling back to the chest when the tip is below 0.9 m. **Open (characters):** the tip measures
+  0.38–0.47 m above the feet at idle and 1.05–1.59 m mid-cast, so the node may be at the staff's foot.
+- **Castle physics** (environment's request), via `C.landingSpot(x, z, footY, dir)`: clamp to `ARENA_BOUNDS`, land on top of anything
+  solid within 4 m of the feet (the rampart → the wall-walk), else step back along the way it came.
+  - Blink, Mirror Step and Flask Step use it (the flask's arc also lands on tops), and they return the standing height.
+  - Rams have a height (`r.y`), run along floors, and go dizzy on walls and barriers (`surfaceSolidAt` at knee height).
+  - Decoys push out of surfaces. Night Cage, Frostfall and Meteor Rain aim points clamp to the arena.
+  - Spawns use `sp[1]` (wall-walk spawns).
+  - An unknown prop type in `PROP_SPAWNS` is skipped with a warning rather than crashing the server.
+- **Names filter** (deploy's CrazyGames note): `rudeName()` in `join` → `WizardN`.
+- **Tests:**
+  - modematch-unit's open spots are sampled over the whole 3.5 m disc inside the castle, and the four testers park on spare open spots
+    (was the farm's south rim).
+  - `goat_e2e.py` is replaced by `tools/test/ram_e2e.py` (Ram Guard, Battering Ram, a Sling bot's call, a Skeleton bot).
+  - botmatch counts ram events.
+
+### Phase C (the fun pass on the castle blockout)
+- **Rams:** a Sling's ram and a provoked guard ram now hit for 41 plus a knockdown (hit kind `ram_charge`, base 30) instead of killing.
+  Only Stampede's rams (an ultimate) still flatten.
+- **Frostfall:** 44 base damage (60) and a 1.2 s freeze (were 50 and 1.5 s).
+- **`DAMAGE_SCALE`:** 1.3 → 1.36.
+- **Attribution:** a ram's `death` names its spell (`spell`), and loadoutbalance uses it.
+- **Trapped Relic** needed no change: the castle's 18 props took it from 75% of Utility kills to 43–57% (c0), then 50% and 33% (c1) and
+  59% and 40% (c2). With Roll dealing no damage, about 50% is the floor.
+
+`loadoutbalance.mjs <port> 12 75 <diff>` with `/tmp/wa-pace/observe.mjs` alongside. Analysis: `/tmp/wa-spells/analyze.mjs <json> 900`.
+Data in `/tmp/wa-spells/r15/c0` (castle baseline, old one-shot rams), `c1` (ram_charge), `c2` (plus Frostfall and the damage scale; the
+committed state).
+
+| | c0 normal | c1 normal | **c2 normal** | c0 hard | c1 hard | **c2 hard** | target |
+|---|---|---|---|---|---|---|---|
+| kills / player / min | 2.20 | 1.97 | **1.75** | 1.65 | 1.50 | **1.60** | ~2 |
+| respawn → first damage (median) | 5.3 s | 5.7 s | **5.4 s** | 5.1 s | 5.8 s | **4.9 s** | ~6 s |
+| engagements ending in a kill | 49% | 46% | **42%** | 42% | 38% | **42%** | ~50% |
+| TTK (median damage chain) | 3.9 s | 3.0 s | **4.2 s** | 3.0 s | 4.0 s | **3.4 s** | 3–4 s |
+| ram killing blows | 16 | 11 | 7 | 15 | 10 | 2 | |
+
+- **Noise:** random loadouts swing ±15% between identical runs. Normal fell from c1 to c2 despite more damage, while hard rose.
+- **Frostfall:** 46% of Power (c1 normal), then 27% and 6% in c2.
+- **Run-to-run "dominant" flags in c2:**
+  - Fireball 31% of Primary on normal (19 kills; hard 9%).
+  - Cyclone 41% of Power on hard (7 of 17; normal 2).
+  - **Meteor Rain 75% of Ultimate kills on normal (6 of 8)**, the same as round 14. Ultimates rarely kill, and it's the one-shot.
+    Ty's call: its 4 m circle, or leave it.
+- **Hard stays a little under 2 kills a minute.** The next levers aren't mine to pick without Ty: hard bots' `dodge` 0.9, or a shorter
+  respawn. Everything else is on target within the noise.
+
+### Verification
+- `modematch-unit`: ALL PASS on the castle (twice, the last on the final constants).
+- botmatch hard and normal, ram matches (Sling, Ram Guard, Stampede, Ride all fire), and a watcher:
+  - 300 s of hard plus 90 s on the final code: 0 samples outside `ARENA_BOUNDS`, no bot still for 8 s or more.
+  - No server errors.
+- Browser (Playwright, headless): `ram_e2e.py`:
+  - 3 guard rams and a charging Battering Ram drawn.
+  - A Sling bot's ram homing with the hint.
+  - Bots as `skeleton_*`.
+  - No console errors after the pose fix.
+- Screenshots: `/tmp/wa-spells/r15/shots/` (`ram_guard.png`, `ram_sling_call.png`, `ram_skeleton_bot.png`, `cast_*.png`).
+- New sounds: decoded in Chromium (durations 0.60–3.53 s, peaks 0.84–0.94).
+
+### Audio
+The six Pixabay files are replaced by CC0 ones from OpenGameArt: Till Behrend, rubberduck ×2, tinyworlds, Vehicle and bmaczero.
+`sounds/CREDITS.md` has the sources and processing. Nothing in `public/sounds` is from Pixabay now. **README line 228 (coordinator's)**
+still says "six effects supplied by Ty from Pixabay"; it can say the flask and potion sounds are CC0 from OpenGameArt.
+
+### Left over
+- **characters:** the low staff tip (above), and the goat copy in `select.js` (line 31 "Stones that call a goat", the how-to-play tip
+  at 396).
+- **environment:** `goat.glb` can go once nothing needs the fallback (`ram.glb` is in). effects.js:411 has a stale "goat ram" comment.
+- **Headless runs** still drop the WebSocket now and then (round 14's note). `ram_e2e.py` retries the guard cast until the spawn
+  countdown ends.
+- **Servers:** mine (4101, 4109, 4191) are stopped. Port 3000 wasn't touched.
+
 ## Round 14: pacing, spawn protection, the audit fixes, CC0 audio
 Commits: `ab77100` (pacing: constants, server, bots, match, unit test), `c7ce96e` (client fixes, deploy's and environment's requests),
 `93144fa` (CC0 audio), `f7093d1` (requests replies), `7bff9bf` (spawn band 18–26 m), plus this hand-off.
