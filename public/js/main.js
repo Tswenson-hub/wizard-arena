@@ -1461,10 +1461,10 @@ function updatePotions(dt) {
 const KIND_ICON = { fireball: 'fireball', heavy: 'heavy', meteor_rain_hit: 'meteor_rain', firewall_burn: 'firewall', shear: 'shear', cyclone: 'cyclone',
   eye_of_storm: 'eye_of_storm', eye_burst: 'eye_of_storm', skim: 'skim', frostfall: 'frostfall', blizzard_chip: 'blizzard', blizzard_freeze: 'blizzard',
   bulwark_frost: 'bulwark', hex: 'hex', lash: 'lash', trapped_relic: 'trapped_relic', sling: 'sling', potion: 'potion', potion_splash: 'potion',
-  toxic: 'toxic', toxic_pool: 'toxic', prop: 'prop', ram: 'ram', battering_ram: 'ram', ram_shove: 'ram', fast: 'fast', flaskstep: 'flaskstep' };
+  toxic: 'toxic', toxic_pool: 'toxic', prop: 'prop', ram: 'ram', battering_ram: 'ram', ram_charge: 'ram', ram_shove: 'ram', fast: 'fast', flaskstep: 'flaskstep' };
 const KIND_NAME = { heavy: 'Meteor', fast: 'Spark', shear: 'Gale Shear', hex: 'Hex Shards', skim: 'Glacial Skim', lash: 'Sanguine Lash', sling: "Shepherd's Sling",
   potion: 'Potion Toss', potion_splash: 'Potion Toss', toxic: 'Toxic Flask', toxic_pool: 'Toxic Flask', prop: 'a thrown object',
-  ram: 'a ram', battering_ram: 'Battering Ram', ram_shove: 'Ram Ride', meteor_rain_hit: 'Meteor Rain', firewall_burn: 'Firewall', eye_burst: 'Eye of the Storm', blizzard_chip: 'Blizzard',
+  ram: 'a ram', battering_ram: 'Battering Ram', ram_charge: 'a charging ram', ram_shove: 'Ram Ride', meteor_rain_hit: 'Meteor Rain', firewall_burn: 'Firewall', eye_burst: 'Eye of the Storm', blizzard_chip: 'Blizzard',
   blizzard_freeze: 'Blizzard', bulwark_frost: 'Glacial Bulwark', flaskstep: 'Flask Step' };
 const iconFor = (kind) => `./textures/icons/${KIND_ICON[kind] || 'skull'}.png`;
 const kindName = (kind) => KIND_NAME[kind] || C.SPELLBOOK[kind]?.name || C.SPELLS[kind]?.name || (kind ? kind.replace(/_/g, ' ') : 'something');

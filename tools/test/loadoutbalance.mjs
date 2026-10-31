@@ -20,7 +20,7 @@ function spellOfKind(kind, lo) {
     eye_burst: 'eye_of_storm', blizzard_chip: 'blizzard', blizzard_freeze: 'blizzard', meteor_rain_hit: 'meteor_rain', ram_shove: 'ram_ride',
     trapped_relic: 'trapped_relic', relic: 'trapped_relic' }[kind];
   if (direct) return direct;
-  if (kind === 'prop' || kind === 'goat') return lo?.utility === 'telekinesis' ? 'telekinesis' : `?${kind}`;   // round 12: only Telekinesis lifts and throws
+  if (kind === 'prop') return lo?.utility === 'telekinesis' ? 'telekinesis' : `?${kind}`;   // round 12: only Telekinesis lifts and throws
   if (kind === 'ram' || kind === 'battering_ram') {   // a summoned ram: whichever ram spell the killer carries (power first)
     for (const s of ['battering_ram', 'stampede', 'ram_guard', 'sling', 'ram_ride']) if (Object.values(lo || {}).includes(s)) return s;
   }
@@ -50,7 +50,7 @@ function oneRun(i) {
         totalKills++;
         kinds[m.kind] = (kinds[m.kind] || 0) + 1;
         for (const s of Object.values(lo[killer] || {})) st(s).k++;
-        st(spellOfKind(m.kind, lo[killer])).blows++;
+        st(m.spell || spellOfKind(m.kind, lo[killer])).blows++;   // (round 15: a ram's death names its spell)
       }
     });
     setTimeout(() => {

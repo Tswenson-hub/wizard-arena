@@ -16,7 +16,7 @@ export const HIT_RADIUS = 0.75;
 // Round 10 (Ty: "+30% for every spell, ultimate and thrown object"): every damage source is multiplied by this in
 // server.js applyHit, so it's tuned in one place. Healing, shields (wall HP, stamina costs) and ult charge per hit are not.
 // Ram and Meteor Rain one-shots stay one-shots. D(n) is a blurb's number at this scale.
-export const DAMAGE_SCALE = 1.3;
+export const DAMAGE_SCALE = 1.36;   // round 15 (pacing on the castle): 1.3 left hard bots at 1.5 kills a minute
 export const D = (n) => Math.round(n * DAMAGE_SCALE);
 // Round 10: out of combat (no damage taken for `delay` s), health comes back at `rate` HP a second, up to full.
 export const REGEN = { delay: 7, rate: 6 };   // round 14 (pacing): 5 s / 8 HP/s let most fights reset into full regen
@@ -27,7 +27,7 @@ export const POTION = { heal: 35, respawn: 20, radius: 0.9, height: 1.0 };
 export const LEDGE = { reach: 1.2, time: 0.45, rise: 0.3 };
 // Round 10 (Ty): a thrown object (a prop, a potion barrel, a crate) that hits an unblocked wizard knocks them down:
 // flung back about 2 m, they fall (fall), lie there (down) and get up (getup), unable to move, act or shield throughout.
-export const KNOCKDOWN = { kinds: ['prop', 'battering_ram'], fall: 0.4, down: 0.8, getup: 0.4, fling: 24 };   // fling: m/s, decays to ~2 m
+export const KNOCKDOWN = { kinds: ['prop', 'battering_ram', 'ram_charge'], fall: 0.4, down: 0.8, getup: 0.4, fling: 24 };   // fling: m/s, decays to ~2 m
 KNOCKDOWN.total = KNOCKDOWN.fall + KNOCKDOWN.down + KNOCKDOWN.getup;
 import { surfaceHeight as _sh, STEP_UP as _step } from './map.js';
 // From feet at p ([x, y, z]) facing dir ([x, z], unit), in a jump peaking at apexY: where we'd end up standing, or null.
@@ -471,17 +471,17 @@ export const SPELLBOOK = {
   },
   frostfall: {
     id: 'frostfall', slot: 'power', name: 'Frostfall', short: 'Frostfall',
-    blurb: `Hold to aim a circle, release: 1.75 s later a block of ice crushes it. ${D(50)} damage and freezes 1.5 s. Wards don't help.`,
+    blurb: `Hold to aim a circle, release: 1.75 s later a block of ice crushes it. ${D(44)} damage and freezes 1.2 s. Wards don't help.`,
     radius: 3.2,         // the circle
     range: 24,           // farthest centre from the caster
     delay: 1.75,         // release to impact; everyone sees the shadow grow meanwhile
     fall: 0.5,           // the ice is visible falling for this long before impact
     castPose: 0.5,
     height: 2,           // wizards whose feet are higher than this are out of reach
-    damage: 50,
+    damage: 44,          // round 15: 50 (46% of Power's kills on normal)
     stun: 0,
     knockback: 0,
-    bind: 1.5,           // frozen: rooted and silenced, like the lash's bind
+    bind: 1.2,           // frozen: rooted and silenced, like the lash's bind (round 15: 1.5)
     unblockable: true,   // it comes from above: wards and ice walls don't stop it
     airCast: true,       // the one power spell Rime can cast during a Skyward Flash
     cooldown: 10,        // round 14: 14
@@ -578,7 +578,7 @@ export const SPELLBOOK = {
   },
   ram_guard: {
     id: 'ram_guard', slot: 'guard', name: 'Ram Guard', short: 'Ram Guard',
-    blurb: 'Tap: 3 rams circle you for 3 s and take shots meant for you. Whoever hits one gets charged by it.',
+    blurb: `Tap: 3 rams circle you for 3 s and take shots meant for you. Whoever hits one gets charged by it (${D(30)} and knocked flat).`,
     count: 3, radius: 2.2, lap: 1.5, life: 3,
     cooldown: 10,
   },
@@ -674,6 +674,9 @@ export const SPELLBOOK = {
   },
   toxic_pool: {          // standing in a Toxic Flask's pool (a hit kind): 12 a second, every 0.5 s
     id: 'toxic_pool', name: 'Toxic Flask', damage: 6, stun: 0, knockback: 0, staminaCost: 0, unblockable: true, noInterrupt: true,
+  },
+  ram_charge: {          // round 15: a Sling's called ram or a provoked guard ram getting through (a hit kind): damage and a knockdown, no longer a kill
+    id: 'ram_charge', name: 'a charging ram', damage: 30, stun: 0, knockback: 0, staminaCost: 0, unblockable: true,
   },
   ram_shove: {           // Ram Ride running into an enemy (a hit kind)
     id: 'ram_shove', name: 'Ram Ride', damage: 15, stun: 0.4, knockback: 8, staminaCost: 20,
@@ -936,7 +939,7 @@ export const SPELL_INFO = {
   // powers (RMB)
   meteor:        { element: 'fire',   tags: ['Projectile', 'Wind-up'], damage: `${D(SPELLS.heavy.damage)}`, cooldown: S_(SPELLS.heavy.cooldown), range: M_(Math.round(SPELLS.heavy.speed * SPELLS.heavy.life)), windup: S_(SPELLS.heavy.chargeTime) },
   cyclone:       { element: 'wind',   tags: ['Area', 'Wind-up', 'Stuns'], damage: `${D(28)}`, cooldown: S_(5), range: M_(5.5), windup: S_(0.45) },
-  frostfall:     { element: 'ice',    tags: ['Area', 'Roots'], damage: `${D(SPELLBOOK.frostfall.damage)}`, cooldown: S_(SPELLBOOK.frostfall.cooldown), range: M_(SPELLBOOK.frostfall.range), windup: S_(1.75), duration: 'freeze 1.5 s' },
+  frostfall:     { element: 'ice',    tags: ['Area', 'Roots'], damage: `${D(SPELLBOOK.frostfall.damage)}`, cooldown: S_(SPELLBOOK.frostfall.cooldown), range: M_(SPELLBOOK.frostfall.range), windup: S_(1.75), duration: `freeze ${S_(SPELLBOOK.frostfall.bind)}` },
   sanguine_lash: { element: 'dark',   tags: ['Projectile', 'Wind-up', 'Roots'], damage: `${D(SPELLS.lash.damage)}`, cooldown: S_(SPELLBOOK.sanguine_lash.cooldown), range: M_(22), windup: S_(1.5), duration: 'bind 1.25 s' },
   battering_ram: { element: 'earth',  tags: ['Summon', 'Wind-up', 'Knockdown'], damage: `${D(SPELLBOOK.battering_ram.damage)}`, cooldown: S_(SPELLBOOK.battering_ram.cooldown), range: M_(36), windup: S_(SPELLBOOK.battering_ram.windup) },
   toxic_flask:   { element: 'acid',   tags: ['Lob', 'Area'], damage: `${D(12)} + ${D(12)}/s`, cooldown: S_(8), range: M_(18), windup: '', duration: S_(5) },
@@ -946,7 +949,7 @@ export const SPELL_INFO = {
   tempest_veil:  { element: 'wind',   tags: ['Shield'], damage: '', cooldown: S_(SPELLBOOK.tempest_veil.cooldown), range: '', windup: '', duration: S_(SPELLBOOK.tempest_veil.duration) },
   glacial_bulwark: { element: 'ice',  tags: ['Shield', 'Roots'], damage: '', cooldown: S_(12), range: M_(6), windup: '', duration: S_(5) },
   black_death:   { element: 'dark',   tags: ['Shield', 'Heal'], damage: '', cooldown: 'hold', range: '', windup: '', duration: 'about 3.5 s' },
-  ram_guard:     { element: 'earth',  tags: ['Shield', 'Summon'], damage: 'kill', cooldown: S_(10), range: '', windup: '', duration: S_(3) },
+  ram_guard:     { element: 'earth',  tags: ['Shield', 'Summon', 'Knockdown'], damage: `${D(SPELLBOOK.ram_charge.damage)}`, cooldown: S_(10), range: '', windup: '', duration: S_(3) },
   smoke_flask:   { element: 'acid',   tags: ['Shield', 'Area'], damage: '', cooldown: S_(10), range: M_(2.4), windup: '', duration: S_(2) },
   // mobility (E)
   smoke_screen:  { element: 'fire',   tags: ['Dash', 'Area'], damage: '', cooldown: S_(8), range: M_(6.5), windup: '', duration: 'cloud 5 s' },

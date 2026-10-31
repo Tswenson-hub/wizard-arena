@@ -367,11 +367,11 @@ function applyHit(target, proj) {
     ...(!blocked && !steady && spec.launch ? { launch: spec.launch } : {}),
   });
 
-  if (target.hp <= 0 && !target.dead) killPlayer(target, attacker, null, proj.kind);
+  if (target.hp <= 0 && !target.dead) killPlayer(target, attacker, null, proj.kind, proj.spell || null);
   return { dmg, blocked };
 }
 
-function killPlayer(target, attacker, cause = null, kind = cause) {   // kind: the spell or thing that did it (the kill feed's icon)
+function killPlayer(target, attacker, cause = null, kind = cause, spell = null) {   // spell: which spell's ram it was (the balance tools)   // kind: the spell or thing that did it (the kill feed's icon)
   target.dead = true;
   target.hp = 0;
   target.charging = false;
@@ -393,7 +393,7 @@ function killPlayer(target, attacker, cause = null, kind = cause) {   // kind: t
   if (target.carrying) dropProp(target, true);
   if (attacker && attacker.id !== target.id) { attacker.kills++; addUltCharge(attacker, C.ULT_CHARGE.kill); }
   match.onKill(target, attacker, cause);
-  broadcast({ t: 'death', id: target.id, killer: attacker ? attacker.id : null, cause, kind });
+  broadcast({ t: 'death', id: target.id, killer: attacker ? attacker.id : null, cause, kind, ...(spell ? { spell } : {}) });
 }
 
 function respawn(p) {
@@ -610,7 +610,7 @@ function launchRam(p, t) {
   p.cd.power = t + BRAM.cooldown;
   castSlow(p);
   p.yaw = W.yaw;
-  const r = summonRam({ x: p.p[0] + W.dir[0] * BRAM.spawnDist, z: p.p[2] + W.dir[2] * BRAM.spawnDist, yaw: W.yaw, ownerId: p.id, mode: 'charge', maxTime: BRAM.maxTime });
+  const r = summonRam({ x: p.p[0] + W.dir[0] * BRAM.spawnDist, z: p.p[2] + W.dir[2] * BRAM.spawnDist, yaw: W.yaw, ownerId: p.id, mode: 'charge', maxTime: BRAM.maxTime, spell: 'battering_ram' });
   if (r) r.spell = 'battering_ram';   // round 14: it hits for damage and a knockdown, no longer a kill (ramStrike)
   broadcast({ t: 'batteringRam', id: p.id, yaw: W.yaw });
 }
@@ -931,7 +931,7 @@ function summonRam(opts) {
   const r = { id: nextRamId++, summoned: true, owner: opts.ownerId, mode: opts.mode, x: opts.x, z: opts.z, yaw: opts.yaw ?? 0,
     state: opts.mode === 'charge' ? 'charge' : opts.mode === 'call' ? 'windup' : opts.mode,
     until: t + (opts.mode === 'call' ? G_.windup : opts.maxTime ?? G_.chargeTime), speed: opts.speed ?? G_.chargeSpeed,
-    target: opts.targetId ?? null, angle: opts.angle ?? 0, hardUntil: t + 10, born: t };
+    target: opts.targetId ?? null, angle: opts.angle ?? 0, hardUntil: t + 10, born: t, spell: opts.spell ?? null };
   const owner = players.get(opts.ownerId);
   r.y = opts.y ?? groundAt(r.x, r.z, owner ? owner.p[1] : 0);
   rams.push(r);
@@ -988,7 +988,12 @@ function ramStrike(p, attacker, cause, g) {
     applyHit(p, { kind: 'battering_ram', owner: attacker ? attacker.id : null, v: [Math.sin(g.yaw), 0, Math.cos(g.yaw)] });
     return;
   }
-  killPlayer(p, attacker, cause);
+  // round 15: a Sling's ram and a provoked guard ram hit hard and knock down; only Stampede's rams still flatten outright
+  if (g?.spell === 'sling' || g?.spell === 'ram_guard') {
+    applyHit(p, { kind: 'ram_charge', owner: attacker ? attacker.id : null, v: [Math.sin(g.yaw), 0, Math.cos(g.yaw)], spell: g.spell });
+    return;
+  }
+  killPlayer(p, attacker, cause, cause, g?.spell || null);
 }
 function updateRams(dt, t) {
   for (const r of [...rams]) {
@@ -1069,7 +1074,7 @@ function callRamOn(target, slinger) {
   if (t < (slinger.slingLock.get(target.id) ?? 0) || aboveFloor(target) > 0.5) return;   // (in the air: no call)
   let g = null;
   const at = ramCallSpot(target, slinger);
-  if (at) g = summonRam({ ...at, ownerId: slinger.id, mode: 'call', targetId: target.id });
+  if (at) g = summonRam({ ...at, ownerId: slinger.id, mode: 'call', targetId: target.id, spell: 'sling' });
   // Herd Call (Sling + Ram Guard): one of our circling guard rams goes as well
   if (hasCombo(slinger, 'herd')) {
     const h = rams.find(q => q.owner === slinger.id && q.state === 'orbit');
@@ -1087,7 +1092,7 @@ function startRide(p, yaw) {
   const rideTime = RIDE.distance / RIDE.speed;
   p.ride = { start: t, rideAt: t + RIDE.mount, dismountAt: t + RIDE.mount + rideTime, endAt: t + RIDE.mount + rideTime + RIDE.dismount, yaw, shoved: new Set() };
   p.yaw = yaw;
-  const r = summonRam({ x: p.p[0], z: p.p[2], yaw, ownerId: p.id, mode: 'mount', maxTime: RIDE.mount + RIDE.distance / RIDE.speed + RIDE.dismount + 1 });
+  const r = summonRam({ x: p.p[0], z: p.p[2], yaw, ownerId: p.id, mode: 'mount', spell: 'ram_ride', maxTime: RIDE.mount + RIDE.distance / RIDE.speed + RIDE.dismount + 1 });
   p.ride.ram = r?.id ?? null; p.ride.ramObj = r || null;   // 
   p.rootUntil = Math.max(p.rootUntil, p.ride.rideAt);   // getting on
   if (p.blocking) { p.blocking = false; p.blockReleasedAt = t; }
@@ -1141,7 +1146,7 @@ function updateStampedes(t) {
     while (t >= st.at && st.spawned < due) {
       const side = (Math.random() - 0.5) * (STAMP.width - 1.2), back = Math.random() * 1.5;
       const x = st.p[0] - st.dir[2] * side - st.dir[0] * back, z = st.p[2] + st.dir[0] * side - st.dir[2] * back;
-      summonRam({ x, z, yaw: Math.atan2(st.dir[0], st.dir[2]), ownerId: st.owner, mode: 'charge', maxTime: (STAMP.length + back) / G_.chargeSpeed });
+      summonRam({ x, z, yaw: Math.atan2(st.dir[0], st.dir[2]), ownerId: st.owner, mode: 'charge', spell: 'stampede', maxTime: (STAMP.length + back) / G_.chargeSpeed });
       st.spawned++;
     }
     if (st.spawned >= STAMP.rams) { stampedes.delete(st.id); broadcast({ t: 'stampedeEnd', id: st.id }); }
@@ -2099,7 +2104,7 @@ function handle(p, msg) {
       p.ramGuardUntil = t + RGUARD.life;
       for (let i = 0; i < RGUARD.count; i++) {
         const a = i / RGUARD.count * Math.PI * 2;
-        const r = summonRam({ x: p.p[0] + Math.sin(a) * RGUARD.radius, z: p.p[2] + Math.cos(a) * RGUARD.radius, yaw: a + Math.PI / 2, ownerId: p.id, mode: 'orbit', angle: a,
+        const r = summonRam({ x: p.p[0] + Math.sin(a) * RGUARD.radius, z: p.p[2] + Math.cos(a) * RGUARD.radius, yaw: a + Math.PI / 2, ownerId: p.id, mode: 'orbit', spell: 'ram_guard', angle: a,
           radius: RGUARD.radius, lap: RGUARD.lap, maxTime: RGUARD.life });
         if (r && rams.includes(r)) r.until = t + RGUARD.life;
       }
