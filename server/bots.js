@@ -12,7 +12,11 @@ const THINK_DT = 1 / 20;   // AI update rate
 const DIFFICULTY = {
   easy: {
     react: 0.45,        // seconds before it responds to something it sees
-    aimErr: 7,          // degrees of random aim error
+    aimErr: 10,         // degrees of random aim error (round 15: 7)
+    posErr: 0.75,       // round 15: metres of error at the aim point itself (misses at close range too, where degrees don't)
+    airErr: 10,         // round 15 (Ty: 'laser aim'): extra degrees against a target in the air (a jump, a hover, Skyward) or dashing
+    leadJitter: 0.5,    // round 15: the lead it uses is off by this fraction (gaussian σ): under- or over-leading a moving target
+    placeErr: 1.8,      // round 15: metres of error placing a ground spell (Frostfall, Meteor Rain, Night Cage)
     lead: 0,            // fraction of target movement it leads
     dodge: 0.25,        // chance it tries to avoid an incoming threat
     blinkDodge: false,
@@ -31,12 +35,12 @@ const DIFFICULTY = {
     airJump: 0.2,       // round 13: chance it air-jumps out of a shot's way when it's up already
   },
   normal: {
-    react: 0.25, aimErr: 3.5, lead: 0.6, dodge: 0.6, blinkDodge: true,
+    react: 0.25, aimErr: 7, posErr: 0.75, airErr: 9, leadJitter: 0.5, placeErr: 1.4, lead: 0.6, dodge: 0.6, blinkDodge: true,   // (round 15: aimErr 3.5)
     think: 1 / 3, speed: 0.95, range: [8, 14], aggression: 0.8, tk: 0.12, punish: 0.7,
     fooled: 0.3, relicMemory: false, saveFinisher: 0.5, jump: 0.5, crouch: 0.5, airCast: 0.08, airJump: 0.5,
   },
   hard: {
-    react: 0.12, aimErr: 1.2, lead: 1, dodge: 0.9, blinkDodge: true,
+    react: 0.12, aimErr: 3.5, posErr: 0.5, airErr: 6, leadJitter: 0.3, placeErr: 0.9, lead: 1, dodge: 0.9, blinkDodge: true,   // (round 15: aimErr 1.2)
     think: 1 / 6, speed: 1, range: [9, 15], aggression: 0.95, tk: 0.1, punish: 1,
     fooled: 0.15, relicMemory: true, saveFinisher: 0.9, jump: 0.85, crouch: 0.8, airCast: 0.16, airJump: 0.8,
   },
@@ -240,6 +244,14 @@ function decoyTarget(d, owner) {
 }
 
 // Where to aim a projectile of `speed` (and `gravity`) so it meets `target`, leading by `lead`.
+// Round 15: a target that's hard to hit: in the air (a jump, a double jump, a hover, Skyward, a fall) or dashing (a roll, a blink,
+// a smoke dash, a ride: moving faster than a sprint).
+function hardTarget(q) {
+  const tr = tracks.get(q.id), sp = tr ? Math.hypot(tr.v[0], tr.v[1]) : 0;
+  return airborne(q, performance.now() / 1000) || sp > 7;
+}
+// Round 15: a placed spell's aim point, off by cfg.placeErr metres (more on a hard target).
+const placeJitter = (cfg, q) => (cfg.placeErr ?? 0) * (q && hardTarget(q) ? 1.5 : 1);
 function aimAt(me, from, target, speed, gravity, cfg) {
   const tr = tracks.get(target.id);
   const v = tr ? tr.v : target.vel || [0, 0];
@@ -256,17 +268,22 @@ function aimAt(me, from, target, speed, gravity, cfg) {
     const best = Math.min(...[r1, r2].filter(r => r > 0));
     if (Number.isFinite(best)) ti = best;
   }
-  const lead = cfg.lead * ti;
+  // round 15: the lead is a guess, under or over (cfg.leadJitter); a target in the air or dashing is harder still
+  const hard = hardTarget(target);
+  const lead = cfg.lead * ti * Math.max(0, 1 + gauss() * (cfg.leadJitter ?? 0) * (hard ? 1.6 : 1));
   // a falling target: predict its height, but it can't sink below the ground
   const vy = tr ? tr.vy : 0;
-  let aim = [c[0] + v[0] * lead, Math.max(C.hitCenterOf(target), c[1] + vy * lead), c[2] + v[1] * lead];
+  let aim = [c[0] + v[0] * lead, Math.max(C.hitCenterOf(target), c[1] + vy * lead * (hard ? 0.6 + Math.random() * 0.8 : 1)), c[2] + v[1] * lead];
+  // round 15: a miss in metres at the aim point (more on a hard target), not just an angle
+  { const pe = (cfg.posErr ?? 0) * (hard ? 1.5 : 1); aim[0] += gauss() * pe; aim[1] += gauss() * pe * 0.5; aim[2] += gauss() * pe; }
   // keep a led point inside the arena
   const r = Math.hypot(aim[0], aim[2]);
   if (r > C.ARENA_RADIUS) { aim[0] *= C.ARENA_RADIUS / r; aim[2] *= C.ARENA_RADIUS / r; }
   let dir = gravity ? C.ballisticDir(from, aim, speed, gravity)
     : (() => { const d = [aim[0] - from[0], aim[1] - from[1], aim[2] - from[2]]; const l = Math.hypot(...d) || 1; return d.map(x => x / l); })();
   // human-ish error: rotate by a random yaw and pitch
-  const ey = gauss() * cfg.aimErr * Math.PI / 180, ep = gauss() * cfg.aimErr * 0.4 * Math.PI / 180;
+  const err = cfg.aimErr + (hard ? cfg.airErr ?? 0 : 0);
+  const ey = gauss() * err * Math.PI / 180, ep = gauss() * err * 0.4 * Math.PI / 180;
   const cy = Math.cos(ey), sy = Math.sin(ey);
   dir = [dir[0] * cy + dir[2] * sy, dir[1] + ep, -dir[0] * sy + dir[2] * cy];
   return dir;
@@ -688,6 +705,7 @@ function tryUltimate(me, world, t, act, target) {
     let x = 0, z = 0;
     for (const q of best) { x += q.p[0]; z += q.p[2]; }
     x /= best.length; z /= best.length;
+    { const pe = placeJitter(me.bot.cfg, best[0]); x += gauss() * pe; z += gauss() * pe; }   // round 15: placement error
     me.yaw = yawTo(me.p, [x, 0, z]);
     act({ t: 'ult', at: [x, z] });
   } else return false;
@@ -781,7 +799,8 @@ function flyMeteorRain(me, world, t, act) {
   }
   if (!best) return;
   const tr = tracks.get(best.id), lead = (MRAIN.dive + 0.1) * b.cfg.lead;
-  const at = [best.p[0] + (tr ? tr.v[0] : 0) * lead, best.p[2] + (tr ? tr.v[1] : 0) * lead];
+  const lj = lead * Math.max(0, 1 + gauss() * (b.cfg.leadJitter ?? 0)), pe = placeJitter(b.cfg, best);   // (round 15: a guessed lead, a placement error)
+  const at = [best.p[0] + (tr ? tr.v[0] : 0) * lj + gauss() * pe, best.p[2] + (tr ? tr.v[1] : 0) * lj + gauss() * pe];
   act({ t: 'mrainAim', at });
   if (t >= b.mrainCommit || rooted(best, t) || isStunned(best, t)) { b.mrainCommit = null; act({ t: 'mrainDive', at }); }
 }
@@ -1155,8 +1174,9 @@ function frostfallAim(me, target, t, cfg) {
   const v = tr ? tr.v : target.vel || [0, 0];
   const stuckFor = Math.max(target.rootUntil || 0, target.stunUntil || 0) - t;
   const free = Math.max(0, FROST.delay - Math.max(0, stuckFor)) * cfg.lead * 0.6;
-  const err = cfg.aimErr * 0.12;
-  return [target.p[0] + v[0] * free + gauss() * err, target.p[2] + v[1] * free + gauss() * err];
+  const err = cfg.aimErr * 0.12 + placeJitter(cfg, target);   // (round 15: plus the placement error)
+  const lead = free * Math.max(0, 1 + gauss() * (cfg.leadJitter ?? 0));
+  return [target.p[0] + v[0] * lead + gauss() * err, target.p[2] + v[1] * lead + gauss() * err];
 }
 
 // Standing in a Frostfall shadow: walk straight out if there's time, else use mobility.
