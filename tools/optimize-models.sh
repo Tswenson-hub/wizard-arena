@@ -6,13 +6,20 @@
 #     exports have so many UV seams that the regular simplifier stalls around 4k; sloppy ignores seams
 #     (fine for trees and rocks, which repeat dozens of times). Installs its npm deps in a temp dir.
 #     -> public/models/<name>.glb (defaults: ratio 0.35, 1024 px; aim for < 1 MB, ~10k tris for props)
+#   tools/optimize-models.sh pack <name> [maps-px] [simplify-ratio]
+#     meshopt-compress public/models/<name>.glb in place (EXT_meshopt_compression: world.js and the editor set
+#     three's MeshoptDecoder on their GLTFLoaders), shrinking its normal/roughness maps to maps-px (default 512;
+#     the base colour keeps its size). `one` already ends with this. Round 14 packed every map model this way:
+#     farmhouse/silo/barn with 1024 maps (silo and farmhouse also simplify 0.5, error 0.002), the rest with 512.
+#     Not ice_wall/acid_puddle: effects.js loads those with its own GLTFLoader, which has no decoder.
+#     Packing an already-packed file works but re-quantizes; start from the backup or the source when you can.
 #   Repeated scenery (trees, rocks) needs a looser error to reach its ratio, e.g. one <pine.glb> pine 0.5 512 0.02
 #   Big image-to-3d scenery went:  one <barn.glb> barn 0.03 2048   (88 MB -> 2.6 MB, 64k tris)
 #                                  one <silo.glb> silo 0.012 2048  (248 MB -> 4.1 MB)
 # Needs network access the first time (npx fetches @gltf-transform/cli).
 set -e
 G="npx --yes @gltf-transform/cli@4"
-OUT="$(dirname "$0")/../public/models"
+OUT="${OUT:-$(dirname "$0")/../public/models}"
 TMP="$(mktemp -d)"
 sloppy() { # src dst target-tris
   [ -d "$TMP/npm/node_modules/meshoptimizer" ] || npm i --silent --prefix "$TMP/npm" @gltf-transform/core@4 meshoptimizer@1.3 >/dev/null
@@ -35,15 +42,39 @@ await io.write(dst, doc);
 JS
   (cd "$TMP/npm" && node sloppy.mjs "$1" "$2" "$3")
 }
+pack() { # src dst [maps-px] [simplify-ratio]
+  [ -d "$TMP/pk/node_modules/sharp" ] || npm i --silent --prefix "$TMP/pk" @gltf-transform/core@4 @gltf-transform/extensions@4 @gltf-transform/functions@4 meshoptimizer@1.3 sharp >/dev/null
+  cat > "$TMP/pk/pack.mjs" <<'JS'
+import { NodeIO } from '@gltf-transform/core';
+import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
+import { meshopt, simplify, textureCompress, weld } from '@gltf-transform/functions';
+import { MeshoptDecoder, MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
+import sharp from 'sharp';
+const [src, dst, maps, ratio] = process.argv.slice(2);
+await Promise.all([MeshoptDecoder.ready, MeshoptEncoder.ready, MeshoptSimplifier.ready]);
+const io = new NodeIO().registerExtensions(ALL_EXTENSIONS).registerDependencies({ 'meshopt.decoder': MeshoptDecoder, 'meshopt.encoder': MeshoptEncoder });
+const doc = await io.read(src);
+await doc.transform(textureCompress({ encoder: sharp, targetFormat: 'webp', quality: 80, resize: [+maps, +maps], slots: /^(normalTexture|metallicRoughnessTexture|occlusionTexture)$/ }));
+if (+ratio < 1) await doc.transform(weld(), simplify({ simplifier: MeshoptSimplifier, ratio: +ratio, error: 0.002 }));
+await doc.transform(meshopt({ encoder: MeshoptEncoder, level: 'high', quantizePosition: 12, quantizeNormal: 8 }));
+await io.write(dst, doc);
+JS
+  set -- "$(cd "$(dirname "$1")" && pwd)/$(basename "$1")" "$(cd "$(dirname "$2")" && pwd)/$(basename "$2")" "$3" "$4"
+  (cd "$TMP/pk" && node pack.mjs "$1" "$2" "${3:-512}" "${4:-1}")
+}
 shrink() { # src dst simplify-ratio texture-size [simplify-error] [target-tris]
   $G weld "$1" "$TMP/a.glb"
   $G simplify "$TMP/a.glb" "$TMP/b.glb" --ratio "$3" --error "${5:-0.003}"
   if [ -n "$6" ]; then sloppy "$TMP/b.glb" "$TMP/s.glb" "$6"; $G prune "$TMP/s.glb" "$TMP/b.glb"; fi
   $G resize "$TMP/b.glb" "$TMP/c.glb" --width "$4" --height "$4"
   $G webp "$TMP/c.glb" "$TMP/d.glb" --quality 80
-  $G quantize "$TMP/d.glb" "$2"
+  pack "$TMP/d.glb" "$2" "$(( $4 > 1024 ? 1024 : 512 ))"
 }
-if [ "$1" = one ]; then
+if [ "$1" = pack ]; then
+  cp "$OUT/$2.glb" "$TMP/in.glb"
+  pack "$TMP/in.glb" "$OUT/$2.glb" "$3" "$4"
+  ls -la "$OUT/$2.glb"
+elif [ "$1" = one ]; then
   shrink "$2" "$OUT/$3.glb" "${4:-0.35}" "${5:-1024}" "${6:-0.003}" "$7"
   ls -la "$OUT/$3.glb"
 else

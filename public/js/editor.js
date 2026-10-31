@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import * as C from '../shared/constants.js';
 import { buildWorld, loadModels, makePropMesh, spinners } from './world.js';
 
@@ -28,7 +29,7 @@ const status = (text, cls = '') => { const s = $('status'); s.textContent = text
 
 // ------------------------------------------------------------ the world, rebuilt from the layout after each change
 // GLTF files load once; each build gets fresh clones (world.js fits and places what it's given).
-const gltfLoader = new GLTFLoader(), gltfCache = new Map();
+const gltfLoader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder), gltfCache = new Map();
 const loader = {
   load(url, onLoad, onProgress, onError) {
     if (!gltfCache.has(url)) gltfCache.set(url, gltfLoader.loadAsync(url));

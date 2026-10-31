@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import * as C from '../shared/constants.js';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 
 const flat = (color, extra = {}) => new THREE.MeshStandardMaterial({ color, flatShading: true, roughness: 0.9, metalness: 0.0, ...extra });
 // Ground decals stacked on the floor: polygon offset instead of y gaps so they never z-fight.
@@ -1117,6 +1118,7 @@ const FARM_MODELS = () => [
 ];
 
 export function loadModels(loader, scene) {
+  loader.setMeshoptDecoder?.(MeshoptDecoder);   // the map's models are meshopt-compressed (tools/optimize-models.sh)
   const load = (url) => new Promise((res, rej) => loader.load(url, res, undefined, rej));
   return Promise.all([
     load('/models/goat.glb').then(g => { models.goat = fitModel(g, 1.25); }),
