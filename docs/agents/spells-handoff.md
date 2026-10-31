@@ -1,5 +1,106 @@
 # Spells hand-off
 
+## Round 14: pacing, spawn protection, the audit fixes, CC0 audio
+Commits: `ab77100` (pacing: constants, server, bots, match, unit test), `c7ce96e` (client fixes, deploy's and environment's requests),
+`93144fa` (CC0 audio), `f7093d1` (requests replies), `7bff9bf` (spawn band 18–26 m), plus this hand-off.
+
+### Pacing (all in constants.js unless noted)
+- **Regen:** 7 s delay, 6 HP/s. **Respawn:** 2 s.
+- **Spawn protection** (`SPAWN_PROTECT.time` 1.5 s): server.js `p.protUntil`, set at respawn and cleared at death.
+  - While it's on, `applyHit` lands nothing: it sends a `hit` with `blocked: true, prot: true`.
+  - Goats and rams don't kill (`ramStrike`).
+  - Attacking ends it: `PROT_ENDS` = cast, chargeStart, cyclone, lashStart, frostfall, ult, toxic, curse, pickup, throw, ram, ride, ramGuard.
+  - Moving, blinking, rolling and shielding keep it.
+  - The snapshot carries `prot`. Bots hold fire on a protected target and prefer someone else.
+- **Spawn choice** (match.js `chooseSpawn`): the farthest spawn in the `SPAWN_CHOICE` band from the nearest living enemy, otherwise
+  the 2nd-farthest overall. **The band is 18–26 m, not the brief's 20–30** (see the runs below). One line in constants.js reverts it.
+- **Projectile speeds:** Fireball 30, Hex 28, Potion 24, Meteor 26. Ranges stay the same (lifetimes shortened to match). Meteor's cooldown is 4 s.
+- **Primaries:** Spark 12, Hex 14, Sling 10, Fireball 16/24, Skim shards 9 (base values; ×1.3 on the cards: 16, 18, 13, 21/31, 3 × 12).
+  `PRIMARY_RELOAD` 1.2 s for every magazine.
+  - Theoretical TTK with every hit landing: Skim 1.2 s (if all three shards land), Shear 2.5, Fireball 2.7, Hex 3.0, Potion 3.9,
+    Spark 4.2, Sling 5.2 (plus its goat calls).
+- **Ultimates:** passive 1.0 %/s, a kill is worth 10 %.
+- **Outliers:**
+  - **Battering Ram:** 70 damage (base 54) and a knockdown; hit kind `battering_ram`, in `KNOCKDOWN.kinds`.
+    - goats.js's `ctx.killPlayer` doesn't pass the goat, so server.js tags the ram (`g.spell`) and `strikingRam(p)` finds the
+      charging one within 3 m. If environment ever passes `g` as the 4th argument, it's used directly.
+    - Bots now favour it as a finisher (target HP ≤ 70).
+  - **Cooldowns:** Trapped Relic 6 s (and its `liftCooldown`), Lash 9 s, Frostfall 10 s, Veil 7 s.
+  - **Bulwark** has 80 HP.
+  - **Black Death:** `drainMul` 2.5 → 2.0, so about 3.6 s of holding (the brief's "modest buff").
+- **Match:** first to 15, 7-minute cap (`FFA` in match.js).
+- **Cards:** `SPELL_INFO` derives the changed spells' damage, cooldown, range and wind-up from the data. The Ram reads "70", not "kill".
+
+### Audit fixes
+- **"-3616":** two hits, Cyclone's 36 and Lash's 16, arrived together. `hudNumber` placed each at a random spot, so they overlapped.
+  - Now hits on us within 0.35 s add up into one number (`hurtNumber`), and numbers take separate lanes.
+  - Checked: a 36 and a 16 pushed together show one "-52".
+- **Click to play** (`#lockPrompt`): shows when the mouse isn't captured and the menu isn't open. That covers after joining, a
+  refused lock (`pointerlockerror` → a "the browser didn't hand over the mouse" note) and the lock lost to another window or tab.
+  - Esc releasing the lock with the page focused opens the pause menu, and Esc over the prompt toggles to the menu and back.
+  - deploy's platform.js keys gameplayStart/Stop off `#clickToPlay`, `#lockPrompt` and `#mEnd` `.hidden`.
+- **Pause menu:**
+  - **Leave match:** `net.close()`, then a reload back to the builder (loadout, name and sound are in localStorage).
+  - **Controls:** a one-line strip.
+  - **Clipping:** the builder keeps a 660 px minimum height and scrolls, so the Ultimate row and the voice buttons are reachable
+    at 1280×720.
+- **TK marker:** a soft additive ground ring with four notches, turning slowly, over a faint halo. It's purple for Telekinesis and
+  red for Trapped Relic, and it sits just outside the object.
+- **Nameplates:**
+  - No more " · normal": main.js builds Wizards without `bot` and keeps `w.botLevel`. characters can drop the suffix code in wizard.js.
+  - Capped size: closer than 6 m to the camera a plate shrinks with the distance, so its on-screen size stops growing.
+- **`window.__wa`** only exists with `?debug` or `localStorage.waDebug = '1'`. `goat_e2e.py` loads `/?debug=1`.
+- **net.js:** the console.log is gone.
+- **Audio:**
+  - The menu music is RandomMind's "Medieval: The Old Tower Inn" (OpenGameArt, CC0): loudness-matched to the old track, with a
+    0.35 s crossfade seam.
+  - The goat bleats are Kinoton's "Single Goat Bleating 2x" (Freesound, CC0), one bleat per file.
+  - `sounds/CREDITS.md` and the in-game credits line are updated.
+
+### Requests done
+- **Environment's camera blockers:** `World.cameraClearance` / `World.cameraCutaway` in `updateCamera`, looked up by name.
+- **Deploy:** relative URLs in my files, `window.WA_SERVER` in net.js, and the favicon links.
+
+### Verification
+- **Unit tests:** `node tools/test/modematch-unit.mjs` prints ALL PASS, including first to 15, 7 minutes, and the spawn band
+  (30 of 30 against brute force).
+- **Balance:** `loadoutbalance.mjs <port> 12 75 <diff>` with `/tmp/wa-pace/observe.mjs` alongside. The analysis is
+  `/tmp/wa-spells/analyze.mjs` (the pace script with the fight time as an argument). Data and output are in `/tmp/wa-spells/`
+  (`n1`, `h1`, `n2`: `lb_*.txt`, `an_*.txt`, `*.json`).
+
+| | normal before | normal, 20–30 band | normal, 18–26 band | hard before | hard, 20–30 band | target |
+|---|---|---|---|---|---|---|
+| kills / player / min | 0.93 | **1.52** | 1.28 | 0.73 | **1.45** | ~2 |
+| respawn → first damage (median) | 10.8 s | 7.0 s | **6.1 s** | 9.4 s | 8.1 s | ~6 s |
+| spawn → nearest enemy (mean) | 37.5 m | 29.1 m | **25.3 m** | 37.4 m | 27.2 m | 20–28 m |
+| engagements ending in a kill | 42% | **51%** | 42% | 34% | 42% | ~50% |
+| median TTK (damage chain) | 2.2 s | 3.0 s | 5.1 s | 3.1 s | 3.3 s | 3–4 s |
+| out-of-combat share of a life | 55% | 44% | 42% | 54% | 43% | |
+
+- **Noise:** runs with random loadouts swing a lot. n1 and n2 are the same code apart from the band, yet got 91 and 77 kills;
+  n1 had 9 Meteor Rain kills, n2 had 4.
+- **Slot shares above ~35%** (the brief's limit):
+  - **Normal (n1):** Trapped Relic has 75% of Utility (12 of 16; Roll deals no damage, so it's only Relic against Telekinesis).
+    Meteor Rain has 75% of Ultimate (9 of 12).
+  - **Hard (h1):** Frostfall has 43.5% of Power (10 of 23). Ram Guard has every Guard kill (8: its provoked rams still one-shot).
+  - **Primaries are even:** the top primary is at 27% on normal (Sling) and 29% on hard (Hex), and Spark isn't dominating.
+
+### Left over / for the coordinator
+- **Kills per minute is ~1.5, not ~2.** The next levers, which Ty hasn't approved:
+  - Meteor Rain's 4 m one-shot circle (it's most of the ultimate kills now that ultimates come every ~40 s).
+  - Ram Guard's one-shot rams (the Battering Ram is no longer a one-shot, but they still are).
+  - Frostfall back to 12 s.
+  - A shorter regen delay is the wrong way.
+- **Six more Pixabay files remain:** `potion_shatter`, `toxic_smash`, `smoke_flask`, `flask_land`, `fizz_loop` and `brew_drink`
+  (Ty's, by Universfield and freesound_community). The brief only named the music and the bleats; swap these too if the license
+  is the worry.
+- **README:** line 214 still credits the old music ("Nordic Fantasia"). README is yours.
+- **Headless Chromium drops the game's WebSocket** (code 1006 at both ends) a few seconds in, in about half of runs. It does the same
+  on HEAD (2 of 4), so it isn't new, and a plain Node client stays connected for 60 s. Re-run a browser test that dies early.
+- **Disk:** this Mac had about 340 MB free (97% full) during the round. It isn't from our files; it's worth clearing before
+  the build zips.
+- **Servers:** my servers (4101, 4109, 4110) are stopped. Port 3000 wasn't touched.
+
 ## Round 13: agility (double jump, casting on the move and in the air, snappier movement), and Roll moves to Utility
 Commits: `d80f81a` (constants, requests), `9ac931c` (server), `a71870d` (bots), `5023e57` (client), `cc29494` (tests, reply to characters),
 `d967e87` (Roll to Utility), `0c360b1` (E pips), plus this hand-off.
