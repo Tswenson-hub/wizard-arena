@@ -191,9 +191,9 @@ function makeBuilderPreview(el) {
     pv.body.model.rotation.y = pv.yaw + Math.sin(now / 2400) * 0.35;
     camera.aspect = W / H;
     // frame the whole body: the Mage with its hat (2.2 m), the staff raised overhead or held out in front (2.7 m tall, 2.3 m
-    // wide), whatever the panel's shape
+    // wide, with a margin), whatever the panel's shape
     const span = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
-    camera.position.set(0, 1.25, Math.max(2.7 / span, 2.3 / (span * camera.aspect)));
+    camera.position.set(0, 1.25, Math.max(3.0 / span, 2.8 / (span * camera.aspect)));
     camera.lookAt(0, 1.15, 0);
     camera.updateProjectionMatrix();
     renderer.render(scene, camera);

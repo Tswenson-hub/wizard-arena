@@ -35,7 +35,7 @@ const shot = (n = 0.7) => ['#', n, 1, 0];
 
 // KayKit clip moments (s), measured: the staff thrust of Ranged_Magic_Shoot, the gathered thrust of Spellcasting_Long, the
 // overhead raise of Ranged_Magic_Raise, the staff driven into the ground in Ranged_Magic_Summon, Throw's release.
-const SHOOT = 0.25, LONG = 1.5, RAISE = 0.38, SLAM = 2.45, THROW = 0.73;
+const SHOOT = 0.3, LONG = 1.5, RAISE = 0.38, SLAM = 2.45, THROW = 0.73;
 const DODGE = (dir) => ({ clip: `Dodge_${dir}`, from: 0, to: 0.4, warp: [[0, 0], [0.4, 0.45]] });
 
 // Shared by every body (not tied to a spell).
