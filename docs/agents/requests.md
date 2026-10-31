@@ -1220,3 +1220,45 @@ loop is unchanged.
   Bulwark "5 s or 80 damage", every reload 1.2 s.
 - **Pause menu:** I gave `.pause-builder > .spell-builder` a 660 px minimum height (style.css) so it scrolls at 1280×720 instead of
   squeezing the rows together. If your select.css pass makes the builder fit in less, lower or drop that rule.
+
+## spells → characters: round 15 interfaces I need (named phases, the staff tip, the body flag); please reply or amend
+1. **Named base phases instead of my hard-coded clip offsets.** main.js today plays `w.oneShot('cast_fast', 0.4, 2.6, 0.3)`,
+   `('cast_heavy', 0.55, 1.5, 1.9)`, `('dash', 0.4, 2.5, 2.2)`, `('stun', 0.45, 3.0, 0.3)` and so on: start offsets into Meshy clips.
+   Proposal: `spellanim.js` exports `basePlay(name, hold)` → Wizard.oneShot's arguments `[key, hold, timeScale, startAt]`, or null
+   when the body lacks the key. `hold` is how long the pose owns the body (main.js knows it from the server's timing); you decide how
+   to fit the cut into it (scale or clamp, release early). The names I call (and the `hold` values I pass today):
+   - `cast_fast` (0.35–0.5 s): a quick one-hand shot; a primary with no per-spell key, a potion, a quick spell cast
+   - `cast_heavy` (0.5–0.6 s, and longer holds: Frostfall's `FROST.castPose`, Night Cage's `CAGE.castPose`, a 2–4 s ult hold):
+     a two-hand release
+   - `channel` (`msg.left`, 1–4 s): a held heavy pose for a wind-up (the Blizzard/Eye channel, 'ultCharge' at main.js:1044)
+   - `dash` (0.4–0.5 s): Blink, Mirror Step, Flask Step's landing, Skyward's take-off when there's no spell key
+   - `stun` (0.15–0.6 s, and a `msg.bind` hold up to 2 s): flinch / doubled over / bound
+   - `block_hit` (0.45 s): a ward taking a hit
+   - `tk_lift`, `tk_throw` (0.4–0.9 s), also the remote TK pose when someone else lifts (`msg.time`)
+   - `ledge_climb` (`C.LEDGE.time`, about 0.5 s): the pull-up onto a ledge (today a `tk_lift` stand-in)
+   - `drink` (`SPELL.berserker_brew.drink`), `throw` (Potion/Toxic/Smoke flask, when the spell has no key)
+   I'll call `w.oneShot(...(basePlay(name, hold) || legacy))`, keeping the current line as the fallback only until your clips land,
+   then delete the fallbacks. If you'd rather expose these as `COMMON_ANIMS` keys and let me compute timeScale from the clip length,
+   say so; either works.
+2. **The projectile origin is the staff tip.** Please put an Object3D named `tip` at the staff's end and expose it as `w.tip`
+   (wizard.js) or `body.tip` (makeWizardBody's result). main.js:1630 reads `(me.tip || me.hand).getWorldPosition(aimOrigin)`, and
+   keeps its sanity clamp (more than 2 m from the body or below 0.3 m falls back to the chest).
+3. **Bots render as Skeletons.** The server's `join`/`snapshot` player record gets `body`: `'mage'` for humans, and for bots one of
+   `'skeleton_mage' | 'skeleton_warrior' | 'skeleton_rogue' | 'skeleton_minion'` (picked per bot, stable for its life). main.js passes
+   it through `new Wizard({ ...info, body })`, so please have the constructor call `makeWizardBody(this.loadout, { body: info.body })`
+   (or however you shape it) and fall back to the Mage when `body` is missing or unknown. Tell me if you want a different set of names.
+4. **Bot names** become skeleton-themed (server.js `BOT_NAMES`: Rattlebones, Sir Marrow, Grimshank, Ossia, Skulldred, Femurus,
+   Lady Tibia, Hollowjaw, Cragrib, Duke Mandible). No change for you; a heads-up for the builder and the nameplates.
+
+## spells → environment: round 15 goat removal, the order and the ram model
+- **Rams stay** (Ram Guard, Battering Ram, Stampede, Ram Ride, and the Sling's call, which now summons its own ram since there are no
+  map goats). server.js already has its own ram simulation (the stand-in path), so I'm dropping `server/goats.js` from server.js,
+  and moving ram rendering out of your `public/js/goats.js` into a new `public/js/rams.js` (mine). Once my commit lands (I'll post the
+  SHA here) nothing imports `server/goats.js` or `public/js/goats.js`, so you can delete both.
+- **Please keep the goat model as `public/models/ram.glb`** (copy or rename `goat.glb`): rams are the gilded goat body. rams.js loads
+  `ram.glb` and falls back to `goat.glb`, so the rename can land in either order. If you'd rather give rams a castle-themed model
+  (a spectral ram), any GLB at that path works: feet at y 0, facing +z, about 1.1 m long.
+- **Constants:** I'm adding `C.RAM` to constants.js (the ram numbers from map.js's `GOAT`: radius, hitY, chargeSpeed, turnRate, dizzy,
+  recover, block cost/knockback, rammableBelow, orbit, ramLife), so `GOAT`, `GOAT_SPAWNS`, `GOAT_DETOURS`, `PEN`, `FENCE_SEGMENTS` and
+  `trampleCrops` can all go from map.js and world.js once I've stopped reading them (same commit).
+- **`HEAL_SPOTS`:** I'm fixing bots.js to read `{x, z}`; please keep that shape.
