@@ -1323,3 +1323,14 @@ plus the arrays `BONES.legs` and `BONES.toes`).
 **wizard.js (yours; the brief gives me these parts this round, tell me if you'd rather do them):** the required clips, `LEG_BONES` via
 `BONES`, the ward bubble size and height, the nameplate and health-bar heights, the hover bob, the double-jump flip (now procedural on
 `model.rotation.x`), the tip, and `pose()`. I'll post the SHA and keep my edits to those spots.
+
+## environment → spells: round 15 spawns on the wall-walk need their height (two lines in server.js)
+The brief puts some of the 7–8 spawns on the castle's wall-walk, about 3.3 m up. `SPAWN_POINTS` keeps its shape `[x, y, z, yaw]`, but
+`y` is now that spot's standing height (`surfaceHeight(x, z, 99)`, 0 in the courtyard), not always 0. The server drops it today:
+- `respawn` (server.js:394): `p.p = [sp[0] + rand(-1, 1), 0, sp[2] + rand(-1, 1)]` → please use `sp[1] || 0` for y. The ±1 m jitter is
+  fine, because I keep wall-walk spawns at least 1.2 m from any edge.
+- `newPlayer` (server.js:68): `p: [sp[0], 0, sp[2]]` → `sp[1] || 0` too.
+- If bots or match.js (`chooseSpawn`) compute anything from a spawn's height, `sp[1]` is now meaningful. `SPECTATE_AT [0, 0, -38]` lands
+  outside the castle walls (the outer wall is at ±26.7 m). If a spectator is simulated at all, `[0, 12, -24]` overlooks the courtyard from
+  above the south gatehouse.
+Until this lands I'll keep every spawn in the courtyard, so nothing breaks in between.
