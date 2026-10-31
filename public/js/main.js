@@ -71,9 +71,9 @@ const local = {
   cd: { fast: 0, power: 0, mobility: 0, guard: 0, throw: 0 },   // per slot, like the server
   charging: false, chargeStart: 0, chargeSent: false,
   cyclone: null,               // { start, pulsed } during our own Arcane Cyclone
-  lash: null,                  // { start, sent } during our own Sanguine Lash wind-up
+  siphon: null,                // { start, sent } during our own Blood Siphon cast (round 16)
   slowUntil: 0,                // Glacial Skim slow
-  rootUntil: 0,                // bound by a lash, or recovering from our own missed lash
+  rootUntil: 0,                // bound (Frostfall, Blizzard, a Bulwark's freeze)
   silenceUntil: 0,             // bound: no spells, ward or telekinesis
   dash: null,                  // { start, time, dist } during our own Smoke Screen or Roll dash (along lastDashDir)
   rollCharges: null, rollUntil: 0,   // Roll: when each charge is back (predicted), and the current roll's end
@@ -120,7 +120,7 @@ const EYE = SPELL.eye_of_storm, CAGE = SPELL.night_cage, BLIZ = SPELL.blizzard, 
 const ULT_KINDS = new Set(['eye_of_storm', 'eye_burst', 'blizzard_freeze', 'meteor_rain_hit', 'meteor_rain_splash']);
 const STAMP = SPELL.stampede, RIDE = SPELL.ram_ride, RGUARD = SPELL.ram_guard;
 const AIMED_ULTS = { night_cage: CAGE, stampede: STAMP };   // hold Q to aim (a circle, or Stampede's lane), release; then the wind-up
-const LASH = SPELL.sanguine_lash, MIRROR = SPELL.mirror_step, BULWARK = SPELL.glacial_bulwark, RELIC = SPELL.trapped_relic, SKIM = SPELL.glacial_skim;
+const SIPHON = SPELL.sanguine_lash, MIRROR = SPELL.mirror_step, BULWARK = SPELL.glacial_bulwark, RELIC = SPELL.trapped_relic, SKIM = SPELL.glacial_skim;
 
 function chooseLoadout(lo) {
   const clean = saveLoadout(lo);
@@ -373,7 +373,7 @@ function rebuildWizard(w, loadout, color, voice = w.voice) {
   stopWizardAudio(w);
   w.dispose(scene);
   const n = makeWizard(info, w === me);
-  for (const k of ['hp', 'st', 'kills', 'deaths', 'dead', 'blocking', 'charging', 'stunned', 'netAnim', 'targetYaw', 'bound', 'slowed', 'lashing', 'frozen', 'veiled', 'ult']) n[k] = w[k];
+  for (const k of ['hp', 'st', 'kills', 'deaths', 'dead', 'blocking', 'charging', 'stunned', 'netAnim', 'targetYaw', 'bound', 'slowed', 'siphoning', 'frozen', 'veiled', 'ult']) n[k] = w[k];
   n.targetPos.copy(w.targetPos);
   players.set(w.id, n);
   if (w.carrying) startCarry(n, w.carrying);
@@ -395,14 +395,13 @@ function applySnapshot(w, s) {
   if (!!s.spectator !== !!w.spectator) { w.spectator = !!s.spectator; if (w !== me) w.group.visible = !w.spectator; }   // a 5th human watching
   if (s.blocking && !w.blocking && !w.dead && w.loadout?.guard === 'black_death') sfx.play('black_death_cast', { pos: wpos(w), vol: 0.6, jitter: 0.05 });   // raising the Black Death
   w.blocking = s.blocking; w.charging = s.charging; w.stunned = s.stun;
-  w.slowed = !!s.slow; w.bound = !!s.bound; w.lashing = !!s.lashing; w.frozen = !!s.frozen;
+  w.slowed = !!s.slow; w.bound = !!s.bound; w.siphoning = !!s.siphoning; w.frozen = !!s.frozen;
   w.ult = s.ult ?? 0;
   // the ring and nameplate wear the loadout's dominant element
   const shown = s.color;
   if (shown != null && shown !== w.shownColor) { w.setColor(shown); w.shownColor = shown; }
   if (!s.eye && w.eyeFx) endEye(w);                  // missed the end message
-  // Black Death's absorbed damage rides on the next Lash: the coiled whip glows with it (looks.js)
-  if ((s.lashBonus ?? 0) !== (w.lashBonus ?? 0)) { w.lashBonus = s.lashBonus ?? 0; w.body?.setWhipGlow?.(w.lashBonus / SPELL.black_death.maxBonus); }
+  w.siphonBonus = s.siphonBonus ?? 0;   // Sanguine Aegis's absorbed damage, riding on the next Blood Siphon (the HUD shows it)
   w.riding = !!s.ride; w.ramGuard = !!s.ramGuard;
   w.brewing = !!s.brew;
   w.regen = !!s.regen;   // out-of-combat regen: our HP bar pulses green
@@ -414,13 +413,12 @@ function applySnapshot(w, s) {
     if (!s.ultWind && local.ultWind && now - local.ultWind.start > 0.5) local.ultWind = null;   // refused, fizzled or fired
   }
   if (s.veil !== undefined && !!s.veil !== w.veiled) w.veiled = !!s.veil;
-  if (!s.lashing && w.lashT >= 0 && w !== me) w.endLash();
   if (s.dead !== w.dead) w.dead = s.dead;
   if (w === me) {
     local.ult = s.ult ?? 0;
     if (!s.blocking && local.blocking) { local.blocking = false; }   // server cancelled the ward
     if (!s.charging && local.charging && local.chargeSent) { local.charging = false; }
-    if (!s.lashing && local.lash && local.lash.sent) { local.lash = null; me.endLash(); }
+    if (!s.siphoning && local.siphon && local.siphon.sent) local.siphon = null;
     if (s.liftCd > 0 && Math.abs(local.liftCdUntil - now - s.liftCd) > 0.3) local.liftCdUntil = now + s.liftCd;
     // the magazine: adopt the server's count when we haven't just fired (our prediction may be ahead)
     if (s.ammo !== undefined && now - local.lastShot > 0.4) {
@@ -559,10 +557,10 @@ function handleMessage(msg) {
         else if (msg.kind === 'hex') { if (!combo) owner.pose('cast', 0.45); sfx.play('hex_cast', { pos: msg.p, vol: 0.75, rate: 1 + (msg.curve?.shot ?? 0) * 0.08, jitter: 0.04 }); }
         else if (msg.kind === 'sling') { if (!combo) owner.pose('cast', 0.4); sfx.play('sling_cast', { pos: msg.p, vol: 0.75, jitter: 0.06 }); }   // (it used to fall through to the thrown-prop branch)
         else if (msg.kind === 'skim') { if (!owner.inOneShot()) { if (!combo) owner.pose('cast', 0.4); sfx.castSkim(msg.p); } }   // three per cast
-        else if (msg.kind === 'lash') {
-          // a body with its own lash clip is already mid-strike: let the follow-through play
-          if (!owner.actions.lash) owner.pose('cast_release', 0.5);
-          owner.lashT = -1; owner.lashing = false; sfx.lashCrack(msg.p); effects.slash(msg.p, 0xff2a3c, 1.3);
+        else if (msg.kind === 'siphon') {   // round 16: Blood Siphon's bolt leaves (the cast pose has played the thrust)
+          owner.siphoning = false;
+          if (!owner.inOneShot()) playSpell(owner, 'sanguine_lash', 'release') || owner.pose('cast', 0.4);
+          sfx.lashCrack(msg.p);
         }
         else if (msg.kind === 'heavy') { owner.charging = false; owner.pose('cast_release', 0.55); sfx.castHeavy(msg.p); }
         else { tkGesture(owner, 'tk_throw'); sfx.throw_(msg.p); if (owner.carrying) startCarry(owner, null); }
@@ -602,11 +600,13 @@ function handleMessage(msg) {
         else if (msg.kind === 'prop' && target.pose('stagger')) { /* doubled over */ }
         else if (C.hitSpec(msg.kind)?.stun !== 0 && msg.int !== false) target.pose('flinch', msg.kind === 'heavy' ? 0.5 : 0.55);
         sfx.hitBody(c);
+        // round 16: Blood Siphon drains: a red ribbon of light from the victim back to the caster
+        if (msg.kind === 'siphon' && msg.dmg > 0) { const by = players.get(msg.attacker); if (by && !by.dead) effects.siphonTracer([c.x, c.y, c.z], by.group); }
         sfx.voice(target, target === me ? null : c);   // a grunt, by gender (rate-limited per wizard)
         if (msg.slow) target.slowed = true;
         if (msg.launch) target.launch(msg.launch);
-        if (msg.bind && (msg.freeze || msg.kind === 'frostfall')) { target.bound = true; target.frozen = true; target.endLash(); target.cancelCyclone(); target.pose('flinch', 0.15); }
-        else if (msg.bind) { target.bound = true; target.endLash(); target.cancelCyclone(); effects.bind([c.x, c.y - 1, c.z]); sfx.bind(c); target.pose('bound', msg.bind); }
+        if (msg.bind && (msg.freeze || msg.kind === 'frostfall')) { target.bound = true; target.frozen = true; target.cancelCyclone(); target.pose('flinch', 0.15); }
+        else if (msg.bind) { target.bound = true; target.cancelCyclone(); effects.bind([c.x, c.y - 1, c.z]); sfx.bind(c); target.pose('bound', msg.bind); }
       }
       if (target === me) {
         if (!msg.blocked) {
@@ -618,7 +618,7 @@ function handleMessage(msg) {
             local.rootUntil = Math.max(local.rootUntil, now + msg.bind); local.silenceUntil = Math.max(local.silenceUntil, now + msg.bind); local.vel.set(0, 0, 0);
             local.frostAim = false;
             if (msg.freeze || msg.kind === 'frostfall') { local.frozenUntil = now + msg.bind; feed(`Frozen by <b>${esc(players.get(msg.attacker)?.name || '?')}</b>'s ${esc(C.hitSpec(msg.kind)?.name || 'ice')}!`); }
-            else feed(`Bound by <b>${esc(players.get(msg.attacker)?.name || '?')}</b>'s lash!`);
+            else feed(`Bound by <b>${esc(players.get(msg.attacker)?.name || '?')}</b>'s ${esc(C.hitSpec(msg.kind)?.name || 'spell')}!`);
           }
         }
         // knockback (none while rooted)
@@ -626,7 +626,7 @@ function handleMessage(msg) {
         // only an interrupting hit (anything but the first two shots of a magazine) breaks a cast
         const breaks = !msg.blocked && msg.int !== false;
         if (breaks && local.charging) local.charging = false;
-        if (breaks && local.lash) { local.lash = null; me.endLash(); }
+        if (breaks && local.siphon && !local.siphon.sent) local.siphon = null;
         if (breaks && local.cyclone && !local.cyclone.pulsed) { local.cyclone = null; me.cancelCyclone(); }
         if (breaks) { local.frostAim = false; local.cataAim = false; }
       }
@@ -708,26 +708,19 @@ function handleMessage(msg) {
     case 'loadoutRejected':
       feed(`<span class="warn">${esc(msg.reason || 'That loadout was refused.')}</span>`);
       break;
-    case 'lashStart': {
+    case 'siphonStart': {   // round 16: Blood Siphon's 0.35 s cast (ours was started locally)
       const w = players.get(msg.id);
       if (!w) break;
-      if (w !== me || w.lashT < 0) w.startLash();   // our own was started locally
-      w.lashing = true;
-      sfx.cycloneWindup(wpos(w));
+      w.siphoning = true;
+      if (w !== me) playSpell(w, 'sanguine_lash', 'windup') || w.pose('cast', SIPHON.castTime + 0.2);
+      sfx.play('hex_cast', { pos: wpos(w), vol: 0.6, rate: 0.6, jitter: 0.04 });   // a low blood hum
       break;
     }
-    case 'lashCancel': {
+    case 'siphonCancel': {
       const w = players.get(msg.id);
       if (!w) break;
-      w.endLash(); w.lashing = false;
-      if (w === me) local.lash = null;
-      break;
-    }
-    case 'lashMiss': {
-      const w = players.get(msg.id);
-      if (!w) break;
-      w.pose('stagger', msg.root);   // recovery: doubled over, rooted
-      if (w === me) { local.rootUntil = Math.max(local.rootUntil, now + msg.root); local.vel.set(0, 0, 0); feed('Your lash missed: <b>recovering</b>'); }
+      w.siphoning = false;
+      if (w === me) local.siphon = null;
       break;
     }
     case 'mirror': {
@@ -891,7 +884,7 @@ function handleMessage(msg) {
       if (w === me) {
         ui.death.querySelector('.big').textContent = msg.cause === 'ram' ? 'Flattened by a ram' : 'You were vanquished';
         ui.death.classList.remove('hidden'); local.charging = false; local.blocking = false;
-        local.cyclone = null; local.flight = null; local.pos.y = 0; local.lash = null; local.fHold = null;
+        local.cyclone = null; local.flight = null; local.pos.y = 0; local.siphon = null; local.fHold = null;
         local.slowUntil = local.rootUntil = local.silenceUntil = local.frozenUntil = 0; local.frostAim = false;
         local.cataAim = false; local.eyeUntil = local.blizzUntil = 0; local.pull = null; local.ride = null; local.ultWind = null; local.mrain = null;
         local.hover = null; local.airDash = null; local.jump = null; local.fall = null; local.airJumped = false; local.jumpSpeed = 0; local.castSlowUntil = 0;
@@ -927,7 +920,7 @@ function handleMessage(msg) {
       if (!w) break;
       if (w === me) hudNumber(`+${msg.amt}`, 'heal');
       // round 15: Black Death's mending shows over the wizard for everyone (crimson), with a pulse at their feet
-      if (msg.src === 'bd' && !w.dead) {
+      if ((msg.src === 'bd' || msg.src === 'siphon') && !w.dead) {   // (round 16: Blood Siphon's heal too)
         floatNumber(w, `+${msg.amt}`, 'heal bd');
         effects.groundRing(w.group.position.clone().setY(w.group.position.y + 0.05), 1.6, 0xff2a48, 0.7, 0.45);
         effects.burst(w.group.position.clone().setY(w.group.position.y + 1.1), 0xff3050, 6, 1.4, 0.4, -0.5);
@@ -1459,9 +1452,9 @@ function updatePotions(dt) {
 // Spell icons (Raven Fantasy Icons, public/textures/icons/CREDITS.md) by hit kind, and names for the feed and card.
 const KIND_ICON = { fireball: 'fireball', heavy: 'heavy', meteor_rain_hit: 'meteor_rain', meteor_rain_splash: 'meteor_rain', firewall_burn: 'firewall', shear: 'shear', cyclone: 'cyclone',
   eye_of_storm: 'eye_of_storm', eye_burst: 'eye_of_storm', skim: 'skim', frostfall: 'frostfall', blizzard_chip: 'blizzard', blizzard_freeze: 'blizzard',
-  bulwark_frost: 'bulwark', hex: 'hex', lash: 'lash', trapped_relic: 'trapped_relic', sling: 'sling', potion: 'potion', potion_splash: 'potion',
+  bulwark_frost: 'bulwark', hex: 'hex', siphon: 'lash', trapped_relic: 'trapped_relic', sling: 'sling', potion: 'potion', potion_splash: 'potion',
   toxic: 'toxic', toxic_pool: 'toxic', prop: 'prop', ram: 'ram', battering_ram: 'ram', ram_charge: 'ram', ram_shove: 'ram', fast: 'fast', flaskstep: 'flaskstep' };
-const KIND_NAME = { heavy: 'Meteor', fast: 'Spark', shear: 'Gale Shear', hex: 'Hex Shards', skim: 'Glacial Skim', lash: 'Sanguine Lash', sling: "Shepherd's Sling",
+const KIND_NAME = { heavy: 'Meteor', fast: 'Spark', shear: 'Gale Shear', hex: 'Hex Shards', skim: 'Glacial Skim', siphon: 'Blood Siphon', sling: "Shepherd's Sling",
   potion: 'Potion Toss', potion_splash: 'Potion Toss', toxic: 'Toxic Flask', toxic_pool: 'Toxic Flask', prop: 'a thrown object',
   ram: 'a ram', battering_ram: 'Battering Ram', ram_charge: 'a charging ram', ram_shove: 'Ram Ride', meteor_rain_hit: 'Meteor Rain', meteor_rain_splash: 'Meteor Rain', firewall_burn: 'Firewall', eye_burst: 'Eye of the Storm', blizzard_chip: 'Blizzard',
   blizzard_freeze: 'Blizzard', bulwark_frost: 'Glacial Bulwark', flaskstep: 'Flask Step' };
@@ -1543,7 +1536,7 @@ function damageArc(msg) {
   setTimeout(() => el.remove(), 900);
 }
 function combatFeedbackHit(msg, target) {
-  const big = msg.ult ? ' ult' : (msg.dmg >= 30 || msg.long || msg.kind === 'heavy' || msg.kind === 'frostfall' || msg.kind === 'lash') ? ' big' : msg.fin ? ' crit' : '';   // (round 15: a long Sling hit too)
+  const big = msg.ult ? ' ult' : (msg.dmg >= 30 || msg.long || msg.kind === 'heavy' || msg.kind === 'frostfall' || msg.kind === 'siphon') ? ' big' : msg.fin ? ' crit' : '';   // (round 15: a long Sling hit too)
   if (msg.attacker === myId && target !== me) {
     if (msg.blocked) floatNumber(target, 'BLOCKED', 'blocked');
     else if (msg.dmg > 0) floatNumber(target, String(Math.round(msg.dmg)), 'dmg' + big);
@@ -1816,10 +1809,10 @@ function updateLocal(dt) {
 
   // ---- Arcane Cyclone timing (the server pulses; this keeps our controls honest meanwhile)
   if (local.cyclone && now - local.cyclone.start > CYC.windup + CYC.spin + 0.3) local.cyclone = null;
-  if (local.lash && local.lash.sent && now - local.lash.start > LASH.windup + 0.6) { local.lash = null; me.endLash(); }
-  const winding = (!!local.cyclone && !local.cyclone.pulsed) || !!local.lash;
+  if (local.siphon && local.siphon.sent && now - local.siphon.start > SIPHON.castTime + 0.6) local.siphon = null;
+  const winding = !!local.cyclone && !local.cyclone.pulsed;
   if (local.ramWind && now - local.ramWind.start > SPELL.battering_ram.windup + 1) local.ramWind = null;   // missed the launch
-  const busy = local.charging || !!local.cyclone || !!local.lash || !!local.ramWind;
+  const busy = local.charging || !!local.cyclone || !!local.siphon || !!local.ramWind;
 
   // movement input (camera-relative), also the direction of a Mirror Step
   let mx = 0, mz = 0;
@@ -1914,11 +1907,10 @@ function updateLocal(dt) {
         local.cyclone = { start: now, pulsed: false };
         me.startCyclone();
         net.send({ t: 'cyclone' });
-      } else if (K.power === 'sanguine_lash') {
-        local.lash = { start: now, sent: false };
-        startHover(LASH.windup);
-        me.startLash();
-        net.send({ t: 'lashStart' });
+      } else if (K.power === 'sanguine_lash') {   // round 16: Blood Siphon, a 0.35 s cast you walk through
+        local.siphon = { start: now, sent: false };
+        playSpell(me, 'sanguine_lash', 'windup') || me.pose('cast', SIPHON.castTime + 0.2);
+        net.send({ t: 'siphonStart' }); castSlow();
       } else if (K.power === 'toxic_flask') {
         computeAim();
         local.cd.power = now + SPELL.toxic_flask.cooldown * cdMul();
@@ -1949,11 +1941,11 @@ function updateLocal(dt) {
       net.send({ t: 'chargeRelease', origin: aimOrigin.toArray(), dir: aimDir.toArray() }); castSlow();
       setTimeout(() => { local.charging = false; }, 150);
     }
-    if (local.lash && !local.lash.sent && now - local.lash.start >= LASH.windup) {
+    if (local.siphon && !local.siphon.sent && now - local.siphon.start >= SIPHON.castTime) {
       computeAim();
-      local.lash.sent = true;
-      local.cd.power = now + LASH.cooldown;
-      net.send({ t: 'lashRelease', origin: aimOrigin.toArray(), dir: aimDir.toArray() }); castSlow();
+      local.siphon.sent = true;
+      local.cd.power = now + SIPHON.cooldown;
+      net.send({ t: 'siphonRelease', origin: aimOrigin.toArray(), dir: aimDir.toArray() }); castSlow();
     }
     // mobility slot
     if (input.justPressed('KeyE') && !busy && !airborne && now >= local.cd.mobility && !(rooted && K.mobility !== 'skyward')) {
@@ -2107,7 +2099,7 @@ function updateLocal(dt) {
   if (onFloor) local.edgeAt = now;
   const coyote = !onFloor && local.fall && !local.fall.air && now - local.edgeAt < C.JUMP.coyote;
   if (input.justPressed('Space') && canAct && !rooted && !local.flight && !local.ride && !local.mrain && now >= local.eyeUntil && !local.blocking
-    && !local.charging && !local.lash && !local.flaskWind && !local.ultWind && !local.ramWind && now >= local.blizzUntil && !local.hover && !local.grab && !me.dead) {
+    && !local.charging && !local.flaskWind && !local.ultWind && !local.ramWind && now >= local.blizzUntil && !local.hover && !local.grab && !me.dead) {
     const air = !onFloor && !coyote;
     if (air ? !local.airJumped && me.st >= C.AIR_JUMP.stamina && !(local.jump && now - local.jump.start < 0.06) : me.st >= C.JUMP.stamina) {
       const y0 = local.pos.y;
@@ -2144,10 +2136,10 @@ function updateLocal(dt) {
     R.heading += THREE.MathUtils.clamp(Math.atan2(Math.sin(want - R.heading), Math.cos(want - R.heading)), -RIDE.turnRate * rt, RIDE.turnRate * rt);
     mx = 0; mz = 1; fwd.set(Math.sin(R.heading), 0, Math.cos(R.heading));
   }
-  // round 13: only the big wind-ups root us (turning and aiming still work): Meteor's charge, the Lash's and the Ram's
+  // round 13: only the big wind-ups root us (turning and aiming still work): Meteor's charge, the Ram's
   // wind-ups, an ultimate's wind-up, the Blizzard channel, a ledge pull-up (server.js castRooted, the same rule).
   // Other casts slow us (C.CAST_SLOW), as do Cyclone's and Flask Step's short wind-ups.
-  const castRooted = !local.ride && !local.mrain && now >= local.eyeUntil && (local.charging || !!local.lash || !!local.ultWind
+  const castRooted = !local.ride && !local.mrain && now >= local.eyeUntil && (local.charging || !!local.ultWind
     || now < local.blizzUntil || !!local.ramWind || !!local.grab);
   const castSlowed = now < local.castSlowUntil || (!!local.cyclone && !local.cyclone.pulsed) || !!local.flaskWind;
   if (castRooted && !local.wasCastRooted) local.vel.set(0, 0, 0);   // stop dead as the cast starts (a later knockback still lands)
@@ -2247,7 +2239,7 @@ function updateLocal(dt) {
   } else if (local.hover) {
     // round 13: hanging through a rooting wind-up started in the air; at its end (or the wind-up's) we fall
     local.pos.y = Math.max(groundAt(local.pos.x, local.pos.z, local.hover.y), local.hover.y);
-    if (now >= local.hover.until || me.dead || !(local.charging || local.lash || local.ultWind || local.ramWind) || local.mrain) {
+    if (now >= local.hover.until || me.dead || !(local.charging || local.ultWind || local.ramWind) || local.mrain) {
       local.hover = null;
       if (!local.mrain) local.fall = { start: now, y0: local.pos.y, air: true };
     }
@@ -2431,11 +2423,11 @@ function updateHud(dt) {
 
   // charge ring: the meteor's wind-up, or the cyclone's (purple)
   const windup = local.charging ? [local.chargeStart, C.SPELLS.heavy.chargeTime] : local.cyclone && !local.cyclone.pulsed ? [local.cyclone.start, CYC.windup]
-    : local.lash ? [local.lash.start, LASH.windup] : local.fHold ? [local.fHold.start, RELIC.hold] : null;
+      : local.siphon && !local.siphon.sent ? [local.siphon.start, SIPHON.castTime] : local.fHold ? [local.fHold.start, RELIC.hold] : null;
   if (windup) {
     const k = Math.min(1, (now - windup[0]) / windup[1]);
     ui.charge.classList.add('on'); ui.charge.classList.toggle('ready', k >= 1);
-    ui.charge.classList.toggle('cyclone', !!local.cyclone); ui.charge.classList.toggle('lash', !!local.lash || !!local.fHold);
+    ui.charge.classList.toggle('cyclone', !!local.cyclone); ui.charge.classList.toggle('lash', !!local.siphon || !!local.fHold);
     ui.chargeFg.style.strokeDashoffset = 163.4 * (1 - k);
   } else ui.charge.classList.remove('on');
 
@@ -2457,7 +2449,7 @@ function updateHud(dt) {
   ui.ab.fast.classList.toggle('reloading', !!local.reloadUntil);
   cdFill('power', local.cd.power, SPELL[K.power].cooldown);
   // Black Death: the whip's stored charge, as a crimson ring around the RMB slot
-  const whipK = K.guard === 'black_death' ? Math.min(1, (me.lashBonus || 0) / SPELL.black_death.maxBonus) : 0;
+  const whipK = K.guard === 'black_death' ? Math.min(1, (me.siphonBonus || 0) / SPELL.black_death.maxBonus) : 0;
   ui.ab.power.style.setProperty('--whip', whipK.toFixed(3));
   ui.ab.power.classList.toggle('whip', whipK > 0);
   cdFill('mobility', local.cd.mobility, SPELL[K.mobility].cooldown);
@@ -2471,7 +2463,7 @@ function updateHud(dt) {
   if (!me.carrying && now < local.liftCdUntil) cdFill('throw', local.liftCdUntil, SPELL[K.utility].liftCooldown);   // lift cooldown
   else cdFill('throw', local.cd.throw, C.THROW_COOLDOWN);
   ui.ab.block.classList.toggle('active', local.blocking || me.veiled || [...walls.values()].some(w => w.data.owner === myId) || [...firewalls.values()].some(f => f.data.owner === myId) || me.ramGuard);
-  ui.ab.power.classList.toggle('active', local.charging || !!local.cyclone || !!local.lash || local.frostAim);
+  ui.ab.power.classList.toggle('active', local.charging || !!local.cyclone || !!local.siphon || local.frostAim);
   ui.ab.mobility.classList.toggle('active', !!local.flight || !!local.ride);
   ui.ab.block.classList.toggle('disabled', bound || (C.isWard(K.guard) && me.st < 3) || !!local.flight);
   ui.ab.throw.classList.toggle('active', holdingNow || !!local.fHold);
@@ -2585,11 +2577,10 @@ function updateHud(dt) {
 // Charge hum (rising in pitch), ward hum and footsteps follow each wizard around.
 function updateWizardAudio(w, dt) {
   const pos = wpos(w);
-  const charging = (w.charging || w.lashT >= 0 || w.ultWinding) && !w.dead, warding = (w.blocking || w.veiled) && !w.dead;   // Ty's shield hum for both
+  const charging = (w.charging || w.ultWinding) && !w.dead, warding = (w.blocking || w.veiled) && !w.dead;   // Ty's shield hum for both
   if (charging && !w.sndCharge) w.sndCharge = sfx.loop('charge_loop', { pos, vol: 0.55, rate: 0.6 });
   else if (!charging && w.sndCharge) { w.sndCharge.stop(0.08); w.sndCharge = null; }
-  // the lash hum sits lower and rises over its longer wind-up
-  if (w.sndCharge) { w.sndCharge.setPos(pos); w.sndCharge.setRate(w.lashT >= 0 ? 0.4 + Math.min(1, w.lashT / LASH.windup) * 0.5 : 0.6 + Math.min(1, w.chargeT / C.SPELLS.heavy.chargeTime) * 0.9); }
+  if (w.sndCharge) { w.sndCharge.setPos(pos); w.sndCharge.setRate(0.6 + Math.min(1, w.chargeT / C.SPELLS.heavy.chargeTime) * 0.9); }
   if (warding && !w.sndWard) w.sndWard = sfx.loop('ward_loop', { pos, vol: 0.45, fadeIn: 0.12 });
   else if (!warding && w.sndWard) { w.sndWard.stop(0.2); w.sndWard = null; }
   if (w.sndWard) w.sndWard.setPos(pos);

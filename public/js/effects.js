@@ -7,7 +7,7 @@ import { SpriteFX } from './sprites.js';
 // Round 15 (the castle): the floor under a point (a wall-walk, a roof, else the ground): where a placed effect sits.
 const floorUnder = (p) => (C.surfaceHeight ? C.surfaceHeight(p[0], p[2], (p[1] || 0) + 0.3) : 0);
 
-const SPELL_COLORS = { fast: 0x7ad8ff, heavy: 0xff7a2a, prop: 0xb48cff, skim: 0xbfeaff, lash: 0xff2a3c, fireball: 0xff6a1e, shear: 0xd8c8ff, hex: 0xff1f3d, sling: 0xd8c8a8, potion: 0xa050e0, toxic: 0x7fd34a, flaskstep: 0xc080ff };
+const SPELL_COLORS = { fast: 0x7ad8ff, heavy: 0xff7a2a, prop: 0xb48cff, skim: 0xbfeaff, siphon: 0xff2a3c, fireball: 0xff6a1e, shear: 0xd8c8ff, hex: 0xff1f3d, sling: 0xd8c8a8, potion: 0xa050e0, toxic: 0x7fd34a, flaskstep: 0xc080ff };
 const HEX_SHAPES = [3, 4, 0];   // Hex Shards: a triangle, a diamond, then a crescent (0)
 const BULWARK = C.SPELLBOOK.glacial_bulwark, FROST = C.SPELLBOOK.frostfall, SMOKE = C.SPELLBOOK.smoke_screen;
 const CAGE = C.SPELLBOOK.night_cage;
@@ -313,14 +313,16 @@ export class Effects {
       g.add(shard, glow);
       g.lookAt(msg.v[0], 0, msg.v[2]);
       g.userData.aim = true;
-    } else if (msg.kind === 'lash') {
-      // the whip: a long blood-red streak with a bright tip
-      const tip = new THREE.Mesh(this.sphereGeo, this.mat(0xffd0d4));
-      tip.scale.setScalar(0.14);
-      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.13, 2.6, 6, 1, true).rotateX(Math.PI / 2).translate(0, 0, -1.3),
-        this.mat(0xff2a3c, { opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false }));
-      g.add(tip, body);
-      light = new THREE.PointLight(0xff2a3c, 4, 7);
+    } else if (msg.kind === 'siphon') {
+      // round 16, Blood Siphon: a crimson core in a dark blood glow, stretched a little along its flight
+      const core = new THREE.Mesh(this.sphereGeo, this.mat(0xffc0c8));
+      core.scale.setScalar(0.13);
+      const glow = new THREE.Mesh(this.sphereGeo, this.mat(0xd8102c, { opacity: 0.75, blending: THREE.AdditiveBlending, depthWrite: false }));
+      glow.scale.set(0.3, 0.3, 0.55);
+      const shadow = new THREE.Mesh(this.sphereGeo, this.mat(0x30000a, { opacity: 0.55, depthWrite: false }));
+      shadow.scale.set(0.36, 0.36, 0.7);
+      g.add(shadow, glow, core);
+      light = new THREE.PointLight(0xff2a3c, 3.5, 6);
       g.add(light);
       g.userData.aimV = new THREE.Vector3(msg.v[0], msg.v[1], msg.v[2]);
     } else {
@@ -334,7 +336,7 @@ export class Effects {
     g.position.set(msg.p[0], msg.p[1], msg.p[2]);
     this.scene.add(g);
     // a soft textured glow riding on the projectile (and a ring on the big ones)
-    const fk = msg.fin ? 1.3 : 1, coreSize = { fast: 0.8, fireball: 1.4, heavy: 2, hex: 0.9, lash: 0.8, potion: 0.7, toxic: 0.7, flaskstep: 0.6, skim: 0.5, shear: 0.9 }[msg.kind];
+    const fk = msg.fin ? 1.3 : 1, coreSize = { fast: 0.8, fireball: 1.4, heavy: 2, hex: 0.9, siphon: 0.8, potion: 0.7, toxic: 0.7, flaskstep: 0.6, skim: 0.5, shear: 0.9 }[msg.kind];
     const cores = [];
     if (coreSize) {
       cores.push(this.S('circle_05', { follow: g, size: coreSize * fk * 0.8, life: 60, color, alpha: 0.4, fadeIn: 0 }));
@@ -364,7 +366,7 @@ export class Effects {
       else if (pr.kind === 'fast') { this.burst(p, pr.color, pr.fin ? 22 : 14, pr.fin ? 5 : 4, pr.fin ? 0.5 : 0.4); this.S('magic_05', { p, size: [pr.fin ? 1.6 : 1.1, 0.2], life: 0.2, color: pr.color, alpha: 0.9 });
         this.S(Math.random() < 0.5 ? 'spark_01' : 'spark_02', { p, size: [pr.fin ? 1.5 : 1, 1.3], life: 0.16, color: pr.color, alpha: 1, fadeIn: 0.02 }); }   // a crackle
       else if (pr.kind === 'skim') { this.burst(p, 0xdff6ff, 9, 3, 0.25, 4); this.S('star_06', { p, size: [0.9, 0.2], life: 0.2, color: 0xe8fbff }); }
-      else if (pr.kind === 'lash') { this.burst(p, 0xff2a3c, 14, 4, 0.35); this.slash(p, 0xff2a3c, 1.1); this.S('scratch_01', { p, size: [1.2, 1.6], life: 0.22, color: 0xff6070, alpha: 0.9 }); }
+      else if (pr.kind === 'siphon') { this.burst(p, 0xff2a3c, 14, 4, 0.35); this.burst(p, 0x40000c, 8, 2, 0.45, 0); }
       else if (pr.kind === 'fireball') {
         this.burst(p, 0xff7a1e, pr.fin ? 30 : 20, pr.fin ? 6 : 5, pr.fin ? 0.7 : 0.55); this.fireBurst(p, pr.fin ? 1.2 : 0.85, pr.fin ? 8 : 5);
         this.smokeBurst(p, pr.fin ? 1 : 0.7, pr.fin ? 3 : 2, 0x4a3a30, 0.4);
@@ -528,8 +530,22 @@ export class Effects {
     if (type === 'potion') { this.burst(pos, 0x5cf0b0, 22, 5, 0.45); this.burst(pos, 0xd98cff, 14, 3.5, 0.4, -1); }   // potion splash
   }
 
-  // ---------------------------------------------------------------- Sanguine Lash / Mirror Step / Bulwark / Relic
-  // A bound wizard: a crimson snap where the whip caught them.
+  // ---------------------------------------------------------------- Blood Siphon / binds / Mirror Step / Bulwark / Relic
+  // Round 16, Blood Siphon's drain: a red ribbon of light flowing from the victim (`from`, [x, y, z]) back to the caster
+  // (`toObj`, an Object3D followed as it moves) over about 0.35 s.
+  siphonTracer(from, toObj) {
+    const N = this.low ? 6 : 12, start = new THREE.Vector3(from[0], from[1], from[2]);
+    for (let i = 0; i < N; i++) {
+      const delay = i * 0.025, life = 0.32;
+      setTimeout(() => {
+        const to = toObj.position.clone(); to.y += 1.1;
+        const v = to.clone().sub(start).multiplyScalar(1 / life);
+        this.S(i % 3 ? 'circle_05' : 'trace_01', { p: [start.x, start.y, start.z], v: [v.x, v.y, v.z], size: [i % 3 ? 0.22 : 0.5, 0.06], life, color: i % 2 ? 0xff2a3c : 0xffa0b0, alpha: 0.95,
+          ...(i % 3 ? {} : { mode: 'streak', axis: [v.x, v.y, v.z], aspect: 1.4 }) });
+      }, delay * 1000);
+    }
+  }
+  // A bound wizard (Frostfall, Blizzard, a Bulwark's freeze): a crimson snap.
   bind(pos) {
     const p = new THREE.Vector3(pos[0], pos[1] + 1, pos[2]);
     this.burst(p, 0xff2a3c, 18, 4, 0.4, 0);
@@ -1313,8 +1329,9 @@ export class Effects {
       case 'skim':
         this.S('star_01', { p, size: [0.45 * fin, 0.08], life: 0.25, color: 0xcff2ff, alpha: 0.9, rot: 0 });
         break;
-      case 'lash':
-        this.S('trace_01', { p, mode: 'streak', axis: ax, size: [1.3, 0.6], aspect: 1.5, life: 0.25, color: 0xff2a3c, alpha: 0.9 });
+      case 'siphon':   // a dark blood trail with crimson motes
+        this.S('trace_01', { p, mode: 'streak', axis: ax, size: [0.9, 0.35], aspect: 1.5, life: 0.22, color: 0x7a0016, alpha: 0.8, add: false, optional: true });
+        this.S('circle_05', { p: jit(0.12), size: [0.2, 0.04], life: 0.35, color: 0xff3048, alpha: 0.9 });
         break;
       case 'potion': case 'toxic': case 'flaskstep':
         this.S(Math.random() < 0.7 ? 'circle_05' : 'magic_05', { p: jit(0.15), v: [(Math.random() - 0.5) * 0.4, 0.3, (Math.random() - 0.5) * 0.4], size: [0.35 * fin, 0.05], life: 0.45, spin: 3, color, alpha: 0.8 });
@@ -1354,7 +1371,7 @@ export class Effects {
         pr.slingK = Math.min(1, pr.age * C.SPELLS.sling.speed / C.SPELLS.sling.farDist);
         const gl = pr.group.userData.slingGlow; gl.material.opacity = 0.08 + 0.7 * pr.slingK; gl.scale.setScalar(0.12 + 0.16 * pr.slingK);
       }
-      const interval = (pr.kind === 'heavy' || pr.kind === 'lash' || pr.kind === 'fireball' ? 0.025 : 0.035) * (this.low ? 2 : 1);
+      const interval = (pr.kind === 'heavy' || pr.kind === 'siphon' || pr.kind === 'fireball' ? 0.025 : 0.035) * (this.low ? 2 : 1);
       if (pr.trail > interval) { pr.trail = 0; this.trail(pr); }
     }
 

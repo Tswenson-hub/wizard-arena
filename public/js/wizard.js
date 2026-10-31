@@ -33,7 +33,7 @@ function bubbleMaterial(color, { opacity = 0, fill = 0.07, rim = 1, ripple = 0.2
 }
 const shellMat = bubbleMaterial(TK_COLOR, { opacity: 0.9, fill: 0.05, rim: 0.9, ripple: 0.18 });
 
-const CYC = C.SPELLBOOK.cyclone, LASH = C.SPELLBOOK.sanguine_lash;
+const CYC = C.SPELLBOOK.cyclone;
 // Natural ground speed (m/s) of each locomotion clip at 1x, so playback = actual speed / natural speed and the
 // feet don't slide. looks.js measures each body's clips (clip.userData.speed); these are the fallbacks.
 const NATURAL_SPEED = { run: 4.6, walk_fight: 1.5, back: 1.2, crouch_walk: 1.0, strafe_left: 3.5, strafe_right: 3.5 };
@@ -64,17 +64,6 @@ function legacyPhase(name, timeScale, startAt) {
 // Landings and flips may cut these short (an air cast, a flip, an air roll); anything else playing at touchdown goes on.
 const LANDABLE = /^(jump|double_jump|float|air_cast|roll_air)/;
 
-// Sanguine Lash: the whip coiling around the caster during the wind-up (a helix of blood-red light).
-const coilGeo = (() => {
-  const pts = [];
-  for (let i = 0; i <= 120; i++) {
-    const k = i / 120, a = k * Math.PI * 2 * 3.2;
-    const r = 0.55 + Math.sin(k * Math.PI) * 0.25;
-    pts.push(new THREE.Vector3(Math.sin(a) * r, 0.15 + k * 1.9, Math.cos(a) * r));
-  }
-  return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 160, 0.035, 5, false);
-})();
-const coilMat = new THREE.MeshBasicMaterial({ color: 0xff2a3c, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false });
 // Bound wizards: crimson chain rings around the body.
 const chainGeo = new THREE.TorusGeometry(0.62, 0.045, 5, 28);
 const chainMat = new THREE.MeshBasicMaterial({ color: 0xff3048, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false });
@@ -234,11 +223,7 @@ export class Wizard {
     this.shadow.visible = false;
     scene.add(this.shadow);
 
-    // Sanguine Lash wind-up coil, bind chains (with a crimson rune underfoot), frost when slowed
-    this.coil = new THREE.Mesh(coilGeo, coilMat.clone());
-    this.coil.visible = false;
-    this.group.add(this.coil);
-    this.lashT = -1;             // seconds into our lash wind-up; -1 = none
+    // bind chains (with a crimson rune underfoot), frost when slowed
     this.chains = new THREE.Group();
     for (let i = 0; i < 3; i++) {
       const ring = new THREE.Mesh(chainGeo, chainMat);
@@ -303,7 +288,7 @@ export class Wizard {
     this.group.add(this.veil);
     this.veiled = false; this.veilFlashT = 0;
     this.frozen = false;
-    this.bound = false; this.slowed = false; this.lashing = false;
+    this.bound = false; this.slowed = false; this.siphoning = false;
 
     this.nameplate = makeNameplate(this.bot ? `${info.name} · ${this.bot}` : info.name, info.color);
     this.nameplate.position.y = BODY_TOP + 0.4;
@@ -470,7 +455,6 @@ export class Wizard {
     this.getupTimer = setTimeout(() => { if (!this.dead) this.oneShot('getup', K.getup, gu.getClip().duration / K.getup, 0); }, (K.fall + K.down) * 1000);
   }
 
-  // A body with its own lash clip (Vesper) plays it from the start: the strike lands on the 1.5 s release.
   // Smoke Screen: hidden from a viewer outside the cloud. Fades the body, ring, nameplate and health bar.
   setHidden(hidden, dt) {
     const want = hidden ? 1 : 0;
@@ -499,11 +483,6 @@ export class Wizard {
   // an absorbed hit makes the veil flash
   veilFlash() { this.veilFlashT = 0.25; }
 
-  startLash() { this.lashT = 0; this.body?.setWhip?.('out'); this.whipOut = true; this.whipCoilAt = 0; if (this.actions.lash) this.oneShot('lash', LASH.windup + 0.6, 1, 0); }
-  endLash() {
-    if (this.lashT >= 0 && this.current === 'lash' && this.lashT < LASH.windup - 0.1) this.oneShotUntil = 0;   // cancelled: back to the base state
-    this.lashT = -1;
-  }
   // Own decoys are drawn see-through on the caster's screen.
   makeGhost() {
     this.model.traverse(o => {
@@ -628,7 +607,7 @@ export class Wizard {
       if (back && this.floatT > 1) this.actions.float.time = this.actions.float.getClip().duration;
     }
     else if (!this.inOneShot()) {
-      const windup = this.charging || this.lashT >= 0 || (this.cycloneT >= 0 && this.cycloneT < CYC.windup);
+      const windup = this.charging || (this.cycloneT >= 0 && this.cycloneT < CYC.windup);
       // moving slowly in a wind-up or behind a ward: the fight walk; standing: the cast or ward pose
       const loco = this.locomotion(m, windup || this.blocking || this.slowed);
       if (windup) this.setBase(loco || 'cast_heavy', 0.1);
@@ -672,12 +651,6 @@ export class Wizard {
       const c = WARD.r * 0.98 + Math.sin(tNow * 9) * 0.03;
       this.wardFill.scale.set(c, WARD.h * 0.98 + Math.cos(tNow * 7) * 0.04, c);
     }
-    // Vesper's whip: out in her hand through the Lash, coiled at her hip again half a second after
-    if (this.whipOut && this.lashT < 0) {
-      this.whipCoilAt ||= tNow + 0.5;
-      if (tNow >= this.whipCoilAt) { this.body.setWhip?.('coiled'); this.whipOut = false; this.whipCoilAt = 0; }
-    }
-
     // charge orb follows the staff hand
     // the staff hand glows through a heavy wind-up, and gold through an ultimate's wind-up
     const glowing = (this.charging || this.ultWinding) && !this.dead;
@@ -771,20 +744,9 @@ export class Wizard {
       : 0.9 * (1 - (this.cycloneT - CYC.windup) / (fadeOut - CYC.windup));
   }
 
-  // Lash coil (tightening and brightening over the wind-up), chains when bound, frost when slowed.
+  // Chains when bound, frost when slowed.
   updateBinds(dt) {
     const now = performance.now() / 1000;
-    if (this.dead) this.lashT = -1;
-    if (this.lashT >= 0) {
-      this.lashT += dt;
-      const k = Math.min(1, this.lashT / LASH.windup);
-      this.coil.visible = true;
-      this.coil.rotation.y += dt * (2 + k * 9);
-      const s = 1.35 - k * 0.4 + Math.sin(this.lashT * 25) * 0.03 * k;
-      this.coil.scale.set(s, 0.6 + k * 0.4, s);
-      this.coil.material.opacity = 0.35 + 0.6 * k;
-      if (this.lashT > LASH.windup + 0.6) this.lashT = -1;   // missed the release message
-    } else this.coil.visible = false;
     this.chains.visible = this.bound && !this.frozen && !this.dead;
     this.veil.visible = this.veiled && !this.dead;
     if (this.veil.visible) {

@@ -46,7 +46,7 @@ const DIFFICULTY = {
   },
 };
 
-const CYC = C.SPELLBOOK.cyclone, SKY = C.SPELLBOOK.skyward, LASH = C.SPELLBOOK.sanguine_lash;
+const CYC = C.SPELLBOOK.cyclone, SKY = C.SPELLBOOK.skyward, SIPHON = C.SPELLBOOK.sanguine_lash;   // (Blood Siphon keeps the Lash's id)
 const BULWARK = C.SPELLBOOK.glacial_bulwark, SKIM = C.SPELLS.skim, RELIC = C.SPELLBOOK.trapped_relic, FROST = C.SPELLBOOK.frostfall;
 const SMOKE = C.SPELLBOOK.smoke_screen, ROLL = C.SPELLBOOK.roll;
 const EYE = C.SPELLBOOK.eye_of_storm, CAGE = C.SPELLBOOK.night_cage, BLIZ = C.SPELLBOOK.blizzard, MRAIN = C.SPELLBOOK.meteor_rain;
@@ -95,7 +95,7 @@ export function createBot(difficulty) {
     targetId: null, retargetAt: 0,
     threats: new Map(),          // projectile id -> { seenAt, react, handled, ignore }
     chargeSeen: new Map(),       // enemy id -> time we noticed their meteor wind-up
-    lashFireAt: 0,               // our own Sanguine Lash: when to let it go
+    siphonFireAt: 0,             // our own Blood Siphon: when its 0.35 s cast is done
     decoyId: null,               // the Mirror Step decoy we were fooled into chasing
     seenDecoys: new Set(),
     burned: new Map(),           // prop id -> time a Trapped Relic blew up on us (Hard bots remember)
@@ -169,11 +169,11 @@ const canAct = (q, t) => !q.dead && !isStunned(q, t) && !(q.silenceUntil > t);
 const rooted = (q, t) => q.rootUntil > t;
 const airborne = (q, t) => q.flightUntil > t || !!q.jump || !!q.hover || q.p[1] > C.surfaceHeight(q.p[0], q.p[2], q.p[1]) + 0.05;   // (standing on a platform isn't)
 // Round 9: a jump the server will take (it checks the same and more)
-const canJump = (q, t) => !q.jump && !q.grab && !airborne(q, t) && q.st >= C.JUMP.stamina + 15 && !q.blocking && !q.charging && !q.lash && !q.ramWind && !q.ultWind && !q.flaskWind
+const canJump = (q, t) => !q.jump && !q.grab && !airborne(q, t) && q.st >= C.JUMP.stamina + 15 && !q.blocking && !q.charging && !q.siphon && !q.ramWind && !q.ultWind && !q.flaskWind
   && !q.ride && !q.eye && !q.mrain && !(q.rootUntil > t) && !(q.stunUntil > t);
 // Round 13: the air jump (once per airtime, from any height it's at)
 const canAirJump = (q, t) => airborne(q, t) && !(q.flightUntil > t) && !q.airJumped && !q.hover && !q.grab && q.st >= C.AIR_JUMP.stamina + 5 && !q.blocking && !q.charging
-  && !q.lash && !q.ramWind && !q.ultWind && !q.flaskWind && !q.ride && !q.eye && !q.mrain && !q.mrainFall && !(q.rootUntil > t) && !(q.stunUntil > t) && !(q.airDashUntil > t);
+  && !q.siphon && !q.ramWind && !q.ultWind && !q.flaskWind && !q.ride && !q.eye && !q.mrain && !q.mrainFall && !(q.rootUntil > t) && !(q.stunUntil > t) && !(q.airDashUntil > t);
 // Round 9: the way up to a platform. A ramp whose high end reaches `destY` near `dest` ([x, z]): its foot, then up it.
 // If that ramp starts on another piece (the ruin bridge between ledges), the way up to its foot first (one level).
 const rampHigh = (s) => { const lz = (s.y1 >= s.y0 ? 1 : -1) * s.d / 2, c = Math.cos(s.yaw || 0), n = Math.sin(s.yaw || 0); return [s.x + lz * n, s.z + lz * c]; };
@@ -224,14 +224,14 @@ function raiseFirewall(me, toward, act) {
   act({ t: 'firewall', yaw: me.yaw });
 }
 // winding something up that a well-timed interrupt stops (an ultimate's wind-up, and Meteor Rain's hover, included)
-// Round 13 (server.js castRooted; the same rule): only the big wind-ups root (Meteor's charge, the Lash's and the Ram's
+// Round 13 (server.js castRooted; the same rule): only the big wind-ups root (Meteor's charge, the Ram's
 // wind-ups, an ultimate's wind-up, the Blizzard channel, a pull-up). Other casts slow (C.CAST_SLOW), as do Cyclone's and
 // Flask Step's short wind-ups: bots strafe while they fire.
 const castRootedBot = (q, t) => !(q.eye || q.ride || q.mrain || q.mrainFall)
-  && (q.charging || !!q.lash || !!q.ramWind || !!q.grab || !!q.ultWind || !!q.blizz);
+  && (q.charging || !!q.ramWind || !!q.grab || !!q.ultWind || !!q.blizz);
 const castSlowedBot = (q, t) => t < (q.castSlowUntil || 0) || (!!q.cyclone && !q.cyclone.pulsed) || !!q.flaskWind;
 // (a winding Jeb is a target to interrupt; so is anyone hanging in mid-air through a wind-up: q.hover)
-const busyCasting = (q) => q.charging || !!q.lash || !!q.ramWind || cycloneWindingUp(q) || !!q.ultWind || !!q.hover || (!!q.mrain && q.mrain.phase !== 'dive');
+const busyCasting = (q) => q.charging || !!q.siphon || !!q.ramWind || cycloneWindingUp(q) || !!q.ultWind || !!q.hover || (!!q.mrain && q.mrain.phase !== 'dive');
 // the primary can fire now (cooldown, and the magazine isn't reloading)
 const primaryReady = (me, t) => t >= me.cd.fast && !(me.reloadUntil > t) && me.ammo > 0;
 
@@ -239,7 +239,7 @@ const primaryReady = (me, t) => t >= me.cd.fast && !(me.reloadUntil > t) && me.a
 function decoyTarget(d, owner) {
   return {
     id: 'decoy' + d.id, decoy: d.id, p: d.p, yaw: d.yaw, vel: [d.dir[0] * C.speedOf(), d.dir[2] * C.speedOf()],
-    hp: owner.hp, st: owner.st, dead: false, flightUntil: 0, stunUntil: 0, blocking: false, charging: false, cyclone: null, lash: null,
+    hp: owner.hp, st: owner.st, dead: false, flightUntil: 0, stunUntil: 0, blocking: false, charging: false, cyclone: null, siphon: null,
   };
 }
 
@@ -393,19 +393,6 @@ function think(me, world, t) {
     rec.handled = true; reacted = true;
     respondCyclone(me, q, t, act);
   }
-  // an enemy Sanguine Lash winding up, pointed at us: wall it, ward it, or step off the line as it fires
-  for (const q of world.players.values()) {
-    const key = 'lash' + q.id;
-    if (q === me || q.dead || !q.lash || !foe(me, q)) { b.threats.delete(key); continue; }
-    const dq = dist2D(me.p, q.p);
-    if (dq > LASH_RANGE + 2 || !facingWithin(q, me.p, 25) || !hasLOS(q.p, me.p)) continue;
-    let rec = b.threats.get(key);
-    if (!rec) { rec = newThreat(cfg, t); b.threats.set(key, rec); }
-    if (rec.ignore || t < rec.seenAt + rec.react) continue;
-    if (!rec.plan) rec.plan = lashPlan(me, dq, t);
-    runLashPlan(me, q, rec, q.lash.start + LASH.windup, dq, t, act);
-  }
-
   // standing in a Frostfall shadow: walk out of the circle (or blink / flash / mirror out if there's no time)
   for (const k of b.threats.keys()) if (typeof k === 'string' && k.startsWith('frost') && !world.frostfalls?.has(+k.slice(5))) b.threats.delete(k);
   for (const f of world.frostfalls?.values() || []) {
@@ -431,11 +418,11 @@ function think(me, world, t) {
     const tgt = target && !target.dead ? target : null;
     act({ t: 'chargeRelease', dir: tgt ? aimAt(me, from, tgt, C.SPELLS.heavy.speed, 0, cfg) : [Math.sin(me.yaw), 0, Math.cos(me.yaw)] });
   }
-  if (me.lash && t >= b.lashFireAt) {
-    const from = [me.p[0], me.p[1] + 1.3, me.p[2]];
+  if (me.siphon && t >= b.siphonFireAt) {
     const tgt = target && !target.dead ? target : null;
     if (tgt) me.yaw = yawTo(me.p, tgt.p);
-    act({ t: 'lashRelease', dir: tgt ? aimAt(me, from, tgt, C.SPELLS.lash.speed, 0, cfg) : [Math.sin(me.yaw), 0, Math.cos(me.yaw)] });
+    const from = C.castPoint(me.p, me.yaw);
+    act({ t: 'siphonRelease', origin: from, dir: tgt ? aimAt(me, from, tgt, C.SPELLS.siphon.speed, 0, cfg) : [Math.sin(me.yaw), 0, Math.cos(me.yaw)] });
   }
   // a curse being laid: like a player, the bot holds F on the prop for RELIC.hold seconds
   if (b.cursing) {
@@ -456,7 +443,7 @@ function think(me, world, t) {
     if (Math.random() < cfg.aggression && tryUltimate(me, world, t, act, target)) return;
   }
 
-  if (!free || !target || me.blocking || me.charging || me.cyclone || me.lash || t < (b.ramDanger || 0)) return;
+  if (!free || !target || me.blocking || me.charging || me.cyclone || me.siphon || t < (b.ramDanger || 0)) return;
   // a cast roots us: finish a dodge first, cast from where we mean to stand (a wind-up to punish is worth stopping for)
   if (t < b.dodgeUntil && !busyCasting(target)) return;
   const meAir = airborne(me, t);
@@ -469,7 +456,7 @@ function think(me, world, t) {
   // a Ram Guard turns our shots into rams charging back at us: hold fire until it's gone
   if (guarded(target, t) && !target.decoy) return;
 
-  // ---- punish a meteor, lash or cyclone wind-up with a spark (interrupts it)
+  // ---- punish a meteor or cyclone wind-up with a spark (interrupts it)
   if (busyCasting(target) && los && d < 26) {
     if (!b.chargeSeen.has(target.id)) b.chargeSeen.set(target.id, { at: t, go: Math.random() < cfg.punish });
     const seen = b.chargeSeen.get(target.id);
@@ -565,13 +552,13 @@ function think(me, world, t) {
       b.diveUntil = t + 2.5;
       if (veilReady(me, t) && d > 4.5 && d < 9 && cfg.blinkDodge) { act({ t: 'veil' }); return; }   // the veil lasts 2 s: only from where she can close in
     }
-  } else if (K.power === 'sanguine_lash' && powerReady && !targetAir && !me.carrying) {
-    // Lash: best when they're stuck in place, or when it can pierce two of them
-    const window = targetStunned || rooted(target, t) || busyCasting(target) || linedUp(me, target, world, t) || Math.random() < 0.2;
-    if (d > 4 && d < LASH_RANGE - 2 && window && !targetWarded && !lineBlocked([me.p[0], 1.3, me.p[2]], [target.p[0] - me.p[0], 0, target.p[2] - me.p[2]], d, C.SPELLS.lash.radius)) {
+  } else if (K.power === 'sanguine_lash' && powerReady && !me.carrying) {
+    // Blood Siphon (round 16): a poke that heals. Always worth it in range; more eager the more hurt we are.
+    const want = me.hp < 75 || targetStunned || busyCasting(target) || Math.random() < cfg.aggression * 0.6;
+    if (want && d < SIPHON_RANGE - 2 && !targetWarded && !lineBlocked([me.p[0], 1.3, me.p[2]], [target.p[0] - me.p[0], 0, target.p[2] - me.p[2]], d, C.SPELLS.siphon.radius)) {
       me.yaw = yawTo(me.p, target.p);
-      act({ t: 'lashStart' });
-      if (me.lash) b.lashFireAt = t + LASH.windup + 0.02;
+      act({ t: 'siphonStart' });
+      if (me.siphon) b.siphonFireAt = t + SIPHON.castTime + 0.02;
       return;
     }
   } else if (K.power === 'toxic_flask' && powerReady && !targetAir && !me.carrying && d < TOXIC.range - 1) {
@@ -782,7 +769,7 @@ function reactToUltimates(me, world, t, act) {
   }
 }
 
-const LASH_RANGE = C.SPELLS.lash.speed * C.SPELLS.lash.life;
+const SIPHON_RANGE = C.SPELLS.siphon.speed * C.SPELLS.siphon.life;
 
 // Meteor Rain, from up there: aim at the best target (where it will be by the time we land), and dive after a short
 // look (sooner if they're stuck); the server dives on its own at the end of the hover.
@@ -987,20 +974,12 @@ function lowLineBlocked(from, dir, range, radius) {
   return C.COLLIDERS.some(c => c.h > from[1] && segDist(from, to, c) < c.r + radius + 0.1);
 }
 
-// Another enemy close to the line from us through the target: a lash would pierce both.
-function linedUp(me, target, world, t) {
-  const dx = target.p[0] - me.p[0], dz = target.p[2] - me.p[2], l = Math.hypot(dx, dz) || 1;
-  const end = [me.p[0] + dx / l * (LASH_RANGE - 1), 0, me.p[2] + dz / l * (LASH_RANGE - 1)];
-  return [...world.players.values()].some(q => q !== me && q.id !== target.id && !q.dead && foe(me, q) && !airborne(q, t)
-    && segDist(me.p, end, { x: q.p[0], z: q.p[2] }) < 1 && dist2D(me.p, q.p) > 3);
-}
-
 // A ram is charging at us: flash up out of reach, spin it dizzy if the cyclone lands first, wall it
 // off, ward facing it if we can afford it, else blink, mirror-step or dive aside.
 function respondRam(me, world, g, vel, tc, t, act) {
   const b = me.bot, K = kit(me);
   if (me.charging) act({ t: 'chargeRelease', dir: [Math.sin(me.yaw), 0, Math.cos(me.yaw)] });   // abandon the meteor
-  if (me.lash) act({ t: 'lashRelease', dir: [Math.sin(me.yaw), 0, Math.cos(me.yaw)] });          // and the lash
+  if (me.siphon) act({ t: 'siphonRelease', dir: [Math.sin(me.yaw), 0, Math.cos(me.yaw)] });          // and the siphon
   if (!canAct(me, t) || airborne(me, t) || me.cyclone) return;
   if (K.mobility === 'skyward' && b.cfg.blinkDodge && mobilityReady(me, t)) return act({ t: 'skyward' });
   if (world.cycloneStopsRams && K.power === 'cyclone' && t >= me.cd.power && !me.carrying
@@ -1141,7 +1120,7 @@ function raiseWall(me, toward, act) {
 function respondCyclone(me, caster, t, act) {
   const b = me.bot, cfg = b.cfg, K = kit(me);
   if (me.charging) act({ t: 'chargeRelease', dir: [Math.sin(me.yaw), 0, Math.cos(me.yaw)] });
-  if (me.lash) act({ t: 'lashRelease', dir: [Math.sin(me.yaw), 0, Math.cos(me.yaw)] });
+  if (me.siphon) act({ t: 'siphonRelease', dir: [Math.sin(me.yaw), 0, Math.cos(me.yaw)] });
   if (!canAct(me, t) || me.cyclone) return;
   const left = caster.cyclone.pulseAt - t;
   const d = dist2D(me.p, caster.p);
@@ -1194,41 +1173,9 @@ function respondFrostfall(me, f, df, t, act) {
     if (K.mobility === 'blink') return blinkAway(me, out, act);
     if (K.mobility === 'smoke_screen') return smokeAway(me, out, act);
   }
-  if (me.charging || me.lash) act({ t: me.charging ? 'chargeRelease' : 'lashRelease', dir: [Math.sin(me.yaw), 0, Math.cos(me.yaw)] });
+  if (me.charging || me.siphon) act({ t: me.charging ? 'chargeRelease' : 'siphonRelease', dir: [Math.sin(me.yaw), 0, Math.cos(me.yaw)] });
   b.dodgeVec = [out[0], out[2]];
   b.dodgeUntil = f.at + 0.1;
-}
-
-// How to meet a lash wind-up aimed at us. Mobility is saved for the whip itself (respond()), since
-// moving before it fires only moves the aim.
-function lashPlan(me, d, t) {
-  const K = kit(me);
-  if (wallReady(me, t) && d > BULWARK.dist + 1) return 'wall';
-  if (firewallReady(me, t) && d > FIREWALL.dist + 1.5) return 'fire';
-  if (C.isWard(K.guard) && me.st >= C.SPELLS.lash.staminaCost * (C.SPELLBOOK[K.guard].hitCostMul ?? 1) + 5 && !me.carrying && !airborne(me, t)) return 'ward';
-  if (me.bot.cfg.blinkDodge && mobilityReady(me, t) && K.mobility !== 'skyward') return 'whip';
-  return 'side';
-}
-function runLashPlan(me, caster, rec, fireAt, d, t, act) {
-  const b = me.bot;
-  if (rec.plan === 'done' || rec.plan === 'whip' || !canAct(me, t)) return;
-  if (rec.plan === 'wall') { if (wallReady(me, t)) raiseWall(me, caster.p, act); rec.plan = 'done'; return; }
-  // the Firewall only lasts 2.5 s: raise it just before the whip flies
-  if (rec.plan === 'fire') { if (t >= fireAt - 0.4) { if (firewallReady(me, t)) raiseFirewall(me, caster.p, act); rec.plan = 'done'; } return; }
-  const travel = d / C.SPELLS.lash.speed;
-  if (rec.plan === 'ward' && t >= fireAt - 0.3) {
-    if (me.charging || me.lash || me.cyclone) return;
-    me.yaw = yawTo(me.p, caster.p);
-    act({ t: 'block', on: true });
-    b.blockUntil = fireAt + travel + 0.3;
-    rec.plan = 'done';
-  } else if (rec.plan === 'side' && t >= fireAt - 0.06) {
-    const dx = me.p[0] - caster.p[0], dz = me.p[2] - caster.p[2], l = Math.hypot(dx, dz) || 1;
-    b.strafe = -b.strafe;   // break the pattern the caster has been leading
-    b.dodgeVec = [-dz / l * b.strafe, dx / l * b.strafe];
-    b.dodgeUntil = fireAt + travel + 0.25;
-    rec.plan = 'done';
-  }
 }
 
 // Use the mobility spell to get off a projectile's line: blink or mirror-step sideways, or flash straight up.
@@ -1245,13 +1192,13 @@ function respond(me, world, t, proj, th, act) {
   const spec = C.SPELLS[proj.kind];
   const incoming = [-proj.v[0], 0, -proj.v[2]];
   const faceIt = () => { me.yaw = Math.atan2(incoming[0], incoming[2]); };
-  const big = proj.kind === 'heavy' || proj.kind === 'lash';
+  const big = proj.kind === 'heavy' || proj.kind === 'siphon';
   if (veiled(me, t)) return;   // nothing gets through the veil: keep casting
 
   // Mid wind-up we can't ward or move well; a smart bot abandons a cast that's about to be stuffed.
-  if (me.charging || me.lash) {
+  if (me.charging || me.siphon) {
     if (cfg.dodge < 0.5) return;
-    act({ t: me.charging ? 'chargeRelease' : 'lashRelease', dir: [Math.sin(me.yaw), 0, Math.cos(me.yaw)] });   // too early: cancels
+    act({ t: me.charging ? 'chargeRelease' : 'siphonRelease', dir: [Math.sin(me.yaw), 0, Math.cos(me.yaw)] });   // too early: cancels
   }
   if (!canAct(me, t) || me.cyclone) return;
 
@@ -1536,7 +1483,7 @@ function moveBot(me, dt, world, t) {
   b.lastPos = me.p.slice();
 
   const moving = Math.hypot(b.vel[0], b.vel[1]) > 0.6;
-  me.anim = me.charging || me.lash || cycloneWindingUp(me) ? 'charge' : me.blocking ? 'block' : moving ? 'run' : 'idle';
+  me.anim = me.charging || me.siphon || cycloneWindingUp(me) ? 'charge' : me.blocking ? 'block' : moving ? 'run' : 'idle';
 }
 
 // Round 10: hurt, and a ready health potion near (one we can reach: its spot has a floor under it): go and drink it,

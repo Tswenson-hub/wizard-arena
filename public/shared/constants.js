@@ -131,15 +131,14 @@ export const SPELLS = {
     slow: 0.35,          // movement slowed by this fraction...
     slowTime: 2,         // ...for this long (refreshed by a new hit, never stacked)
   },
-  lash: {                // Sanguine Lash: a fast whip that pierces every wizard on its path
-    damage: 12,
+  siphon: {              // round 16: Blood Siphon (the Sanguine Lash's slot and id): a fast blood bolt that heals its caster
+    damage: 22,          // ×1.36: 30
     stun: 0,
-    speed: 28,
-    radius: 0.35,
-    life: 22 / 28,       // about 22 m
-    staminaCost: 40,     // a ward facing the caster blocks it
-    knockback: 0,        // a bound wizard doesn't move, knockback included
-    bind: 1.25,          // rooted and silenced
+    speed: 34,
+    radius: 0.32,
+    life: 26 / 34,       // about 26 m
+    staminaCost: 25,     // a ward facing it blocks it, like any bolt
+    knockback: 2,
   },
   fireball: {           // Cinder's primary: a big, hot, slower bolt
     damage: 16,          // round 14: 18 / 26 (round 10: 20 had Cinder on top in 3 of 3 runs)
@@ -468,12 +467,12 @@ export const SPELLBOOK = {
     staminaCost: 35,     // a ward facing the caster blocks it for this much stamina
     cooldown: 5,
   },
-  sanguine_lash: {
-    id: 'sanguine_lash', slot: 'power', name: 'Sanguine Lash', short: 'Lash',
-    blurb: '1.5 s wind-up, then a piercing whip: binds everyone it hits for 1.25 s. Miss and you are rooted.',
-    windup: 1.5,         // can't ward, move at CHARGE_MOVE_SPEED; being hit cancels it
-    missRoot: 1.0,       // the caster's recovery when the whip hits nobody
-    cooldown: 9,         // round 14: 13
+  sanguine_lash: {       // round 16 (Ty: 'the whip doesn't really work'): Blood Siphon. The id stays, so saved loadouts keep it.
+    id: 'sanguine_lash', slot: 'power', name: 'Blood Siphon', short: 'Siphon',
+    blurb: `A fast blood bolt that heals you for half the damage it deals (${D(22)}, so ${Math.round(D(22) * 0.5)} back). A 0.35 s cast you can walk through; a miss costs nothing.`,
+    castTime: 0.35,      // the cast (a slow, no root); being hit or stunned cancels it
+    heal: 0.5,           // the caster heals this share of the damage the bolt dealt
+    cooldown: 7,
   },
   frostfall: {
     id: 'frostfall', slot: 'power', name: 'Frostfall', short: 'Frostfall',
@@ -487,7 +486,7 @@ export const SPELLBOOK = {
     damage: 44,          // round 15: 50 (46% of Power's kills on normal)
     stun: 0,
     knockback: 0,
-    bind: 1.2,           // frozen: rooted and silenced, like the lash's bind (round 15: 1.5)
+    bind: 1.2,           // frozen: rooted and silenced (round 15: 1.5)
     unblockable: true,   // it comes from above: wards and ice walls don't stop it
     airCast: true,       // the one power spell Rime can cast during a Skyward Flash
     cooldown: 10,        // round 14: 14
@@ -570,7 +569,7 @@ export const SPELLBOOK = {
     cooldown: 0,
     drainMul: 2.0,          // stamina drains this much faster than the base ward rate (about 3.6 s from full; round 14: 2.5, 2.9 s)...
     hitCostMul: 2,          // ...and each blocked hit costs this much more (2.5 left Vesper last in the balance match)
-    lashCdPerDamage: 0.1,   // each absorbed point cuts Sanguine Lash's cooldown by this (s)...
+    lashCdPerDamage: 0.1,   // each absorbed point cuts Blood Siphon's cooldown by this (s)...
     bonusPerDamage: 0.5,    // ...and stores this much bonus damage for the next Lash...
     maxBonus: 14,           // ...up to this
     healPerDamage: 0.6,     // Ty: each blocked hit heals her this share of the damage it absorbed (round 15, Ty: 'needs to do more healing'; was 0.3)
@@ -764,7 +763,7 @@ export function cageClamp(pos, cage, inside) {
 export const speedOf = () => MOVE_SPEED;
 // Round 13 (Ty: "most spells should be able to be cast while moving; only significant spells require rooting"): a cast
 // slows the caster to `mult` of their speed for `time` s (a sprint carries on after it). Only the big wind-ups root:
-// Meteor's charge, Sanguine Lash's and Battering Ram's wind-ups, an ultimate's wind-up, the Blizzard channel (and a
+// Meteor's charge, Battering Ram's wind-up, an ultimate's wind-up, the Blizzard channel (and a
 // ledge pull-up). Started in mid-air, those hang the caster at that height until they end (server.js startHover).
 export const CAST_SLOW = { mult: 0.6, time: 0.3 };
 
@@ -973,7 +972,7 @@ export const SPELL_INFO = {
   meteor:        { element: 'fire',   tags: ['Projectile', 'Wind-up'], damage: `${D(SPELLS.heavy.damage)}`, cooldown: S_(SPELLS.heavy.cooldown), range: M_(Math.round(SPELLS.heavy.speed * SPELLS.heavy.life)), windup: S_(SPELLS.heavy.chargeTime) },
   cyclone:       { element: 'wind',   tags: ['Area', 'Wind-up', 'Stuns'], damage: `${D(28)}`, cooldown: S_(5), range: M_(5.5), windup: S_(0.45) },
   frostfall:     { element: 'ice',    tags: ['Area', 'Roots'], damage: `${D(SPELLBOOK.frostfall.damage)}`, cooldown: S_(SPELLBOOK.frostfall.cooldown), range: M_(SPELLBOOK.frostfall.range), windup: S_(1.75), duration: `freeze ${S_(SPELLBOOK.frostfall.bind)}` },
-  sanguine_lash: { element: 'dark',   tags: ['Projectile', 'Wind-up', 'Roots'], damage: `${D(SPELLS.lash.damage)}`, cooldown: S_(SPELLBOOK.sanguine_lash.cooldown), range: M_(22), windup: S_(1.5), duration: 'bind 1.25 s' },
+  sanguine_lash: { element: 'dark',   tags: ['Projectile', 'Heal'], damage: `${D(SPELLS.siphon.damage)}, heals ${Math.round(SPELLBOOK.sanguine_lash.heal * 100)}%`, cooldown: S_(SPELLBOOK.sanguine_lash.cooldown), range: M_(26), windup: S_(SPELLBOOK.sanguine_lash.castTime) },
   battering_ram: { element: 'earth',  tags: ['Summon', 'Wind-up', 'Knockdown'], damage: `${D(SPELLBOOK.battering_ram.damage)}`, cooldown: S_(SPELLBOOK.battering_ram.cooldown), range: M_(36), windup: S_(SPELLBOOK.battering_ram.windup) },
   toxic_flask:   { element: 'acid',   tags: ['Lob', 'Area'], damage: `${D(12)} + ${D(12)}/s`, cooldown: S_(8), range: M_(18), windup: '', duration: S_(5) },
   // shields (R)
@@ -1010,8 +1009,8 @@ export const SPELL_POOL = Object.fromEntries(LOADOUT_SLOTS.map(slot =>
 
 // Cross-spell synergies: each works for whoever has every spell in `spells` equipped (server.js checks `hasCombo`).
 export const COMBOS = [
-  { id: 'blood_lash', name: 'Blood Lash', spells: ['black_death', 'sanguine_lash'],
-    text: 'Damage Black Death absorbs cuts the Lash\'s cooldown and charges its next hit (up to +14).' },
+  { id: 'blood_lash', name: 'Blood Tithe', spells: ['black_death', 'sanguine_lash'],
+    text: 'Damage Sanguine Aegis absorbs cuts Blood Siphon\'s cooldown and charges its next bolt (up to +14).' },
   { id: 'brew_potions', name: 'Hot Brew', spells: ['berserker_brew', 'potion_toss'],
     text: 'Under Berserker Brew, potions and their splash hit 50% harder.' },
   { id: 'brew_pools', name: 'Strong Brew', spells: ['berserker_brew', 'toxic_flask'],

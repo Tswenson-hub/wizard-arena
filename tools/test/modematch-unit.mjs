@@ -611,6 +611,42 @@ async function wallWalkChecks(join, since) {
   const fw = since(B, n, m => m.t === 'firewall' && m.owner === B.id)[0];
   ok(!!fw && near(fw.y), `Firewall stands on the wall-walk (${fw?.y?.toFixed(2)} m)`);
   for (const c of [A, B]) c.ws.close();
+  await wait(300);
+  await siphonChecks(join, since);
+}
+
+// ---- round 16: Blood Siphon (the Lash's id): a 0.35 s cast, a bolt that heals its caster for half its damage; a miss costs nothing
+async function siphonChecks(join, since) {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  const SI = C.SPELLBOOK.sanguine_lash;
+  const S = await join('Siphoner', { power: 'sanguine_lash', utility: 'telekinesis' }), T = await join('Bleeder', { primary: 'fireball', utility: 'telekinesis' });
+  S.send({ t: 'matchDebug', size: 2 }); S.send({ t: 'removeBots' }); await wait(600);
+  const line = clearLine(12);
+  ok(!!line, `a clear line for the Siphon test (${line ? `${line.a[0]}, ${line.a[2]}` : 'none'})`);
+  if (!line) { for (const c of [S, T]) c.ws.close(); return; }
+  const at = (d) => [line.a[0] + line.dir[0] * d, 0, line.a[2] + line.dir[1] * d];
+  S.send({ t: 'debugPlace', p: at(0), yaw: line.yaw, resetCd: true }); T.send({ t: 'debugPlace', p: at(10), yaw: line.yaw + Math.PI, resetCd: true });
+  await wait(2200);
+  const toward = (from, to) => { const d = [to[0] - from[0], to[1] - from[1], to[2] - from[2]], l = Math.hypot(...d); return d.map(v => v / l); };
+  // the bleeder hurts the siphoner first, so there's something to heal
+  T.send({ t: 'cast', kind: 'fireball', origin: [at(10)[0], 1.3, at(10)[2]], dir: toward([at(10)[0], 1.3, at(10)[2]], [at(0)[0], 1.0, at(0)[2]]) }); await wait(800);
+  let n = S.msgs.length;
+  S.send({ t: 'siphonStart' }); await wait(SI.castTime * 1000 + 40);
+  S.send({ t: 'siphonRelease', origin: [at(0)[0], 1.3, at(0)[2]], dir: toward([at(0)[0], 1.3, at(0)[2]], [at(10)[0], 1.0, at(10)[2]]) }); await wait(700);
+  const hit = since(S, n, m => m.t === 'hit' && m.attacker === S.id && m.kind === 'siphon')[0];
+  const healed = since(S, n, m => m.t === 'heal' && m.id === S.id && m.src === 'siphon').reduce((a, m) => a + m.amt, 0);
+  ok(!!hit && hit.dmg >= 28 && Math.abs(healed - hit.dmg * SI.heal) <= 1.01, `a Siphon hit heals its caster ${Math.round(SI.heal * 100)}% of the damage (${hit?.dmg} dealt, ${healed} healed)`);
+  ok(!since(S, n, m => m.t === 'siphonStart' && m.id === S.id).length || !S.msgs.slice(n).some(m => m.t === 'snap' && m.players.find(q => q.id === S.id)?.rooted),
+    'the cast never roots');
+  // a miss: fired at nothing. No root, no recovery: moving and casting right away work
+  S.send({ t: 'debugPlace', p: at(0), yaw: line.yaw + Math.PI / 2, resetCd: true }); await wait(150);
+  n = S.msgs.length;
+  S.send({ t: 'siphonStart' }); await wait(SI.castTime * 1000 + 40);
+  S.send({ t: 'siphonRelease', origin: [at(0)[0], 1.3, at(0)[2]], dir: [Math.sin(line.yaw + Math.PI / 2), 0, Math.cos(line.yaw + Math.PI / 2)] }); await wait(1000);
+  const me = S.msgs.filter(m => m.t === 'snap').pop()?.players.find(q => q.id === S.id);
+  ok(!since(S, n, m => m.t === 'hit' && m.attacker === S.id).length && !since(S, n, m => m.t === 'lashMiss').length && me && !me.rooted && !me.bound,
+    `a miss costs nothing (rooted ${me?.rooted}, bound ${me?.bound})`);
+  for (const c of [S, T]) c.ws.close();
 }
 
 console.log(fails ? `${fails} FAILED` : 'ALL PASS');

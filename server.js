@@ -79,9 +79,9 @@ function newPlayer(id, name, loadout = C.DEFAULT_LOADOUT, voice = 'male') {
     cd: { fast: 0, power: 0, mobility: 0, guard: 0, throw: 0, lift: 0 },   // per slot, whichever spell is in it
     charging: false, chargeStart: 0,
     cyclone: null,                // { start, pulseAt, endAt, pulsed } during an Arcane Cyclone
-    lash: null,                   // { start } during a Sanguine Lash wind-up
+    siphon: null,                 // { start } during Blood Siphon's 0.35 s cast (round 16; was the Lash's wind-up)
     slowUntil: 0,                 // Glacial Skim slow
-    rootUntil: 0, silenceUntil: 0,   // Sanguine Lash bind (both), or a missed lash's recovery (root only)
+    rootUntil: 0, silenceUntil: 0,   // a bind (Frostfall, Blizzard, a Bulwark's freeze: both), or a root
     frozenUntil: 0,               // Frostfall: the bind above, shown as ice
     ammo: C.primaryMag(loadout.primary).magazine, reloadUntil: 0, lastShotAt: 0,   // primary magazine (constants: primaryMag)
     veilUntil: 0,                 // Tempest Veil: every hit is absorbed until then
@@ -106,12 +106,12 @@ function playerPublic(p) {
     blocking: p.blocking, charging: p.charging,
     stun: p.stunUntil > now(), dead: p.dead,
     carrying: p.carrying, kills: p.kills, deaths: p.deaths,
-    loadout: p.loadout, voice: p.voice, pendingLoadout: !!p.pendingLoadout, lashing: !!p.lash,
+    loadout: p.loadout, voice: p.voice, pendingLoadout: !!p.pendingLoadout, siphoning: !!p.siphon,
     veil: p.veilUntil > now(), liftCd: p.cd.lift > now() ? +(p.cd.lift - now()).toFixed(2) : 0,
     ammo: p.ammo, reload: p.reloadUntil > now() ? +(p.reloadUntil - now()).toFixed(2) : 0,
     slow: p.slowUntil > now(), bound: p.silenceUntil > now(), rooted: p.rootUntil > now(), frozen: p.frozenUntil > now(),
     brew: p.brewUntil > now(), flaskWind: !!p.flaskWind,
-    ult: Math.floor(p.ult), eye: !!p.eye, lashBonus: Math.round(p.lashBonus || 0), heal: now() < (p.healUntil || 0),
+    ult: Math.floor(p.ult), eye: !!p.eye, siphonBonus: Math.round(p.lashBonus || 0), heal: now() < (p.healUntil || 0),
     ultWind: p.ultWind ? p.ultWind.U : null,
     blizz: p.blizz ? +p.blizz.yaw.toFixed(3) : null,
     mrain: p.mrain ? p.mrain.phase : null,
@@ -141,17 +141,17 @@ const aboveFloor = (q) => q.p[1] - groundAt(q.p[0], q.p[2], q.p[1]);   // height
 // Round 13: everything casts in the air (a jump, a fall, an air jump). Up there means any of these:
 const inAir = (p) => !!(p.jump || p.fall || p.hover) || isAirborne(p) || aboveFloor(p) > 0.05;
 // Winding up the Battering Ram: nothing else
-const RAMWIND_LOCKED = new Set(['chargeStart', 'cyclone', 'lashStart', 'frostfall', 'ult', 'veil', 'bulwark', 'smokeFlask', 'ramGuard', 'firewall', 'block', 'toxic', 'curse', 'pickup', 'throw', 'ram', 'ride',
+const RAMWIND_LOCKED = new Set(['chargeStart', 'cyclone', 'siphonStart', 'frostfall', 'ult', 'veil', 'bulwark', 'smokeFlask', 'ramGuard', 'firewall', 'block', 'toxic', 'curse', 'pickup', 'throw', 'ram', 'ride',
   'cast', 'jump', 'teleport', 'skyward', 'smoke', 'mirror', 'flaskStep', 'roll']);
 const kit = (p) => p.loadout;
-const CYCLONE = C.SPELLBOOK.cyclone, SKY = C.SPELLBOOK.skyward, LASH = C.SPELLBOOK.sanguine_lash;
+const CYCLONE = C.SPELLBOOK.cyclone, SKY = C.SPELLBOOK.skyward, SIPHON = C.SPELLBOOK.sanguine_lash;   // (Blood Siphon keeps the Lash's id)
 const MIRROR = C.SPELLBOOK.mirror_step, BULWARK = C.SPELLBOOK.glacial_bulwark, RELIC = C.SPELLBOOK.trapped_relic;
 const ROLL = C.SPELLBOOK.roll;
 const SKIM = C.SPELLBOOK.glacial_skim, FROST = C.SPELLBOOK.frostfall, SMOKE = C.SPELLBOOK.smoke_screen, VEIL = C.SPELLBOOK.tempest_veil;
 const isVeiled = (p) => p.veilUntil > now();
 // Round 14: spawn protection (C.SPAWN_PROTECT): no damage taken for a moment after a respawn, ended early by an attack.
 const spawnProtected = (p) => p.protUntil > now();
-const PROT_ENDS = new Set(['cast', 'chargeStart', 'cyclone', 'lashStart', 'frostfall', 'ult', 'toxic', 'curse', 'pickup', 'throw', 'ram', 'ride', 'ramGuard']);
+const PROT_ENDS = new Set(['cast', 'chargeStart', 'cyclone', 'siphonStart', 'frostfall', 'ult', 'toxic', 'curse', 'pickup', 'throw', 'ram', 'ride', 'ramGuard']);
 const holding = (p) => !!p.carrying;   // a prop floats beside us
 const EYE = C.SPELLBOOK.eye_of_storm, CAGE = C.SPELLBOOK.night_cage, BLIZ = C.SPELLBOOK.blizzard, MRAIN = C.SPELLBOOK.meteor_rain;
 // Eye of the Storm and Absolute Zero's flare can't be interrupted (no stun, cancel, bind, slow or knockback)
@@ -212,7 +212,6 @@ function spawnProjectile(owner, kind, origin, dir, propType = null, fin = false,
     radius: spec.radius,
     born: now(), life: spec.life, from: [origin[0], origin[1], origin[2]],
   };
-  if (kind === 'lash') { proj.pierce = true; proj.hitIds = new Set(); proj.landed = 0; }
   if (fin) {
     proj.fin = true;
     if (spec.finDamage) proj.dmg = spec.finDamage;   // Fireball's 3rd shot hits harder
@@ -228,14 +227,6 @@ function spawnProjectile(owner, kind, origin, dir, propType = null, fin = false,
 
 function endProjectile(proj, hit, extra = {}) {
   projectiles.delete(proj.id);
-  // A lash that bound nobody leaves its caster rooted in recovery.
-  if (proj.kind === 'lash' && !proj.landed) {
-    const caster = players.get(proj.owner);
-    if (caster && !caster.dead) {
-      caster.rootUntil = Math.max(caster.rootUntil, now() + LASH.missRoot);
-      broadcast({ t: 'lashMiss', id: caster.id, root: LASH.missRoot });
-    }
-  }
   // Embibe's potions: a splash, a pool, or (Flask Step) her arrival where it came down
   if (proj.kind === 'potion' && hit && extra.surface !== 'firewall' && extra.surface !== 'smokeflask') potionSplash(proj, extra.target);
   if (proj.kind === 'toxic' && extra.surface !== 'firewall' && extra.surface !== 'smokeflask') makePool(proj);
@@ -311,21 +302,21 @@ function applyHit(target, proj) {
       target.stunUntil = Math.max(target.stunUntil, t + spec.stun);
       if (primaryShot) target.stunImmuneUntil = target.stunUntil + C.SPARK_STUN_IMMUNITY;
     }
-    // Being hit cancels a heavy wind-up, a lash wind-up, a cyclone that hasn't spun yet, an ultimate's wind-up
+    // Being hit cancels a heavy wind-up, a Siphon cast, a cyclone that hasn't spun yet, an ultimate's wind-up
     // (it fizzles), Meteor Rain's hover (she falls), and a lift
     if (target.ultWind) fizzleUlt(target);
     if (target.mrain && target.mrain.phase !== 'dive') mrainKnockedDown(target);
     if (target.flaskWind) cancelFlaskStep(target);
     if (target.charging) { target.charging = false; broadcast({ t: 'chargeCancel', id: target.id }); }
     cancelCyclone(target);
-    cancelLash(target);
+    cancelSiphon(target);
     cancelRamWind(target);
     const lifting = target.carrying && props.get(target.carrying);
     if (lifting && lifting.state === 'lifting') { target.carrying = null; lifting.state = 'idle'; lifting.carrier = null; lifting.trap = null; broadcast({ t: 'prop', prop: propPublic(lifting) }); }
   }
   const freeze = !blocked && !steady && spec.bind && (proj.kind === 'frostfall' || spec.freeze);
   if (!blocked && !steady) {
-    // Glacial Skim slows (refreshed, never stacked); Sanguine Lash binds: rooted and silenced.
+    // Glacial Skim slows (refreshed, never stacked); a bind (Frostfall, Blizzard, a Bulwark) roots and silences.
     if (spec.slow) target.slowUntil = t + spec.slowTime;
     if (spec.bind) {
       target.rootUntil = Math.max(target.rootUntil, t + spec.bind);
@@ -376,7 +367,7 @@ function killPlayer(target, attacker, cause = null, kind = cause, spell = null) 
   target.hp = 0;
   target.charging = false;
   cancelCyclone(target);
-  cancelLash(target);
+  cancelSiphon(target);
   cancelRamWind(target);
   target.slowUntil = target.rootUntil = target.silenceUntil = target.frozenUntil = 0;
   endUltimates(target);
@@ -400,7 +391,7 @@ function respawn(p) {
   const sp = match.spawnPointFor(p) || C.SPAWN_POINTS[Math.floor(Math.random() * C.SPAWN_POINTS.length)];
   p.p = [sp[0] + rand(-1, 1), sp[1] || 0, sp[2] + rand(-1, 1)];   // (y: a wall-walk spawn's standing height)
   p.hp = C.MAX_HP; p.st = C.MAX_STAMINA;
-  p.dead = false; p.stunUntil = 0; p.blocking = false; p.charging = false; p.cyclone = null; p.lash = null; p.flightUntil = 0; p.jump = null; p.crouch = false; p.grab = null; p.knockUntil = 0;
+  p.dead = false; p.stunUntil = 0; p.blocking = false; p.charging = false; p.cyclone = null; p.siphon = null; p.flightUntil = 0; p.jump = null; p.crouch = false; p.grab = null; p.knockUntil = 0;
   p.fall = null; p.hover = null; p.airJumped = false; p.jumpSpeed = 0; p.castSlowUntil = 0; p.rideQueued = null;
   p.slowUntil = p.rootUntil = p.silenceUntil = p.frozenUntil = 0;
   p.ammo = C.primaryMag(kit(p).primary).magazine; p.reloadUntil = 0;
@@ -430,7 +421,7 @@ function dropProp(p, destroy, reason = null) {
   }
 }
 
-// A ward-style guard soaked `absorbed` damage. Black Death charges the next Sanguine Lash with it.
+// A ward-style guard soaked `absorbed` damage. Sanguine Aegis (black_death) charges the next Blood Siphon with it.
 function guardAbsorbed(p, attacker, absorbed, t) {
   const G = kit(p).guard;
   if (G === 'black_death' && absorbed > 0) {
@@ -454,13 +445,13 @@ function heal(p, amount, t, shimmer = 0.3, src = null) {
 // ---------------------------------------------------------------- casting: slows, and the few roots
 // Round 13: a cast slows the caster to C.CAST_SLOW.mult of their speed for C.CAST_SLOW.time (a sprint carries on after
 // it); Cyclone's and Flask Step's short wind-ups slow the same way while they last. Only the big wind-ups root (turning
-// and aiming still work): Meteor's charge, Sanguine Lash's and Battering Ram's wind-ups, an ultimate's wind-up, the
+// and aiming still work): Meteor's charge, Battering Ram's wind-up, an ultimate's wind-up, the
 // Blizzard channel, and a ledge pull-up. The client (main.js) applies the same rules to itself.
 function castSlow(p) {
   p.castSlowUntil = Math.max(p.castSlowUntil || 0, now() + C.CAST_SLOW.time);
 }
 const castSlowed = (p, t = now()) => t < (p.castSlowUntil || 0) || (!!p.cyclone && !p.cyclone.pulsed) || !!p.flaskWind;
-const windingUp = (p) => !!(p.charging || p.lash || p.ramWind || p.ultWind);   // the rooting wind-ups (they hang you in the air)
+const windingUp = (p) => !!(p.charging || p.ramWind || p.ultWind);   // the rooting wind-ups (they hang you in the air)
 function castRooted(p, t = now()) {
   if (p.eye || p.ride || p.mrain || p.mrainFall) return false;
   return windingUp(p) || !!p.blizz || !!p.grab;
@@ -565,7 +556,6 @@ function breakProp(prop, at, by = null) {
   broadcast({ t: 'propBreak', id: prop.id, p: at });
 }
 
-// ---------------------------------------------------------------- Sanguine Lash
 // ---------------------------------------------------------------- health potions (round 10)
 // One flask per map.js HEAL_SPOTS spot. A hurt wizard who touches it drinks it (POTION.heal); it's back POTION.respawn s later.
 const potions = (C.HEAL_SPOTS || []).map(sp => ({ id: sp.id, spot: sp, readyAt: 0 }));
@@ -623,10 +613,11 @@ function cancelRamWind(p) {
   p.cd.power = Math.max(p.cd.power, now() + BRAM.interruptCd);
   broadcast({ t: 'ramWindCancel', id: p.id });
 }
-function cancelLash(p) {
-  if (!p.lash) return;
-  p.lash = null;
-  broadcast({ t: 'lashCancel', id: p.id });
+// Round 16: Blood Siphon's 0.35 s cast (no root): a stun or an interrupting hit cancels it.
+function cancelSiphon(p) {
+  if (!p.siphon) return;
+  p.siphon = null;
+  broadcast({ t: 'siphonCancel', id: p.id });
 }
 
 // ---------------------------------------------------------------- Mirror Step decoys
@@ -1228,7 +1219,7 @@ const AIMED = new Set(['stampede', 'night_cage']);
 function castUltimate(p, msg) {
   const t = now();
   const U = kit(p).ultimate;
-  const free = canAct(p) && !p.charging && !p.cyclone && !p.lash && !holding(p) && !inUltimate(p) && !p.ride;
+  const free = canAct(p) && !p.charging && !p.cyclone && !p.siphon && !holding(p) && !inUltimate(p) && !p.ride;
   const refuse = () => send(p.id, { t: 'ultRefused' });
   if (!U || p.ult < C.ULT_CHARGE.max || !free) return refuse();
   let at = null;
@@ -1443,8 +1434,8 @@ function simulate(dt) {
     }
     // a stun interrupts charging
     if (p.charging && isStunned(p)) { p.charging = false; broadcast({ t: 'chargeCancel', id: p.id }); }
-    // a lash wind-up: a stun interrupts it, and one never released (lost client) lapses
-    if (p.lash && (isStunned(p) || t > p.lash.start + LASH.windup + 1)) cancelLash(p);
+    // a Siphon cast: a stun interrupts it, and one never released (lost client) lapses
+    if (p.siphon && (isStunned(p) || t > p.siphon.start + SIPHON.castTime + 1)) cancelSiphon(p);
     if (p.ramWind) { if (isStunned(p) || isBound(p) || p.dead) cancelRamWind(p); else if (t >= p.ramWind.at) launchRam(p, t); }
     if (p.cyclone) {
       if (!p.cyclone.pulsed && isStunned(p)) cancelCyclone(p);
@@ -1570,11 +1561,10 @@ function simulate(dt) {
     }
     if (done) continue;
 
-    // players (a lash pierces: it hits each wizard on its path once, unless a ward stops it)
+    // players
     for (const pl of players.values()) {
       if (pl.dead || pl.id === proj.owner || !enemies(shooter, pl)) continue;   // teammates: it flies through
       if (pl.rollImmuneUntil > t) continue;   // rolling: it passes through
-      if (proj.pierce && proj.hitIds.has(pl.id)) continue;
       const c = [pl.p[0], pl.p[1] + C.hitCenterOf(pl), pl.p[2]];   // crouched: a smaller, lower sphere
       const d = Math.hypot(proj.p[0] - c[0], proj.p[1] - c[1], proj.p[2] - c[2]);
       if (d < C.hitRadiusOf(pl) + proj.radius) {
@@ -1583,22 +1573,17 @@ function simulate(dt) {
           proj.dmg = C.slingDamage(flown); proj.long = flown >= C.SPELLS.sling.longShot;
         }
         const { blocked, dmg: dealt } = applyHit(pl, proj);
-        if (proj.pierce) {
-          proj.hitIds.add(pl.id);
-          if (!blocked) { proj.landed++; continue; }
-        }
+        // round 16: Blood Siphon heals its caster for a share of what it dealt
+        if (proj.kind === 'siphon' && !blocked && dealt > 0 && shooter && !shooter.dead) heal(shooter, dealt * SIPHON.heal, t, 0.5, 'siphon');
         endProjectile(proj, true, { surface: 'player', target: pl.id });
         done = true; break;
       }
     }
     if (done) continue;
 
-    // decoys: one touch and they burst (projectiles stop on them; a lash cuts through)
+    // decoys: one touch and they burst (projectiles stop on them)
     const dec = decoyAt(proj.p, proj.radius, proj.owner);
-    if (dec) {
-      endDecoy(dec, true);
-      if (!proj.pierce) { endProjectile(proj, true, { surface: 'decoy' }); continue; }
-    }
+    if (dec) { endDecoy(dec, true); endProjectile(proj, true, { surface: 'decoy' }); continue; }
 
     // props (standing ones get destroyed)
     for (const prop of props.values()) {
@@ -1647,7 +1632,7 @@ function simulate(dt) {
 
 // ---------------------------------------------------------------- messages
 // Gale's tornado and Rime's flare: nothing else can be cast meanwhile (Gale can still move).
-const ULT_LOCKED = new Set(['toxic', 'flaskStep', 'smokeFlask', 'ult', 'ram', 'ramGuard', 'ride', 'block', 'cast', 'chargeStart', 'cyclone', 'lashStart', 'frostfall', 'smoke', 'mirror', 'veil', 'bulwark', 'firewall', 'curse', 'skyward', 'teleport', 'pickup', 'throw', 'reload']);
+const ULT_LOCKED = new Set(['toxic', 'flaskStep', 'smokeFlask', 'ult', 'ram', 'ramGuard', 'ride', 'block', 'cast', 'chargeStart', 'cyclone', 'siphonStart', 'frostfall', 'smoke', 'mirror', 'veil', 'bulwark', 'firewall', 'curse', 'skyward', 'teleport', 'pickup', 'throw', 'reload']);
 function handle(p, msg) {
   const t = now();
   if ((inUltimate(p) || p.ride || p.flaskWind) && ULT_LOCKED.has(msg.t)) return;   // a tornado, a rune flare or a ram ride: nothing else
@@ -1732,7 +1717,7 @@ function handle(p, msg) {
       const np = [clamp(msg.p[0], -C.ARENA_RADIUS, C.ARENA_RADIUS), y, clamp(msg.p[2], -C.ARENA_RADIUS, C.ARENA_RADIUS)];
       // platforms' sides are walls (the client pushes itself out the same way; this is the check)
       if (C.SURFACES.length && !p.grab) { const q = C.surfacePushOut(np[0], np[2], np[1], C.PLAYER_RADIUS); np[0] = q[0]; np[2] = q[1]; }
-      // bound or recovering from a missed lash: the wizard stays put (a slowed one is just slower,
+      // bound or rooted: the wizard stays put (a slowed one is just slower,
       // which the speed check below already allows)
       if (isRooted(p)) { np[0] = p.p[0]; np[2] = p.p[2]; }
       const dashing = p.dashUntil > t;   // Smoke Screen's or Roll's dash is much faster than running
@@ -1814,13 +1799,13 @@ function handle(p, msg) {
     }
     case 'block': {
       const on = !!msg.on;
-      if (on && (!C.isWard(kit(p).guard) || p.ultWind || !canAct(p) || p.st <= 2 || p.charging || p.cyclone || p.lash)) break;
+      if (on && (!C.isWard(kit(p).guard) || p.ultWind || !canAct(p) || p.st <= 2 || p.charging || p.cyclone || p.siphon)) break;
       if (p.blocking && !on) p.blockReleasedAt = t;
       p.blocking = on;
       break;
     }
     case 'cast': {
-      if (!canAct(p) || p.blocking || p.charging || p.cyclone || p.lash || holding(p)) break;
+      if (!canAct(p) || p.blocking || p.charging || p.cyclone || p.siphon || holding(p)) break;
       const primary = kit(p).primary, kind = C.PRIMARY_KIND[primary];
       if (t < p.cd.fast || t < p.reloadUntil || p.ammo <= 0) break;   // reloading: refused
       if (msg.kind !== kind) break;
@@ -1865,7 +1850,7 @@ function handle(p, msg) {
     }
     case 'chargeStart': {
       if (kit(p).power !== 'meteor') break;
-      if (!canAct(p) || p.blocking || p.charging || p.cyclone || p.lash || holding(p)) break;
+      if (!canAct(p) || p.blocking || p.charging || p.cyclone || p.siphon || holding(p)) break;
       if (t < p.cd.power) break;
       p.charging = true; p.chargeStart = t;
       startHover(p, C.SPELLS.heavy.chargeTime);
@@ -1887,7 +1872,7 @@ function handle(p, msg) {
       break;
     }
     case 'cyclone': {
-      const ok = kit(p).power === 'cyclone' && canAct(p) && !p.blocking && !p.charging && !p.cyclone && !p.lash
+      const ok = kit(p).power === 'cyclone' && canAct(p) && !p.blocking && !p.charging && !p.cyclone && !p.siphon
         && !holding(p) && t >= p.cd.power;
       // tell a refused caster, so its client drops the wind-up it predicted
       if (!ok) { if (!p.cyclone) send(p.id, { t: 'cycloneCancel', id: p.id }); break; }
@@ -1895,30 +1880,31 @@ function handle(p, msg) {
       broadcast({ t: 'cycloneStart', id: p.id, p: p.p });
       break;
     }
-    case 'lashStart': {
-      const ok = kit(p).power === 'sanguine_lash' && canAct(p) && !p.blocking && !p.charging && !p.cyclone && !p.lash
+    // Round 16: Blood Siphon (the old Lash's id): a 0.35 s cast (a slow, no root), then a fast blood bolt that heals its caster
+    case 'siphonStart': {
+      const ok = kit(p).power === 'sanguine_lash' && canAct(p) && !p.blocking && !p.charging && !p.cyclone && !p.siphon
         && !holding(p) && t >= p.cd.power;
-      if (!ok) { if (!p.lash) send(p.id, { t: 'lashCancel', id: p.id }); break; }
-      p.lash = { start: t };
-      startHover(p, LASH.windup);
-      broadcast({ t: 'lashStart', id: p.id });
+      if (!ok) { if (!p.siphon) send(p.id, { t: 'siphonCancel', id: p.id }); break; }
+      p.siphon = { start: t };
+      castSlow(p);
+      broadcast({ t: 'siphonStart', id: p.id });
       break;
     }
-    case 'lashRelease': {
-      if (!p.lash) break;
-      const early = t - p.lash.start < LASH.windup - 0.05;
-      if (early || !canAct(p)) { cancelLash(p); break; }
-      p.lash = null;
-      p.cd.power = t + LASH.cooldown;
+    case 'siphonRelease': {
+      if (!p.siphon) break;
+      const early = t - p.siphon.start < SIPHON.castTime - 0.08;
+      if (early || !canAct(p)) { cancelSiphon(p); break; }
+      p.siphon = null;
+      p.cd.power = t + SIPHON.cooldown;
       castSlow(p);
-      const whip = spawnProjectile(p, 'lash', sanitizeOrigin(p, msg.origin), sanitizeDir(msg.dir, p));
-      // what Black Death absorbed rides on this whip
-      if (p.lashBonus) { whip.dmg = C.SPELLS.lash.damage + Math.round(p.lashBonus); p.lashBonus = 0; }
+      const bolt = spawnProjectile(p, 'siphon', sanitizeOrigin(p, msg.origin), sanitizeDir(msg.dir, p));
+      // what Sanguine Aegis absorbed rides on this bolt (the Blood Tithe combo)
+      if (p.lashBonus) { bolt.dmg = C.SPELLS.siphon.damage + Math.round(p.lashBonus); p.lashBonus = 0; }
       break;
     }
     case 'frostfall': {
       // range is measured flat from the caster (cast from the air too: it falls on the ground under the aim)
-      if (kit(p).power !== 'frostfall' || !canAct(p) || p.blocking || p.charging || p.cyclone || p.lash || holding(p) || t < p.cd.power) break;
+      if (kit(p).power !== 'frostfall' || !canAct(p) || p.blocking || p.charging || p.cyclone || p.siphon || holding(p) || t < p.cd.power) break;
       if (!Array.isArray(msg.at) || msg.at.length < 2 || !Number.isFinite(msg.at[0]) || !Number.isFinite(msg.at[msg.at.length - 1])) break;
       let x = msg.at[0], z = msg.at[msg.at.length - 1];
       // at most `range` from the caster, inside the arena
@@ -1935,7 +1921,7 @@ function handle(p, msg) {
     case 'smoke': {
       // Smoke Screen: a fast dash backwards (the client moves itself; the server lets it go that fast),
       // leaving a cloud where it started
-      if (kit(p).mobility !== 'smoke_screen' || !canAct(p) || isRooted(p) || p.charging || p.cyclone || p.lash || t < p.cd.mobility) break;
+      if (kit(p).mobility !== 'smoke_screen' || !canAct(p) || isRooted(p) || p.charging || p.cyclone || p.siphon || t < p.cd.mobility) break;
       const yaw = Number.isFinite(msg.yaw) ? msg.yaw : p.yaw;
       const from = validVec(msg.from) && dist2D(msg.from, p.p) < 3 ? [msg.from[0], p.p[1], msg.from[2]] : p.p.slice();
       airDash(p, t, msg.from?.[1], SMOKE.dashTime);   // round 13: in the air, a level dash, then a fall
@@ -1954,7 +1940,7 @@ function handle(p, msg) {
       // stepping up like walking; the server lets it go that fast. For the first ROLL.immune s projectiles pass through
       // (areas still land). Two charges, each back ROLL.cooldown after it was spent. It doesn't root or end crouch or sprint.
       // (round 13: a Utility, on F; its charges' cooldown is the F slot's, cd.lift)
-      if (kit(p).utility !== 'roll' || !canAct(p) || isRooted(p) || p.charging || p.cyclone || p.lash || t < p.cd.lift || t < (p.rollUntil || 0)) break;
+      if (kit(p).utility !== 'roll' || !canAct(p) || isRooted(p) || p.charging || p.cyclone || p.siphon || t < p.cd.lift || t < (p.rollUntil || 0)) break;
       const dl = validVec(msg.dir) ? Math.hypot(msg.dir[0], msg.dir[2]) : 0;
       const yaw = Number.isFinite(msg.yaw) ? msg.yaw : p.yaw;
       const dir = dl > 0.01 ? [msg.dir[0] / dl, 0, msg.dir[2] / dl] : [-Math.sin(yaw), 0, -Math.cos(yaw)];
@@ -1973,7 +1959,7 @@ function handle(p, msg) {
       break;
     }
     case 'mirror': {
-      if (kit(p).mobility !== 'mirror_step' || !canAct(p) || isRooted(p) || p.charging || p.cyclone || p.lash || t < p.cd.mobility) break;
+      if (kit(p).mobility !== 'mirror_step' || !canAct(p) || isRooted(p) || p.charging || p.cyclone || p.siphon || t < p.cd.mobility) break;
       const dir = sanitizeDir([msg.dir?.[0] ?? 0, 0, msg.dir?.[2] ?? 1], p);
       const from = Array.isArray(msg.from) && msg.from.length === 3 && msg.from.every(Number.isFinite) && dist2D(msg.from, p.p) < 3 ? [msg.from[0], p.p[1], msg.from[2]] : p.p.slice();
       const paths = C.mirrorPaths(from, dir);   // (round 15: each lands at its standing height, on a wall-walk if it ends in the rampart)
@@ -2005,7 +1991,7 @@ function handle(p, msg) {
     }
     case 'ram': {
       // Battering Ram: straight along the aim from just in front of Jeb
-      if (kit(p).power !== 'battering_ram' || !canAct(p) || p.blocking || p.charging || p.cyclone || p.lash || p.ramWind || holding(p) || t < p.cd.power) break;
+      if (kit(p).power !== 'battering_ram' || !canAct(p) || p.blocking || p.charging || p.cyclone || p.siphon || p.ramWind || holding(p) || t < p.cd.power) break;
       const d = sanitizeDir([msg.dir?.[0] ?? 0, 0, msg.dir?.[2] ?? 0], p);
       const yaw = Math.atan2(d[0], d[2]);
       p.yaw = yaw;
@@ -2073,7 +2059,7 @@ function handle(p, msg) {
       break;
     }
     case 'ride': {
-      if (kit(p).mobility !== 'ram_ride' || !canAct(p) || isRooted(p) || p.charging || p.cyclone || p.lash || holding(p) || p.ride || t < p.cd.mobility) break;
+      if (kit(p).mobility !== 'ram_ride' || !canAct(p) || isRooted(p) || p.charging || p.cyclone || p.siphon || holding(p) || p.ride || t < p.cd.mobility) break;
       // round 13: from the air, the ram comes up under him as he lands (touchedDown)
       if (inAir(p)) { p.rideQueued = { yaw: Number.isFinite(msg.yaw) ? msg.yaw : p.yaw, until: t + 3 }; send(p.id, { t: 'rideQueued' }); break; }
       p.cd.mobility = Infinity;   // the cooldown starts when he gets off (endRide)
@@ -2081,14 +2067,14 @@ function handle(p, msg) {
       break;
     }
     case 'firewall': {
-      if (kit(p).guard !== 'firewall' || !canAct(p) || p.charging || p.cyclone || p.lash || t < p.cd.guard) break;
+      if (kit(p).guard !== 'firewall' || !canAct(p) || p.charging || p.cyclone || p.siphon || t < p.cd.guard) break;
       p.cd.guard = t + FIREWALL.cooldown;
       castSlow(p);
       raiseFirewall(p, Number.isFinite(msg.yaw) ? msg.yaw : p.yaw);
       break;
     }
     case 'bulwark': {
-      if (kit(p).guard !== 'glacial_bulwark' || !canAct(p) || p.charging || p.cyclone || p.lash || t < p.cd.guard) break;
+      if (kit(p).guard !== 'glacial_bulwark' || !canAct(p) || p.charging || p.cyclone || p.siphon || t < p.cd.guard) break;
       p.cd.guard = t + BULWARK.cooldown;
       castSlow(p);
       raiseWall(p, Number.isFinite(msg.yaw) ? msg.yaw : p.yaw);
@@ -2122,7 +2108,7 @@ function handle(p, msg) {
     }
     case 'skyward': {
       // tell a refused flier, so its client comes back down from the flight it predicted
-      if (kit(p).mobility !== 'skyward' || !canAct(p) || p.charging || p.cyclone || p.lash || isAirborne(p) || t < p.cd.mobility) {
+      if (kit(p).mobility !== 'skyward' || !canAct(p) || p.charging || p.cyclone || p.siphon || isAirborne(p) || t < p.cd.mobility) {
         if (!isAirborne(p)) send(p.id, { t: 'skywardCancel', id: p.id });
         break;
       }
@@ -2135,7 +2121,7 @@ function handle(p, msg) {
     }
     case 'teleport': {
       if (kit(p).mobility !== 'blink') break;
-      if (!canAct(p) || isRooted(p) || p.charging || p.cyclone || p.lash) break;
+      if (!canAct(p) || isRooted(p) || p.charging || p.cyclone || p.siphon) break;
       if (t < p.cd.mobility) break;
       const dir = sanitizeDir([msg.dir?.[0] ?? 0, 0, msg.dir?.[2] ?? 1], p);
       // The client predicts the same landing spot, so its next position report lines up.
@@ -2153,7 +2139,7 @@ function handle(p, msg) {
     }
     case 'pickup': {
       if (kit(p).utility !== 'telekinesis') break;   // round 12: only Telekinesis lifts (Trapped Relic only curses)
-      if (!canAct(p) || holding(p) || p.charging || p.cyclone || p.lash || p.blocking || t < p.cd.lift) break;
+      if (!canAct(p) || holding(p) || p.charging || p.cyclone || p.siphon || p.blocking || t < p.cd.lift) break;
       const best = tkTarget(p, msg.aimOrigin, msg.aimDir);
       if (!best) break;
       castSlow(p);
