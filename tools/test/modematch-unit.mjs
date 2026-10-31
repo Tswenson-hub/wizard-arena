@@ -448,6 +448,50 @@ async function agilityChecks(join, since, spots) {
     ok(snap(J).p[2] - (sz - 6) < 3.4, `a jump faster than it took off with is held back (server ${(snap(J).p[2] - (sz - 6)).toFixed(2)} of 4.5 m)`);
   }
   for (const c of [J, F]) c.ws.close();
+  await wait(300);
+  await slingChecks(join, since);
+}
+
+// ---- round 15: Shepherd's Sling hits harder the further the stone has flown (C.slingDamage)
+async function slingChecks(join, since) {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  const S = await join('Slinger', { primary: 'sling', utility: 'telekinesis' });
+  const T1 = await join('FarMark', { utility: 'telekinesis' }), T2 = await join('NearMark', { utility: 'telekinesis' });
+  S.send({ t: 'matchDebug', size: 3 }); S.send({ t: 'removeBots' }); await wait(600);
+  // a 24 m line across open courtyard floor at chest height (no castle piece on it), with a free spot 3 m from its start
+  const flatAt = (x, z) => C.surfaceTopAt(x, z) < 0.05 && C.surfaceTopAt(x + 0.6, z) < 0.05 && C.surfaceTopAt(x - 0.6, z) < 0.05;
+  let line = null;
+  for (let x = -22; x <= 22 && !line; x += 1) for (let z = -22; z <= 22 && !line; z += 1) for (const [dx, dz] of [[0, 1], [1, 0], [0, -1], [-1, 0]]) {
+    const a = [x, 1.3, z], far = [x + dx * 24, 1.3, z + dz * 24], near = [x + dx * 3, 1.3, z + dz * 3];
+    if (!(C.insideArena ? C.insideArena(far[0], far[2], 1.5) && C.insideArena(x, z, 1.5) : true)) continue;
+    if (!flatAt(x, z) || !flatAt(far[0], far[2]) || !flatAt(near[0], near[2])) continue;
+    if (C.surfaceSegmentHit([x, 0.4, z], [far[0], 0.4, far[2]]) || C.surfaceSegmentHit(a, far) || C.surfaceSegmentHit([x, 2, z], [far[0], 2, far[2]])) continue;
+    line = { a, far, near, yaw: Math.atan2(dx, dz) }; break;
+  }
+  ok(!!line, `a clear 24 m line for the Sling test (${line ? `${line.a[0]}, ${line.a[2]}` : 'none'})`);
+  if (!line) { for (const c of [S, T1, T2]) c.ws.close(); return; }
+  const place = (c, p, yaw = 0) => c.send({ t: 'debugPlace', p: [p[0], 0, p[2]], yaw, resetCd: true });
+  place(S, line.a, line.yaw); place(T1, line.far, line.yaw + Math.PI); place(T2, [line.a[0] - Math.sin(line.yaw) * 30, 0, line.a[2] - Math.cos(line.yaw) * 30]);
+  await wait(2200);   // (past spawn protection)
+  const shoot = (to) => { const d = [to[0] - line.a[0], to[1] - line.a[1], to[2] - line.a[2]], l = Math.hypot(...d);
+    S.send({ t: 'cast', kind: 'sling', origin: line.a, dir: d.map(v => v / l) }); };
+  let n = S.msgs.length;
+  shoot([line.far[0], 0.95, line.far[2]]); await wait(1100);
+  const far = since(S, n, m => m.t === 'hit' && m.target === T1.id && m.kind === 'sling')[0];
+  place(T1, [line.a[0] - Math.sin(line.yaw) * 30, 0, line.a[2] - Math.cos(line.yaw) * 30]);   // out of the way of the near shot
+  place(T2, line.near, line.yaw + Math.PI); await wait(700);
+  S.send({ t: 'debugPlace', p: [line.a[0], 0, line.a[2]], yaw: line.yaw, resetCd: true });
+  for (let i = 0; i < 40; i++) {   // (a stone in the pouch: wait out the reload)
+    await wait(100);
+    const me = S.msgs.filter(m => m.t === 'snap').pop()?.players.find(q => q.id === S.id);
+    if (me && me.ammo > 0 && !me.reload) break;
+  }
+  n = S.msgs.length;
+  shoot([line.near[0], 0.95, line.near[2]]); await wait(500);
+  const near = since(S, n, m => m.t === 'hit' && m.target === T2.id && m.kind === 'sling')[0];
+  ok(!!far && !!near && far.dmg > near.dmg, `a Sling stone that flew 24 m hits harder than one from 3 m (${far?.dmg} vs ${near?.dmg})`);
+  ok(!!far && far.dmg >= 17 && !!far.long && !!near && near.dmg <= 12 && !near.long, `long hits are flagged long; point blank about 9-11 (${far?.dmg}${far?.long ? ' long' : ''}, ${near?.dmg})`);
+  for (const c of [S, T1, T2]) c.ws.close();
 }
 
 console.log(fails ? `${fails} FAILED` : 'ALL PASS');

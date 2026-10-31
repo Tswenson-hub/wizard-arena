@@ -48,6 +48,8 @@ const SMOKE = C.SPELLBOOK.smoke_screen, ROLL = C.SPELLBOOK.roll;
 const EYE = C.SPELLBOOK.eye_of_storm, CAGE = C.SPELLBOOK.night_cage, BLIZ = C.SPELLBOOK.blizzard, MRAIN = C.SPELLBOOK.meteor_rain;
 const SHEAR = C.SPELLS.shear, HEX = C.SPELLS.hex, FIRE = C.SPELLS.fireball;
 const SHEAR_RANGE = SHEAR.speed * SHEAR.life;
+// Round 15: where a bot likes to fight from: Gale Shear up close; the Sling far out, where its stones hit hardest
+const prefRange = (me, cfg) => kit(me).primary === 'gale_shear' ? [2.5, 6] : kit(me).primary === 'sling' ? [Math.max(cfg.range[0], 16), Math.max(cfg.range[1], 24)] : cfg.range;
 const SLING_S = C.SPELLS.sling, BRAM = C.SPELLBOOK.battering_ram, RGUARD = C.SPELLBOOK.ram_guard, RIDE = C.SPELLBOOK.ram_ride, STAMP = C.SPELLBOOK.stampede;
 const guarded = (q, t) => q.ramGuardUntil > t;
 const POTION = C.SPELLS.potion, TOXIC = C.SPELLS.toxic, TFLASK = C.SPELLBOOK.toxic_flask, SFLASK = C.SPELLBOOK.smoke_flask;
@@ -773,7 +775,7 @@ function flyMeteorRain(me, world, t, act) {
   let best = null, bs = -Infinity;
   for (const q of world.players.values()) {
     if (!foe(me, q) || q.dead || airborne(q, t) || dist2D(q.p, [M.from[0], 0, M.from[1]]) > MRAIN.range) continue;
-    const near = [...world.players.values()].filter(o => foe(me, o) && !o.dead && dist2D(o.p, q.p) < MRAIN.radius).length;
+    const near = [...world.players.values()].filter(o => foe(me, o) && !o.dead && dist2D(o.p, q.p) < MRAIN.killRadius).length;   // (round 15: only the inner ring kills)
     const sc = near * 2 - q.hp * 0.02 + (rooted(q, t) || isStunned(q, t) ? 1.5 : 0);
     if (sc > bs) { bs = sc; best = q; }
   }
@@ -1348,7 +1350,7 @@ function moveBot(me, dt, world, t) {
       const los = hasLOS(me.p, target.p);
       const lowHp = me.hp < 25 && me.hp < target.hp;   // round 10: regen makes a retreat nearly free, so only when really low
       // Gale Shear only reaches 8 m: she fights up close
-      const range = kit(me).primary === 'gale_shear' ? [2.5, 6] : cfg.range;
+      const range = prefRange(me, cfg);
       const diving = t < (b.diveUntil || 0) && t >= me.cd.power && !me.carrying;
       let fwd = 0;
       if (me.eye) fwd = d > 1.2 ? 1 : 0;                 // the tornado goes for them
@@ -1434,7 +1436,7 @@ function moveBot(me, dt, world, t) {
   // stamina for the ward. A sprinting bot faces where it runs (the server only grants a forward sprint).
   {
     const tg = target && !target.dead ? target : null, dT = tg ? dist2D(me.p, tg.p) : 0;
-    const far = goal ? Math.hypot(goal[0] - me.p[0], goal[1] - me.p[2]) > 6 : !!tg && (dT > (kit(me).primary === 'gale_shear' ? 7 : cfg.range[1] + 5) || (dT > 8 && !hasLOS(me.p, tg.p)));   // (sprint is free: close in on one we can't see)
+    const far = goal ? Math.hypot(goal[0] - me.p[0], goal[1] - me.p[2]) > 6 : !!tg && (dT > (kit(me).primary === 'gale_shear' ? 7 : prefRange(me, cfg)[1] + 5) || (dT > 8 && !hasLOS(me.p, tg.p)));   // (sprint is free: close in on one we can't see)
     const fleeing = me.hp < 35 && !!tg && dT < 14;
     const threatened = [...b.threats.values()].some(r => !r.handled && !r.ignore) || t < (b.ramDanger || 0);
     const keep = false;   // round 10: sprint is free, nothing to save stamina for

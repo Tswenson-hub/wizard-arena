@@ -17,7 +17,7 @@ function spellOfKind(kind, lo) {
   const direct = { fast: 'spark', fireball: 'fireball', skim: 'glacial_skim', shear: 'gale_shear', hex: 'hex_shards', sling: 'sling',
     potion: 'potion_toss', potion_splash: 'potion_toss', heavy: 'meteor', cyclone: 'cyclone', lash: 'sanguine_lash', frostfall: 'frostfall',
     toxic: 'toxic_flask', toxic_pool: 'toxic_flask', firewall_burn: 'firewall', bulwark_frost: 'glacial_bulwark', eye_of_storm: 'eye_of_storm',
-    eye_burst: 'eye_of_storm', blizzard_chip: 'blizzard', blizzard_freeze: 'blizzard', meteor_rain_hit: 'meteor_rain', ram_shove: 'ram_ride',
+    eye_burst: 'eye_of_storm', blizzard_chip: 'blizzard', blizzard_freeze: 'blizzard', meteor_rain_hit: 'meteor_rain', meteor_rain_splash: 'meteor_rain', ram_shove: 'ram_ride',
     trapped_relic: 'trapped_relic', relic: 'trapped_relic' }[kind];
   if (direct) return direct;
   if (kind === 'prop') return lo?.utility === 'telekinesis' ? 'telekinesis' : `?${kind}`;   // round 12: only Telekinesis lifts and throws

@@ -163,7 +163,11 @@ export const SPELLS = {
     knockback: 3,
   },
   sling: {               // Jeb's primary: a sling stone; a hit calls a ram on the target
-    damage: 10,          // round 14: 7
+    damage: 10,          // round 14: 7 (round 15: the card's mid value; a hit deals slingDamage(flown) instead)
+    near: 6.6,           // round 15 (Ty: no ambient rams to aggro any more): at point blank (×1.36: 9)...
+    far: 15.5,           // ...rising in a straight line to this at `farDist` m flown (×1.36: 21), and staying there
+    farDist: 28,
+    longShot: 18,        // flown this far: a "long" hit (the bigger number, the hit message's `long`)
     stun: 0.45,
     speed: 32,
     radius: 0.22,
@@ -332,6 +336,9 @@ export function hexAt(c, age) {
   return { p, v: tan };
 }
 
+// Round 15: Shepherd's Sling hits harder the further the stone has flown (base damage, before DAMAGE_SCALE).
+export const slingDamage = (flown) => { const S = SPELLS.sling; return S.near + (S.far - S.near) * Math.max(0, Math.min(1, flown / S.farDist)); };
+
 // The summoned rams (Ram Guard, Battering Ram, Stampede, Ram Ride and the Sling's call): server.js simulates them.
 // Round 15: these were map.js's GOAT numbers; the map goats are gone.
 export const RAM = {
@@ -432,7 +439,7 @@ export const SPELLBOOK = {
   },
   sling: {
     id: 'sling', slot: 'primary', name: "Shepherd's Sling", short: 'Sling',
-    blurb: 'Sling stones, 2 to a pouch. A hit calls a ram out of the ground beside the target to charge them. The 2nd breaks a wind-up.',
+    blurb: `Sling stones, 2 to a pouch: more damage the further it flies (${D(SPELLS.sling.near)} up close, ${D(SPELLS.sling.far)} at ${SPELLS.sling.farDist} m). A hit calls a ram out of the ground beside the target to charge them. The 2nd breaks a wind-up.`,
     cooldown: SPELLS.sling.cooldown,
     magazine: 2, reload: PRIMARY_RELOAD, idleReload: 2,
     callDist: 7,         // round 15: the called ram appears this far from the target, off to one side
@@ -627,17 +634,22 @@ export const SPELLBOOK = {
   // ---- ultimates (Q). `ult: true` hits never charge the ultimate. Each one cannot be cancelled once cast.
   meteor_rain: {
     id: 'meteor_rain', slot: 'ultimate', name: 'Meteor Rain', short: 'Meteor Rain', ult: true,
-    blurb: 'Leap 12 m into the sky and hover up to 4 s, aiming a 4 m circle; Q or a click dives on it as a falling blaze. Everything in it, or in your path, dies. A hit that interrupts knocks you down.',
+    blurb: `Leap 12 m into the sky and hover up to 4 s, aiming a 4 m circle; Q or a click dives on it as a falling blaze. Everything within 2.4 m of the centre, or in your path, dies; the rest of the circle takes ${D(44)} at the kill ring, falling to ${D(30)} at its edge. A hit that interrupts knocks you down.`,
     height: 12,          // the leap
     rise: 0.5,           // seconds to get up there
     hover: 4,            // longest hover; then she dives on her last aim
-    radius: 4,           // the landing circle
+    radius: 4,           // the landing circle (its outer edge: the splash)
+    killRadius: 2.4,     // round 15 (Ty: it took 75% of Ultimate kills): only this inner circle kills; was the whole 4 m
+    splash: [44, 30],    // base damage between the kill ring and the edge (×1.36: 60 at the ring, 41 at the edge)
     range: 24,           // farthest landing from where she leapt
     dive: 0.6,
     pathRadius: 1.2,     // anyone this close to her dive path is caught too
   },
   meteor_rain_hit: {     // what the dive does to an enemy (a hit kind): death, unless a Tempest Veil absorbs it
     id: 'meteor_rain_hit', name: 'Meteor Rain', ult: true, damage: 1000, stun: 0, knockback: 6, staminaCost: 0, unblockable: true,
+  },
+  meteor_rain_splash: {  // round 15: the landing circle outside the kill ring (a hit kind; the damage comes from MRAIN.splash)
+    id: 'meteor_rain_splash', name: 'Meteor Rain', ult: true, damage: 44, stun: 0.4, knockback: 8, staminaCost: 0, unblockable: true,
   },
   blizzard: {
     id: 'blizzard', slot: 'ultimate', name: 'Blizzard', short: 'Blizzard', ult: true,
@@ -945,7 +957,7 @@ export const SPELL_INFO = {
   gale_shear:    { element: 'wind',   tags: ['Projectile', 'Hitscan-like', 'Interrupts'], damage: `${D(16)}`, cooldown: S_(0.42), range: M_(8), windup: '' },
   glacial_skim:  { element: 'ice',    tags: ['Projectile', 'Slows', 'Interrupts'], damage: `3 × ${D(SPELLS.skim.damage)}`, cooldown: S_(SPELLBOOK.glacial_skim.cooldown), range: M_(22), windup: '' },
   hex_shards:    { element: 'dark',   tags: ['Projectile', 'Interrupts'], damage: `${D(SPELLS.hex.damage)}`, cooldown: S_(SPELLS.hex.cooldown), range: M_(SPELLS.hex.range), windup: '' },
-  sling:         { element: 'earth',  tags: ['Projectile', 'Hitscan-like', 'Summon', 'Interrupts'], damage: `${D(SPELLS.sling.damage)} + ram`, cooldown: S_(SPELLS.sling.cooldown), range: M_(32), windup: '' },
+  sling:         { element: 'earth',  tags: ['Projectile', 'Hitscan-like', 'Summon', 'Interrupts'], damage: `${D(SPELLS.sling.near)}–${D(SPELLS.sling.far)} + ram`, cooldown: S_(SPELLS.sling.cooldown), range: M_(32), windup: '' },
   potion_toss:   { element: 'acid',   tags: ['Projectile', 'Lob', 'Area', 'Stuns'], damage: `${D(SPELLS.potion.damage)} / ${D(SPELLS.potion.finDamage)}`, cooldown: S_(SPELLS.potion.cooldown), range: M_(SPELLS.potion.range), windup: '' },
   // powers (RMB)
   meteor:        { element: 'fire',   tags: ['Projectile', 'Wind-up'], damage: `${D(SPELLS.heavy.damage)}`, cooldown: S_(SPELLS.heavy.cooldown), range: M_(Math.round(SPELLS.heavy.speed * SPELLS.heavy.life)), windup: S_(SPELLS.heavy.chargeTime) },
@@ -974,7 +986,7 @@ export const SPELL_INFO = {
   trapped_relic: { element: 'dark',   tags: ['Area', 'Stuns'], damage: `trap ${D(SPELLBOOK.trapped_relic.damage)}`, cooldown: S_(SPELLBOOK.trapped_relic.cooldown), range: M_(16), windup: '', duration: '2 traps' },
   roll:          { element: 'arcane', tags: ['Dash', 'Dodge'], damage: '', cooldown: '3.5 s × 2', range: M_(4.5), windup: '', duration: 'dodge 0.25 s' },
   // ultimates (Q, charged)
-  meteor_rain:   { element: 'fire',   tags: ['Area', 'Wind-up'], damage: 'kill', cooldown: 'charge', range: M_(24), windup: S_(1.3) },
+  meteor_rain:   { element: 'fire',   tags: ['Area', 'Wind-up'], damage: `kill ${M_(SPELLBOOK.meteor_rain.killRadius)} · ${D(SPELLBOOK.meteor_rain.splash[0])}–${D(SPELLBOOK.meteor_rain.splash[1])}`, cooldown: 'charge', range: M_(24), windup: S_(1.3) },
   eye_of_storm:  { element: 'wind',   tags: ['Area', 'Channel', 'Wind-up'], damage: `${D(8)} / 0.5 s`, cooldown: 'charge', range: M_(7), windup: S_(1.3), duration: S_(3) },
   blizzard:      { element: 'ice',    tags: ['Area', 'Channel', 'Roots', 'Wind-up'], damage: `${D(10)}/s`, cooldown: 'charge', range: M_(14), windup: S_(1.3), duration: S_(2.5) },
   night_cage:    { element: 'dark',   tags: ['Area', 'Heal', 'Wind-up'], damage: '', cooldown: 'charge', range: M_(24), windup: S_(1.3), duration: S_(4) },

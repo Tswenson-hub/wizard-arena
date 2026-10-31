@@ -117,7 +117,7 @@ const cdMul = () => me?.brewing ? C.SPELLBOOK.berserker_brew.cooldownMul : 1;
 const SPELL = C.SPELLBOOK;
 const FROST = SPELL.frostfall, SMOKE = SPELL.smoke_screen, ROLL = SPELL.roll;
 const EYE = SPELL.eye_of_storm, CAGE = SPELL.night_cage, BLIZ = SPELL.blizzard, MRAIN = SPELL.meteor_rain, ULT_WIND = C.ULT_CHARGE.windup;
-const ULT_KINDS = new Set(['eye_of_storm', 'eye_burst', 'blizzard_freeze', 'meteor_rain_hit']);
+const ULT_KINDS = new Set(['eye_of_storm', 'eye_burst', 'blizzard_freeze', 'meteor_rain_hit', 'meteor_rain_splash']);
 const STAMP = SPELL.stampede, RIDE = SPELL.ram_ride, RGUARD = SPELL.ram_guard;
 const AIMED_ULTS = { night_cage: CAGE, stampede: STAMP };   // hold Q to aim (a circle, or Stampede's lane), release; then the wind-up
 const LASH = SPELL.sanguine_lash, MIRROR = SPELL.mirror_step, BULWARK = SPELL.glacial_bulwark, RELIC = SPELL.trapped_relic, SKIM = SPELL.glacial_skim;
@@ -1059,7 +1059,7 @@ function handleMessage(msg) {
       if (msg.id === myId) break;   // ours is drawn from the crosshair
       const w = players.get(msg.id);
       if (!w) break;
-      w.mrainMark ??= effects.cataAim(MRAIN.radius, 0xff3a0a, 0xff8040);
+      w.mrainMark ??= effects.cataAim(MRAIN.radius, 0xff3a0a, 0xff8040, MRAIN.killRadius / MRAIN.radius);
       w.mrainMark.visible = true; w.mrainMark.position.set(msg.at[0], 0, msg.at[1]);
       break;
     }
@@ -1334,7 +1334,7 @@ const walls = new Map();     // id -> { data, fx }
 const frosts = new Map();    // id -> effects entry
 // Cataclysm meteors on their way down, and our Cataclysm targeting circle.
 // Meteor Rain: our aim circle up there, and the cleanup when anyone's ends.
-const mrainMark = effects.cataAim(MRAIN.radius, 0xff5a1e, 0xffc080);
+const mrainMark = effects.cataAim(MRAIN.radius, 0xff5a1e, 0xffc080, MRAIN.killRadius / MRAIN.radius);
 const flaskMark = effects.flaskPreview();   // Flask Step's dotted arc and landing ring
 function endMrain(w) {
   if (!w) return;
@@ -1458,13 +1458,13 @@ function updatePotions(dt) {
 
 // ---------------------------------------------------------------- combat feedback (round 9)
 // Spell icons (Raven Fantasy Icons, public/textures/icons/CREDITS.md) by hit kind, and names for the feed and card.
-const KIND_ICON = { fireball: 'fireball', heavy: 'heavy', meteor_rain_hit: 'meteor_rain', firewall_burn: 'firewall', shear: 'shear', cyclone: 'cyclone',
+const KIND_ICON = { fireball: 'fireball', heavy: 'heavy', meteor_rain_hit: 'meteor_rain', meteor_rain_splash: 'meteor_rain', firewall_burn: 'firewall', shear: 'shear', cyclone: 'cyclone',
   eye_of_storm: 'eye_of_storm', eye_burst: 'eye_of_storm', skim: 'skim', frostfall: 'frostfall', blizzard_chip: 'blizzard', blizzard_freeze: 'blizzard',
   bulwark_frost: 'bulwark', hex: 'hex', lash: 'lash', trapped_relic: 'trapped_relic', sling: 'sling', potion: 'potion', potion_splash: 'potion',
   toxic: 'toxic', toxic_pool: 'toxic', prop: 'prop', ram: 'ram', battering_ram: 'ram', ram_charge: 'ram', ram_shove: 'ram', fast: 'fast', flaskstep: 'flaskstep' };
 const KIND_NAME = { heavy: 'Meteor', fast: 'Spark', shear: 'Gale Shear', hex: 'Hex Shards', skim: 'Glacial Skim', lash: 'Sanguine Lash', sling: "Shepherd's Sling",
   potion: 'Potion Toss', potion_splash: 'Potion Toss', toxic: 'Toxic Flask', toxic_pool: 'Toxic Flask', prop: 'a thrown object',
-  ram: 'a ram', battering_ram: 'Battering Ram', ram_charge: 'a charging ram', ram_shove: 'Ram Ride', meteor_rain_hit: 'Meteor Rain', firewall_burn: 'Firewall', eye_burst: 'Eye of the Storm', blizzard_chip: 'Blizzard',
+  ram: 'a ram', battering_ram: 'Battering Ram', ram_charge: 'a charging ram', ram_shove: 'Ram Ride', meteor_rain_hit: 'Meteor Rain', meteor_rain_splash: 'Meteor Rain', firewall_burn: 'Firewall', eye_burst: 'Eye of the Storm', blizzard_chip: 'Blizzard',
   blizzard_freeze: 'Blizzard', bulwark_frost: 'Glacial Bulwark', flaskstep: 'Flask Step' };
 const iconFor = (kind) => `./textures/icons/${KIND_ICON[kind] || 'skull'}.png`;
 const kindName = (kind) => KIND_NAME[kind] || C.SPELLBOOK[kind]?.name || C.SPELLS[kind]?.name || (kind ? kind.replace(/_/g, ' ') : 'something');
@@ -1544,7 +1544,7 @@ function damageArc(msg) {
   setTimeout(() => el.remove(), 900);
 }
 function combatFeedbackHit(msg, target) {
-  const big = msg.ult ? ' ult' : (msg.dmg >= 30 || msg.kind === 'heavy' || msg.kind === 'frostfall' || msg.kind === 'lash') ? ' big' : msg.fin ? ' crit' : '';
+  const big = msg.ult ? ' ult' : (msg.dmg >= 30 || msg.long || msg.kind === 'heavy' || msg.kind === 'frostfall' || msg.kind === 'lash') ? ' big' : msg.fin ? ' crit' : '';   // (round 15: a long Sling hit too)
   if (msg.attacker === myId && target !== me) {
     if (msg.blocked) floatNumber(target, 'BLOCKED', 'blocked');
     else if (msg.dmg > 0) floatNumber(target, String(Math.round(msg.dmg)), 'dmg' + big);

@@ -210,7 +210,7 @@ function spawnProjectile(owner, kind, origin, dir, propType = null, fin = false,
     v: [d[0] * spec.speed, d[1] * spec.speed, d[2] * spec.speed],
     g: spec.gravity || 0,
     radius: spec.radius,
-    born: now(), life: spec.life,
+    born: now(), life: spec.life, from: [origin[0], origin[1], origin[2]],
   };
   if (kind === 'lash') { proj.pierce = true; proj.hitIds = new Set(); proj.landed = 0; }
   if (fin) {
@@ -358,7 +358,7 @@ function applyHit(target, proj) {
   broadcast({
     t: 'hit', target: target.id, attacker: proj.owner, kind: proj.kind, dmg, blocked,
     kb, dir: norm3([proj.v[0], 0, proj.v[2]]), int: interrupt,
-    ...(proj.fin ? { fin: true } : {}), ...(spec.ult ? { ult: true } : {}),   // (combat feedback: bigger numbers)
+    ...(proj.fin ? { fin: true } : {}), ...(spec.ult ? { ult: true } : {}), ...(proj.long ? { long: true } : {}),   // (combat feedback: bigger numbers)
     ...(knock ? { knockdown: C.KNOCKDOWN.total } : {}),
     ...(blocked ? { absorbed: absorbedAmt } : {}),
     ...(!blocked && spec.slow ? { slow: spec.slowTime } : {}),
@@ -1427,11 +1427,16 @@ function updateMeteorRain(p, t, dt) {
     if (Math.hypot(c[0] - pos[0], c[1] - pos[1], c[2] - pos[2]) < MRAIN.pathRadius + C.HIT_RADIUS * 0.5) mrainKill(p, q, [dir[0] / dl, 0, dir[2] / dl]);
   }
   if (k < 1) return;
-  // the landing: everyone in the circle
+  // the landing: the kill ring kills; the rest of the circle takes a splash falling off to its edge (round 15)
   const hits = [];
   for (const q of players.values()) {
-    if (q === p || !enemies(p, q) || q.dead || aboveFloor(q) > 2.5 || dist2D(q.p, M.diveTo) > MRAIN.radius + C.PLAYER_RADIUS) continue;
-    mrainKill(p, q, outward(M.diveTo, q));
+    if (q === p || !enemies(p, q) || q.dead || aboveFloor(q) > 2.5 || p.mrain.hit.has(q.id)) continue;
+    const d = dist2D(q.p, M.diveTo);
+    if (d > MRAIN.radius + C.PLAYER_RADIUS) continue;
+    if (d <= MRAIN.killRadius + C.PLAYER_RADIUS) { mrainKill(p, q, outward(M.diveTo, q)); continue; }
+    const k = Math.min(1, (d - MRAIN.killRadius - C.PLAYER_RADIUS) / (MRAIN.radius - MRAIN.killRadius));
+    p.mrain.hit.add(q.id);
+    applyHit(q, { kind: 'meteor_rain_splash', owner: p.id, v: outward(M.diveTo, q), dmg: MRAIN.splash[0] + (MRAIN.splash[1] - MRAIN.splash[0]) * k });
   }
   for (const id of p.mrain.hit) hits.push(id);
   crushArea(p.id, M.diveTo[0], M.diveTo[2], MRAIN.radius);
@@ -1620,6 +1625,10 @@ function simulate(dt) {
       const c = [pl.p[0], pl.p[1] + C.hitCenterOf(pl), pl.p[2]];   // crouched: a smaller, lower sphere
       const d = Math.hypot(proj.p[0] - c[0], proj.p[1] - c[1], proj.p[2] - c[2]);
       if (d < C.hitRadiusOf(pl) + proj.radius) {
+        if (proj.kind === 'sling') {   // round 15: the further it flew, the harder it hits
+          const flown = Math.hypot(proj.p[0] - proj.from[0], proj.p[1] - proj.from[1], proj.p[2] - proj.from[2]);
+          proj.dmg = C.slingDamage(flown); proj.long = flown >= C.SPELLS.sling.longShot;
+        }
         const { blocked, dmg: dealt } = applyHit(pl, proj);
         if (proj.kind === 'sling' && !blocked && dealt > 0 && shooter && !pl.dead) callRamOn(pl, shooter);   // Shepherd's Sling
         if (proj.pierce) {

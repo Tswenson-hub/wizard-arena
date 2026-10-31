@@ -249,6 +249,9 @@ export class Effects {
       const stone = new THREE.Mesh(new THREE.DodecahedronGeometry(msg.fin ? 0.17 : 0.12, 0), new THREE.MeshStandardMaterial({ color: 0x8a8070, roughness: 0.9, flatShading: true }));
       g.add(stone);
       g.userData.spin = new THREE.Vector3(9, 6, 4);
+      // round 15: it hits harder the further it flies, and shows it: a warm glow that grows and brightens over the flight
+      const glow = new THREE.Mesh(this.sphereGeo, this.mat(0xffc870, { opacity: 0 }));
+      glow.scale.setScalar(0.15); g.add(glow); g.userData.slingGlow = glow;
       if (msg.fin) { const ring = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.03, 6, 20), this.mat(0xffe0a0, { opacity: 0.8 })); g.add(ring); }
     } else if (msg.kind === 'fireball') {
       // Cinder's Fireball: a white-hot core in a fat flame shell, bigger again for the 3rd shot
@@ -846,7 +849,8 @@ export class Effects {
 
   // ---------------------------------------------------------------- ultimates
   // An aim circle on the ground (Night Cage, Meteor Rain).
-  cataAim(radius = MRAIN.radius, color = 0xff7a2a, rim = 0xffc080) {
+  // `inner` (0..1 of the radius): a second, brighter disc and ring inside it (Meteor Rain's kill ring, round 15).
+  cataAim(radius = MRAIN.radius, color = 0xff7a2a, rim = 0xffc080, inner = 0) {
     const g = new THREE.Group();
     const fill = new THREE.Mesh(new THREE.CircleGeometry(1, 64).rotateX(-Math.PI / 2),
       new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.12, depthWrite: false }));
@@ -854,6 +858,14 @@ export class Effects {
       new THREE.MeshBasicMaterial({ color: rim, transparent: true, opacity: 0.9, depthWrite: false }));
     fill.position.y = ring.position.y = 0.16;
     g.add(fill, ring);
+    if (inner > 0) {
+      const core = new THREE.Mesh(new THREE.CircleGeometry(inner, 64).rotateX(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({ color: 0xff2a10, transparent: true, opacity: 0.28, depthWrite: false }));
+      const coreRing = new THREE.Mesh(new THREE.RingGeometry(inner - 0.05, inner, 96).rotateX(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({ color: 0xffe0b0, transparent: true, opacity: 1, depthWrite: false }));
+      core.position.y = 0.17; coreRing.position.y = 0.18;
+      g.add(core, coreRing);
+    }
     g.scale.setScalar(radius);
     g.visible = false;
     this.scene.add(g);
@@ -1304,6 +1316,8 @@ export class Effects {
         break;
       case 'sling':
         this.S('dirt_02', { p, size: [0.22 * fin, 0.08], life: 0.3, color: 0x9a8a70, alpha: 0.6, add: false, optional: true });
+        // round 15: a golden streak that lengthens and brightens the further the stone has flown
+        if (pr.slingK > 0.2) this.S('trace_01', { p, mode: 'streak', axis: ax, size: [0.5 + 0.9 * pr.slingK, 0.3], aspect: 1.5, life: 0.2, color: 0xffc870, alpha: 0.25 + 0.6 * pr.slingK });
         break;
       default:   // a thrown prop
         this.S('smoke_01', { p: jit(0.6), size: [0.5, 1], life: 0.45, spin: 1, color: 0xb48cff, alpha: 0.3, add: false, optional: true });
@@ -1331,6 +1345,10 @@ export class Effects {
       // trail
       pr.trail += dt;
       if (pr.group.userData.ring) pr.group.userData.ring.rotation.y += dt * 8;
+      if (pr.group.userData.slingGlow) {   // Sling: 0 at the hand, full at C.SPELLS.sling.farDist flown
+        pr.slingK = Math.min(1, pr.age * C.SPELLS.sling.speed / C.SPELLS.sling.farDist);
+        const gl = pr.group.userData.slingGlow; gl.material.opacity = 0.1 + 0.6 * pr.slingK; gl.scale.setScalar(0.15 + 0.3 * pr.slingK);
+      }
       const interval = (pr.kind === 'heavy' || pr.kind === 'lash' || pr.kind === 'fireball' ? 0.025 : 0.035) * (this.low ? 2 : 1);
       if (pr.trail > interval) { pr.trail = 0; this.trail(pr); }
     }
