@@ -3,8 +3,8 @@
 A low-poly, browser-based multiplayer **wizard duelling** game built with **three.js** and **WebSockets**.
 There are no fixed heroes: every player **builds their own wizard** by choosing one spell for each of six
 slots from the full spellbook, then fights in a **four-player free-for-all** where timing, dodging and
-firing back cleanly decide the duel. The arena is a wizard's farmstead with high ground, cover, throwable
-scenery and short-tempered goats.
+firing back cleanly decide the duel. The arena is a castle courtyard with a wall-walk, towers, a timber hall and
+throwable crates, barrels and kegs.
 
 ## Quick start
 
@@ -17,7 +17,7 @@ Open the URL, build a wizard, and enter. Bots fill any empty places up to four.
 
 ### The match
 
-- **Free-for-all, four wizards**, first to **10 kills** or the most kills at the **8-minute** cap.
+- **Free-for-all, four wizards**, first to **15 kills** or the most kills at the **7-minute** cap.
 - A short warm-up, then the match, then results for 8 s and an **automatic rematch**.
 - Humans take places first; bots fill the rest (difficulty on the join screen). A fifth human spectates
   until a place opens.
@@ -58,7 +58,7 @@ Brew + Potion Toss), Strong Brew (Berserker Brew + Toxic Flask), Hail from Above
 mid-air) and Herd Call (Shepherd's Sling + Ram Guard). The builder tags them.
 
 Primaries fire in a rhythm (two or three shots, then a reload); only the last shot of the rhythm stuns and
-interrupts. Casting roots you briefly; movement spells don't. Ultimates charge from damage and time and have
+interrupts. Most spells cast on the move (a brief slow) and in the air; only the big wind-ups (ultimates, Meteor, Sanguine Lash, Battering Ram, Blizzard) root you, and in mid-air they hold you in place. Ultimates charge from damage and time and have
 an interruptible 1.3 s wind-up.
 
 ## Controls
@@ -70,10 +70,10 @@ an interruptible 1.3 s wind-up.
 | `LMB` / `RMB` | Primary / power spell |
 | `R` | Shield (hold or tap, depending on the spell) |
 | `E` | Mobility spell (Skyward Flash in the air: hold `E` to float slower, `C` to drop) |
-| `F` | Utility: telekinesis lifts an object or goat up to 16 m away; `F` again hurls it |
+| `F` | Utility: Telekinesis lifts an object up to 16 m away and `F` again hurls it; Trapped Relic curses an object; Roll dodges |
 | `G` | Set a held object down |
 | `Q` | Ultimate (when charged) |
-| `Space` | Jump (also pulls you up onto ledges just out of reach) |
+| `Space` | Jump; again in the air to double jump (also pulls you up onto ledges just out of reach) |
 | `C` / `Ctrl` | Crouch (`C` toggles, `Ctrl` holds): low cover hides you |
 | `Shift` | Sprint |
 | `T` | Reload early |
@@ -83,14 +83,14 @@ an interruptible 1.3 s wind-up.
 
 ## The arena
 
-A wizard's farmstead built around a stone altar blasted open by an old spell. High ground (ruin ledges, rock
-plateaus, the treetop fort, the barn, hay loft and silo, the embankment road) is reached by stairs, ramps,
-ladders and ledge grabs. Cover clusters break up the sight lines. Health potions (35 HP, back after 20 s) sit on
-contested spots, and you regenerate after 5 s without taking damage.
+A walled castle courtyard about 47 m across. Stairs lead up to a wall-walk that runs all the way round, with
+corner towers, a gatehouse and a timber hall whose balcony joins the walls; a double jump and a ledge grab get you
+up almost anywhere. Pillars, barriers, rubble and crate stacks break up the sight lines around the rune circle in
+the middle. Health potions (35 HP, back after 20 s) sit on contested spots, half of them up high, and you
+regenerate after 7 s without taking damage.
 
-Crates, barrels, pots, hay and goats can be lifted with telekinesis and hurled: a hit knocks the target down.
-**Goats** graze in their pen; hit one with a spell and it charges you, and a charging goat kills in one hit
-unless your shield faces it.
+Crates, barrels, kegs and chests can be lifted with telekinesis and hurled (a hit knocks the target down) or
+cursed into traps with Trapped Relic.
 
 Append `?low` to the URL for lighter graphics on weak GPUs.
 
@@ -127,14 +127,14 @@ public/shared/constants.js Tuning shared by server and client: SPELLBOOK (every 
 public/shared/layout.json  Where everything on the map is (written by the map editor, ?edit=1).
 public/shared/map.js       Map layout built from layout.json: arena radius, COLLIDERS (every solid thing
                            as a circle with a height: movement hits all of them, spells fly over low
-                           ones), walkable SURFACES, props, goats, spawn points.
+                           ones), walkable SURFACES, props, spawn points.
 public/js/editor.js        The map editor (public/edit.html, server/mapedit.js saves it).
 public/js/main.js          Client bootstrap, local player controller, camera, HUD, message handling.
 public/js/wizard.js        Skinned wizard instances + animation state machine.
 public/js/select.js        The spell builder (slot rows of spell cards, presets, saves, preview).
 public/js/looks.js         The KayKit bodies (Mage players, Skeleton bots), the BONES map, the element tint and aura.
 public/js/spellanim.js     Per-spell cast animation table (which clip, timed to each spell's release).
-server/match.js            The four-player free-for-all: warm-up, first to 10, results, rematch.
+server/match.js            The four-player free-for-all: warm-up, first to 15, results, rematch.
 public/js/world.js         The castle courtyard: ground, sky, instanced kit pieces from layout.json, trees outside
                            the walls, prop mesh factories, camera blockers.
 public/js/effects.js       Projectile visuals, particles, debris, teleport/impact effects.
@@ -149,7 +149,7 @@ public/js/rams.js          Ram visuals (Ram Guard, Battering Ram, Stampede, Ram 
 server/bots.js             Server-side AI wizards (Easy / Normal / Hard).
 bot.js                     CLI to add or clear bots on a running server.
 tools/test/                Headless checks: modematch (FFA), loadoutbalance (spell kill shares),
-                           modematch-unit (match rules), botmatch, goat browser test.
+                           modematch-unit (match rules), botmatch, ram browser test.
 docs/agents/               Briefs and hand-off notes from the parallel environment/gameplay build.
 ```
 
@@ -224,6 +224,6 @@ The submission checklist is in `docs/agents/deploy-handoff.md`.
 - **Magic sound effects:** *Magic Spell SFX Soundpack* by **Leonardo Calvo** ([thesoundrack](https://thesoundrack.itch.io/freemagicspellsfx)),
   licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Clips were trimmed, loudness-matched and re-encoded.
 - **Other sound effects:** *Basic Spell Impacts* (lentikula, CC0), *80 CC0 RPG SFX* (OpenGameArt, CC0), Kenney audio packs (CC0),
-  a goat bleat by Kinoton (Freesound, CC0), and six effects supplied by Ty from Pixabay (Pixabay Content License).
+  a ram bleat by Kinoton (Freesound, CC0), and potion, flask and fizz effects from OpenGameArt (CC0).
 - **Menu music:** "Medieval: The Old Tower Inn" by **RandomMind** (OpenGameArt, CC0 1.0).
 - Per-file sources and licences: [`public/sounds/CREDITS.md`](public/sounds/CREDITS.md).
