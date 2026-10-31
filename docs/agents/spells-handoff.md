@@ -1,5 +1,88 @@
 # Spells hand-off
 
+## Round 16: Blood Siphon, Sanguine Aegis, no warm-up, the menu Respawn, Meteor Rain's sway; then idle players
+Commits: `c7c11ce` (Blood Siphon), `77ece63` (Sanguine Aegis), `be4bf66` (the countdown), `12606e6` (Respawn), `4d89148` (the sway),
+`9d3d5db` (requests), `42598c5` (idle players), plus this hand-off.
+
+- **Blood Siphon** (id `sanguine_lash` kept):
+  - The cast is 0.35 s, slowed but not rooted (`siphonStart`, then `siphonRelease` from the client at 0.35 s; a stun or an
+    interrupting hit cancels it).
+  - The bolt is a normal `siphon` projectile: 34 m/s, 26 m, 30 damage (base 22), 7 s cooldown. A hit heals the caster
+    `SIPHON.heal` (50%) of the damage dealt (`heal` with `src: 'siphon'`, crimson +N), and a red tracer flows from the victim back to
+    the caster (`effects.siphonTracer`).
+  - A miss costs nothing.
+  - **Removed:** the whip, the coil, the bind-on-hit, the miss root, the hover, the pierce, and the bots' lash-threat logic.
+  - **Combo** (`blood_lash`, now "Blood Tithe"): Sanguine Aegis's absorbed damage cuts Siphon's cooldown and charges its next bolt
+    (+14 max).
+  - Bots use it as a poke, more when hurt (HP < 75).
+  - Characters' keys: `playSpell(w, 'sanguine_lash', 'windup')` on the cast, `'release'` when the bolt leaves.
+  - Unit tests: a hit heals 50% (30 dealt, 15 healed); a miss leaves the caster unrooted and unbound.
+- **Sanguine Aegis** (id `black_death` kept): renamed, with a blurb that reads as healing; the card tags are Shield and Heal. The shroud
+  is a half see-through deep crimson fill (was a 0.97 black) with a lighter rim (wizard.js).
+- **No warm-up:**
+  - match.js's `warmup` phase is now `countdown`, lasting 3 s (`TIMES.countdown`), for the first match and every rematch. Nothing
+    counts during it.
+  - The HUD shows "Free-for-all · First to 15 kills", then 3, 2, 1 "Get ready", then "Fight!".
+  - `matchDebug` takes `countdown` (and still accepts `warmup`).
+  - The unit tests and `modematch.mjs` read it.
+- **Respawn with these spells** (Esc menu, next to Leave match; `{ t: 'respawnNow', loadout }`):
+  - The loadout applies at once.
+  - Not hurt for `RESPAWN_NOW.safeAfter` (5 s): a free, instant respawn.
+  - Otherwise: `killPlayer(p, lastHitBy, 'respawn')`, so a death credited to the last attacker (feed "X finished Y"), then the usual
+    2 s.
+  - While dead it sets the next loadout. 3 s cooldown (`respawnNowRefused`).
+  - The label: "Respawn with these spells", red "Respawn (counts as a death)", a countdown during the cooldown, or "Use these spells
+    next life".
+  - Unit tests: safe, hurt (the attacker gets the kill), spam refused.
+- **Meteor Rain's sway:**
+  - `C.meteorSway(seed, t, dist)`: two summed sines per axis, about 1.75 m at 14 m (0.5–1.5× with distance), 1.2–2 s periods.
+  - The server picks the seed per cast and sends it in `mrainLeap`.
+  - The client adds it to the aim, and the circle shown is where she lands. Holding C steadies it to half.
+  - Bots get the same sway and correct 60% / 40% / 15% (hard / normal / easy) of it.
+  - Unit test: deterministic per seed, up to 2.1 m.
+- **Idle players** (`C.IDLE`: 45 s, 90 s while dead or in the Esc menu, 300 s):
+  - server.js `noteInput` counts any action, and a `state` report that moves, turns or crouches.
+  - The client reports the menu (`{ t: 'menu', open }`) and sends `{ t: 'activity' }` on a key or click while idle.
+  - **Idle:** `match.setIdle` makes them a spectator (out of the 4) and the bot fill takes the place. They see "You're idle: press any
+    key to rejoin".
+  - **Back:** the spectator queue seats them again; a fill bot makes way.
+  - **5 minutes:** `{ t: 'kicked', reason: 'inactivity' }`, the socket closes, and a "Disconnected for inactivity" card with Rejoin.
+  - `debugIdle` (WA_DEBUG) shortens the times for tests.
+  - Unit tests: idle → spectator plus a bot, input → seated, the kick.
+
+### Verification
+- **`modematch-unit`:** ALL PASS, with the new tests (Siphon, Respawn, the countdown, the sway, idle).
+- **Balance** (12 runs × 75 s each, `/tmp/wa-spells/r16/c5/`):
+
+| | normal | hard |
+|---|---|---|
+| kills / player / min | 1.65 | 1.22 |
+| respawn → first damage | 6.8 s | 6.7 s |
+| engagements ending in a kill | 47% | 35% |
+| TTK (median) | 4.3 s | 2.2 s |
+| Meteor Rain kills per run equipped | 0.82 (9 / 11; was 0.88) | 0.38 (3 / 8) |
+| Meteor Rain: share of Ultimate kills | 75% (9 of 12) | 75% (3 of 4) |
+| Blood Siphon killing blows | 3 (K/D 0.94; about 14% of Power's) | 1 (K/D 0.55; about 5%) |
+
+  - **Meteor Rain** didn't drop "well under" in bot play: bots correct for most of the sway by design, so it bites humans much more
+    than bots.
+  - **If Ty wants it lower still:** a bigger sway (`sway.amp` 1.75 → 2.5) or a smaller kill ring (2.4 → 2.0 m).
+- **Browser** (`/tmp/wa-spells/r16/shots/`):
+  - the countdown banners (read from the HUD in the first second)
+  - the Respawn button safe (`2_*`) and hurt (`3_*`, red), with the builder's new cards
+  - Siphon's bolt (`4_*`) and tracer (`5_*`)
+  - the crimson +15 and the crimson Aegis shroud (`7_aegis.png`)
+  - Meteor Rain's circle with its kill ring (`8_*`), with the sampled positions drifting 1–2 m while the aim held still
+  - No console errors.
+- **CrazyGames build:** a local build served under `/game/` passes `deploy/subpath_test.py --max-mb 20`: 377 files, 7.7 MB initial, no
+  requests outside `/game/`, no failed requests or console errors, the SDK's start and stop events.
+  - `deploy/smoke.py` is the live (Render) test; it runs after a push.
+
+### Left over
+- **Coordinator (README):** the old names on lines 50, 51, 56 and 61, the warm-up, and the new Respawn button (in requests.md).
+- **Deploy:** `capture_store.py` waits on the "Warm-up" text (in requests.md).
+- **Balance-review buffs:** held until Ty approves (round 15 section below).
+
 ## Round 15: goats out, rams on their own, Skeleton bots, castle physics, named animation phases, the fun pass, CC0 audio
 Commits: `50ff0ad` (interfaces in requests), `0149403` (goats removed, rams.js, Skeleton names and body flag, the HEAL_SPOTS fix,
 spawn heights), `30f52a0` (castle physics, unit test on the castle), `cd06689` (main.js on named phases, staff-tip aim, the pose()
