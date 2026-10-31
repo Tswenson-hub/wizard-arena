@@ -894,18 +894,19 @@ function primary(me, target, act, cfg, world, t) {
 function bolt(me, target, act, cfg, world, kind) {
   const spec = C.SPELLS[kind];
   const from = [me.p[0], me.p[1] + 1.3, me.p[2]];
-  const dir = aimAt(me, from, target, spec.speed, 0, cfg);
+  const src = C.castPoint(me.p, yawTo(me.p, target.p));   // round 15: the shot leaves the staff head; aim from there
+  const dir = aimAt(me, src, target, spec.speed, 0, cfg);
   if (lineBlocked(from, dir, dist2D(me.p, target.p), Math.min(spec.radius, 0.5))) return;
   if (firewallInWay(me, world, from, target.p) || smokeFlaskInWay(me, world, from, target.p)) return;
   me.yaw = yawTo(me.p, target.p);
-  act({ t: 'cast', kind, dir });
+  act({ t: 'cast', kind, dir, origin: src });
 }
 
 // A lobbed potion (Potion Toss, Toxic Flask) onto where the target will be.
 function lob(me, target, act, cfg, world, msgType, spec, extra = {}) {
-  const from = [me.p[0], me.p[1] + 1.3, me.p[2]];
+  const from = C.castPoint(me.p, yawTo(me.p, target.p));   // round 15: from the staff head
   if (smokeFlaskInWay(me, world, from, target.p) || firewallInWay(me, world, from, target.p)) return;
-  if (C.pillarBlocks(from, target.p, 0.2)) return;
+  if (C.pillarBlocks([me.p[0], me.p[1] + 1.3, me.p[2]], target.p, 0.2)) return;
   const dir = aimAt(me, from, target, spec.speed, spec.gravity, cfg);
   me.yaw = yawTo(me.p, target.p);
   act({ t: msgType, ...extra, dir, origin: from });

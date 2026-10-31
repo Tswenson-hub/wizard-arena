@@ -834,6 +834,17 @@ export const MAX_NAME_LEN = 14;
 
 // Where a blink lands. Used by the server (authoritative) and the client (prediction),
 // so the two must agree exactly.
+// Round 15: where a cast leaves the staff head. Measured on the KayKit Mage: at a cast's release the orb is about 0.33 m to the
+// body's right, 0.9 m up and 1.15 m ahead (at idle the staff is carried low, at the hip). The ahead part is held to 0.85 m so
+// a shot never starts past a wall in front of the caster; if a wall is between the chest and that point, the chest it is.
+export const STAFF_RELEASE = { side: -0.33, up: 0.95, fwd: 0.85 };
+export function castPoint(p, yaw) {
+  const R = STAFF_RELEASE, fx = Math.sin(yaw), fz = Math.cos(yaw), lx = Math.cos(yaw), lz = -Math.sin(yaw);   // forward; the body's +x (its left)
+  const at = [p[0] + fx * R.fwd + lx * R.side, p[1] + R.up, p[2] + fz * R.fwd + lz * R.side];
+  const chest = [p[0], p[1] + 1.1, p[2]];
+  return MAPNS.surfaceSegmentHit?.(chest, at) ? [p[0], p[1] + 1.3, p[2]] : at;
+}
+
 // Round 15: [x, y, z], y the standing height there (landingSpot: on the castle's walls, never inside one).
 export function computeTeleport(from, dir, distance = TELEPORT.distance) {
   const l = Math.hypot(dir[0], dir[2]) || 1;

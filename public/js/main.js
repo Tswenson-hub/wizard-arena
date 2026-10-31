@@ -1605,10 +1605,13 @@ const aimOrigin = new THREE.Vector3();
 function computeAim() {
   camera.getWorldDirection(aimDir);
   const target = tmp.v1.copy(camera.position).addScaledVector(aimDir, 40);
-  (me.tip || me.hand).getWorldPosition(aimOrigin);   // round 15: from the staff's head (looks.js tip), else the hand
-  // keep the origin sane even mid-animation (within reach of the chest, above the knees)
-  const chestY = local.pos.y + 1.1;
-  if (Math.hypot(aimOrigin.x - local.pos.x, aimOrigin.y - chestY, aimOrigin.z - local.pos.z) > 1.8 || aimOrigin.y < local.pos.y + 0.9) aimOrigin.set(local.pos.x, local.pos.y + 1.3, local.pos.z);
+  // round 15: from the staff head. The KayKit Mage carries the staff low at idle, so unless it's raised (mid-cast), the shot
+  // starts where the head will be at the cast's release (C.castPoint); a raised tip is used as it is, if it's in reach and
+  // no wall is between it and the chest.
+  (me.tip || me.hand).getWorldPosition(aimOrigin);
+  const chest = [local.pos.x, local.pos.y + 1.1, local.pos.z];
+  if (aimOrigin.y < local.pos.y + 0.75 || Math.hypot(aimOrigin.x - chest[0], aimOrigin.y - chest[1], aimOrigin.z - chest[2]) > 1.6
+    || C.surfaceSegmentHit?.(chest, aimOrigin.toArray())) aimOrigin.fromArray(C.castPoint([local.pos.x, local.pos.y, local.pos.z], local.yaw));
   aimDir.copy(target).sub(aimOrigin).normalize();
 }
 
@@ -1646,6 +1649,8 @@ function aimPoint() {
   camera.getWorldDirection(camDir);
   const o = camera.position;
   let best = 60;
+  // ignore anything between the camera and us (round 15: the boom's real length along the ray, not a fixed 4.5 m)
+  const near = Math.max(0.5, (local.pos.x - o.x) * camDir.x + (local.pos.y + 1.2 - o.y) * camDir.y + (local.pos.z - o.z) * camDir.z);
   const hitSphere = (c, r) => {
     const lx = c.x - o.x, ly = c.y - o.y, lz = c.z - o.z;
     const tca = lx * camDir.x + ly * camDir.y + lz * camDir.z;
@@ -1653,7 +1658,7 @@ function aimPoint() {
     const d2 = lx * lx + ly * ly + lz * lz - tca * tca;
     if (d2 > r * r) return;
     const t = tca - Math.sqrt(r * r - d2);
-    if (t > 4.5 && t < best) best = t;       // ignore anything between the camera and us
+    if (t > near && t < best) best = t;
   };
   for (const w of players.values()) if (w !== me && !w.dead) hitSphere(tmp.v1.copy(w.group.position).setY(w.group.position.y + C.hitCenterOf(w)), C.hitRadiusOf(w) + 0.3);
   for (const d of decoys.values()) if (d.owner !== myId) hitSphere(tmp.v1.copy(d.wiz.group.position).setY(C.HIT_CENTER_Y), C.HIT_RADIUS + 0.3);
@@ -1666,9 +1671,13 @@ function aimPoint() {
     const d2 = lx * lx + lz * lz - tca * tca;
     if (tca < 0 || d2 > c.r * c.r) continue;
     const t = (tca - Math.sqrt(c.r * c.r - d2)) / hl;
-    if (t > 4.5 && t < best && o.y + camDir.y * t < c.h) best = t;
+    if (t > near && t < best && o.y + camDir.y * t < c.h) best = t;
   }
-  if (camDir.y < -0.01) { const t = -o.y / camDir.y; if (t > 4.5 && t < best) best = t; }
+  if (camDir.y < -0.01) { const t = -o.y / camDir.y; if (t > near && t < best) best = t; }
+  // the castle's walls, towers and wall-walk floors (SURFACES boxes)
+  const a = [o.x + camDir.x * near, o.y + camDir.y * near, o.z + camDir.z * near], b = [o.x + camDir.x * best, o.y + camDir.y * best, o.z + camDir.z * best];
+  const sh = C.surfaceSegmentHit?.(a, b);
+  if (sh) best = near + (best - near) * sh.t;
   return [o.x + camDir.x * best, Math.max(0.3, o.y + camDir.y * best), o.z + camDir.z * best];
 }
 
@@ -2319,26 +2328,48 @@ function updateLocal(dt) {
 }
 
 // Over-the-shoulder orbit camera (pulled in when something stands between it and us).
+// Round 15 (the KayKit Mage: a chibi body, 2.2 m to the hat's tip, its brim about 1 m across): an over-the-shoulder boom.
+// The camera sits CAM.side to the right of a pivot at brim height and CAM.dist behind that point, and the crosshair ray runs
+// parallel to the boom through the side point, so the body and hat stay left of the crosshair at any distance. Walls, towers
+// and kit pieces shorten the side step first, then the boom (environment's camera grid and the castle's SURFACES boxes), and a
+// boom pulled in close rises a little so we look over the hat rather than into it.
+const CAM = { dist: 5.0, height: 1.95, side: 1.2, minSide: 0.45, lift: 0.7, margin: 0.35 };
+// How far along a -> b (0..1) the camera can go before something solid, less a small margin.
+function camClear(a, b) {
+  let k = World.cameraClearance ? World.cameraClearance(a, b) : 1;
+  const hit = C.surfaceSegmentHit?.(a.toArray(), b.toArray());
+  if (hit) k = Math.min(k, hit.t);
+  if (k < 1) k = Math.max(0, k - CAM.margin / Math.max(0.01, a.distanceTo(b)));
+  return k;
+}
 function updateCamera(dt) {
-  let camDist = 4.2;
+  let camDist = CAM.dist;
   local.camDuck = (local.camDuck ?? 0) + ((local.crouch ? 1 : 0) - (local.camDuck ?? 0)) * Math.min(1, dt * 10);
-  const pivot = tmp.v1.set(local.pos.x, local.pos.y + 1.55 - 0.5 * local.camDuck, local.pos.z);
+  const pivot = tmp.v1.set(local.pos.x, local.pos.y + CAM.height - 0.55 * local.camDuck, local.pos.z);
   const back = tmp.v2.set(-Math.sin(local.yaw) * Math.cos(local.pitch), Math.sin(local.pitch), -Math.cos(local.yaw) * Math.cos(local.pitch));
-  const shoulder = tmp.v3.set(Math.cos(local.yaw), 0, -Math.sin(local.yaw)).multiplyScalar(0.7);
-  // pull the camera in if a pillar sits between it and the wizard (2D circle test along the boom)
+  const right = tmp.v3.set(-Math.cos(local.yaw), 0, Math.sin(local.yaw));   // the body's right (its local -x)
+  // the side step: as far right as the walls allow
+  const sideFull = pivot.clone().addScaledVector(right, CAM.side);
+  const side = Math.max(CAM.minSide, CAM.side * camClear(pivot, sideFull));
+  const shoulderP = pivot.clone().addScaledVector(right, side);
+  // pull the camera in if a pillar sits between it and the shoulder point (2D circle test along the boom)
   for (const p of C.COLLIDERS) {
     for (let d = 0.6; d < camDist; d += 0.3) {
-      const x = pivot.x + back.x * d + shoulder.x, z = pivot.z + back.z * d + shoulder.z;
-      if (pivot.y + back.y * d < p.h + 0.5 && Math.hypot(x - p.x, z - p.z) < p.r + 0.35) { camDist = Math.max(1.2, d - 0.3); break; }
+      const x = shoulderP.x + back.x * d, z = shoulderP.z + back.z * d;
+      if (shoulderP.y + back.y * d < p.h + 0.5 && Math.hypot(x - p.x, z - p.z) < p.r + 0.35) { camDist = Math.max(1.2, d - 0.3); break; }
     }
   }
-  const desired = pivot.clone().addScaledVector(back, camDist).add(shoulder);
-  // round 14 (environment's camera blockers): stop short of a Meshy model behind us, and see through a tree canopy
-  if (World.cameraClearance) desired.lerpVectors(pivot, desired, World.cameraClearance(pivot, desired));
+  let desired = shoulderP.clone().addScaledVector(back, camDist);
+  // round 14/15 (environment's camera blockers, and the castle's boxes): stop short of a wall or tower behind us
+  const k = camClear(shoulderP, desired);
+  desired.lerpVectors(shoulderP, desired, k);
+  // pulled in close (backed against a wall): rise a little and look over the hat
+  const lifted = desired.clone(); lifted.y += CAM.lift * (1 - k);
+  if (!C.surfaceSolidAt?.(lifted.x, lifted.y, lifted.z, true)) desired = lifted;
   World.cameraCutaway?.(pivot);
-  if (desired.y < 0.4) desired.y = 0.4;
+  if (desired.y < local.pos.y + 0.4) desired.y = local.pos.y + 0.4;
   camera.position.lerp(desired, Math.min(1, dt * 18));
-  const look = pivot.clone().add(shoulder).addScaledVector(back, -6);
+  const look = shoulderP.clone().addScaledVector(back, -8);
   if (shakeAmt > 0.001) {
     camera.position.x += (Math.random() - 0.5) * shakeAmt; camera.position.y += (Math.random() - 0.5) * shakeAmt;
     shakeAmt *= Math.max(0, 1 - dt * 10);

@@ -2345,7 +2345,7 @@ function rudeName(name) {
 
 function sanitizeOrigin(p, o) {
   if (Array.isArray(o) && o.length === 3 && o.every(Number.isFinite) && dist2D(o, p.p) < 2.5 && o[1] > p.p[1] - 1 && o[1] < p.p[1] + 3) return o;
-  return [p.p[0], p.p[1] + 1.3, p.p[2]];
+  return C.castPoint(p.p, p.yaw);   // round 15: the staff head at release (bots send none for most casts)
 }
 
 // ---------------------------------------------------------------- network
