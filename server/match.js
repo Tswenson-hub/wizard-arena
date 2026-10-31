@@ -1,6 +1,6 @@
 // The match (round 11: one mode only). A 4-player free-for-all: humans first, bots fill up to 4, a 5th human
 // watches as a spectator until a place opens. First to 15 kills, or the most kills at the 7-minute cap.
-// Loop: warmup (10 s, nothing scores) → live → end (results, 8 s) → an immediate rematch (warmup ...).
+// Loop: countdown (3 s, nothing scores; round 16: no warm-up) → live → end (results, 8 s) → an immediate rematch (countdown ...).
 // Spells agent (round 11; it was the modes agent's).
 //
 // Hooks: server.js calls these.
@@ -18,13 +18,13 @@
 //
 // ctx (from server.js): { players, props, now, broadcast, send, addBot, removePlayer, respawn, propPublic,
 //   addUltCharge(p, pct) }, plus optional resetRams() and resetUlt(p).
-// Debug (only with MATCH_DEBUG=1 in the server's environment): { t: 'matchDebug', target, cap, warmup, endTime,
+// Debug (only with MATCH_DEBUG=1 in the server's environment): { t: 'matchDebug', target, cap, countdown (or warmup), endTime,
 // botDiff, skip: true, spectate: true, pinBots: true | false, size }.
 
 import * as C from '../public/shared/constants.js';
 
 export const FFA = { name: 'Free-for-all', size: 4, target: 15, cap: 420 };   // round 14 (pacing): 10 / 480
-const TIMES = { warmup: 10, end: 8 };
+const TIMES = { countdown: 3, end: 8 };   // round 16 (Ty): a 3 s countdown, then go (was a 10 s warm-up)
 const DEBUG = !!process.env.MATCH_DEBUG;
 const DIFFS = ['easy', 'normal', 'hard'];
 const SPECTATE_AT = [0, 0, -38];
@@ -35,7 +35,7 @@ const spawnList = () => C.FFA_SPAWNS?.length ? C.FFA_SPAWNS : C.SPAWN_POINTS;
 export function createMatch(ctx) {
   const { players, props } = ctx;
   const S = {
-    phase: 'warmup', phaseEnd: 0, paused: true,   // paused until a human is here
+    phase: 'countdown', phaseEnd: 0, paused: true,   // paused until a human is here
     target: null, cap: null, size: FFA.size,       // debug overrides
     times: { ...TIMES },
     results: null,
@@ -118,10 +118,10 @@ export function createMatch(ctx) {
     for (const p of players.values()) { resetUlt(p); if (!p.spectator) ctx.respawn(p); }
     clearStats();
   }
-  function startWarmup() {
+  function startCountdown() {
     S.results = null;
     resetArena();
-    setPhase('warmup', S.times.warmup);
+    setPhase('countdown', S.times.countdown);
   }
   function startLive() {
     clearStats();
@@ -225,7 +225,7 @@ export function createMatch(ctx) {
     },
     onLeave(p) {
       // last human gone: server.js clears the bots; wait for the next arrival
-      if (!p.bot && !humans().some(q => q !== p)) { S.paused = true; S.phase = 'warmup'; S.results = null; }
+      if (!p.bot && !humans().some(q => q !== p)) { S.paused = true; S.phase = 'countdown'; S.results = null; }
       else S.fillCheckAt = 0;   // a place may have opened for a spectator
     },
     onDamage(target, attacker, dmg) {
@@ -244,7 +244,7 @@ export function createMatch(ctx) {
     tick() {
       const now = t();
       if (S.paused) return;
-      if (S.startOnTick) { S.startOnTick = false; startWarmup(); }
+      if (S.startOnTick) { S.startOnTick = false; startCountdown(); }
       if (now >= S.fillCheckAt && now >= S.graceUntil) { S.fillCheckAt = now + 1; fillBots(); }
       for (const p of players.values()) {   // debug: pinned bots stay put
         if (!p.pin || p.dead) continue;
@@ -255,8 +255,8 @@ export function createMatch(ctx) {
         checkWin();
         if (S.phase === 'live' && now >= S.phaseEnd) endMatch('time');
       } else if (now >= S.phaseEnd) {
-        if (S.phase === 'warmup') startLive();
-        else if (S.phase === 'end') startWarmup();   // the rematch: no vote
+        if (S.phase === 'countdown') startLive();
+        else if (S.phase === 'end') startCountdown();   // the rematch: no vote
       }
     },
     handle(p, msg) {
@@ -265,7 +265,8 @@ export function createMatch(ctx) {
         const num = (v, lo, hi) => Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : undefined;
         if (msg.target !== undefined) S.target = num(msg.target, 1, 10000) ?? null;
         if (msg.cap !== undefined) S.cap = num(msg.cap, 5, 3600) ?? null;
-        if (msg.warmup !== undefined) S.times.warmup = num(msg.warmup, 1, 60) ?? TIMES.warmup;
+        { const cd = msg.countdown ?? msg.warmup;   // (`warmup`: the old name, still taken)
+          if (cd !== undefined) S.times.countdown = num(cd, 1, 60) ?? TIMES.countdown; }
         if (msg.endTime !== undefined) S.times.end = num(msg.endTime, 1, 60) ?? TIMES.end;
         if (msg.size !== undefined) { S.size = Math.round(num(msg.size, 1, 16) ?? FFA.size); S.fillCheckAt = 0; }
         // pinBots: every bot frozen where it stands (rooted and silenced), for UI tests; false lets them go

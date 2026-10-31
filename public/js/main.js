@@ -1269,7 +1269,7 @@ let lastMatch = null;
 let lastGuardBreak = 0, lastGuardBleat = 0;
 // (lastGuardBreak: the guard's rams go together, one break sound)
 function matchSounds(msg) {
-  if (msg.t === 'matchPhase' && msg.match.phase === 'live' && lastMatch?.phase === 'warmup') sfx.ui('fight_start', 0.8);
+  if (msg.t === 'matchPhase' && msg.match.phase === 'live' && lastMatch?.phase === 'countdown') sfx.ui('fight_start', 0.8);
   if (msg.t === 'matchEnd') {
     const w = msg.results?.winner;
     if (w != null) sfx.ui(w === myId ? 'victory' : 'defeat', 0.75);
@@ -1280,7 +1280,7 @@ function matchSnapSounds(m) {
   const prev = lastMatch; lastMatch = m;
   if (!prev) return;
   // the warm-up's last three seconds tick down
-  if (m.phase === 'warmup' && m.left != null && m.left <= 3.05 && Math.ceil(m.left) !== Math.ceil(prev.left ?? 99) && Math.ceil(m.left) > 0) sfx.ui('countdown_tick', 0.6);
+  if (m.phase === 'countdown' && m.left != null && m.left <= 3.05 && Math.ceil(m.left) !== Math.ceil(prev.left ?? 99) && Math.ceil(m.left) > 0) sfx.ui('countdown_tick', 0.6);
 }
 // The menu music plays on the join screen and the results screen; not in the fight.
 function updateMusic() {

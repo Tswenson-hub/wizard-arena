@@ -67,15 +67,15 @@ const bots = () => fighters().filter(p => p.bot);
 // ---- a human arrives: bots fill to 4
 const h = mk(false); h.botPref = 'hard'; join(h);
 run(0.1);
-ok(S.phase === 'warmup' && !S.paused, 'a human unpauses the match: warm-up');
+ok(S.phase === 'countdown' && !S.paused && Math.abs(S.phaseEnd - clock - 3) < 0.15, 'a human unpauses the match: a 3 s countdown (no warm-up)');
 run(2);
 ok(fighters().length === 4 && bots().length === 3, `bots fill to 4 (${fighters().length} fighters, ${bots().length} bots)`);
 ok(bots().every(p => p.bot.difficulty === 'hard'), 'fill bots use the human\'s difficulty');
 ok(fighters().every(p => !p.team), 'no teams');
 const [b1, b2] = bots();
 ok(match.isEnemy(h, b1) && match.isEnemy(b1, b2) && !match.isEnemy(h, h), 'everyone else is an enemy, never yourself');
-run(9);
-ok(S.phase === 'live', 'warm-up (10 s) → live');
+run(1);
+ok(S.phase === 'live', 'the countdown (3 s) → live');
 ok(match.matchPublic().target === 15 && match.matchPublic().mode === 'ffa', 'first to 15, mode ffa');
 
 // ---- a 2nd human takes a bot's place; 3rd and 4th too; a 5th spectates
@@ -106,16 +106,16 @@ ok(S.results.players[0].id === h.id && S.results.players.length === 4 && S.resul
 ok(!match.isEnemy(h, h2), 'no fighting on the results screen');
 ok(sent.some(m => m.t === 'matchEnd'), 'matchEnd broadcast');
 run(8.1);
-ok(S.phase === 'warmup' && !sent.some(m => m.t === 'matchMode' || m.t === 'matchVotes'), 'results (8 s) → an immediate rematch (warm-up), no vote');
+ok(S.phase === 'countdown' && !sent.some(m => m.t === 'matchMode' || m.t === 'matchVotes'), 'results (8 s) → an immediate rematch (the 3 s countdown), no vote');
 ok(fighters().every(p => p.kills === 0 && p.deaths === 0), 'the rematch starts from 0');
 ok(fighters().every(p => (ult.get(p.id) || 0) === 0), 'ultimate charge reset');
-run(10.1); ok(S.phase === 'live', 'rematch goes live');
+run(3.1); ok(S.phase === 'live', 'rematch goes live after the 3 s countdown');
 
 // ---- the 7-minute cap
 ok(Math.abs(S.phaseEnd - clock - 420) < 0.2, 'the live phase lasts 7 minutes');
 h.kills = 3; h2.kills = 5; clock = S.phaseEnd - 0.01; run(0.1);
 ok(S.phase === 'end' && S.results.reason === 'time' && S.results.winner === h2.id, 'at the cap the most kills wins');
-run(8.1); run(10.1);
+run(8.1); run(3.1);
 h.kills = 2; h2.kills = 2; clock = S.phaseEnd - 0.01; run(0.1);
 ok(S.phase === 'end' && S.results.winner === null, 'a tie at the cap: no winner');
 
@@ -142,10 +142,10 @@ ok(S.phase === 'end' && S.results.winner === null, 'a tie at the cap: no winner'
 // ---- the last human leaves: paused, bots go (server.js does that), the next arrival restarts it
 for (const q of [...players.values()].filter(q => !q.bot && q !== h)) ctx.removePlayer(q.id);
 ctx.removePlayer(h.id);
-ok(S.paused && S.phase === 'warmup', 'the last human leaving pauses the match');
+ok(S.paused && S.phase === 'countdown', 'the last human leaving pauses the match');
 for (const q of [...players.values()]) players.delete(q.id);
 const h6 = join(mk(false)); run(2);
-ok(!S.paused && S.phase === 'warmup' && fighters().length === 4, 'the next arrival starts a fresh warm-up with 3 bots');
+ok(!S.paused && S.phase === 'countdown' && fighters().length === 4, 'the next arrival starts a fresh countdown with 3 bots');
 ok(match.canThrow(h6, props.get(1)), 'telekinesis throws normally');
 ok(!('vote' in match.matchPublic()) && !('zone' in match.matchPublic()) && !('scores' in match.matchPublic()), 'no vote, zone or team scores in the match state');
 
@@ -174,7 +174,7 @@ async function serverChecks() {
     const since = (c, n, pred) => c.msgs.slice(n).filter(pred);
     const A = await join('Relic', { utility: 'trapped_relic' }), B = await join('Tk', { utility: 'telekinesis' });
     const V = await join('Victim', { utility: 'telekinesis' }), R = await join('Roller', { utility: 'roll' });
-    A.send({ t: 'matchDebug', size: 4, warmup: 1 }); A.send({ t: 'removeBots' });
+    A.send({ t: 'matchDebug', size: 4, countdown: 1 }); A.send({ t: 'removeBots' });
     await wait(1500);
     const place = (c, p, yaw = 0) => c.send({ t: 'debugPlace', p: [p[0], 0, p[1]], yaw });
     // open ground (round 15, the castle: inside its walls; no collider, platform, wall or prop within 3.5 m, sampled over

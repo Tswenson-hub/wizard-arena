@@ -1,5 +1,5 @@
 // Match UI (round 11: the 4-player free-for-all only): the top bar (clock, your kills, the leader, the target),
-// the warm-up countdown and banners, and the results screen with each wizard's loadout, then the rematch countdown.
+// the 3 s countdown (round 16: no warm-up) and banners, and the results screen with each wizard's loadout, then the rematch countdown.
 // Spells agent (round 11; it was the modes agent's). main.js calls:
 //   const matchUI = mountMatchUI({ scene, camera, net, players, props, myId: () => myId })
 //   matchUI.onWelcome(msg)   the welcome message (with match.js welcomeExtras)
@@ -58,7 +58,7 @@ export function mountMatchUI(env) {
     ui.mode.textContent = `Free-for-all · first to ${match.target}`;
     const l = left(), me = info.get(myId());
     ui.clock.classList.remove('urgent');
-    if (match.phase === 'warmup') { ui.clock.textContent = l == null ? '—' : clock(l); ui.sub.textContent = l == null ? 'Waiting' : 'Warm-up: nothing counts yet'; }
+    if (match.phase === 'countdown') { ui.clock.textContent = l == null ? '—' : clock(l); ui.sub.textContent = l == null ? 'Waiting' : 'Get ready'; }
     else if (match.phase === 'live') {
       ui.clock.textContent = l == null ? '' : clock(l);
       ui.clock.classList.toggle('urgent', l != null && l < 30);
@@ -107,7 +107,7 @@ export function mountMatchUI(env) {
     const prev = match;
     match = m; matchAt = performance.now();
     if (!prev || prev.phase !== m.phase) {
-      if (m.phase === 'warmup' && m.left != null) banner('Free-for-all', `Warm-up · first to ${m.target} kills`, 3.5);
+      if (m.phase === 'countdown' && m.left != null) banner('Free-for-all', `First to ${m.target} kills`, 0.9);
       if (m.phase === 'live' && prev) banner('Fight!', `First to ${m.target} kills`, 2);
       showPhase();
     }
@@ -136,7 +136,7 @@ export function mountMatchUI(env) {
       if (!match) return;
       renderTop();
       if (match.phase === 'end') { const c = ui.end.querySelector('.mRe'), l = left(); if (c && l != null) c.textContent = Math.ceil(l); }
-      if (match.phase === 'warmup' && left() != null && left() < 3.5 && performance.now() > bannerUntil) banner(String(Math.ceil(left())), 'Get ready', 0.3);
+      if (match.phase === 'countdown' && left() != null && left() < 3.05 && performance.now() > bannerUntil) banner(String(Math.ceil(left())), 'Get ready', 0.3);
       if (performance.now() > bannerUntil) ui.banner.classList.add('hidden');
     },
   };

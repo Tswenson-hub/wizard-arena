@@ -22,7 +22,7 @@ ws.on('open', () => ws.send(JSON.stringify({ t: 'join', name: 'Observer', diffic
 ws.on('message', (raw) => {
   const m = JSON.parse(raw);
   if (m.t === 'welcome') {
-    ws.send(JSON.stringify({ t: 'matchDebug', spectate: true, botDiff: diff, warmup: 2, endTime: 3, target: flag('--target'), cap: flag('--cap') }));
+    ws.send(JSON.stringify({ t: 'matchDebug', spectate: true, botDiff: diff, countdown: 2, endTime: 3, target: flag('--target'), cap: flag('--cap') }));
     return;
   }
   if (m.t === 'joined') names[m.player.id] = `${m.player.name}(${m.player.bot || 'human'})`;
@@ -30,7 +30,7 @@ ws.on('message', (raw) => {
     const was = phase;
     phase = m.match.phase;
     if (phase === 'live' && was !== 'live' && !ended) { liveAt = Date.now(); console.log(`[ffa] live: first to ${m.match.target}`); }
-    if (phase === 'warmup' && ended) { rematch = true; finish(); }
+    if (phase === 'countdown' && ended) { rematch = true; finish(); }
   }
   if (m.t === 'matchEnd' && !ended) { ended = m.results; if (!wantRematch) finish(); }
   if (m.t === 'death' && phase === 'live') deaths++;
