@@ -1114,13 +1114,6 @@ function handleMessage(msg) {
       if (g) { if (g.mode === 'orbit' && performance.now() - (lastGuardBreak || 0) > 400) { lastGuardBreak = performance.now(); sfx.play('ram_guard_break', { pos: g.group.position.clone().setY(1), vol: 0.7, jitter: 0.06 }); } g.despawn(scene, effects); rams.delete(msg.id); }
       break;
     }
-    case 'ramCalled': {
-      const by = players.get(msg.by), tg = players.get(msg.target), g = rams.get(msg.ram);
-      if (g) sfx.bleat(g.group.position.clone().setY(1), true, { owner: msg.ram });
-      if (msg.target === myId) feed(`<b>${esc(by?.name || '?')}</b> called a ram on you! <b>Ward facing it</b> or get out of the way`);
-      else if (msg.by === myId) feed(`Your sling calls a ram on <b>${esc(tg?.name || '?')}</b>`);
-      break;
-    }
     case 'ramWind': {
       // Battering Ram's wind-up: the caster stomps; a ghost ram paws the ground in front of him, kicking up dust, and snorts
       const w = players.get(msg.id);

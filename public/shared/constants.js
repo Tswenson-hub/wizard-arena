@@ -163,13 +163,13 @@ export const SPELLS = {
     staminaCost: 12,
     knockback: 3,
   },
-  sling: {               // Jeb's primary: a sling stone; a hit calls a ram on the target
+  sling: {               // Jeb's primary: a sling stone (round 15, Ty: its hit no longer calls a ram)
     damage: 10,          // round 14: 7 (round 15: the card's mid value; a hit deals slingDamage(flown) instead)
     near: 6.6,           // round 15 (Ty: no ambient rams to aggro any more): at point blank (×1.36: 9)...
     far: 15.5,           // ...rising in a straight line to this at `farDist` m flown (×1.36: 21), and staying there
     farDist: 28,
     longShot: 18,        // flown this far: a "long" hit (the bigger number, the hit message's `long`)
-    stun: 0.45,
+    stun: 0.15,          // round 15 (Ty: too strong at range): a light flinch (was 0.45); no ram call any more
     speed: 32,
     radius: 0.22,
     life: 1.0,           // about 32 m
@@ -440,11 +440,9 @@ export const SPELLBOOK = {
   },
   sling: {
     id: 'sling', slot: 'primary', name: "Shepherd's Sling", short: 'Sling',
-    blurb: `Sling stones, 2 to a pouch: more damage the further it flies (${D(SPELLS.sling.near)} up close, ${D(SPELLS.sling.far)} at ${SPELLS.sling.farDist} m). A hit calls a ram out of the ground beside the target to charge them. The 2nd breaks a wind-up.`,
+    blurb: `Sling stones, 2 to a pouch: more damage the further it flies (${D(SPELLS.sling.near)} up close, ${D(SPELLS.sling.far)} at ${SPELLS.sling.farDist} m). The 2nd makes them flinch.`,
     cooldown: SPELLS.sling.cooldown,
     magazine: 2, reload: PRIMARY_RELOAD, idleReload: 2,
-    callDist: 7,         // round 15: the called ram appears this far from the target, off to one side
-    callLockout: 6,      // seconds before the same target can have another ram called on it (balance match: 3 was too many)
   },
   hex_shards: {
     id: 'hex_shards', slot: 'primary', name: 'Hex Shards', short: 'Hex',
@@ -969,7 +967,7 @@ export const SPELL_INFO = {
   gale_shear:    { element: 'wind',   tags: ['Projectile', 'Hitscan-like', 'Interrupts'], damage: `${D(16)}`, cooldown: S_(0.42), range: M_(8), windup: '' },
   glacial_skim:  { element: 'ice',    tags: ['Projectile', 'Slows', 'Interrupts'], damage: `3 × ${D(SPELLS.skim.damage)}`, cooldown: S_(SPELLBOOK.glacial_skim.cooldown), range: M_(22), windup: '' },
   hex_shards:    { element: 'dark',   tags: ['Projectile', 'Interrupts'], damage: `${D(SPELLS.hex.damage)}`, cooldown: S_(SPELLS.hex.cooldown), range: M_(SPELLS.hex.range), windup: '' },
-  sling:         { element: 'earth',  tags: ['Projectile', 'Hitscan-like', 'Summon', 'Interrupts'], damage: `${D(SPELLS.sling.near)}–${D(SPELLS.sling.far)} + ram`, cooldown: S_(SPELLS.sling.cooldown), range: M_(32), windup: '' },
+  sling:         { element: 'earth',  tags: ['Projectile', 'Hitscan-like'], damage: `${D(SPELLS.sling.near)}–${D(SPELLS.sling.far)}`, cooldown: S_(SPELLS.sling.cooldown), range: M_(32), windup: '' },
   potion_toss:   { element: 'acid',   tags: ['Projectile', 'Lob', 'Area', 'Stuns'], damage: `${D(SPELLS.potion.damage)} / ${D(SPELLS.potion.finDamage)}`, cooldown: S_(SPELLS.potion.cooldown), range: M_(SPELLS.potion.range), windup: '' },
   // powers (RMB)
   meteor:        { element: 'fire',   tags: ['Projectile', 'Wind-up'], damage: `${D(SPELLS.heavy.damage)}`, cooldown: S_(SPELLS.heavy.cooldown), range: M_(Math.round(SPELLS.heavy.speed * SPELLS.heavy.life)), windup: S_(SPELLS.heavy.chargeTime) },
@@ -1020,8 +1018,6 @@ export const COMBOS = [
     text: 'Under Berserker Brew, Toxic Flask and its pool hit 50% harder.' },
   { id: 'sky_frost', name: 'Hail from Above', spells: ['skyward', 'frostfall'],
     text: 'Frostfall can be cast mid-air during a Skyward Flash.' },
-  { id: 'herd', name: 'Herd Call', spells: ['sling', 'ram_guard'],
-    text: 'A Sling hit also sends one of your circling guard rams at the target.' },
 ];
 export const hasCombo = (lo, comboId) => { const c = COMBOS.find(k => k.id === comboId); return !!(c && lo && c.spells.every(id => Object.values(lo).includes(id))); };
 export const combosOf = (lo) => COMBOS.filter(c => hasCombo(lo, c.id));          // the combos a loadout has active

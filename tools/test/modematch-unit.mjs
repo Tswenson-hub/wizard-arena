@@ -480,7 +480,7 @@ async function slingChecks(join, since) {
   await wait(2200);   // (past spawn protection)
   const shoot = (to) => { const d = [to[0] - line.a[0], to[1] - line.a[1], to[2] - line.a[2]], l = Math.hypot(...d);
     S.send({ t: 'cast', kind: 'sling', origin: line.a, dir: d.map(v => v / l) }); };
-  let n = S.msgs.length;
+  let n = S.msgs.length; const nStart = n;
   shoot([line.far[0], 0.95, line.far[2]]); await wait(1100);
   const far = since(S, n, m => m.t === 'hit' && m.target === T1.id && m.kind === 'sling')[0];
   place(T1, [line.a[0] - Math.sin(line.yaw) * 30, 0, line.a[2] - Math.cos(line.yaw) * 30]);   // out of the way of the near shot
@@ -496,6 +496,10 @@ async function slingChecks(join, since) {
   const near = since(S, n, m => m.t === 'hit' && m.target === T2.id && m.kind === 'sling')[0];
   ok(!!far && !!near && far.dmg > near.dmg, `a Sling stone that flew 24 m hits harder than one from 3 m (${far?.dmg} vs ${near?.dmg})`);
   ok(!!far && far.dmg >= 17 && !!far.long && !!near && near.dmg <= 12 && !near.long, `long hits are flagged long; point blank about 9-11 (${far?.dmg}${far?.long ? ' long' : ''}, ${near?.dmg})`);
+  // round 15 (Ty): the stone is just a stone: no ram is called, and no hit is more than its farthest damage
+  const maxDmg = Math.round(C.SPELLS.sling.far * C.DAMAGE_SCALE);
+  ok(!since(S, nStart, m => m.t === 'ramSpawn' || m.t === 'ramCalled').length, 'a Sling hit summons no ram');
+  ok(!!far && far.dmg <= maxDmg && !!near && near.dmg <= maxDmg, `a Sling hit does at most ${maxDmg} (${far?.dmg}, ${near?.dmg})`);
   for (const c of [S, T1, T2]) c.ws.close();
   await wait(300);
   await rideChecks(join, since);

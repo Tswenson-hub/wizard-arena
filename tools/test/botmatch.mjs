@@ -7,7 +7,7 @@ const [port, secs, ...diffs] = process.argv.slice(2);
 const ws = new WebSocket(`ws://localhost:${port}`);
 const stats = {}; const names = {};
 const S = (id) => stats[id] ??= { casts: {}, hitsDealt: 0, dmg: 0, blocked: 0, hitsTaken: 0, tps: 0, pickups: 0, propHits: 0, shieldSaves: 0 };
-const ramEv = { spawned: 0, called: 0, angry: 0, ramHit: 0, ramBlocked: 0, bonk: 0, ramDeaths: {} }; const projOwner = {}; const kinds = {}; const surf = {};
+const ramEv = { spawned: 0, angry: 0, ramHit: 0, ramBlocked: 0, bonk: 0, ramDeaths: {} }; const projOwner = {}; const kinds = {}; const surf = {};
 ws.on('open', () => { for (const d of diffs) ws.send(JSON.stringify({ t: 'addBot', difficulty: d })); });
 let last, lastRams;
 ws.on('message', (raw) => {
@@ -19,7 +19,6 @@ ws.on('message', (raw) => {
   if (m.t === 'tp') S(m.id).tps++;
   if (m.t === 'prop' && m.prop.state === 'lifting') S(m.prop.carrier).pickups++;
   if (m.t === 'ramSpawn') ramEv.spawned++;
-  if (m.t === 'ramCalled') ramEv.called++;
   if (m.t === 'ramAngry') ramEv.angry++;
   if (m.t === 'ramHit') m.blocked ? ramEv.ramBlocked++ : ramEv.ramHit++;
   if (m.t === 'ramBonk') ramEv.bonk++;

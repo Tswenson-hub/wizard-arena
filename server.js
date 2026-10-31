@@ -918,7 +918,7 @@ function relicBlast(prop, victim = null) {
 const rams = [];
 let nextRamId = 1000;
 const G_ = C.RAM;
-const SLING = C.SPELLBOOK.sling, BRAM = C.SPELLBOOK.battering_ram, RGUARD = C.SPELLBOOK.ram_guard, RIDE = C.SPELLBOOK.ram_ride, STAMP = C.SPELLBOOK.stampede;
+const BRAM = C.SPELLBOOK.battering_ram, RGUARD = C.SPELLBOOK.ram_guard, RIDE = C.SPELLBOOK.ram_ride, STAMP = C.SPELLBOOK.stampede;
 const ramPublic = (r) => ({ id: r.id, p: [+r.x.toFixed(2), +r.z.toFixed(2)], yaw: +r.yaw.toFixed(2), s: r.state === 'orbit' || r.state === 'mount' ? 'charge' : r.state,
   tgt: r.target, y: +(r.y || 0).toFixed(2), owner: r.owner, mode: r.mode });
 // Round 15 (the castle): a ram runs on whatever floor it's on (the courtyard, a wall-walk), and a wall, a pillar or a
@@ -932,8 +932,8 @@ function stirRam(g) { if (g.state === 'charge' || g.state === 'windup') ramDizzy
 function summonRam(opts) {
   const t = now();
   const r = { id: nextRamId++, summoned: true, owner: opts.ownerId, mode: opts.mode, x: opts.x, z: opts.z, yaw: opts.yaw ?? 0,
-    state: opts.mode === 'charge' ? 'charge' : opts.mode === 'call' ? 'windup' : opts.mode,
-    until: t + (opts.mode === 'call' ? G_.windup : opts.maxTime ?? G_.chargeTime), speed: opts.speed ?? G_.chargeSpeed,
+    state: opts.mode === 'charge' ? 'charge' : opts.mode,
+    until: t + (opts.maxTime ?? G_.chargeTime), speed: opts.speed ?? G_.chargeSpeed,
     target: opts.targetId ?? null, angle: opts.angle ?? 0, hardUntil: t + 10, born: t, spell: opts.spell ?? null };
   const owner = players.get(opts.ownerId);
   r.y = opts.y ?? groundAt(r.x, r.z, owner ? owner.p[1] : 0);
@@ -991,8 +991,8 @@ function ramStrike(p, attacker, cause, g) {
     applyHit(p, { kind: 'battering_ram', owner: attacker ? attacker.id : null, v: [Math.sin(g.yaw), 0, Math.cos(g.yaw)] });
     return;
   }
-  // round 15: a Sling's ram and a provoked guard ram hit hard and knock down; only Stampede's rams still flatten outright
-  if (g?.spell === 'sling' || g?.spell === 'ram_guard') {
+  // round 15: a provoked guard ram hits hard and knocks down; only Stampede's rams still flatten outright
+  if (g?.spell === 'ram_guard') {
     applyHit(p, { kind: 'ram_charge', owner: attacker ? attacker.id : null, v: [Math.sin(g.yaw), 0, Math.cos(g.yaw)], spell: g.spell });
     return;
   }
@@ -1011,15 +1011,8 @@ function updateRams(dt, t) {
     }
     if (r.state === 'mount') { if (!owner || owner.dead || !owner.ride) despawnRam(r); continue; }   // placed by the ride
     if (r.state === 'dizzy' || r.state === 'recover') { if (t >= r.until) despawnRam(r); continue; }
-    if (r.state === 'windup') {   // a Sling's ram rearing up, facing its target
-      const tg = players.get(r.target);
-      if (!tg || tg.dead) { despawnRam(r); continue; }
-      r.yaw = Math.atan2(tg.p[0] - r.x, tg.p[2] - r.z);
-      if (t >= r.until) { r.state = 'charge'; r.mode = 'charge'; r.until = t + G_.chargeTime; }
-      continue;
-    }
     if (r.state !== 'charge') continue;
-    // a provoked guard ram (or a Sling's) homes; Battering Rams and Stampede rams run dead straight
+    // a provoked guard ram homes; Battering Rams and Stampede rams run dead straight
     const tg = r.target != null && players.get(r.target);
     if (tg && !tg.dead) { const want = Math.atan2(tg.p[0] - r.x, tg.p[2] - r.z); let d = Math.atan2(Math.sin(want - r.yaw), Math.cos(want - r.yaw)); d = clamp(d, -G_.turnRate * dt, G_.turnRate * dt); r.yaw += d; }
     const nx = r.x + Math.sin(r.yaw) * r.speed * dt, nz = r.z + Math.cos(r.yaw) * r.speed * dt;
@@ -1042,50 +1035,6 @@ function updateRams(dt, t) {
     for (const d of [...decoys.values()]) if (enemyOf(r.owner, players.get(d.owner)) && Math.hypot(d.p[0] - r.x, d.p[2] - r.z) < G_.radius + C.PLAYER_RADIUS + 0.25) endDecoy(d, true);
     if (t >= r.until) { r.state = 'recover'; r.until = t + G_.recoverTime; }
   }
-}
-
-// Shepherd's Sling (round 15: no map goats any more): a hit summons a ram SLING.callDist from the target, off to one
-// side of the slinger's line, which rears for RAM.windup and then charges the target (homing), credited to the slinger.
-function ramCallSpot(target, slinger) {
-  const dx = target.p[0] - slinger.p[0], dz = target.p[2] - slinger.p[2], l = Math.hypot(dx, dz) || 1;
-  const base = Math.atan2(dx / l, dz / l), side = Math.random() < 0.5 ? 1 : -1;
-  // a flank first (90° off the line), then swinging round toward behind the target, then the slinger's own side
-  for (const off of [90, 120, 60, 150, 30, 180, 0]) for (const sg of [side, -side]) {
-    const a = base + sg * off * Math.PI / 180, R = SLING.callDist;
-    const x = target.p[0] + Math.sin(a) * R, z = target.p[2] + Math.cos(a) * R;
-    if (C.insideArena ? !C.insideArena(x, z, 1.5) : Math.hypot(x, z) > C.ARENA_RADIUS - 2) continue;
-    const y = groundAt(x, z, target.p[1]);
-    if (Math.abs(y - target.p[1]) > 0.3 || ramBlocked(x, z, y)) continue;   // on the target's own floor, out of the walls
-    if (C.COLLIDERS.some(o => segCircle(x, z, target.p[0], target.p[2], o, G_.radius))) continue;
-    // a clear run: nothing solid at knee height along the way (and the floor doesn't drop or rise on the way)
-    let clear = true;
-    for (let k = 1; k <= 8 && clear; k++) { const u = k / 8, px = x + (target.p[0] - x) * u, pz = z + (target.p[2] - z) * u; clear = !ramBlocked(px, pz, y) && Math.abs(groundAt(px, pz, y) - y) < 0.3; }
-    if (!clear) continue;
-    return { x, z, y, yaw: Math.atan2(target.p[0] - x, target.p[2] - z) };
-  }
-  return null;
-}
-// Does the segment (ax, az) → (bx, bz) pass within o.r + pad of collider o?
-function segCircle(ax, az, bx, bz, o, pad) {
-  const vx = bx - ax, vz = bz - az, L2 = vx * vx + vz * vz || 1;
-  const k = clamp(((o.x - ax) * vx + (o.z - az) * vz) / L2, 0, 1);
-  return Math.hypot(ax + vx * k - o.x, az + vz * k - o.z) < o.r + pad;
-}
-function callRamOn(target, slinger) {
-  const t = now();
-  slinger.slingLock ??= new Map();
-  if (t < (slinger.slingLock.get(target.id) ?? 0) || aboveFloor(target) > 0.5) return;   // (in the air: no call)
-  let g = null;
-  const at = ramCallSpot(target, slinger);
-  if (at) g = summonRam({ ...at, ownerId: slinger.id, mode: 'call', targetId: target.id, spell: 'sling' });
-  // Herd Call (Sling + Ram Guard): one of our circling guard rams goes as well
-  if (hasCombo(slinger, 'herd')) {
-    const h = rams.find(q => q.owner === slinger.id && q.state === 'orbit');
-    if (h) { ramProvoked(h, target.id); g ??= h; }
-  }
-  if (!g) return;
-  slinger.slingLock.set(target.id, t + SLING.callLockout);
-  broadcast({ t: 'ramCalled', ram: g.id, target: target.id, by: slinger.id });
 }
 
 // Ram Ride: mount (can't act), gallop forward along the rider's facing for RIDE.distance, dismount, the ram goes.
@@ -1634,7 +1583,6 @@ function simulate(dt) {
           proj.dmg = C.slingDamage(flown); proj.long = flown >= C.SPELLS.sling.longShot;
         }
         const { blocked, dmg: dealt } = applyHit(pl, proj);
-        if (proj.kind === 'sling' && !blocked && dealt > 0 && shooter && !pl.dead) callRamOn(pl, shooter);   // Shepherd's Sling
         if (proj.pierce) {
           proj.hitIds.add(pl.id);
           if (!blocked) { proj.landed++; continue; }
