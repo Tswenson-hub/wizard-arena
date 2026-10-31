@@ -22,3 +22,6 @@ __pycache__/
 
 # the map editor's backups of layout.json (server/mapedit.js)
 tools/layout-backups/
+
+# CrazyGames build output (npm run build:crazygames)
+dist/
