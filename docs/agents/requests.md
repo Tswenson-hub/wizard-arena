@@ -1135,3 +1135,33 @@ Nothing else needs main.js. The rest of this pass works from what you already se
 - the front flip or backflip, picked in `airJump()` from the measured velocity
 - the air cast: any cast `oneShot` while airborne and not rooted plays Jumping_Punch's air strike
 - the crouch (`crouch` / `crouch_walk` keys, which your existing crouch branch picks up)
+
+## deploy → spells, characters, environment: relative URLs for CrazyGames, and `window.WA_SERVER` in net.js (round 14)
+CrazyGames serves the client from a subpath, so a root path like `/models/x.glb` misses. `npm run build:crazygames` already
+rewrites these in its copy (and lists each file it had to touch), so the build works today; making them relative in the
+sources removes the rewrite and keeps our own site identical (`./models/x` from `/` is `/models/x`). It's the same
+mechanical change everywhere: a quote, backtick or `(` followed by `/vendor/`, `/models/`, `/textures/`, `/sounds/`, `/css/`,
+`/js/` or `/shared/` gets a `.` in front. On your own files only, this does it:
+```sh
+sed -i '' -E "s#([\"'\`(])/(vendor|models|textures|sounds|css|js|shared)/#\1./\2/#g" <your files>
+```
+Line numbers as of 08d539c plus the working tree:
+- **spells:** `public/index.html` 7, 8, 9 (CSS), 12, 13 (importmap: `./vendor/three/build/three.module.js`, `./vendor/three/examples/jsm/`),
+  48 (`./sounds/CREDITS.md`), 119 (`./js/main.js`); `public/js/main.js` 204, 1453, 1490; `audio.js` 5 (`SOUND_DIR = './sounds/'`);
+  `effects.js` 57, 571, 1171, 1183; `sprites.js` 17; `match-ui.js` 23 (modes retired; I take it as yours).
+  - **net.js, one line:** `new WebSocket(window.WA_SERVER || \`${proto}://${location.host}\`)`. The build writes `config.js`
+    (`window.WA_SERVER = 'wss://wizard-arena-76od.onrender.com'`); on our own site it's unset and nothing changes. Until it lands, the
+    build patches that exact line in its copy, so please keep the line's shape or add `WA_SERVER` yourself.
+  - **favicon:** `public/favicon.ico` and `public/favicon.png` (a purple wizard hat) are in. Please add after `<title>`:
+    `<link rel="icon" href="./favicon.ico" sizes="any">` and `<link rel="icon" type="image/png" href="./favicon.png">` (browsers
+    find `/favicon.ico` on our own site anyway; the CrazyGames build adds the links if they're missing).
+- **characters:** `public/js/looks.js` 191, 192, 194, 203, 204, 216, 217, 334, 337, 338, 341; `select.js` 26; the `model` fields in
+  `public/shared/wizards.js` 13, 18, 23, 28, 35, 42 (the server never reads them).
+- **environment:** `public/js/world.js` 41, 156, 262, 1109–1117, 1124–1126, 1143, 1149, 1162, 1175, 1176, 1178, 1183, 1192
+  (`load(\`./models/${name}.glb\`)` and the textures). `edit.html` / `editor.js` aren't shipped, so they can stay as they are.
+- **Nothing to do for the SDK:** `deploy/crazygames/platform.js` (only in the CrazyGames build) sends `gameplayStart` when the HUD is up
+  and none of `#clickToPlay`, `#lockPrompt`, `#mEnd` is showing, and `gameplayStop` otherwise. Please keep those ids and their
+  `.hidden` meaning (spells: your new pause menu and prompt already fit). If you'd rather drive it, `window.WA_PLATFORM?.gameplay(true|false)`
+  takes over from the DOM.
+- **Tests:** `window.__wa` is gone, so `deploy/smoke.py` now reads players and bots from the server's `snap` frames and dismisses the
+  how-to-play card via `.htp-close` (characters: keep that class, or tell me).
