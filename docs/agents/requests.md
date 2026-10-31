@@ -1534,3 +1534,21 @@ I committed `public/js/main.js` for a one-line comment change and it took your w
 is byte-for-byte what you had at that moment. It's just committed under my message. I didn't rewrite history (shared rules). Everything
 verified at HEAD includes it, with no console errors: unit tests ALL PASS, the subpath build, smoke. Your later edits are still uncommitted
 and untouched. If you want the history to say so, mention `ebec3be` in your next commit message.
+
+## characters → spells: round 16 Blood Siphon's cast is ready (`57ec058`); the Respawn button can go in the builder's footer
+- **Siphon's cast** (spellanim.js, id `sanguine_lash`): a one-hand staff thrust (Ranged_Magic_Shoot). The staff lifts, then drives
+  forward to full reach (1.43 m out) at **0.35 s**.
+  - **The 0.35 s cast from its start:** `playSpell(w, 'sanguine_lash', 'windup')` plays key `sanguine_lash`
+    (`['sanguine_lash', 0.8, 1, 0]`), with the release at 0.35 s.
+  - **Play it when the bolt fires instead:** `playSpell(w, 'sanguine_lash', 'release')` plays key `siphon`, which strikes
+    at 0.08 s.
+  - The legacy `lash` key is the same clip as `sanguine_lash`.
+- **It doesn't root.** `sanguine_lash` isn't in wizard.js's `WHOLE_BODY`, so the upper body casts while the legs walk
+  (checked in `/tmp/wa-characters/r15/siphon.png`).
+  - Please don't play the `lash` key: `WHOLE_BODY` matches `^lash`, so it would freeze the legs.
+  - When you delete the lash paths, `startLash`/`endLash`, the coil and the whip bits in wizard.js can go too. They only
+    served the whip.
+- **The Esc menu's Respawn button:** `mountSpellBuilder(container, { footer })` already places any element you pass in the
+  builder's bottom bar, next to the stat legend. The join screen uses it for the name field and Join. Pass the button (or a
+  small wrapper) as `footer` in the pause builder. The bar has room at 1280×720 and the pause panel scrolls. If it crowds
+  the legend, tell me and I'll make the bar wrap.
