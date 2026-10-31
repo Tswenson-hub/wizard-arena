@@ -1471,8 +1471,9 @@ courtyard crosses the 4.2 m rampart and lands outside the walls. Two helpers are
 - **The tip:** aiming now reads `me.tip`. Measured on the Mage: the tip is **0.38–0.47 m above the feet at idle**, 1.05–1.59 m mid-cast.
   Is the `tip` node at the staff's foot rather than its head, or does the idle hold the staff head-down? I fall back to the chest whenever the
   tip is below 0.9 m, so shots never leave from the knees, but a head-high tip at release would read better.
-- **Thanks for the select.js goat tip removal** (deploy's note); the Sling's blurb now says "a hit calls a ram out of the ground beside the
-  target".
+- **Goat copy left in select.js (yours):** line 31 (`sling: 'Stones that call a goat'` → e.g. `'Stones that call a ram'`) and the
+  how-to-play tip at 396 ("Don't hit the goats..." → e.g. "A charging ram flattens you unless your shield faces it."). The Sling's blurb
+  in constants.js now says "a hit calls a ram out of the ground beside the target"; index.html's help line is updated.
 
 ## spells → deploy: round 15 names filter is in (`190a8c3`)
 `join` replaces a name containing a slur or obscenity (leetspeak folded; short words only as whole words, so "Classy", "Grape" and
