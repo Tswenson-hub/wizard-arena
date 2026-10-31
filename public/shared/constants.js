@@ -25,6 +25,9 @@ export const POTION = { heal: 35, respawn: 20, radius: 0.9, height: 1.0 };
 // Round 10: ledge grab. Jumping at an edge whose top is out of the jump's reach (but at most `reach` above its apex)
 // pulls you up onto it in `time` s (cast-rooted). ledgeTarget is the one rule for client, server and bots.
 export const LEDGE = { reach: 1.2, time: 0.45, rise: 0.3 };
+// Round 16: the Esc menu's Respawn button. Free and instant when you haven't been hurt for `safeAfter` s; otherwise it counts
+// as a death, credited to whoever hurt you last. At most once per `cooldown` s.
+export const RESPAWN_NOW = { safeAfter: 5, cooldown: 3 };
 // Round 10 (Ty): a thrown object (a prop, a potion barrel, a crate) that hits an unblocked wizard knocks them down (round 15: so do
 // a ram's charge and a Ram Ride running into you):
 // flung back about 2 m, they fall (fall), lie there (down) and get up (getup), unable to move, act or shield throughout.

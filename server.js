@@ -2100,6 +2100,31 @@ function handle(p, msg) {
       else if (msg.voice !== undefined && msg.loadout === undefined) broadcast({ t: 'loadout', id: p.id, loadout: p.loadout, voice: p.voice, color: p.color });
       break;
     }
+    // Round 16: the Esc menu's "Respawn with these spells": the loadout applies now; a free, instant respawn when we haven't
+    // been hurt for RESPAWN_NOW.safeAfter s, else a death credited to the last one who hurt us (then the usual respawn)
+    case 'respawnNow': {
+      if (p.spectator || p.watchOnly) break;
+      const R = C.RESPAWN_NOW;
+      if (t < (p.respawnNowAt || 0)) { send(p.id, { t: 'respawnNowRefused', left: +(p.respawnNowAt - t).toFixed(1) }); break; }
+      if (msg.loadout !== undefined && !requestLoadout(p, msg.loadout, msg.voice)) { send(p.id, { t: 'loadoutRejected', reason: 'Every slot needs a spell of that slot.' }); break; }
+      if (p.dead) break;   // (dead already: the loadout simply starts with the coming respawn)
+      p.respawnNowAt = t + R.cooldown;
+      if (t - (p.lastDamagedAt ?? -Infinity) < R.safeAfter) {
+        const by = players.get(p.lastHitBy);
+        killPlayer(p, by && by !== p && !by.dead ? by : null, 'respawn', 'respawn');
+        break;
+      }
+      // free: tidy up what a death would end, then straight back in at a fresh spawn
+      p.charging = false; cancelCyclone(p); cancelSiphon(p); cancelRamWind(p);
+      if (p.flaskWind) cancelFlaskStep(p);
+      p.brewUntil = 0;
+      if (p.veilUntil) { p.veilUntil = 0; broadcast({ t: 'veilEnd', id: p.id }); }
+      for (const d of [...decoys.values()]) if (d.owner === p.id) endDecoy(d, false);
+      if (p.carrying) dropProp(p, false);
+      p.lastHitBy = null;
+      respawn(p);
+      break;
+    }
     case 'reload': {
       // R: reload a partial magazine
       if (p.dead || p.ammo >= C.primaryMag(kit(p).primary).magazine || t < p.reloadUntil) break;

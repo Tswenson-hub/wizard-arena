@@ -126,6 +126,10 @@ kbd {
 .pause-top h2 { margin: 0 !important; }
 #clickToPlay .pause-top button.primary { width: auto; padding: 8px 22px; }
 #clickToPlay .pause-top #leaveBtn { padding: 7px 14px; font-size: 13px; }
+/* round 16: Respawn with these spells (gold-rimmed when free; red when it counts as a death) */
+#clickToPlay .pause-top #respawnBtn { width: auto; padding: 8px 18px; font-weight: 700; border: 2px solid var(--gold); background: rgba(232, 184, 74, 0.16); color: #ffe7b0; }
+#clickToPlay .pause-top #respawnBtn.danger { border-color: #e2304a; background: rgba(200, 24, 48, 0.28); color: #ffd0d6; }
+#clickToPlay .pause-top #respawnBtn:disabled { opacity: 0.5; cursor: default; }
 /* round 14: a compact controls strip between the top row and the builder */
 .pause-keys { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--dim); }
 .pause-keys span { white-space: nowrap; }

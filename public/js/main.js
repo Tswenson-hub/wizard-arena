@@ -244,6 +244,7 @@ function updateLockUI() {
   ui.lockPrompt.classList.toggle('hidden', !free || menuOpen);
   document.body.classList.toggle('paused', free && menuOpen);
   updateBotTally();
+  updateRespawnBtn();
 }
 function lockNote(text) { $('#lockNote').innerHTML = text; }
 const LOCK_NOTE = 'The mouse aims while the game has it. <kbd>Esc</kbd> opens the menu.';
@@ -254,6 +255,25 @@ $('#resumeBtn').addEventListener('click', () => { sfx.click(); menuOpen = false;
 // Leave: back to the spell builder (the join screen). A reload is the clean way out of a live match; the loadout,
 // name and sound settings are saved in localStorage, and the models come back from the cache.
 $('#leaveBtn').addEventListener('click', () => { sfx.click(); net.close(); location.reload(); });
+// Round 16: Respawn with these spells. Free when we haven't been hurt for RESPAWN_NOW.safeAfter s (the server decides; this
+// mirrors it for the label), otherwise a death credited to whoever hurt us last. While dead it just sets the next loadout.
+let respawnNowAt = 0;
+function updateRespawnBtn() {
+  const b = $('#respawnBtn');
+  if (!b || !me) return;
+  const R = C.RESPAWN_NOW, t = performance.now() / 1000, hurt = t - (local.hurtAt ?? -Infinity) < R.safeAfter;
+  const wait = respawnNowAt - t;
+  b.classList.toggle('danger', !me.dead && hurt);
+  b.disabled = wait > 0;
+  b.textContent = me.dead ? 'Use these spells next life' : wait > 0 ? `Respawn (${Math.ceil(wait)} s)` : hurt ? 'Respawn (counts as a death)' : 'Respawn with these spells';
+}
+$('#respawnBtn').addEventListener('click', () => {
+  if (!me || performance.now() / 1000 < respawnNowAt) return;
+  sfx.click();
+  net.send({ t: 'respawnNow', loadout: wantLoadout });
+  if (!me.dead) respawnNowAt = performance.now() / 1000 + C.RESPAWN_NOW.cooldown;
+  menuOpen = false; play(); updateLockUI();
+});
 document.addEventListener('keydown', (e) => {
   if (e.code !== 'Escape' || !me || input.locked) return;
   menuOpen = !menuOpen; updateLockUI();
@@ -609,6 +629,7 @@ function handleMessage(msg) {
         else if (msg.bind) { target.bound = true; target.cancelCyclone(); effects.bind([c.x, c.y - 1, c.z]); sfx.bind(c); target.pose('bound', msg.bind); }
       }
       if (target === me) {
+        if (!msg.blocked && msg.dmg > 0) local.hurtAt = performance.now() / 1000;   // (round 16: the Respawn button's state)
         if (!msg.blocked) {
           flashVignette(); shake(msg.kind === 'heavy' || msg.kind === 'cyclone' || msg.kind === 'trapped_relic' || ULT_KINDS.has(msg.kind) ? 0.6 : 0.25);
           if (msg.int !== false) local.stunUntil = Math.max(local.stunUntil, now + (msg.knockdown || (C.hitSpec(msg.kind)?.stun ?? 0.4)));
@@ -882,7 +903,7 @@ function handleMessage(msg) {
       effects.death([w.group.position.x, 0, w.group.position.z]);
       sfx.voice(w, w === me ? null : wpos(w), true);
       if (w === me) {
-        ui.death.querySelector('.big').textContent = msg.cause === 'ram' ? 'Flattened by a ram' : 'You were vanquished';
+        ui.death.querySelector('.big').textContent = msg.cause === 'ram' ? 'Flattened by a ram' : msg.cause === 'respawn' ? 'Respawning' : 'You were vanquished';
         ui.death.classList.remove('hidden'); local.charging = false; local.blocking = false;
         local.cyclone = null; local.flight = null; local.pos.y = 0; local.siphon = null; local.fHold = null;
         local.slowUntil = local.rootUntil = local.silenceUntil = local.frozenUntil = 0; local.frostAim = false;
@@ -891,6 +912,7 @@ function handleMessage(msg) {
       }
       if (msg.killer === myId && msg.id !== myId) sfx.killSting();   // our kill (a ram's kills are its summoner's)
       killFeed(k && k !== w ? k : null, w, msg.kind || msg.cause);
+      if (msg.cause === 'respawn') feed(k && k !== w ? `<b>${esc(k.name)}</b> finished <b>${esc(w.name)}</b>` : `<b>${esc(w.name)}</b> respawned`);   // (round 16: the menu's Respawn while hurt)
       if (msg.killer === myId && msg.id !== myId) killMarker();
       if (w === me) showKilledBy(k && k !== w ? k : null, msg.kind || msg.cause);
       break;
@@ -2417,6 +2439,7 @@ function fadeBlockingProps(dt) {
 // ---------------------------------------------------------------- HUD
 let lastHud = { hp: -1, st: -1 };
 function updateHud(dt) {
+  if (menuOpen) updateRespawnBtn();   // (round 16: its label follows how recently we were hurt)
   if (me.hp !== lastHud.hp) { ui.hp.style.width = `${me.hp}%`; lastHud.hp = me.hp; }
   const stShown = me.st;
   if (Math.abs(stShown - lastHud.st) > 0.5) { ui.st.style.width = `${stShown}%`; lastHud.st = stShown; ui.stBar.classList.toggle('low', stShown < 25); }

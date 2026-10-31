@@ -647,6 +647,49 @@ async function siphonChecks(join, since) {
   ok(!since(S, n, m => m.t === 'hit' && m.attacker === S.id).length && !since(S, n, m => m.t === 'lashMiss').length && me && !me.rooted && !me.bound,
     `a miss costs nothing (rooted ${me?.rooted}, bound ${me?.bound})`);
   for (const c of [S, T]) c.ws.close();
+  await wait(300);
+  await respawnChecks(join, since);
+}
+
+// ---- round 16: the Esc menu's Respawn button ({ t: 'respawnNow', loadout })
+async function respawnChecks(join, since) {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  const R = C.RESPAWN_NOW;
+  const P = await join('Respawner', { primary: 'spark', utility: 'telekinesis' }), K = await join('Hitter', { primary: 'fireball', utility: 'telekinesis' });
+  P.send({ t: 'matchDebug', size: 2 }); P.send({ t: 'removeBots' }); await wait(600);
+  const line = clearLine(10);
+  if (!line) { ok(false, 'a clear line for the respawn test'); for (const c of [P, K]) c.ws.close(); return; }
+  const at = (d) => [line.a[0] + line.dir[0] * d, 0, line.a[2] + line.dir[1] * d];
+  P.send({ t: 'debugPlace', p: at(0), yaw: line.yaw, resetCd: true }); K.send({ t: 'debugPlace', p: at(9), yaw: line.yaw + Math.PI, resetCd: true });
+  await wait(2200);
+  const snapOf = (c) => c.msgs.filter(m => m.t === 'snap').pop()?.players.find(q => q.id === c.id);
+  // safe: not hurt for 5 s. Instant, no death, the new loadout applied
+  const newLo = { ...C.DEFAULT_LOADOUT, primary: 'hex_shards', utility: 'telekinesis' };
+  let n = P.msgs.length;
+  const deaths0 = snapOf(P)?.deaths ?? 0;
+  P.send({ t: 'respawnNow', loadout: newLo }); await wait(300);
+  ok(since(P, n, m => m.t === 'respawn' && m.id === P.id).length === 1 && !since(P, n, m => m.t === 'death' && m.id === P.id).length
+    && (snapOf(P)?.deaths ?? 0) === deaths0 && snapOf(P)?.loadout?.primary === 'hex_shards', 'a safe respawn: instant, no death counted, the new loadout on');
+  // spam: again at once is refused
+  n = P.msgs.length;
+  P.send({ t: 'respawnNow', loadout: newLo }); await wait(200);
+  ok(!since(P, n, m => m.t === 'respawn' && m.id === P.id).length && since(P, n, m => m.t === 'respawnNowRefused').length === 1, `a second one within ${R.cooldown} s is refused`);
+  // hurt: the hitter lands a fireball; then a respawn counts as a death, credited to the hitter
+  await wait(R.cooldown * 1000 + 100);
+  const pp = snapOf(P)?.p || at(0);
+  P.send({ t: 'debugPlace', p: [pp[0], pp[1], pp[2]], yaw: 0 }); K.send({ t: 'debugPlace', p: [pp[0] + 6, pp[1], pp[2]], yaw: -Math.PI / 2, resetCd: true }); await wait(1700);
+  const o = [pp[0] + 6, pp[1] + 1.3, pp[2]], d = [pp[0] - o[0], pp[1] + 1 - o[1], pp[2] - o[2]], l = Math.hypot(...d);
+  n = P.msgs.length;
+  K.send({ t: 'cast', kind: 'fireball', origin: o, dir: d.map(v => v / l) }); await wait(600);
+  const hurt = since(P, n, m => m.t === 'hit' && m.target === P.id && m.dmg > 0).length > 0;
+  const kills0 = snapOf(K)?.kills ?? 0;
+  n = P.msgs.length;
+  P.send({ t: 'respawnNow', loadout: newLo }); await wait(300);
+  const death = since(P, n, m => m.t === 'death' && m.id === P.id)[0];
+  ok(hurt && !!death && death.killer === K.id && death.cause === 'respawn', `a hurt respawn is a death credited to the last attacker (hit ${hurt}, killer ${death?.killer === K.id ? 'the hitter' : death?.killer})`);
+  await wait(300);
+  ok((snapOf(K)?.kills ?? 0) === kills0 + 1, `and the attacker gets the kill (${kills0} → ${snapOf(K)?.kills})`);
+  for (const c of [P, K]) c.ws.close();
 }
 
 console.log(fails ? `${fails} FAILED` : 'ALL PASS');
