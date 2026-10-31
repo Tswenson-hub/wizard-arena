@@ -18,7 +18,11 @@
   button:hover { border-color: var(--accent); }
   button.on { background: #3b2e5c; border-color: var(--accent); }
   button.primary { background: #4a3480; border-color: var(--accent); }
-  .pal { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+  #palSearch { width: 100%; box-sizing: border-box; background: #1b1e28; color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; font: inherit; margin-bottom: 6px; }
+  .pal details { margin: 2px 0; }
+  .pal summary { cursor: pointer; color: var(--dim); font-size: 12px; padding: 2px 0; }
+  .pal summary b { color: var(--text); font-weight: 600; }
+  .pal .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 4px 0 6px; }
   .pal button { text-align: left; font-size: 12px; padding: 3px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   label.tog { display: flex; gap: 6px; align-items: center; margin: 2px 0; color: var(--dim); }
   .field { display: grid; grid-template-columns: 80px 1fr; gap: 6px; align-items: center; margin: 3px 0; }
@@ -44,18 +48,21 @@
 <canvas id="view"></canvas>
 <div id="left" class="panel">
   <h3>Place</h3>
+  <input id="palSearch" type="search" placeholder="Search pieces (wall, stairs, banner…)">
   <div id="palette" class="pal"></div>
   <h3>Overlays</h3>
   <div id="overlays"></div>
   <h3>Snap</h3>
   <label class="tog"><input type="checkbox" id="snapGround" checked> ground (surface height)</label>
-  <label class="tog"><input type="checkbox" id="snapGrid"> grid 0.25 m / 15°</label>
+  <label class="tog"><input type="checkbox" id="snapKit" checked> kit grid 0.83 m (half a KayKit tile) / 90°</label>
+  <label class="tog"><input type="checkbox" id="snapGrid"> fine grid 0.25 m / 15°</label>
   <h3>Keys</h3>
   <div id="help">
     <b>Right-drag</b> look, with <b>WASD</b> fly, <b>Q/E</b> down/up, <b>Shift</b> fast, <b>wheel</b> forward<br>
     <b>T</b> top-down<br>
     <b>Click</b> select, <b>Shift-click</b> add<br>
     <b>W</b> move, <b>E</b> rotate, <b>R</b> scale<br>
+    <b>[ ]</b> turn the selection 90°, <b>PgUp/PgDn</b> lift it one storey<br>
     <b>Del</b> delete, <b>Ctrl+D</b> duplicate<br>
     <b>Ctrl+Z</b> undo, <b>Ctrl+Shift+Z</b> redo<br>
     <b>Ctrl+S</b> save, <b>Esc</b> deselect

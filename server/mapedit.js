@@ -2,7 +2,7 @@
 // Everything here exists only when the server runs with MAP_EDIT=1 (npm run edit). Otherwise /?edit=1, edit.html,
 // js/editor.js and /api/map/* answer 404, so the live site doesn't serve the editor at all.
 //   GET  /?edit=1          the editor page (public/edit.html)
-//   GET  /api/map/models   the models in public/models, for the editor's palette (read-only)
+//   GET  /api/map/models   the models in public/models and its kit folders, for the editor's palette (read-only)
 //   POST /api/map/layout   write public/shared/layout.json. Only when the server runs with MAP_EDIT=1 (npm run edit),
 //                          only from this machine (loopback address, and a localhost Origin so another site open in
 //                          the browser can't post to it), and only a layout that passes validateLayout(). The file it
@@ -21,8 +21,13 @@ export function mountMapEdit(app, root) {
   const editing = () => process.env.MAP_EDIT === '1';
   app.use(['/edit.html', '/js/editor.js', '/api/map'], (req, res, next) => (editing() ? next() : res.status(404).send('Not found')));
   app.get('/', (req, res, next) => (!('edit' in req.query) ? next() : editing() ? res.sendFile(path.join(root, 'public', 'edit.html')) : res.status(404).send('Not found')));
+  // every .glb under public/models, with its folder: 'castle/wall', 'village/Roof_RoundTiles_4x4', 'potion'
   app.get('/api/map/models', (req, res) => {
-    fs.readdir(path.join(root, 'public', 'models'), (err, files) => res.json(err ? [] : files.filter(f => f.endsWith('.glb')).map(f => f.slice(0, -4)).sort()));
+    const dir = path.join(root, 'public', 'models');
+    try {
+      const files = fs.readdirSync(dir, { recursive: true }).map(f => String(f).split(path.sep).join('/'));
+      res.json(files.filter(f => f.endsWith('.glb')).map(f => f.slice(0, -4)).sort());
+    } catch { res.json([]); }
   });
   app.post('/api/map/layout', express.json({ limit: '4mb' }), (req, res) => {
     if (!LOOPBACK.has(req.socket.remoteAddress)) return res.status(403).json({ error: 'map editing only works from this computer' });

@@ -87,7 +87,7 @@ const io = new NodeIO().registerExtensions(ALL_EXTENSIONS).registerDependencies(
 for (const src of srcs) {
   const doc = await io.read(src);
   for (const t of doc.getRoot().listTextures()) t.dispose();     // materials keep their names (and factors); textures go
-  await doc.transform(dedup(), weld(), prune(), meshopt({ encoder: MeshoptEncoder, level: 'high', quantizePosition: 14, quantizeNormal: 8 }));
+  await doc.transform(dedup(), weld(), prune({ keepAttributes: true }), meshopt({ encoder: MeshoptEncoder, level: 'high', quantizePosition: 14, quantizeNormal: 8 }));
   const out = path.join(dst, path.basename(src).replace(/\.gltf$/, '.glb'));
   await io.write(out, doc);
   console.log(out);

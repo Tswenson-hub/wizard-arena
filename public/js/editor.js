@@ -100,25 +100,31 @@ const segDist = (x, z, a, b) => {
   const sx = b[0] - a[0], sz = b[1] - a[1], l2 = sx * sx + sz * sz || 1e-9, k = Math.max(0, Math.min(1, ((x - a[0]) * sx + (z - a[1]) * sz) / l2));
   return Math.hypot(a[0] + sx * k - x, a[1] + sz * k - z);
 };
-const RADIUS = { farmhouse: 6.5, barn: 7.5, silo: 6, tractor: 2.4, cart: 2.6, well: 1.4, scarecrow: 0.9, haystack: 1, pillar: 1.3, archway: 2.6,
-  obelisk: 1.4, blastStone: 0.9, tableRock: 1.4, tree: 1.6, prop: 0.75, spawn: 1.2, heal: 1.1, cover: 1.1, fenceDebris: 1.4, altar: 1.6 };
+const RADIUS = { prop: 0.75, spawn: 1.2, heal: 1.1 };
+const LIFTS = new Set(['kit', 'deco', 'block']);   // kinds with a `y` the gizmo moves up and down
 function anchorY(e) {
-  if (e.kind === 'piece' || e.kind === 'deco') return e.y || 0;
-  if (e.kind === 'leanSilo') return e.y0;
-  if (e.kind === 'wall') return e.base;
-  return ['prop', 'spawn', 'heal', 'cover', 'haystack'].includes(e.kind) ? C.surfaceHeight(e.x, e.z, 99) : 0;
+  if (LIFTS.has(e.kind)) return e.y || 0;
+  return ['prop', 'spawn', 'heal'].includes(e.kind) ? C.surfaceHeight(e.x, e.z, 99) : 0;
 }
-// The entry's own surfaces (pieces, the leaning silo, walls).
+// The entry's own surfaces (kit pieces, blocks).
 function surfacesOf(e) {
-  if (e.kind === 'piece' || e.kind === 'leanSilo') return C.SURFACES.filter(s => s.piece === e.id);
-  if (e.kind === 'wall') return C.SURFACES.filter(s => s.name === `${e.piece}-${e.name}`);
+  if (e.kind === 'kit' || e.kind === 'block') return C.SURFACES.filter(s => s.piece === e.id);
   return [];
+}
+// A kit piece's footprint radius from its bounding box (pieces without colliders: banners, torches, floors at 0).
+function kitRadius(e) {
+  const b = C.KIT_MODELS[e.model]; if (!b) return 1;
+  return Math.max(0.4, Math.hypot(Math.max(-b[0], b[1]), Math.max(-b[4], b[5])) * C.kitScale(e.model) * (e.scale ?? 1));
+}
+// A rectangle entry (floor, bounds): how far (x, z) is outside it, in metres (0 inside).
+function rectOut(e, x, z) {
+  const c = Math.cos(e.rotY || 0), n = Math.sin(e.rotY || 0), dx = x - e.x, dz = z - e.z, lx = dx * c - dz * n, lz = dx * n + dz * c;
+  return Math.hypot(Math.max(0, Math.abs(lx) - e.w / 2), Math.max(0, Math.abs(lz) - e.d / 2));
 }
 // How far (x, z) is from the entry, as a fraction of its size (< 1: on it).
 function pickScore(e, x, z) {
-  if (e.kind === 'pen') { const P = C.PEN, dx = Math.max(P.x0 - x, 0, x - P.x1), dz = Math.max(P.z0 - z, 0, z - P.z1); return (dx + dz) > 0 ? 1 + dx + dz : 0.95; }
-  if (e.kind === 'path') { const [s, c] = sinCos(e.rotY), h = e.len * (e.scale ?? 1) / 2; return segDist(x, z, [e.x - s * h, e.z - c * h], [e.x + s * h, e.z + c * h]) / (e.w / 2); }
-  if (e.kind === 'fallenPillar' || e.kind === 'leanSilo') { const [s, c] = sinCos(e.rotY), l = e.len * (e.scale ?? 1); return segDist(x, z, [e.x, e.z], [e.x + s * l, e.z + c * l]) / 1.2; }
+  // the big rectangles only when nothing else is there (and only from close to their middle or edge)
+  if (e.kind === 'floor' || e.kind === 'bounds') { const o = rectOut(e, x, z); return o > 0 ? 1 + o : Math.min(0.999, 0.99 + Math.hypot(x - e.x, z - e.z) / 1e4); }
   const sf = surfacesOf(e);
   if (sf.length) {
     let best = Infinity;
@@ -129,21 +135,21 @@ function pickScore(e, x, z) {
     }
     return best > 0 ? 1 + best : 0.9 - 0.4 / (1 + sf.length);   // inside a footprint: favour small pieces over the big one they sit on
   }
-  const r = e.kind === 'tree' ? RADIUS.tree * e.h / 9 + 0.5 : e.kind === 'deco' ? Math.max(0.6, (e.h || 2) * (e.scale ?? 1) * 0.4) : (RADIUS[e.kind] || 1.5) * (e.scale ?? 1);
+  const r = e.kind === 'kit' ? kitRadius(e) * 0.8 : e.kind === 'deco' ? Math.max(0.6, (e.h || 2) * (e.scale ?? 1) * 0.4) : (RADIUS[e.kind] || 1.5) * (e.scale ?? 1);
   return Math.hypot(x - e.x, z - e.z) / r;
 }
 function extentRadius(e) {
-  if (e.kind === 'pen') return Math.hypot(e.w, e.d) / 2;
-  if (e.kind === 'path' || e.kind === 'fallenPillar' || e.kind === 'leanSilo') return e.len * (e.scale ?? 1) / 2 + 1;
+  if (e.kind === 'floor' || e.kind === 'bounds' || e.kind === 'block') return Math.hypot(e.w, e.d) / 2 * (e.scale ?? 1);
+  if (e.kind === 'kit') return kitRadius(e);
   const sf = surfacesOf(e);
   if (sf.length) return Math.max(...sf.map(s => Math.hypot(s.x - e.x, s.z - e.z) + Math.hypot(s.w, s.d) / 2));
-  return e.kind === 'tree' ? 2 : e.kind === 'deco' ? Math.max(0.8, (e.h || 2) * (e.scale ?? 1) * 0.5) : (RADIUS[e.kind] || 1.5) * (e.scale ?? 1);
+  return e.kind === 'deco' ? Math.max(0.8, (e.h || 2) * (e.scale ?? 1) * 0.5) : (RADIUS[e.kind] || 1.5) * (e.scale ?? 1);
 }
 
 // ------------------------------------------------------------ overlays (toggles) and markers
-const OVERLAYS = { colliders: 'Colliders', surfaces: 'Walkable surfaces', spawns: 'Spawns', heals: 'Heal spots', props: 'Props', pen: 'Goat pen and detours',
-  rim: 'Arena rim and blast radius', zones: 'Farm / blast / magic lines', labels: 'Selection outline' };
-const shown = { colliders: true, surfaces: true, spawns: true, heals: true, props: true, pen: true, rim: true, zones: true, labels: true };
+const OVERLAYS = { colliders: 'Colliders', surfaces: 'Walkable surfaces', walls: 'Wall boxes (red: no standing)', spawns: 'Spawns', heals: 'Heal spots', props: 'Props',
+  rim: 'Arena bounds and rim', labels: 'Selection outline' };
+const shown = { colliders: true, surfaces: true, walls: false, spawns: true, heals: true, props: true, rim: true, labels: true };
 try { Object.assign(shown, JSON.parse(localStorage.getItem('waEditOverlays') || '{}')); } catch {}
 for (const [k, name] of Object.entries(OVERLAYS)) {
   const l = document.createElement('label'); l.className = 'tog';
@@ -169,6 +175,7 @@ function drawOverlays() {
   }
   if (shown.surfaces) {
     for (const s of C.SURFACES) {
+      if (s.noStand && !shown.walls) continue;
       const ramp = s.kind === 'ramp', geo = s.round ? new THREE.CircleGeometry(s.w / 2, 24) : new THREE.PlaneGeometry(s.w, ramp ? Math.hypot(s.d, s.y1 - s.y0) : s.d);
       geo.rotateX(-Math.PI / 2);
       const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: s.noStand ? 0xff4040 : s.moveOnly ? 0x40c0ff : 0x40ff70, transparent: true, opacity: 0.28, depthWrite: false, side: THREE.DoubleSide }));
@@ -193,19 +200,10 @@ function drawOverlays() {
     const m = (propCache[type] ??= makePropMesh(type)).clone();
     m.position.set(x, C.surfaceHeight(x, z, 99), z); overlayRoot.add(m);
   });
-  if (shown.pen) {
-    const P = C.PEN, y = 0.12;
-    overlayRoot.add(lines(C.FENCE_SEGMENTS.flatMap(([a, b]) => [a[0], y, a[1], b[0], y, b[1]]), 0xffffff, 0.9));
-    const goats = []; for (const [x, z] of C.GOAT_SPAWNS) goats.push(...circlePts(x, z, C.GOAT.radius, 0.15, 12));
-    for (const p of [P.gateIn, P.gateOut]) goats.push(...circlePts(p[0], p[1], 0.3, 0.15, 8));
-    overlayRoot.add(lines(goats, 0xffffff, 1));
-    const det = []; for (const b of C.GOAT_DETOURS) if (Number.isFinite(b.x0)) det.push(b.x0, y, b.z0, b.x1, y, b.z0, b.x1, y, b.z0, b.x1, y, b.z1, b.x1, y, b.z1, b.x0, y, b.z1, b.x0, y, b.z1, b.x0, y, b.z0);
-    overlayRoot.add(lines(det, 0xd0a0ff, 0.6));
-  }
-  if (shown.rim) overlayRoot.add(lines(circlePts(0, 0, C.ARENA_RADIUS, 0.15, 96), 0xff5050, 0.9), lines(circlePts(C.ALTAR.x, C.ALTAR.z, C.BLAST_RADIUS, 0.15, 64), 0x8a6a4a, 0.9));
-  if (shown.zones) {
-    const R = C.ARENA_RADIUS, w5 = Math.sqrt(R * R - 25), w15 = Math.sqrt(R * R - 225);
-    overlayRoot.add(lines([-w5, 0.2, 5, w5, 0.2, 5], 0x8ad04a, 1), lines([-w15, 0.2, -15, w15, 0.2, -15], 0xb48cff, 1));
+  if (shown.rim) {
+    const B = C.ARENA_BOUNDS, y = 0.15;
+    overlayRoot.add(lines(circlePts(0, 0, C.ARENA_RADIUS, y, 96), 0xff5050, 0.6),
+      lines([B.x0, y, B.z0, B.x1, y, B.z0, B.x1, y, B.z0, B.x1, y, B.z1, B.x1, y, B.z1, B.x0, y, B.z1, B.x0, y, B.z1, B.x0, y, B.z0], 0xffd04a, 0.9));
   }
   drawSelection();
 }
@@ -232,7 +230,7 @@ function setSelection(ids) {
   if (e) {
     proxy.position.set(e.x, anchorY(e), e.z); proxy.rotation.set(0, e.rotY || 0, 0); proxy.scale.setScalar(1);
     gizmo.attach(proxy);
-    gizmo.showY = gizmo.mode === 'rotate' || ((e.kind === 'piece' || e.kind === 'deco') && gizmo.mode === 'translate');
+    gizmo.showY = gizmo.mode === 'rotate' || (LIFTS.has(e.kind) && gizmo.mode === 'translate');
     gizmo.showX = gizmo.showZ = gizmo.mode !== 'rotate';
   } else gizmo.detach();
   drawSelection(); inspect();
@@ -244,12 +242,15 @@ function setMode(mode) {
 }
 for (const b of document.querySelectorAll('[data-mode]')) b.onclick = () => setMode(b.dataset.mode);
 function applySnap() {
-  const grid = $('snapGrid').checked;
-  gizmo.setTranslationSnap(grid ? 0.25 : null);
-  gizmo.setRotationSnap(grid ? Math.PI / 12 : null);
+  const kit = $('snapKit').checked, grid = $('snapGrid').checked;
+  gizmo.setTranslationSnap(kit ? C.KIT_GRID / 2 : grid ? 0.25 : null);
+  gizmo.setRotationSnap(kit ? Math.PI / 2 : grid ? Math.PI / 12 : null);
   gizmo.setScaleSnap(grid ? 0.05 : null);
 }
-$('snapGrid').onchange = applySnap; applySnap();
+$('snapKit').onchange = () => { if ($('snapKit').checked) $('snapGrid').checked = false; applySnap(); };
+$('snapGrid').onchange = () => { if ($('snapGrid').checked) $('snapKit').checked = false; applySnap(); };
+applySnap();
+const snapKitXZ = (v) => $('snapKit').checked ? Math.round(v / (C.KIT_GRID / 2)) * (C.KIT_GRID / 2) : v;
 
 // a drag: the selected entries move with the proxy (around the first one), and nearby world objects follow until release
 let drag = null;
@@ -276,7 +277,7 @@ gizmo.addEventListener('objectChange', () => {
     e.z = drag.pivot[1] + dz - rx * s + rz * c;
     if ('rotY' in st || dRot) e.rotY = (st.rotY || 0) + dRot;
     if (gizmo.mode === 'scale') { if (k === 1) delete e.scale; else e.scale = (st.scale ?? 1) * k; }
-    if (dy && (e.kind === 'piece' || e.kind === 'deco')) e.y = (st.y || 0) + dy;
+    if (dy && LIFTS.has(e.kind)) e.y = Math.max(0, (st.y || 0) + dy);
     if (e.kind === 'deco' && $('snapGround').checked && !dy) e.y = groundUnder(e.x, e.z);
   }
   // the world objects near the first entry follow the drag (the rebuild on release puts everything in its true place)
@@ -363,50 +364,58 @@ function pickPoint(ev) {
 }
 
 // ------------------------------------------------------------ the palette: what can be placed
+// Grouped by kit: Gameplay (spawns, heal spots, props, invisible blocks), Castle (KayKit Dungeon), Village (Quaternius),
+// Other models (placed as decos fitted to a height). The search box filters every group by name.
 const PALETTE = [
-  { label: 'Spawn', make: () => ({ kind: 'spawn', rotY: 0 }) },
-  { label: 'Heal spot', make: () => ({ kind: 'heal', name: 'heal' }) },
-  ...Object.keys(C.PROP_TYPES).map(t => ({ label: `Prop: ${t}`, make: () => ({ kind: 'prop', type: t }) })),
-  { label: 'Cover: hay', make: () => ({ kind: 'cover', type: 'hay', cluster: 'new' }) },
-  { label: 'Cover: rock', make: () => ({ kind: 'cover', type: 'rock', cluster: 'new', h: 2.2 }) },
-  { label: 'Cover: pillar', make: () => ({ kind: 'cover', type: 'pillar', cluster: 'new', h: 5.5 }) },
-  ...Object.keys(C.TREE_KINDS).map(k => ({ label: `Tree: ${k}`, make: () => ({ kind: 'tree', model: k, rotY: 0, h: C.TREE_KINDS[k].h }) })),
-  { label: 'Hay stack', make: () => ({ kind: 'haystack', model: 'hay' }) },
-  { label: 'Blast stone', make: () => ({ kind: 'blastStone', model: 'rock_jagged', h: 1.8, tilt: 0.3 }) },
-  { label: 'Table rock', make: () => ({ kind: 'tableRock', model: 'rock_table', rotY: 0, h: 1, tilt: 0.15 }) },
-  { label: 'Fence panel', make: () => ({ kind: 'fenceDebris', rotY: 0 }) },
-  { label: 'Path', make: () => ({ kind: 'path', rotY: 0, len: 8, w: 2.6 }) },
-  { label: 'Rune pillar', make: () => ({ kind: 'pillar', model: 'rune_pillar', rotY: 0, tilt: 0.1 }) },
-  { label: 'Archway', make: () => ({ kind: 'archway', model: 'archway', rotY: 0, height: 7, tilt: 0 }) },
-  { label: 'Obelisk', make: () => ({ kind: 'obelisk', model: 'obelisk', rotY: 0, height: 6, r: 0.9, tilt: 0.06, sink: 0.1 }) },
-  ...Object.keys(C.PIECE_PARTS).map(m => ({ label: `Platform: ${m}`, make: () => ({ kind: 'piece', model: m, rotY: 0, h: { rock_plateau: 2.66, ruin_steps: 2.42, hay_loft: 3.3, watchtower: 8.5, ruin_platform: 2.22, plank_bridge: 2.6, embankment: 1.3, wooden_stairs: 3.6 }[m] || 2 }) })),
+  { group: 'Gameplay', label: 'Spawn', make: () => ({ kind: 'spawn', rotY: 0 }) },
+  { group: 'Gameplay', label: 'Heal spot', make: () => ({ kind: 'heal', name: 'heal' }) },
+  ...Object.keys(C.PROP_TYPES).map(t => ({ group: 'Gameplay', label: `Prop: ${t}`, make: () => ({ kind: 'prop', type: t }) })),
+  { group: 'Gameplay', label: 'Invisible block', make: () => ({ kind: 'block', rotY: 0, w: 2, d: 2, h: 3 }) },
+  { group: 'Gameplay', label: 'Stone floor', make: () => ({ kind: 'floor', model: 'castle/floor_tile_large', rotY: 0, w: 10, d: 10, seed: 1 }) },
 ];
-const SPECIAL_MODELS = new Set(['wizard', 'goat', 'potion', 'grass_tall', 'grass_clover', 'ice_wall', 'acid_puddle', 'pine_far', 'oak_far', 'birch_far']);
+const KIT_GROUPS = { castle: 'Castle (KayKit)', village: 'Village (Quaternius)' };
+const SPECIAL_MODELS = new Set(['wizard', 'goat', 'ram', 'potion', 'grass_tall', 'grass_clover', 'ice_wall', 'acid_puddle', 'pine_far', 'oak_far', 'birch_far']);
 async function buildPalette() {
   let models = [];
   try { models = await (await fetch('/api/map/models')).json(); } catch {}
-  for (const m of models.filter(m => !SPECIAL_MODELS.has(m))) PALETTE.push({ label: `Model: ${m}`, make: () => ({ kind: 'deco', model: m, rotY: 0, h: 2 }) });
-  const root = $('palette');
-  for (const item of PALETTE) {
-    const b = document.createElement('button'); b.textContent = item.label; b.title = item.label;
-    b.onclick = () => { placing = item; $('placing').style.display = 'block'; for (const q of root.children) q.classList.toggle('on', q === b); };
-    root.appendChild(b);
+  for (const m of Object.keys(C.KIT_MODELS)) PALETTE.push({ group: KIT_GROUPS[m.split('/')[0]] || 'Kit', label: m.split('/')[1].replace(/_/g, ' '), title: m,
+    make: () => ({ kind: 'kit', model: m, rotY: 0 }) });
+  for (const m of models.filter(m => !m.includes('/') && !SPECIAL_MODELS.has(m))) PALETTE.push({ group: 'Other models', label: m, make: () => ({ kind: 'deco', model: m, rotY: 0, h: 2 }) });
+  drawPalette();
+}
+let palButtons = [];
+function drawPalette() {
+  const root = $('palette'), q = $('palSearch').value.trim().toLowerCase();
+  root.innerHTML = ''; palButtons = [];
+  const groups = new Map();
+  for (const item of PALETTE) if (!q || item.label.toLowerCase().includes(q) || (item.title || '').toLowerCase().includes(q)) (groups.get(item.group) || groups.set(item.group, []).get(item.group)).push(item);
+  for (const [name, items] of groups) {
+    const d = document.createElement('details'); d.open = !!q || name === 'Gameplay';
+    d.innerHTML = `<summary><b>${name}</b> (${items.length})</summary>`;
+    const grid = document.createElement('div'); grid.className = 'grid'; d.appendChild(grid);
+    for (const item of items) {
+      const b = document.createElement('button'); b.textContent = item.label; b.title = item.title || item.label;
+      b.onclick = () => { placing = item; $('placing').style.display = 'block'; for (const x of palButtons) x.classList.toggle('on', x === b); };
+      grid.appendChild(b); palButtons.push(b);
+    }
+    root.appendChild(d);
   }
 }
+$('palSearch').oninput = drawPalette;
 function newId(base) { let i = 1; while (byId(`${base}-${i}`)) i++; return `${base}-${i}`; }
 function place(item, p) {
   pushUndo();
-  const e = { id: '', ...item.make(), x: +p.x.toFixed(2), z: +p.z.toFixed(2) };
-  e.id = newId(e.kind === 'deco' ? e.model : e.kind === 'prop' ? `prop-${e.type}` : e.kind === 'piece' ? e.model : e.kind);
+  const e = { id: '', ...item.make(), x: +snapKitXZ(p.x).toFixed(4), z: +snapKitXZ(p.z).toFixed(4) };
+  e.id = newId(e.kind === 'deco' ? e.model : e.kind === 'kit' ? e.model.split('/')[1] : e.kind === 'prop' ? `prop-${e.type}` : e.kind);
   if (e.kind === 'heal') e.name = e.id;
-  if (e.kind === 'cover') e.cluster = e.id;
-  if (e.kind === 'deco' && $('snapGround').checked) e.y = groundUnder(e.x, e.z);
+  // a kit piece lands on what's under the click (a wall-walk, a tower top) when ground snap is on
+  if ((e.kind === 'deco' || e.kind === 'kit') && $('snapGround').checked) { const y = groundUnder(e.x, e.z); if (y > 0.01) e.y = +y.toFixed(4); }
   // props keep their ids in order (index + 1): a new prop goes after the last prop
   const lastSame = L.entries.map(q => q.kind).lastIndexOf(e.kind);
   L.entries.splice(lastSame >= 0 ? lastSame + 1 : L.entries.length, 0, e);
   cancelPlacing(); commit(); setSelection([e.id]);
 }
-function cancelPlacing() { placing = null; $('placing').style.display = 'none'; for (const q of $('palette').children) q.classList.remove('on'); }
+function cancelPlacing() { placing = null; $('placing').style.display = 'none'; for (const q of palButtons) q.classList.remove('on'); }
 
 // ------------------------------------------------------------ the inspector: the selected entry's fields
 function inspect(live = false) {
@@ -423,7 +432,7 @@ function inspect(live = false) {
   root.innerHTML = `<div class="sel-title">${e.kind}${e.model ? ' · ' + e.model : ''}</div>`;
   for (const k of fields) {
     const v = k === 'rotY' ? (e.rotY ?? 0) : k === 'scale' ? (e.scale ?? 1) : e[k];
-    if (v === undefined && !['h', 'y'].includes(k)) continue;
+    if (v === undefined && !['h', 'y'].includes(k) && !(e.kind === 'kit' && k === 'solid')) continue;
     const row = document.createElement('div'); row.className = 'field';
     row.innerHTML = `<span>${k === 'rotY' ? 'rotY (rad)' : k}</span>`;
     const inp = document.createElement('input');
@@ -450,20 +459,34 @@ function duplicate() {
   const ids = [];
   for (const id of selection) {
     const e = byId(id), c = structuredClone(e);
-    c.id = newId(id.replace(/-\d+$/, '')); c.x += 1.5; c.z += 1.5;
+    c.id = newId(id.replace(/-\d+$/, ''));
+    if (c.kind === 'kit') { const b = C.KIT_MODELS[c.model], len = b ? (b[1] - b[0]) * C.kitScale(c.model) * (c.scale ?? 1) : 1.5; c.x += Math.cos(c.rotY || 0) * len; c.z -= Math.sin(c.rotY || 0) * len; }
+    else { c.x += 1.5; c.z += 1.5; }
     if (c.kind === 'heal') c.name = c.id;
     L.entries.splice(L.entries.indexOf(e) + 1, 0, c); ids.push(c.id);
   }
   commit(); setSelection(ids);
 }
-const SINGLETONS = new Set(['altar', 'farmhouse', 'pen', 'scarecrow', 'tractor', 'barn', 'silo', 'well', 'cart']);
+const SINGLETONS = new Set(['bounds']);
 function remove() {
   const ids = selection.filter(id => !SINGLETONS.has(byId(id)?.kind));
-  if (ids.length < selection.length) status('The farmhouse, barn, pen, altar and the other one-offs can be moved but not deleted', 'err');
+  if (ids.length < selection.length) status('The arena bounds can be moved and resized but not deleted', 'err');
   if (!ids.length) return;
   pushUndo();
   L.entries = L.entries.filter(e => !ids.includes(e.id));
   commit(); setSelection([]);
+}
+
+// Turn the selection a quarter round its first entry, or lift it one storey (a KayKit wall's height), as one undo step.
+function nudge({ rot = 0, lift = 0 }) {
+  pushUndo();
+  const e0 = byId(selection[0]), c = Math.cos(rot), s = Math.sin(rot);
+  for (const id of selection) {
+    const e = byId(id); if (!e) continue;
+    if (rot) { const rx = e.x - e0.x, rz = e.z - e0.z; e.x = +(e0.x + rx * c + rz * s).toFixed(4); e.z = +(e0.z - rx * s + rz * c).toFixed(4); e.rotY = +(((e.rotY || 0) + rot) % (2 * Math.PI)).toFixed(4); }
+    if (lift && LIFTS.has(e.kind)) { const y = Math.max(0, (e.y || 0) + lift); if (y < 1e-3) delete e.y; else e.y = +y.toFixed(4); }
+  }
+  commit(); setSelection(selection);
 }
 
 // ------------------------------------------------------------ checks (warnings, not blockers)
@@ -477,14 +500,14 @@ function runChecks() {
   // spawns: 15 m apart, out of each other's sight at chest height
   const S = C.SPAWN_POINTS;
   for (let i = 0; i < S.length; i++) for (let j = i + 1; j < S.length; j++) {
-    const a = [S[i][0], 1.3, S[i][2]], b = [S[j][0], 1.3, S[j][2]], d = Math.hypot(a[0] - b[0], a[2] - b[2]);
+    const a = [S[i][0], S[i][1] + 1.3, S[i][2]], b = [S[j][0], S[j][1] + 1.3, S[j][2]], d = Math.hypot(a[0] - b[0], a[2] - b[2]);
     if (d < 15) warn(`Spawns ${i + 1} and ${j + 1} are only ${d.toFixed(1)} m apart (15 m minimum)`, [a[0], a[2]]);
     else if (!C.pillarBlocks(a, b, 0) && !C.surfaceBlocks(a, b) && !C.losVolumeBlocks(a, b)) warn(`Spawns ${i + 1} and ${j + 1} can see each other`, [a[0], a[2]]);
   }
-  // anything outside the rim
-  for (const e of L.entries) if (Math.hypot(e.x, e.z) > R - 0.5 && e.kind !== 'pen') warn(`${e.id} is outside the rim`, [e.x, e.z]);
-  // goat points inside colliders
-  for (const [x, z] of C.GOAT_SPAWNS) for (const c of C.COLLIDERS) if (c.kind !== 'fence' && Math.hypot(c.x - x, c.z - z) < c.r + C.GOAT.radius) { warn(`A goat spawn is inside a ${c.kind} collider`, [x, z]); break; }
+  // gameplay spots outside the bounds, or inside something solid
+  for (const e of L.entries) if (['spawn', 'heal', 'prop'].includes(e.kind) && !C.insideArena(e.x, e.z, 0.3)) warn(`${e.id} is outside the arena bounds`, [e.x, e.z]);
+  for (const e of L.entries) if (['spawn', 'heal', 'prop'].includes(e.kind)) { const y = C.surfaceHeight(e.x, e.z, 99), s = C.surfaceSolidAt(e.x, y + 0.6, e.z); if (s) warn(`${e.id} is inside ${s.piece || s.name}`, [e.x, e.z]); }
+  for (const e of L.entries) if (Math.hypot(e.x, e.z) > R + 25) warn(`${e.id} is far outside the arena`, [e.x, e.z]);
   // platforms with no way up (a walk, a double jump or a double jump plus a ledge grab, from the ground or from a
   // surface that's reachable itself)
   for (const s of unreachableSurfaces()) warn(`${s.name} has no way up`, [s.x, s.z]);
@@ -522,14 +545,14 @@ function unreachableSurfaces() {
       if (reached.has(s)) continue;
       for (const [ex, ez, ox, oz] of edge(s)) {
         const top = sTopAt(s, ex, ez);
-        let floor = Math.hypot(ox, oz) < C.ARENA_RADIUS ? 0 : -Infinity;                  // the ground outside, inside the rim
+        let floor = C.insideArena(ox, oz) ? 0 : -Infinity;                                 // the ground beside it, inside the bounds
         for (const q of reached) if (inside(q, ox, oz, 0.1)) floor = Math.max(floor, sTopAt(q, ox, oz));
         for (const q of reached) if (q !== s && inside(q, ex, ez, 0.1) && Math.abs(sTopAt(q, ex, ez) - top) < step + 0.05) floor = Math.max(floor, top);   // joined to a reached surface
         if (top - floor <= Math.max(step + 0.05, grab)) { reached.add(s); grew = true; break; }
       }
     }
   }
-  return stand.filter(s => !reached.has(s) && !s.ladder && s.style !== 'silo');
+  return stand.filter(s => !reached.has(s) && !s.ladder && s.style !== 'block' && !s.moveOnly);
 }
 
 // ------------------------------------------------------------ save, export, import
@@ -579,6 +602,8 @@ addEventListener('keydown', (ev) => {
   else if (k === 'r') setMode('scale');
   else if (k === 't') toggleTop();
   else if (k === 'delete' || k === 'backspace') { ev.preventDefault(); remove(); }
+  else if ((k === '[' || k === ']') && selection.length) nudge({ rot: k === ']' ? -Math.PI / 2 : Math.PI / 2 });
+  else if ((k === 'pageup' || k === 'pagedown') && selection.length) { ev.preventDefault(); nudge({ lift: k === 'pageup' ? C.KIT_GRID * 2 : -C.KIT_GRID * 2 }); }
   else if (k === 'escape') { cancelPlacing(); setSelection([]); }
 });
 addEventListener('keyup', (ev) => keys.delete(ev.key.toLowerCase()));
