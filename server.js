@@ -1109,7 +1109,7 @@ function updateRide(p, t) {
   if (t >= R.dismountAt && !R.off) { R.off = true; p.rootUntil = Math.max(p.rootUntil, R.endAt); }   // getting off
   if (galloping(p, t)) {
     for (const q of players.values()) {
-      if (q === p || q.dead || R.shoved.has(q.id) || !enemies(p, q) || q.p[1] > 1) continue;
+      if (q === p || q.dead || R.shoved.has(q.id) || !enemies(p, q) || Math.abs(q.p[1] - p.p[1]) > 1) continue;   // (round 15: on his own level, a wall-walk too)
       if (dist2D(q.p, p.p) > C.PLAYER_RADIUS * 2 + G_.radius * 0.6) continue;
       R.shoved.add(q.id);
       const dx = q.p[0] - p.p[0], dz = q.p[2] - p.p[2], l = Math.hypot(dx, dz) || 1;

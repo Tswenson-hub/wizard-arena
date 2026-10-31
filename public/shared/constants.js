@@ -25,9 +25,10 @@ export const POTION = { heal: 35, respawn: 20, radius: 0.9, height: 1.0 };
 // Round 10: ledge grab. Jumping at an edge whose top is out of the jump's reach (but at most `reach` above its apex)
 // pulls you up onto it in `time` s (cast-rooted). ledgeTarget is the one rule for client, server and bots.
 export const LEDGE = { reach: 1.2, time: 0.45, rise: 0.3 };
-// Round 10 (Ty): a thrown object (a prop, a potion barrel, a crate) that hits an unblocked wizard knocks them down:
+// Round 10 (Ty): a thrown object (a prop, a potion barrel, a crate) that hits an unblocked wizard knocks them down (round 15: so do
+// a ram's charge and a Ram Ride running into you):
 // flung back about 2 m, they fall (fall), lie there (down) and get up (getup), unable to move, act or shield throughout.
-export const KNOCKDOWN = { kinds: ['prop', 'battering_ram', 'ram_charge'], fall: 0.4, down: 0.8, getup: 0.4, fling: 24 };   // fling: m/s, decays to ~2 m
+export const KNOCKDOWN = { kinds: ['prop', 'battering_ram', 'ram_charge', 'ram_shove'], fall: 0.4, down: 0.8, getup: 0.4, fling: 24 };   // fling: m/s, decays to ~2 m
 KNOCKDOWN.total = KNOCKDOWN.fall + KNOCKDOWN.down + KNOCKDOWN.getup;
 import { surfaceHeight as _sh, STEP_UP as _step } from './map.js';
 // From feet at p ([x, y, z]) facing dir ([x, z], unit), in a jump peaking at apexY: where we'd end up standing, or null.
@@ -507,9 +508,9 @@ export const SPELLBOOK = {
   },
   ram_ride: {
     id: 'ram_ride', slot: 'mobility', name: 'Ram Ride', short: 'Ride',
-    blurb: 'Mount a ram and gallop up to 20 m (it turns slowly toward where you look); E, Space or a click gets off early. Riding into an enemy shoves them for 15.',
-    mount: 0.4, dismount: 0.4,   // he can't act while getting on and off
-    speed: 7, distance: 20,      // up to about 2.9 s (round 8: twice as long, but E, Space or a primary click dismounts early)
+    blurb: `Mount a ram and gallop up to 20 m (it turns slowly toward where you look); E, Space or a click gets off early. Riding into an enemy knocks them flat for ${D(15)}.`,
+    mount: 0.26, dismount: 0.4,  // he can't act while getting on and off (round 15, Ty: a quicker mount; was 0.4)
+    speed: 8.75, distance: 20,   // up to about 2.3 s (round 15, Ty: a faster ride; was 7 m/s, 2.9 s). E, Space or a click dismounts early
     turnRate: 1.5,               // rad/s: the ram's heading follows where you look, this fast at most
     height: 0.55,        // he sits this high on the ram (visual)
     cooldown: 8,
@@ -979,7 +980,7 @@ export const SPELL_INFO = {
   blink:         { element: 'wind',   tags: ['Teleport'], damage: '', cooldown: S_(4), range: M_(9), windup: '' },
   skyward:       { element: 'ice',    tags: ['Dash'], damage: '', cooldown: S_(6), range: M_(7), windup: '', duration: 'float 2.8 s' },
   mirror_step:   { element: 'dark',   tags: ['Dash'], damage: '', cooldown: S_(7), range: M_(7), windup: '', duration: 'decoys 2.5 s' },
-  ram_ride:      { element: 'earth',  tags: ['Dash', 'Summon'], damage: `${D(15)}`, cooldown: S_(8), range: M_(20), windup: S_(0.4) },
+  ram_ride:      { element: 'earth',  tags: ['Dash', 'Summon', 'Knockdown'], damage: `${D(15)}`, cooldown: S_(8), range: M_(20), windup: S_(SPELLBOOK.ram_ride.mount) },
   flask_step:    { element: 'acid',   tags: ['Teleport', 'Lob', 'Wind-up'], damage: '', cooldown: S_(8), range: M_(16), windup: S_(0.6) },
   // utility (F)
   telekinesis:   { element: 'arcane', tags: ['Knockdown'], damage: `${D(22)}`, cooldown: S_(3), range: M_(16), windup: '' },

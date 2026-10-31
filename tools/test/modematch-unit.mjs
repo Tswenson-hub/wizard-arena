@@ -452,22 +452,27 @@ async function agilityChecks(join, since, spots) {
   await slingChecks(join, since);
 }
 
+// A straight 24 m (len) line across open courtyard floor, clear of every castle piece at knee, chest and head height, with a
+// free spot 3 m from its start: { a, far, near, yaw } (a, far, near at chest height), or null.
+function clearLine(len) {
+  const flatAt = (x, z) => C.surfaceTopAt(x, z) < 0.05 && C.surfaceTopAt(x + 0.6, z) < 0.05 && C.surfaceTopAt(x - 0.6, z) < 0.05;
+  for (let x = -22; x <= 22; x += 1) for (let z = -22; z <= 22; z += 1) for (const [dx, dz] of [[0, 1], [1, 0], [0, -1], [-1, 0]]) {
+    const a = [x, 1.3, z], far = [x + dx * len, 1.3, z + dz * len], near = [x + dx * 3, 1.3, z + dz * 3];
+    if (!(C.insideArena ? C.insideArena(far[0], far[2], 1.5) && C.insideArena(x, z, 1.5) : true)) continue;
+    if (!flatAt(x, z) || !flatAt(far[0], far[2]) || !flatAt(near[0], near[2])) continue;
+    if (C.surfaceSegmentHit([x, 0.4, z], [far[0], 0.4, far[2]]) || C.surfaceSegmentHit(a, far) || C.surfaceSegmentHit([x, 2, z], [far[0], 2, far[2]])) continue;
+    return { a, far, near, yaw: Math.atan2(dx, dz), dir: [dx, dz] };
+  }
+  return null;
+}
+
 // ---- round 15: Shepherd's Sling hits harder the further the stone has flown (C.slingDamage)
 async function slingChecks(join, since) {
   const wait = (ms) => new Promise(r => setTimeout(r, ms));
   const S = await join('Slinger', { primary: 'sling', utility: 'telekinesis' });
   const T1 = await join('FarMark', { utility: 'telekinesis' }), T2 = await join('NearMark', { utility: 'telekinesis' });
   S.send({ t: 'matchDebug', size: 3 }); S.send({ t: 'removeBots' }); await wait(600);
-  // a 24 m line across open courtyard floor at chest height (no castle piece on it), with a free spot 3 m from its start
-  const flatAt = (x, z) => C.surfaceTopAt(x, z) < 0.05 && C.surfaceTopAt(x + 0.6, z) < 0.05 && C.surfaceTopAt(x - 0.6, z) < 0.05;
-  let line = null;
-  for (let x = -22; x <= 22 && !line; x += 1) for (let z = -22; z <= 22 && !line; z += 1) for (const [dx, dz] of [[0, 1], [1, 0], [0, -1], [-1, 0]]) {
-    const a = [x, 1.3, z], far = [x + dx * 24, 1.3, z + dz * 24], near = [x + dx * 3, 1.3, z + dz * 3];
-    if (!(C.insideArena ? C.insideArena(far[0], far[2], 1.5) && C.insideArena(x, z, 1.5) : true)) continue;
-    if (!flatAt(x, z) || !flatAt(far[0], far[2]) || !flatAt(near[0], near[2])) continue;
-    if (C.surfaceSegmentHit([x, 0.4, z], [far[0], 0.4, far[2]]) || C.surfaceSegmentHit(a, far) || C.surfaceSegmentHit([x, 2, z], [far[0], 2, far[2]])) continue;
-    line = { a, far, near, yaw: Math.atan2(dx, dz) }; break;
-  }
+  const line = clearLine(24);
   ok(!!line, `a clear 24 m line for the Sling test (${line ? `${line.a[0]}, ${line.a[2]}` : 'none'})`);
   if (!line) { for (const c of [S, T1, T2]) c.ws.close(); return; }
   const place = (c, p, yaw = 0) => c.send({ t: 'debugPlace', p: [p[0], 0, p[2]], yaw, resetCd: true });
@@ -492,6 +497,33 @@ async function slingChecks(join, since) {
   ok(!!far && !!near && far.dmg > near.dmg, `a Sling stone that flew 24 m hits harder than one from 3 m (${far?.dmg} vs ${near?.dmg})`);
   ok(!!far && far.dmg >= 17 && !!far.long && !!near && near.dmg <= 12 && !near.long, `long hits are flagged long; point blank about 9-11 (${far?.dmg}${far?.long ? ' long' : ''}, ${near?.dmg})`);
   for (const c of [S, T1, T2]) c.ws.close();
+  await wait(300);
+  await rideChecks(join, since);
+}
+
+// ---- round 15: Ram Ride: a quicker mount, a faster gallop, and an enemy in the way is knocked flat (ram_shove, KNOCKDOWN.kinds)
+async function rideChecks(join, since) {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  const RIDE = C.SPELLBOOK.ram_ride;
+  const H = await join('Rider', { mobility: 'ram_ride', utility: 'telekinesis' }), V = await join('Trampled', { utility: 'telekinesis' });
+  H.send({ t: 'matchDebug', size: 2 }); H.send({ t: 'removeBots' }); await wait(600);
+  const line = clearLine(16);
+  ok(!!line, `a clear 16 m line for the Ram Ride test (${line ? `${line.a[0]}, ${line.a[2]}` : 'none'})`);
+  if (!line) { for (const c of [H, V]) c.ws.close(); return; }
+  const at = (d) => [line.a[0] + line.dir[0] * d, 0, line.a[2] + line.dir[1] * d];
+  H.send({ t: 'debugPlace', p: at(0), yaw: line.yaw, resetCd: true }); V.send({ t: 'debugPlace', p: at(6), yaw: line.yaw + Math.PI, resetCd: true });
+  await wait(2200);   // (past spawn protection)
+  let n = V.msgs.length;
+  H.send({ t: 'ride', yaw: line.yaw }); await wait(40);
+  const ride = since(V, n, m => m.t === 'ride' && m.id === H.id)[0];
+  ok(!!ride && ride.mount <= 0.3 && Math.abs(ride.ride - RIDE.distance / RIDE.speed) < 0.01, `the ride starts: mount ${ride?.mount} s, ${ride?.ride?.toFixed(2)} s at ${RIDE.speed} m/s`);
+  await wait(RIDE.mount * 1000);
+  // gallop along the line, reporting every 50 ms at the ride's speed, through where the enemy stands
+  for (let i = 1; i <= 24; i++) { H.send({ t: 'state', p: at(Math.min(12, RIDE.speed * 0.05 * i)), yaw: line.yaw }); await wait(50); }
+  await wait(200);
+  const hit = since(V, n, m => m.t === 'hit' && m.target === V.id && m.kind === 'ram_shove')[0];
+  ok(!!hit && hit.dmg > 0 && !!hit.knockdown, `an enemy in the ride's path is knocked flat (${hit ? `${hit.dmg} damage, knockdown ${hit.knockdown}` : 'no hit'})`);
+  for (const c of [H, V]) c.ws.close();
 }
 
 console.log(fails ? `${fails} FAILED` : 'ALL PASS');
