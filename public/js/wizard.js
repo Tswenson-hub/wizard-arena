@@ -183,8 +183,9 @@ export class Wizard {
     this.guardStyle = this.loadout.guard;
     if (this.guardStyle === 'black_death') {
       const u = this.ward.material.uniforms;
-      u.color.value.setHex(0x90081c); u.fill.value = 0; u.rim.value = 1.1; u.ripple.value = 0.35; u.whiten.value = 0.04;
-      this.wardFill = new THREE.Mesh(bubbleGeo, new THREE.MeshBasicMaterial({ color: 0x040006, transparent: true, opacity: 0, depthWrite: false }));
+      // round 16, Sanguine Aegis (Black Death renamed): a deep crimson blood shroud with a lighter rim, not a black one
+      u.color.value.setHex(0xff4a62); u.fill.value = 0.08; u.rim.value = 1.25; u.ripple.value = 0.45; u.whiten.value = 0.28;
+      this.wardFill = new THREE.Mesh(bubbleGeo, new THREE.MeshBasicMaterial({ color: 0x7a0a22, transparent: true, opacity: 0, depthWrite: false }));
       this.wardFill.scale.set(WARD.r * 0.98, WARD.h * 0.98, WARD.r * 0.98);
       this.wardFill.position.y = WARD.y;
       this.wardFill.visible = false;
@@ -646,7 +647,7 @@ export class Wizard {
     this.ward.scale.set(WARD.r * sw, WARD.h * sw, WARD.r * sw);
     if (this.wardFill) {
       const m = this.wardFill.material;
-      m.opacity += (w * 0.97 - m.opacity) * Math.min(1, dt * 14);
+      m.opacity += (w * 0.5 - m.opacity) * Math.min(1, dt * 14);   // (round 16: half see-through crimson, was a 0.97 black)
       this.wardFill.visible = m.opacity > 0.01;
       const c = WARD.r * 0.98 + Math.sin(tNow * 9) * 0.03;
       this.wardFill.scale.set(c, WARD.h * 0.98 + Math.cos(tNow * 7) * 0.04, c);

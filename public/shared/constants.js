@@ -564,8 +564,8 @@ export const SPELLBOOK = {
     cooldown: 10,
   },
   black_death: {
-    id: 'black_death', slot: 'guard', name: 'Black Death', short: 'Black Death', ward: true, allSides: true,
-    blurb: 'Hold: a black shroud blocks spells from every side, for about 3.5 s of stamina. Each block heals you for 60% of the damage it absorbed and charges your next Lash, and the shroud mends you 4 HP a second while it\'s up.',
+    id: 'black_death', slot: 'guard', name: 'Sanguine Aegis', short: 'Aegis', ward: true, allSides: true,   // round 16: Black Death renamed (id kept)
+    blurb: 'Hold to raise a blood shroud that turns absorbed damage into healing: it blocks spells from every side for about 3.5 s of stamina, heals you 60% of what it absorbs and 4 HP a second while it\'s up, and charges your next Blood Siphon.',
     cooldown: 0,
     drainMul: 2.0,          // stamina drains this much faster than the base ward rate (about 3.6 s from full; round 14: 2.5, 2.9 s)...
     hitCostMul: 2,          // ...and each blocked hit costs this much more (2.5 left Vesper last in the balance match)

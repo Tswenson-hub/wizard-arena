@@ -393,7 +393,7 @@ function applySnapshot(w, s) {
   }
   w.hp = s.hp; w.st = s.st; w.kills = s.kills; w.deaths = s.deaths;
   if (!!s.spectator !== !!w.spectator) { w.spectator = !!s.spectator; if (w !== me) w.group.visible = !w.spectator; }   // a 5th human watching
-  if (s.blocking && !w.blocking && !w.dead && w.loadout?.guard === 'black_death') sfx.play('black_death_cast', { pos: wpos(w), vol: 0.6, jitter: 0.05 });   // raising the Black Death
+  if (s.blocking && !w.blocking && !w.dead && w.loadout?.guard === 'black_death') sfx.play('black_death_cast', { pos: wpos(w), vol: 0.6, jitter: 0.05 });   // raising Sanguine Aegis
   w.blocking = s.blocking; w.charging = s.charging; w.stunned = s.stun;
   w.slowed = !!s.slow; w.bound = !!s.bound; w.siphoning = !!s.siphoning; w.frozen = !!s.frozen;
   w.ult = s.ult ?? 0;
@@ -405,7 +405,7 @@ function applySnapshot(w, s) {
   w.riding = !!s.ride; w.ramGuard = !!s.ramGuard;
   w.brewing = !!s.brew;
   w.regen = !!s.regen;   // out-of-combat regen: our HP bar pulses green
-  w.healing = !!s.heal;   // Night Cage or Black Death healing: the crimson shimmer (per frame)
+  w.healing = !!s.heal;   // Night Cage or Sanguine Aegis healing: the crimson shimmer (per frame)
   if (!s.brew && w.brewFx) { effects.stopAura(w.brewFx); w.brewFx = null; }
   if (w !== me) { w.sprinting = !!s.sprint; w.castRooted = !!s.castRoot; w.crouch = !!s.crouch; w.jumping = !!s.jump || s.hover != null; hoverFx(w, s.hover != null); }
   w.ultWinding = !!s.ultWind; w.blizz = s.blizz ?? null;
@@ -915,7 +915,7 @@ function handleMessage(msg) {
       break;
     }
     case 'notice': feed(esc(msg.text)); break;   // a server note for us (e.g. the match is full)
-    case 'heal': {   // Night Cage, Black Death: green numbers (ours by the HP bar)
+    case 'heal': {   // Night Cage, Sanguine Aegis, Blood Siphon: green numbers (ours by the HP bar)
       const w = players.get(msg.id);
       if (!w) break;
       if (w === me) hudNumber(`+${msg.amt}`, 'heal');
