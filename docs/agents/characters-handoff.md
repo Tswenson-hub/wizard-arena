@@ -1,5 +1,72 @@
 # Characters hand-off
 
+## Round 14: the first-run experience, the builder at three sizes, the Ward bubble
+
+### What I did
+- **How to play** (`select.js` `openHowToPlay()`, exported):
+  - A card over the page that opens by itself on a first visit to the join screen. It's remembered in localStorage as
+    `waHowToPlaySeen` and never opens from the pause menu's builder.
+  - It re-opens from a new **How to play** chip next to Randomize. Esc, Enter, "Got it" or a click outside closes it.
+  - Contents:
+    - the goal: free-for-all, first to **15 kills** (a fixed string matching `FFA.target` in server/match.js)
+    - "Build your wizard: one spell per slot", with the stat legend
+    - the controls in two columns: Moving (WASD, Mouse, Space, Space ×2, Shift, C) and Your six spells (LMB, RMB, R, E,
+      F, Q), then T reload, M mute and Esc menu
+    - the goat warning
+- **Stat symbols:** damage ✷, cooldown ⟳, range ↔, duration ◷ and wind-up ⧗ are now SVG masks in select.css, not font
+  glyphs. The old ⚔ and ⟳ rendered as × and ◇ on some systems.
+  - Duration has its own symbol now; it used to share ↔ with range.
+  - The **legend** sits in the builder's footer and in the how-to card.
+  - The tooltip is 13 px, and each stat row there carries its symbol.
+- **Cards, with nothing clipped:**
+  - Each card shows a short hand-written line (`CARD_LINE` in select.js) instead of the blurb's first sentence. The
+    lines have no numbers, so tuning can't make them wrong. They use a 2-line clamp, and none reaches it.
+  - Tags show in order of interest (Combo, Stuns, Roots, …, Projectile last), and only whole tags; the tooltip lists
+    them all.
+  - A short card (1280×720) first drops its tag row, or its line if that's enough. A combo card drops its line first, so
+    the Combo tag stays. No card drops both.
+- **Under 900 px wide:** the notice "Best played on a desktop with a keyboard and mouse" replaces the presets, the grid
+  and the voice. The name field and Enter stay, for a narrow desktop window.
+- **Pause menu builder:** rows were squeezed below the 84 px card minimum, so cards spilled into the next row. A row is
+  now at least 84 px, and the panel scrolls.
+- **Ward bubble** (`wizard.js` `bubbleMaterial`): a ShaderMaterial with a fresnel rim, a faint fill and ripples drifting
+  up, additive.
+  - Black Death keeps its opaque dark shroud inside a crimson rim.
+  - The Telekinesis shell around a held prop uses the same bubble in purple.
+  - `w.wardHit()` flares the bubble for about 0.25 s; spells is asked in requests.md to call it next to `effects.blockFlash`.
+
+### Verified (`/tmp/wa-characters/`, port 4103)
+- **`measure.py`** checks every visible card for an element whose text overflows its box, an element past the card's
+  edge, or a tag not wholly inside its row:
+  - **0 clipped** at 1280×720, 1366×768 and 1920×1080; no horizontal scroll at any size.
+  - 1280×720 (cards 125×88): 15 cards drop their tag row and 7 drop their line. Berserker Brew shows Combo and Wind-up.
+  - 1366×768 (cards 135×96): 2 drop tags and 2 drop the line.
+  - 1920×1080 (cards 195×148): nothing dropped.
+- **`shots.py`** at 1280, 860 and 390 px wide:
+  - The card shows on a first visit, Esc closes it, and it doesn't come back after a reload.
+  - The chip re-opens it, there are no page errors, and the document width equals the viewport.
+  - Screenshots: `first_1280.png` (the card), `tip_1280.png` (Brew's tooltip), `after_390.png` and `after_860.png` (the
+    notice).
+- **Bubble screenshots** in a live match: `ward_ward.png` (the bubble around a wizard was `ward_ward.png` before the TK
+  check overwrote it), `ward_black_death.png` and the TK shell (the latest `ward_ward.png`). `pause_1280.png` is the
+  pause builder.
+- **Card numbers against the spells agent's round 14 constants** (`ab77100`), with damage ×1.3 on the cards:
+  - Spark 12 → 16, Hex 14 → 18, Sling 10 → 13 + ram, Fireball 16/24 → 21/31, Skim 3 × 12
+  - Meteor cooldown 4 s, Battering Ram 70 (not "kill"), Trapped Relic 6 s, Sanguine Lash 9 s, Frostfall 10 s
+  - Tempest Veil 7 s, Black Death about 3.5 s, and Bulwark's 80 HP in its tooltip
+  - All of them match. The cards read SPELL_INFO, so later tuning carries through by itself.
+
+### Left over, or for others
+- **Spells** (requests.md):
+  - `#helpBtn` should call `Select.openHowToPlay()`.
+  - The header `.sub` still says "first to 10 kills".
+  - `target.wardHit?.()` is the optional flare.
+- The how-to card's "15 kills" is a string. If `FFA.target` changes, update it in select.js.
+- Headless runs, after joining a match: the client showed "Disconnected from server" a few seconds in, and the server log
+  shows the player leaving. Seen twice, with the in-progress server code on my port. I didn't look into it (spells' code).
+- `window.__wa` now needs `?debug` (spells' change); my scripts in `/tmp/wa-characters/` use it.
+
+
 ## Round 13b: Ty's second Jeb export (flips, jumps, landings, the air cast, the crouch)
 
 ### What I did
