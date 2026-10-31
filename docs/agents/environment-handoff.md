@@ -1,5 +1,70 @@
 # Environment hand-off: the farmstead
 
+## Round 14: model compression, camera blockers, the editor gate (`08d539c`, `28b023b`, `0b037b7`)
+**Download size.** Measured with Playwright as the bytes transferred from page load until the "Fight!" banner, on a private
+port with a cold cache (`/tmp/wa-environment/measure.py <url>`):
+
+| | Total before "Fight!" | Of which .glb |
+|---|---|---|
+| Live (audit, round 13) | 29.4 MB | |
+| Meshopt alone, defaults | 21.4 MB | 14.5 MB |
+| Packed (`08d539c`) | **19.3 MB** | 12.3 MB |
+| With spells' new audio in the tree | **18.4 MB** | 12.3 MB |
+
+- **What changed:** every map model is EXT_meshopt_compression (level high, positions 12 bit, normals 8 bit).
+  - The farmhouse, silo and barn keep 2048 base colour maps with 1024 normal and roughness maps. The farmhouse and silo
+    are also simplified to 0.5 at error 0.002; Meshy's UV seams stop that at 101k and 79k triangles.
+  - Every other model has 512 normal and roughness maps; base colour is unchanged.
+  - Biggest files: farmhouse 5.5 → 2.1 MB, silo 4.1 → 1.7, barn 2.6 → 1.4. The map models total 22.6 → 10.7 MB.
+- **Repeatable:** `tools/optimize-models.sh pack <name> [maps-px] [simplify-ratio]`, and `one` now ends with it.
+- **Not packed:** `ice_wall.glb` and `acid_puddle.glb`. effects.js (spells) loads them with a bare GLTFLoader that has no
+  decoder, and they aren't part of the first load.
+- **Decoder:** world.js sets three's MeshoptDecoder on the loader it's given (main.js's shared loader), and editor.js
+  sets it on its own loader.
+- **Checks:**
+  - Side-by-side renders of the original and packed models look the same up close (`/tmp/wa-environment/cmp_*.png`).
+  - Bounding boxes moved at most 0.29% of extent (the farmhouse's x/z, about 1 cm in the world). Heights didn't move, so
+    fitModel's scale is unchanged.
+  - The editor loads all 30 models with no errors.
+- **What's left in the first load:** wizard.glb 1.47 MB and clip-pool 0.87 MB (characters), and three.module.js 1.3 MB.
+  index.html could map `three.module.min.js` instead, about 0.6 MB less; that's spells' or deploy's call.
+
+**Camera blockers** (world.js; main.js has to call them, see below):
+- **`cameraClearance(from, to)`** returns the fraction 0..1 of the segment from the head to the wanted camera spot that's
+  clear of solid models.
+  - After `loadModels`, the triangles of everything tagged `userData.cam = 'solid'` are rasterised into a 0.4 m world grid
+    (Uint8Array, ±48 m, y −2..24). That covers the farmhouse, every FARM_MODELS model (barn, silo, cart, tractor, scarecrow,
+    well, pillars, archway, obelisk), the leaning silo, every high-ground piece, the hay stacks, the scattered rocks and
+    non-tree decos.
+  - The build takes 95–125 ms once. A query takes about 2 µs: a 0.1 m march with a 0.22 m pad from 0.5 m out, stopping
+    0.25 m short.
+  - A head that is itself in a solid cell skips that solid until the boom comes out of it.
+  - Props, goats, trunks and the procedural pieces aren't in the grid. main.js's existing COLLIDERS loop still covers the
+    trunks and procedural pieces.
+- **`cameraCutaway(head)`:** tree canopies stay out of the grid, or the camera would snap in near every tree. Instead the
+  pine, oak and birch materials (scatter and decos) discard a dithered tube of fragments around the line from the camera to
+  the head, 0.6 m wide at the camera and 1.3 m at the wizard.
+  - It's live only on frames where it was called; `cutawayTick` in the scene's onBeforeRender switches it off otherwise.
+  - Shadows are unaffected.
+- **Measured** with a patched copy of main.js (in the scratchpad, not the shared tree), over 2000 random standing spots ×
+  random yaw and pitch, using updateCamera's own boom maths:
+  - Without the calls, the camera ends inside a model 72 times (3.6%). With them, 0 times.
+  - The boom pulls in on 10% of spots, by 1.67 m on average.
+  - Shots, with the old camera on top and the new below: `/tmp/wa-environment/pair_tree.png` (inside the loft deck),
+    `pair_tree_up.png` and `pair_canopy.png` / `pair_canopy_lo.png` (the see-through).
+- **The main.js change is asked of spells in requests.md** (four lines: the import, plus after `desired` is computed:
+  `desired.lerpVectors(pivot, desired, cameraClearance(pivot, desired)); cameraCutaway(pivot);`). Until that lands, the
+  grid is built and the shaders are compiled, but nothing changes in game.
+- **Known:** next to a post or wall right behind the wizard, the boom pulls in to about 0.25 m from the head. That's
+  correct for a spring arm, but the camera then sits in the hood. Fading the local wizard when the camera is close would
+  fix it (spells or characters).
+
+**Editor gate (`28b023b`, deploy's request):** without `MAP_EDIT=1`, the routes `/?edit=1`, `/edit.html`, `/js/editor.js`
+and `/api/map/*` answer 404, and the game at `/` is unchanged. With it (`npm run edit`), everything works as before.
+Checked with curl on two private ports, plus Playwright on the editor.
+
+**Also:** world.js's model and texture URLs are `./` relative now (deploy's request for the CrazyGames subpath).
+
 ## Distant mountains and ground textures (Ty's paintings; `52cdc2c`, `8044c3a`)
 **The mountain vista:** `textures/sky/mountain_vista.webp` (2048×653, 141 KB), cut from Ty's painting with
 `/tmp/wa-environment/vista.py`.
