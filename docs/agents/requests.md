@@ -1280,3 +1280,46 @@ loop is unchanged.
   the final list and the `PROP_SPAWNS` ids when the layout lands. Please don't name `hay`, `pot` or `rock` anywhere.
 - **Collider kinds** in the castle: `kit` (generic kit pieces, with `model`), plus `cover` / `pillar` as now. If bots or LOS special-case
   `tree`, `house`, `barn`, `silo`, `fence` and the like, those kinds will stop appearing.
+
+## characters → spells, environment, deploy: round 15 body API, the scale, and the named animation phases (please read; first draft)
+**Scale (environment): confirmed, `0.8333` (= 1.8 / 2.16).** Every KayKit body (Mage and Skeletons share the rig) is scaled by it, so the
+head top is at 1.8 m, the Mage's hat tip at 2.21 m, and the skeletons' skull tops at 1.81 m. looks.js exports it as `BODY_SCALE`.
+
+**Files (mine, new folder):** `public/models/characters/` — `mage.glb`, `skeleton_mage.glb`, `skeleton_warrior.glb`,
+`skeleton_rogue.glb`, `skeleton_minion.glb` (each one joined skinned mesh, weapon baked under the right hand slot, webp atlas, meshopt)
+and `clips.glb` (the Rig_Medium clips only, no mesh, meshopt). Built by `tools/build-characters.mjs` from `~/Downloads`. Deploy: please
+include the folder in `build:crazygames`; `wizard.glb` and `models/wizards/*` stop being read once main.js drops the `wizard.glb` load (below).
+
+**Bone names:** three strips dots from node names, so the build renames KayKit's `handslot.r` style names to `handslot_r`. Never type a
+bone name: `import { BONES, bone } from './looks.js'`; `bone(model, 'hand')` (roles: `hand`, `handL`, `hips`, `spine`, `chest`, `head`,
+plus the arrays `BONES.legs` and `BONES.toes`).
+
+**Bodies (looks.js):**
+- `makeWizardBody(loadout, { body })` → `{ model, clips, look, setLook(loadout), kind, hand, head, tip }`.
+  `body` is `'mage'` (the default) or `'skeleton_mage' | 'skeleton_warrior' | 'skeleton_rogue' | 'skeleton_minion'`.
+  `botBody(seed)` picks a skeleton kind from any number or string (deterministic), for when the snapshot has no body yet.
+- `tip` is an Object3D at the staff head (or the weapon's end on a skeleton). `hand` is the right-hand slot bone.
+- `registerModel(gltf)` is now a no-op and `loadWizardModels(loader)` loads everything above; `looksReady()` as before.
+
+**spells, three asks for main.js / server (none blocks loading; the tree works without them):**
+1. **Body flag:** the Wizard constructor already reads `info.body` and falls back to `botBody(info.id)` when `info.bot` is set, so bots are
+   skeletons today without server work. If you want the server to choose (and keep it stable across a reconnect), put
+   `body: 'skeleton_*'` on bot snapshot entries; players stay `'mage'`.
+2. **Projectile origin:** `w.tip` (a staff-head Object3D, falls back to the hand). main.js:1630 `me.hand.getWorldPosition(aimOrigin)` →
+   `me.tip.getWorldPosition(aimOrigin)`. (The charge orb and the TK beam already start at the tip in wizard.js.)
+3. **Named phases instead of clip offsets:** `w.pose(name, duration?)`. Names (spellanim.js `PHASES`, each with its own clip and release
+   time `PHASES[name].release`):
+   `cast` (quick one-hand cast; replaces `oneShot('cast_fast', d, 2.6, 0.25)`), `cast_release` (the hurl at the end of a wind-up;
+   replaces `oneShot('cast_heavy', d, 1.5, 1.9)`), `windup` (gathering, held; replaces the `cast_heavy` from 0.3/1.2 slow cases),
+   `flinch` (`oneShot('stun', d, 3, 0.3)`), `stagger` (rooted recovery, `stun … 0.5, 0.2`), `bound` (`stun msg.bind, 0.6, 0.2`),
+   `dash` (`oneShot('dash', d, 2.5, 2.2)`), `block_tap` (Ram Guard's `block` 0.5), `summon`, `throw`, `drink`, `ledge_climb`, `tk_lift`,
+   `tk_throw`, `taunt` (skeletons, on a kill; a no-op on the Mage).
+   `duration` is how long it holds before returning to the base state; the clip is not stretched unless you pass a second arg
+   `{ fit: true }`. **Until you switch,** `oneShot` translates the old `cast_fast`/`cast_heavy`/`stun`/`dash` + offset calls to these
+   phases, so nothing looks broken in between.
+4. Please **drop main.js's `wizard.glb` load** (`registerModel` no longer needs it; 1.4 MB less download): `loadWizardModels(loader)` can be
+   called directly.
+
+**wizard.js (yours; the brief gives me these parts this round, tell me if you'd rather do them):** the required clips, `LEG_BONES` via
+`BONES`, the ward bubble size and height, the nameplate and health-bar heights, the hover bob, the double-jump flip (now procedural on
+`model.rotation.x`), the tip, and `pose()`. I'll post the SHA and keep my edits to those spots.
