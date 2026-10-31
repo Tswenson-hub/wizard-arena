@@ -11,7 +11,8 @@ export class Net {
   connect(name, pick, difficulty) {
     return new Promise((resolve, reject) => {
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-      const ws = new WebSocket(`${proto}://${location.host}`);
+      // round 14: the CrazyGames build sets window.WA_SERVER (config.js) to the Render server; our own site leaves it unset
+      const ws = new WebSocket(window.WA_SERVER || `${proto}://${location.host}`);
       this.ws = ws;
       ws.onopen = () => { this.connected = true; this.send({ t: 'join', name, loadout: pick?.loadout, voice: pick?.voice, difficulty }); };
       ws.onmessage = (e) => {
@@ -20,9 +21,12 @@ export class Net {
         else this.queue.push(msg);
       };
       ws.onerror = () => reject(new Error('Could not reach the server'));
-      ws.onclose = (e) => { console.log('[net] socket closed', e.code, e.reason, e.wasClean); this.connected = false; this.onClose?.(); };
+      ws.onclose = () => { this.connected = false; this.onClose?.(); };
     });
   }
+
+  // Leaving on purpose (the pause menu's Leave match): no "disconnected" notice.
+  close() { this.onClose = null; this.ws?.close(); }
 
   send(msg) {
     if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(msg));

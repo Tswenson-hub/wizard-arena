@@ -125,6 +125,18 @@ kbd {
 .pause-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; text-align: left; }
 .pause-top h2 { margin: 0 !important; }
 #clickToPlay .pause-top button.primary { width: auto; padding: 8px 22px; }
+#clickToPlay .pause-top #leaveBtn { padding: 7px 14px; font-size: 13px; }
+/* round 14: a compact controls strip between the top row and the builder */
+.pause-keys { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--dim); }
+.pause-keys span { white-space: nowrap; }
+.pause-keys kbd { font-size: 11px; padding: 1px 5px; margin-right: 3px; }
+/* round 14: "Click to play" whenever the mouse isn't captured and the menu isn't open */
+#lockPrompt { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(8,6,16,0.35); pointer-events: auto; cursor: pointer; z-index: 5; }
+#lockPrompt .lp-card { padding: 22px 38px; border-radius: 14px; text-align: center; background: rgba(16,12,26,0.88); border: 1px solid rgba(255,214,120,0.35);
+  box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
+#lockPrompt .lp-big { font-size: 34px; font-weight: 800; letter-spacing: 1px; color: var(--gold); animation: lpPulse 1.6s ease-in-out infinite; }
+#lockPrompt .lp-sub { margin-top: 8px; font-size: 14px; color: var(--dim); max-width: 340px; }
+@keyframes lpPulse { 50% { opacity: 0.72; } }
 .pause-group { display: flex; align-items: center; gap: 8px; }
 .pause-label { font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--dim); }
 .pause-top .vol-row { margin: 0; }
@@ -133,6 +145,9 @@ kbd {
 body.paused #abilities, body.paused #bars, body.paused #mBanner, body.paused #soundInd { visibility: hidden; }
 .pause-builder { flex: 1; min-height: 0; overflow-y: auto; }
 .pause-builder > .spell-builder, .join-builder > .spell-builder { min-height: 560px; }   /* shorter windows scroll instead of squeezing the cards */
+/* round 14: under the top row and the controls strip the pause builder had about 430 px and squeezed its rows into each
+   other (the Ultimate row and the voice buttons were cut off at 1280×720): it keeps its full height and scrolls instead */
+.pause-builder > .spell-builder { min-height: 660px; }
 .pause h2 { margin: 0 0 14px; font-size: 22px; letter-spacing: 2px; color: var(--gold); }
 .pause h3 { margin: 20px 0 8px; font-size: 13px; font-weight: normal; letter-spacing: 1px; text-transform: uppercase; color: var(--dim); }
 .pause button, .practice-row select {

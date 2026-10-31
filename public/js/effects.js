@@ -54,7 +54,7 @@ function windTexture() {
 // Smoke Screen and Smoke Flask puffs: Kenney's smoke sprites (public/textures/particles), one of three at random.
 let smokeTexs = null;
 function puffTexture() {
-  smokeTexs ??= ['smoke_01', 'smoke_07', 'smoke_08'].map(n => { const t = new THREE.TextureLoader().load(`/textures/particles/${n}.png`); t.colorSpace = THREE.SRGBColorSpace; return t; });
+  smokeTexs ??= ['smoke_01', 'smoke_07', 'smoke_08'].map(n => { const t = new THREE.TextureLoader().load(`./textures/particles/${n}.png`); t.colorSpace = THREE.SRGBColorSpace; return t; });
   return smokeTexs[Math.floor(Math.random() * smokeTexs.length)];
 }
 // (the old canvas puff, kept as a fallback name)
@@ -568,7 +568,7 @@ export class Effects {
     g.add(standIn);
     // the model: loaded once, fitted to 1 m (base at y 0, centred), its material made frosty and see-through; each wall
     // gets a clone stretched to width x height (0.7 m thick: the collider stays the 0.5 m slab) with its own material
-    this.iceWallModel ??= import('three/addons/loaders/GLTFLoader.js').then(({ GLTFLoader }) => new GLTFLoader().loadAsync('/models/ice_wall.glb')).then(gl => {
+    this.iceWallModel ??= import('three/addons/loaders/GLTFLoader.js').then(({ GLTFLoader }) => new GLTFLoader().loadAsync('./models/ice_wall.glb')).then(gl => {
       const m = gl.scene, box = new THREE.Box3().setFromObject(m), size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
       m.position.set(-c.x, -box.min.y, -c.z);
       const unit = new THREE.Group(); unit.add(m); unit.userData.size = size;
@@ -1168,7 +1168,7 @@ export class Effects {
     const g = new THREE.Group();
     g.position.set(p[0], C.surfaceHeight(p[0], p[2], (p[1] || 0) + 0.3), p[2]);
     if (!this.acidTex) {
-      this.acidTex = new THREE.TextureLoader().load('/textures/fx/acid_puddle.webp');
+      this.acidTex = new THREE.TextureLoader().load('./textures/fx/acid_puddle.webp');
       this.acidTex.colorSpace = THREE.SRGBColorSpace; this.acidTex.anisotropy = 4;
     }
     // the texture's green body reaches about 0.3 of its width from the centre, its splashes 0.45: drawn 2.5 R across, the
@@ -1180,7 +1180,7 @@ export class Effects {
     liquid.position.y = 0.1; liquid.renderOrder = 1;
     // Ty's Meshy acid puddle (models/acid_puddle.glb, the broken vial in it) replaces the decal once loaded: 2.4 R across like
     // the decal, flattened to 0.45 of its scale so the vial lies low. It fades and pulses a green glow by itself.
-    this.acidModel ??= import('three/addons/loaders/GLTFLoader.js').then(({ GLTFLoader }) => new GLTFLoader().loadAsync('/models/acid_puddle.glb')).then(gl => {
+    this.acidModel ??= import('three/addons/loaders/GLTFLoader.js').then(({ GLTFLoader }) => new GLTFLoader().loadAsync('./models/acid_puddle.glb')).then(gl => {
       const m = gl.scene, box = new THREE.Box3().setFromObject(m), size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
       m.position.set(-c.x, -box.min.y, -c.z);
       const unit = new THREE.Group(); unit.add(m); unit.userData.size = size;

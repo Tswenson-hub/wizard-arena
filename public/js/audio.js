@@ -2,7 +2,7 @@
 // camera, with a small reverb and a compressor on the master bus. If a sample fails to load, the
 // event falls back to a synthesized blip so the game is never silent.
 
-const SOUND_DIR = '/sounds/';
+const SOUND_DIR = './sounds/';
 const PREFS_KEY = 'wizardAudio';
 
 // Round 11: each player picks a voice in the builder (male or female grunts); each player is pitched a little apart.

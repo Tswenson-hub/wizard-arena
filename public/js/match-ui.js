@@ -20,7 +20,7 @@ export function mountMatchUI(env) {
   // stylesheet (linked from here, as before)
   if (!document.querySelector('link[data-match-css]')) {
     const link = document.createElement('link');
-    link.rel = 'stylesheet'; link.href = '/css/match.css'; link.dataset.matchCss = '';
+    link.rel = 'stylesheet'; link.href = './css/match.css'; link.dataset.matchCss = '';
     document.head.appendChild(link);
   }
 

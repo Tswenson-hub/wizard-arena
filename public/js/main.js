@@ -5,6 +5,7 @@ import { Net } from './net.js';
 import { Input } from './input.js';
 import { Sfx } from './audio.js';
 import { buildWorld, makePropMesh, spinners, loadModels, trampleCrops } from './world.js';
+import * as World from './world.js';   // round 14: cameraClearance / cameraCutaway (environment), looked up by name
 import { GoatView } from './goats.js';
 import { Wizard } from './wizard.js';
 import { registerModel, loadWizardModels } from './looks.js';
@@ -47,7 +48,7 @@ const ui = {
   hud: $('#hud'), hp: $('#bars .hp .fill'), st: $('#bars .st .fill'), stBar: $('#bars .st'),
   charge: $('#chargeRing'), chargeFg: $('#chargeRing .fg'),
   feed: $('#feed'), killfeed: $('#killfeed'), hint: $('#hint'), status: $('#status'), death: $('#deathScreen'), vignette: $('#vignette'),
-  scoreboard: $('#scoreboard'), scoreBody: $('#scoreboard tbody'), clickToPlay: $('#clickToPlay'),
+  scoreboard: $('#scoreboard'), scoreBody: $('#scoreboard tbody'), clickToPlay: $('#clickToPlay'), lockPrompt: $('#lockPrompt'),
   soundInd: $('#soundInd'), botDiff: $('#botDiff'), botTally: $('#botTally'), volume: $('#volume'), mute: $('#mute'),
   pickNote: $('#pickNote'),
   ammo: [...document.querySelectorAll('#abilities [data-ab="fast"] .ammo i')],
@@ -201,7 +202,7 @@ try {
 ui.joinBtn.disabled = true;
 
 const loader = new GLTFLoader();
-const wizardLoaded = new Promise((res, rej) => loader.load('/models/wizard.glb', (gltf) => { registerModel(gltf); res(); }, (ev) => {
+const wizardLoaded = new Promise((res, rej) => loader.load('./models/wizard.glb', (gltf) => { registerModel(gltf); res(); }, (ev) => {
   if (ev.total) ui.loadStatus.textContent = `Loading wizard… ${Math.round(ev.loaded / ev.total * 100)}%`;
 }, rej));
 Promise.all([wizardLoaded.then(() => loadWizardModels(loader)), loadModels(loader, scene)]).then(() => {
@@ -232,9 +233,37 @@ ui.form.addEventListener('submit', async (e) => {
   }
 });
 
-// Pause menu (shown whenever the mouse isn't captured): resume, practice bots, volume.
-ui.clickToPlay.addEventListener('click', (e) => { if (e.target === ui.clickToPlay) input.requestLock(); });
-$('#resumeBtn').addEventListener('click', () => { sfx.click(); input.requestLock(); });
+// Without the mouse captured, one of two overlays (round 14):
+//  - the pause menu (#clickToPlay): resume, leave, bots, sound, the controls and the builder. Esc opens it: the lock
+//    lost while the page still has focus (that's Esc), or Esc pressed over the prompt.
+//  - the "Click to play" prompt (#lockPrompt): not captured yet after joining, the lock refused (an iframe without
+//    pointer-lock, Chrome's cool-down after Esc), or lost to another window or tab.
+let menuOpen = false;
+function updateLockUI() {
+  const inGame = !!me, free = inGame && !input.locked;
+  ui.clickToPlay.classList.toggle('hidden', !free || !menuOpen);
+  ui.lockPrompt.classList.toggle('hidden', !free || menuOpen);
+  document.body.classList.toggle('paused', free && menuOpen);
+  updateBotTally();
+}
+function lockNote(text) { $('#lockNote').innerHTML = text; }
+const LOCK_NOTE = 'The mouse aims while the game has it. <kbd>Esc</kbd> opens the menu.';
+function play() { lockNote(LOCK_NOTE); input.requestLock(); }
+ui.clickToPlay.addEventListener('click', (e) => { if (e.target === ui.clickToPlay) play(); });
+ui.lockPrompt.addEventListener('click', () => { sfx.click(); play(); });
+$('#resumeBtn').addEventListener('click', () => { sfx.click(); menuOpen = false; play(); updateLockUI(); });
+// Leave: back to the spell builder (the join screen). A reload is the clean way out of a live match; the loadout,
+// name and sound settings are saved in localStorage, and the models come back from the cache.
+$('#leaveBtn').addEventListener('click', () => { sfx.click(); net.close(); location.reload(); });
+document.addEventListener('keydown', (e) => {
+  if (e.code !== 'Escape' || !me || input.locked) return;
+  menuOpen = !menuOpen; updateLockUI();
+});
+input.onLockError = () => {
+  menuOpen = false;
+  lockNote('The browser didn\'t hand over the mouse. Click again to play. <kbd>Esc</kbd> opens the menu.');
+  updateLockUI();
+};
 for (const b of document.querySelectorAll('[data-bot]')) b.addEventListener('click', () => { sfx.click(); net.send({ t: 'addBot', difficulty: b.dataset.bot }); });
 ui.volume.value = Math.round(sfx.volume * 100);
 ui.mute.checked = sfx.muted;
@@ -250,9 +279,13 @@ function updateSoundInd() {
 function toggleMute() { sfx.muted = !sfx.muted; ui.mute.checked = sfx.muted; updateSoundInd(); feed(sfx.muted ? 'Sound muted (M)' : 'Sound on'); }
 ui.soundInd.addEventListener('click', (e) => { e.stopPropagation(); sfx.init(); sfx.resume(); toggleMute(); });
 updateSoundInd();
-input.onLockChange = (locked) => { ui.clickToPlay.classList.toggle('hidden', locked || !me); document.body.classList.toggle('paused', !locked && !!me); updateBotTally(); };
+input.onLockChange = (locked) => {
+  if (locked) { menuOpen = false; updateLockUI(); return; }
+  // Esc releases the lock with the page still focused: the menu. Losing it to another window or tab: the prompt.
+  setTimeout(() => { if (input.locked) return; menuOpen = document.hasFocus() && document.visibilityState === 'visible'; updateLockUI(); }, 120);
+};
 function updateBotTally() {
-  const n = [...players.values()].filter(w => w.bot).length;
+  const n = [...players.values()].filter(w => w.botLevel).length;
   ui.botTally.textContent = n ? `(${n} in arena)` : '';
 }
 net.onClose = () => {
@@ -289,6 +322,7 @@ function onWelcome(msg) {
   ui.hud.classList.remove('hidden');
   input.enabled = true;
   input.requestLock();
+  setTimeout(updateLockUI, 400);   // round 14: not captured (refused, or no click behind the join): "Click to play"
   feed(`Welcome, <b>${esc(me.name)}</b>. Free-for-all: first to ${msg.match?.target ?? 10} kills.`);
   if (sfx.muted) feed('<span class="warn">Sound is muted (press M)</span>');   // round 11: a saved mute is easy to forget
   if (me.spectator) feed('The match is full: you are watching until a place opens.');
@@ -307,9 +341,26 @@ const stampedeFx = new Map();   // Stampede lanes on the ground: id -> effects e
 const pools = new Map();        // Toxic Flask pools: id -> { p, owner, fx }
 const laneMark = effects.laneAim(STAMP.width, STAMP.length);
 
+// Round 14: bots' plates show just the name (wizard.js adds " · hard" whenever its `bot` is set, setColor included),
+// so the Wizard never gets `bot`: main.js keeps the difficulty as `botLevel` (the scoreboard, the feed, the bot tally).
+// A plate keeps its world size (2.4 × 0.6 m) from PLATE_NEAR m out; closer in it shrinks with the distance, so its
+// on-screen size stops growing (a wizard right in front of the camera had a plate across half the screen).
+const PLATE_NEAR = 6;
+function capPlate(w) {
+  const np = w.nameplate;
+  if (!np?.visible) return;
+  const d = camera.position.distanceTo(np.getWorldPosition(tmp.plate ??= new THREE.Vector3()));
+  const k = Math.min(1, d / PLATE_NEAR);
+  np.scale.set(2.4 * k, 0.6 * k, 1);
+}
+function makeWizard(info, isLocal) {
+  const w = new Wizard({ ...info, bot: null }, scene, isLocal);
+  w.botLevel = info.bot || null;
+  return w;
+}
 function addPlayer(info) {
   if (players.has(info.id)) return players.get(info.id);
-  const w = new Wizard(info, scene, info.id === myId);
+  const w = makeWizard(info, info.id === myId);
   applySnapshot(w, info);
   players.set(info.id, w);
   return w;
@@ -318,10 +369,10 @@ function addPlayer(info) {
 // A player's loadout changed (at a respawn): rebuild their Wizard (the look follows the spell mix), keeping its state.
 function rebuildWizard(w, loadout, color, voice = w.voice) {
   const g = w.group.position;
-  const info = { id: w.id, name: w.name, color: color ?? C.loadoutColor(loadout), bot: w.bot, loadout, voice, p: [g.x, g.y, g.z], yaw: w.group.rotation.y };
+  const info = { id: w.id, name: w.name, color: color ?? C.loadoutColor(loadout), bot: w.botLevel, loadout, voice, p: [g.x, g.y, g.z], yaw: w.group.rotation.y };
   stopWizardAudio(w);
   w.dispose(scene);
-  const n = new Wizard(info, scene, w === me);
+  const n = makeWizard(info, w === me);
   for (const k of ['hp', 'st', 'kills', 'deaths', 'dead', 'blocking', 'charging', 'stunned', 'netAnim', 'targetYaw', 'bound', 'slowed', 'lashing', 'frozen', 'veiled', 'ult']) n[k] = w[k];
   n.targetPos.copy(w.targetPos);
   players.set(w.id, n);
@@ -483,7 +534,7 @@ function handleMessage(msg) {
     }
     case 'joined': {
       const w = addPlayer(msg.player);
-      if (w !== me) feed(`<b>${esc(w.name)}</b> entered the arena${w.bot ? ` <span style="opacity:.6">(${w.bot} bot)</span>` : ''}`);
+      if (w !== me) feed(`<b>${esc(w.name)}</b> entered the arena${w.botLevel ? ` <span style="opacity:.6">(${w.botLevel} bot)</span>` : ''}`);
       updateBotTally();
       break;
     }
@@ -1276,7 +1327,7 @@ function spawnDecoy(d) {
   if (decoys.has(d.id)) return;
   const owner = players.get(d.owner);
   if (!owner) return;
-  const wiz = new Wizard({ id: owner.id, name: owner.name, color: owner.color, bot: owner.bot, loadout: owner.loadout, voice: owner.voice, p: d.p, yaw: d.yaw }, scene, false);
+  const wiz = makeWizard({ id: owner.id, name: owner.name, color: owner.color, bot: owner.botLevel, loadout: owner.loadout, voice: owner.voice, p: d.p, yaw: d.yaw }, false);
   wiz.hp = owner.hp; wiz.netAnim = 'run';
   if (owner === me) wiz.makeGhost();
   decoys.set(d.id, { wiz, owner: d.owner });
@@ -1400,7 +1451,7 @@ function setPotion(pt) {
   let v = potionViews.get(pt.id);
   if (!v) {
     const m = potionMesh(); scene.add(m.g);
-    const marker = document.createElement('div'); marker.className = 'potionMark'; marker.innerHTML = '<img src="/textures/icons/potion.png" alt=""><span></span>';
+    const marker = document.createElement('div'); marker.className = 'potionMark'; marker.innerHTML = '<img src="./textures/icons/potion.png" alt=""><span></span>';
     $('#hud').appendChild(marker);
     v = { group: m.g, flask: m.flask, light: m.light, marker, glow: null };
     potionViews.set(pt.id, v);
@@ -1432,12 +1483,12 @@ function updatePotions(dt) {
 const KIND_ICON = { fireball: 'fireball', heavy: 'heavy', meteor_rain_hit: 'meteor_rain', firewall_burn: 'firewall', shear: 'shear', cyclone: 'cyclone',
   eye_of_storm: 'eye_of_storm', eye_burst: 'eye_of_storm', skim: 'skim', frostfall: 'frostfall', blizzard_chip: 'blizzard', blizzard_freeze: 'blizzard',
   bulwark_frost: 'bulwark', hex: 'hex', lash: 'lash', trapped_relic: 'trapped_relic', sling: 'sling', potion: 'potion', potion_splash: 'potion',
-  toxic: 'toxic', toxic_pool: 'toxic', prop: 'prop', goat: 'goat', goated: 'goat', ram: 'ram', ram_shove: 'ram', fast: 'fast', flaskstep: 'flaskstep' };
+  toxic: 'toxic', toxic_pool: 'toxic', prop: 'prop', goat: 'goat', goated: 'goat', ram: 'ram', battering_ram: 'ram', ram_shove: 'ram', fast: 'fast', flaskstep: 'flaskstep' };
 const KIND_NAME = { heavy: 'Meteor', fast: 'Spark', shear: 'Gale Shear', hex: 'Hex Shards', skim: 'Glacial Skim', lash: 'Sanguine Lash', sling: "Shepherd's Sling",
   potion: 'Potion Toss', potion_splash: 'Potion Toss', toxic: 'Toxic Flask', toxic_pool: 'Toxic Flask', prop: 'a thrown object', goat: 'a goat', goated: 'a goat',
-  ram: 'a ram', ram_shove: 'Ram Ride', meteor_rain_hit: 'Meteor Rain', firewall_burn: 'Firewall', eye_burst: 'Eye of the Storm', blizzard_chip: 'Blizzard',
+  ram: 'a ram', battering_ram: 'Battering Ram', ram_shove: 'Ram Ride', meteor_rain_hit: 'Meteor Rain', firewall_burn: 'Firewall', eye_burst: 'Eye of the Storm', blizzard_chip: 'Blizzard',
   blizzard_freeze: 'Blizzard', bulwark_frost: 'Glacial Bulwark', flaskstep: 'Flask Step' };
-const iconFor = (kind) => `/textures/icons/${KIND_ICON[kind] || 'skull'}.png`;
+const iconFor = (kind) => `./textures/icons/${KIND_ICON[kind] || 'skull'}.png`;
 const kindName = (kind) => KIND_NAME[kind] || C.SPELLBOOK[kind]?.name || C.SPELLS[kind]?.name || (kind ? kind.replace(/_/g, ' ') : 'something');
 const heroHex = (w) => '#' + ((w?.color ?? 0xdddddd).toString(16).padStart(6, '0'));
 // A loadout in a few words: its primary, power and ultimate.
@@ -1472,12 +1523,32 @@ function updateFloats(dt) {
   }
 }
 // Numbers about us, by the HP bar: red damage taken, green heals, grey BLOCKED.
+// Round 14: each new number takes the next of five lanes (two numbers at random spots used to overlap: a Cyclone's 36
+// and a Lash's 16 landing together read as "-3616"), and hits on us within HURT_MERGE s add up into one number.
+let hudLane = 0, lastHurt = null;
+const HURT_MERGE = 0.35;
 function hudNumber(text, cls) {
   const el = document.createElement('div');
   el.className = 'hn ' + cls; el.textContent = text;
-  el.style.left = `${20 + Math.random() * 60}%`;
+  hudLane = (hudLane + 2) % 5;
+  el.style.left = `${18 + hudLane * 15}%`;
   $('#bars').appendChild(el);
-  setTimeout(() => el.remove(), 1100);
+  el.timer = setTimeout(() => el.remove(), 1100);
+  return el;
+}
+function hurtNumber(dmg, big) {
+  const t = performance.now() / 1000;
+  if (lastHurt && t - lastHurt.at < HURT_MERGE && lastHurt.el.isConnected) {
+    const L = lastHurt;
+    L.n += dmg; L.at = t;
+    L.el.textContent = `-${Math.round(L.n)}`;
+    if (big === ' ult' || L.big !== ' ult' && (big === ' big' || L.n >= 30)) L.big = big === ' ult' ? ' ult' : ' big';
+    L.el.className = 'hn hurt' + L.big;
+    L.el.style.animation = 'none'; void L.el.offsetWidth; L.el.style.animation = '';   // rise again from the bar
+    clearTimeout(L.el.timer); L.el.timer = setTimeout(() => L.el.remove(), 1100);
+    return;
+  }
+  lastHurt = { el: hudNumber(`-${Math.round(dmg)}`, 'hurt' + big), n: dmg, at: t, big };
 }
 // A red arc round the crosshair, toward where the hit came from.
 function damageArc(msg) {
@@ -1503,7 +1574,7 @@ function combatFeedbackHit(msg, target) {
   if (target === me) {
     if (msg.blocked) hudNumber('BLOCKED', 'blocked');
     else if (msg.dmg > 0) {
-      hudNumber(`-${Math.round(msg.dmg)}`, 'hurt' + big);
+      hurtNumber(msg.dmg, big);
       damageArc(msg);
       if (msg.attacker != null && msg.attacker !== myId) dmgFrom.set(msg.attacker, (dmgFrom.get(msg.attacker) || 0) + msg.dmg);
     }
@@ -1546,7 +1617,7 @@ function hitmarker() {
 let scoreVisible = false, scoreT = 0;
 function updateScoreboard() {
   const rows = [...players.values()].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
-  ui.scoreBody.innerHTML = rows.map(w => `<tr class="${w === me ? 'me' : ''}"><td style="color:#${w.color.toString(16).padStart(6, '0')}">${esc(w.name)}${w.bot ? `<span class="bot">${w.bot} bot</span>` : ''}</td><td class="wiz">${esc(loadoutLine(w.loadout))}</td><td>${w.kills}</td><td>${w.deaths}</td></tr>`).join('');
+  ui.scoreBody.innerHTML = rows.map(w => `<tr class="${w === me ? 'me' : ''}"><td style="color:#${w.color.toString(16).padStart(6, '0')}">${esc(w.name)}${w.botLevel ? `<span class="bot">${w.botLevel} bot</span>` : ''}</td><td class="wiz">${esc(loadoutLine(w.loadout))}</td><td>${w.kills}</td><td>${w.deaths}</td></tr>`).join('');
 }
 
 // ---------------------------------------------------------------- local player update
@@ -1707,10 +1778,32 @@ function sendPickup() {
 }
 
 // Glow marker on the prop telekinesis would grab.
-const tkMarker = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 1),
-  new THREE.MeshBasicMaterial({ color: 0xb48cff, wireframe: true, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false }));
+// Round 14: the Telekinesis / Trapped Relic target marker, a soft glowing ring on the ground round the object (it was a
+// white wireframe ball): a bright band with four notches that turn slowly, over a wider faint halo.
+const tkMarker = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const g = c.getContext('2d'), R = 128;
+  const ring = g.createRadialGradient(R, R, 0, R, R, R);
+  ring.addColorStop(0, 'rgba(255,255,255,0)'); ring.addColorStop(0.66, 'rgba(255,255,255,0)'); ring.addColorStop(0.78, 'rgba(255,255,255,0.9)');
+  ring.addColorStop(0.83, 'rgba(255,255,255,1)'); ring.addColorStop(0.9, 'rgba(255,255,255,0.35)'); ring.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = ring; g.fillRect(0, 0, 256, 256);
+  g.globalCompositeOperation = 'destination-out';   // four notches, so the turn reads
+  for (let k = 0; k < 4; k++) { g.beginPath(); g.moveTo(R, R); g.arc(R, R, R, k * Math.PI / 2 - 0.09, k * Math.PI / 2 + 0.09); g.closePath(); g.fill(); }
+  const halo = document.createElement('canvas'); halo.width = halo.height = 128;
+  const h = halo.getContext('2d'), hg = h.createRadialGradient(64, 64, 0, 64, 64, 64);
+  hg.addColorStop(0, 'rgba(255,255,255,0.0)'); hg.addColorStop(0.55, 'rgba(255,255,255,0.28)'); hg.addColorStop(1, 'rgba(255,255,255,0)');
+  h.fillStyle = hg; h.fillRect(0, 0, 128, 128);
+  const mat = (tex, opacity) => new THREE.MeshBasicMaterial({ map: tex, color: 0xb48cff, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false });
+  const flat = (m, size) => { const o = new THREE.Mesh(new THREE.PlaneGeometry(size, size), m); o.rotation.x = -Math.PI / 2; o.renderOrder = 3; return o; };
+  const group = new THREE.Group();
+  const ringMat = mat(new THREE.CanvasTexture(c), 0.8), haloMat = mat(new THREE.CanvasTexture(halo), 0.6);
+  group.add(flat(haloMat, 2.9), flat(ringMat, 2));
+  group.setColor = (hex) => { ringMat.color.setHex(hex); haloMat.color.setHex(hex); };
+  return group;
+})();
 tkMarker.visible = false;
 scene.add(tkMarker);
+const TK_RING = 0.83;   // the ring's band sits at this radius at scale 1 (the band is drawn at 0.78–0.9 of the texture)
 let tkHover = null;
 
 // The floor under a point for feet at footY (map.js SURFACES once they land; flat until then)
@@ -2284,6 +2377,9 @@ function updateCamera(dt) {
     }
   }
   const desired = pivot.clone().addScaledVector(back, camDist).add(shoulder);
+  // round 14 (environment's camera blockers): stop short of a Meshy model behind us, and see through a tree canopy
+  if (World.cameraClearance) desired.lerpVectors(pivot, desired, World.cameraClearance(pivot, desired));
+  World.cameraCutaway?.(pivot);
   if (desired.y < 0.4) desired.y = 0.4;
   camera.position.lerp(desired, Math.min(1, dt * 18));
   const look = pivot.clone().add(shoulder).addScaledVector(back, -6);
@@ -2387,16 +2483,18 @@ function updateHud(dt) {
   if (tkHover?.goat) {
     const gp = tkHover.goat.group.position;
     tkMarker.visible = true;
-    tkMarker.position.set(gp.x, gp.y + C.GOAT.hitY, gp.z);
-    tkMarker.scale.setScalar(C.GOAT.radius + 0.45 + Math.sin(now * 6) * 0.04);
-    tkMarker.rotation.y += dt * 1.5;
+    tkMarker.setColor(0xb48cff);
+    tkMarker.position.set(gp.x, gp.y + 0.05, gp.z);
+    tkMarker.scale.setScalar((C.GOAT.radius + 0.35) / TK_RING + Math.sin(now * 6) * 0.04);
+    tkMarker.rotation.y += dt * 1.2;
   } else if (tkHover && (K.utility === 'telekinesis' || curseable(tkHover))) {
     const spec = C.PROP_TYPES[tkHover.data.type];
     tkMarker.visible = true;
-    tkMarker.material.color.setHex(K.utility === 'trapped_relic' ? 0xff4060 : 0xb48cff);
-    tkMarker.position.set(tkHover.data.x, spec.h * 0.5, tkHover.data.z);
-    tkMarker.scale.setScalar(spec.r + 0.3 + Math.sin(now * 6) * 0.04);
-    tkMarker.rotation.y += dt * 1.5;
+    tkMarker.setColor(K.utility === 'trapped_relic' ? 0xff4060 : 0xb48cff);
+    const base = tkHover.mesh ? tkHover.mesh.position.y - (tkHover.mesh.userData.lift || 0) : 0;
+    tkMarker.position.set(tkHover.data.x, Math.max(0, base) + 0.05, tkHover.data.z);
+    tkMarker.scale.setScalar((spec.r + 0.3) / TK_RING + Math.sin(now * 6) * 0.04);
+    tkMarker.rotation.y += dt * 1.2;
   } else tkMarker.visible = false;
   const hunted = !me.dead && [...goats.values()].some(g => g.tgt === myId && (g.state === 'windup' || g.state === 'charge'));
   const rooted = now < local.rootUntil, slowed = now < local.slowUntil;
@@ -2512,7 +2610,7 @@ function frame(t) {
       if (owner) d.wiz.hp = owner.hp;
       d.wiz.interpolate(dt);
       d.wiz.updateAnimation(true, dt);
-      d.wiz.faceCamera(camera);
+      d.wiz.faceCamera(camera); capPlate(d.wiz);
     }
     // telekinesis beam to a held goat (goats.js draws the goat itself)
     for (const w of players.values()) {
@@ -2521,7 +2619,7 @@ function frame(t) {
     }
     updateUltimates();
     updateSmokeHiding(dt);
-    for (const w of players.values()) w.faceCamera(camera);
+    for (const w of players.values()) { w.faceCamera(camera); capPlate(w); }
     updateHud(dt);
     matchUI.update(dt);
     if (input.justPressed('KeyM')) toggleMute();
@@ -2562,5 +2660,6 @@ function frame(t) {
 }
 requestAnimationFrame(frame);
 
-// Debug handle (used by the automated smoke test; harmless in production).
-window.__wa = { renderer, input, net, local, players, props, goats, effects, scene, camera, sfx, decoys, walls, frosts, frostMark, mrainMark, flaskMark, cageMark, laneMark, cages, firewalls, stampedeFx, C, get cursedProps() { return cursedProps; }, get seenTraps() { return seenTraps; } };
+// Debug handle for the automated tests (round 14: off unless asked for, with ?debug in the URL or localStorage waDebug = 1).
+const DEBUG = (() => { try { return new URLSearchParams(location.search).has('debug') || localStorage.getItem('waDebug') === '1'; } catch { return false; } })();
+if (DEBUG) window.__wa = { renderer, input, net, local, players, props, goats, effects, scene, camera, sfx, decoys, walls, frosts, frostMark, mrainMark, flaskMark, cageMark, laneMark, cages, firewalls, stampedeFx, C, get cursedProps() { return cursedProps; }, get seenTraps() { return seenTraps; } };

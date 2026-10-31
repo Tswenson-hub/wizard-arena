@@ -13,7 +13,7 @@ async def main():
     async with async_playwright() as p:
         b=await p.chromium.launch(args=['--use-angle=swiftshader','--enable-unsafe-swiftshader']); pg=await b.new_page(viewport={'width':1280,'height':720})
         errs=[]; pg.on('pageerror', lambda e: errs.append(str(e))); pg.on('console', lambda m: errs.append(m.text) if m.type=='error' else None)
-        await pg.goto('http://localhost:' + PORT + '')
+        await pg.goto('http://localhost:' + PORT + '/?debug=1')   # (window.__wa is behind ?debug since round 14)
         await pg.wait_for_function("!document.querySelector('#joinBtn').disabled", timeout=60000)
         await pg.select_option('#botCount','0'); await pg.click('#joinBtn')
         await pg.wait_for_function("window.__wa && window.__wa.goats.size === 4", timeout=15000)

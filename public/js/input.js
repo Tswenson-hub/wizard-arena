@@ -10,6 +10,7 @@ export class Input {
     this.locked = false;
     this.enabled = false;
     this.onLockChange = null;
+    this.onLockError = null;      // round 14: the browser refused the lock (an iframe without pointer-lock, too soon after Esc...)
 
     document.addEventListener('keydown', (e) => {
       if (!this.enabled) return;
@@ -40,6 +41,7 @@ export class Input {
       if (!this.locked) { this.keys.clear(); this.lmb = this.rmb = false; }
       this.onLockChange?.(this.locked);
     });
+    document.addEventListener('pointerlockerror', () => this.onLockError?.());
   }
 
   requestLock() {

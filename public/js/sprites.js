@@ -14,7 +14,7 @@ const BIG = ['smoke_01', 'smoke_07', 'smoke_08', 'smoke_10', 'magic_01', 'magic_
 const SMALL = ['circle_02', 'circle_05', 'light_01', 'light_03', 'magic_03', 'magic_05', 'star_01', 'star_06', 'star_09',
   'spark_01', 'spark_02', 'flame_01', 'flame_03', 'fire_01', 'fire_02', 'muzzle_01', 'muzzle_02', 'dirt_01', 'dirt_02',
   'scorch_02', 'slash_01', 'scratch_01', 'twirl_02', 'trace_01', 'window_04'];
-const DIR = '/textures/particles/';
+const DIR = './textures/particles/';
 const ATLAS = 1024;   // big sprites: 256 px in the top two rows (4 a row); small ones: 128 px below (8 a row)
 
 const RECT = {}, UV = {};   // canvas cell [x, y, size] and texture [u0, v0, u1, v1]

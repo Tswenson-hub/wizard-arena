@@ -4,13 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Wizard Arena</title>
-<link rel="stylesheet" href="/css/style.css">
-<link rel="stylesheet" href="/css/select.css">
-<link rel="stylesheet" href="/css/match.css">
+<link rel="icon" href="./favicon.ico" sizes="any">
+<link rel="icon" type="image/png" href="./favicon.png">
+<link rel="stylesheet" href="./css/style.css">
+<link rel="stylesheet" href="./css/select.css">
+<link rel="stylesheet" href="./css/match.css">
 <script type="importmap">
 { "imports": {
-  "three": "/vendor/three/build/three.module.js",
-  "three/addons/": "/vendor/three/examples/jsm/"
+  "three": "./vendor/three/build/three.module.js",
+  "three/addons/": "./vendor/three/examples/jsm/"
 } }
 </script>
 </head>
@@ -45,7 +47,7 @@
         <div><kbd>LMB</kbd> fires a magazine, then reloads (<kbd>T</kbd> to reload early). The last shot stuns and breaks a wind-up</div>
         <div><kbd>G</kbd> set it down &nbsp; <kbd>Tab</kbd> scoreboard &nbsp; <kbd>M</kbd> mute &nbsp; <kbd>Esc</kbd> menu (and your loadout)</div>
       </div>
-      <p class="credits">Spell sounds: Magic Spell Full Pack by Leonardo Calvo (thesoundrack), <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>. Music: “Nordic Fantasia Lofi” by turning_pages (Pixabay). Also CC0 sounds and particles by Kenney, lentikula and OpenGameArt contributors; spell icons by Raven. <a href="/sounds/CREDITS.md" target="_blank" rel="noopener">All credits</a></p>
+      <p class="credits">Spell sounds: Magic Spell Full Pack by Leonardo Calvo (thesoundrack), <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>. Music: “Medieval: The Old Tower Inn” by RandomMind (CC0). Also CC0 sounds and particles by Kenney, lentikula and OpenGameArt contributors; spell icons by Raven. <a href="./sounds/CREDITS.md" target="_blank" rel="noopener">All credits</a></p>
     </div>
   </div>
 </div>
@@ -82,11 +84,19 @@
     <h2>Scoreboard</h2>
     <table><thead><tr><th>Player</th><th>Loadout</th><th>Kills</th><th>Deaths</th></tr></thead><tbody></tbody></table>
   </div>
+  <!-- round 14: the mouse isn't captured (not yet, refused, or lost to another window): one click gets back in -->
+  <div id="lockPrompt" class="hidden">
+    <div class="lp-card">
+      <div class="lp-big">Click to play</div>
+      <div class="lp-sub" id="lockNote">The mouse aims while the game has it. <kbd>Esc</kbd> opens the menu.</div>
+    </div>
+  </div>
   <div id="clickToPlay" class="hidden">
     <div class="pause panel">
       <div class="pause-top">
         <h2>Paused</h2>
         <button id="resumeBtn" class="primary">Resume</button>
+        <button id="leaveBtn" class="ghost" title="Leave the match and go back to the spell builder">Leave match</button>
         <span class="book-note" id="pickNote">a change applies at your next respawn</span>
         <div class="pause-group"><span class="pause-label">Bots <span id="botTally"></span></span>
           <div class="btn-row" title="Bots fill the match to 4; swap one in at another difficulty">
@@ -98,11 +108,16 @@
           <label><input id="mute" type="checkbox"> Mute <kbd>M</kbd></label>
         </div>
       </div>
+      <div class="pause-keys" aria-label="Controls">
+        <span><kbd>WASD</kbd> move</span><span><kbd>Space</kbd> jump, again in the air</span><span><kbd>Shift</kbd> sprint</span><span><kbd>C</kbd> crouch</span>
+        <span><kbd>LMB</kbd> primary</span><span><kbd>RMB</kbd> power</span><span><kbd>R</kbd> shield</span><span><kbd>E</kbd> mobility</span>
+        <span><kbd>F</kbd> utility</span><span><kbd>Q</kbd> ultimate</span><span><kbd>T</kbd> reload</span><span><kbd>Tab</kbd> scores</span><span><kbd>M</kbd> mute</span>
+      </div>
       <div class="wizard-pick pause-builder" id="pausePicker"></div>
     </div>
   </div>
 </div>
 
-<script type="module" src="/js/main.js"></script>
+<script type="module" src="./js/main.js"></script>
 </body>
 </html>
