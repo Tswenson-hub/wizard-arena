@@ -212,12 +212,15 @@ export const SPELL_ANIMS = {
     play: { windup: ['cyclone', 0.45 + 0.9, 1, 0] },
   },
   sanguine_lash: {
-    grade: 'good', release: 1.5, legacy: ['lash'],
-    // the backhand drawn back by 0.4 s and held there, hunched, through the 1.5 s wind-up (the coil tightens); the slash cracks on
-    // the release (its peak, clip 0.27 s, at 1.5 s), then the follow-through
-    keys: { sanguine_lash: { clip: 'Melee_1H_Attack_Slice_Horizontal', warp: [[0, 0], [0.2, 0.4], [0.2, 1.4], [0.27, 1.5], [1.37, 2.1]], bend: { spine: 12, chest: 10 } } },
-    play: { windup: ['sanguine_lash', 2.1, 1, 0] },
-    need: 'a crouched whip wind-up',
+    // Round 16: Blood Siphon (the id stays). A quick one-hand staff thrust: the bolt leaves at the end of the 0.35 s cast (no root:
+    // the legs keep walking under it). `sanguine_lash` plays from the cast's start (release at 0.35 s); `siphon` is the same thrust
+    // cut to strike at 0.08 s, for playing it the moment the bolt fires instead.
+    grade: 'good', release: 0.35, legacy: ['lash'],
+    keys: {
+      sanguine_lash: windup('Ranged_Magic_Shoot', 0, SHOOT, 0.35, 0.45),
+      siphon: strike('Ranged_Magic_Shoot', SHOOT, 0.2, 0.45),
+    },
+    play: { windup: ['sanguine_lash', 0.8, 1, 0], release: ['siphon', 0.53, 1, 0] },
   },
   frostfall: {
     grade: 'good', release: 0.15,
