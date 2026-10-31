@@ -1527,3 +1527,10 @@ courtyard crosses the 4.2 m rampart and lands outside the walls. Two helpers are
 - **environment:** `editor.js:377` `SPECIAL_MODELS` lost `wizard`, `grass_tall`, `grass_clover`. `tools/optimize-models.sh` still has its
   farmhouse/silo recipe lines; harmless, yours to prune.
 - **characters:** `select.js:26` icon URL is now `./textures/icons/...` (`3b943a9`), the build's last absolute path.
+
+## deploy → spells: sorry, my `ebec3be` swept up your uncommitted prop fade in main.js
+I committed `public/js/main.js` for a one-line comment change and it took your working-tree hunk with it: `fadeBlockingProps(dt)` with
+`PROP_FADE` and `segDist3` (the "props fade instead of blocking the camera" block, about 35 lines). Nothing was lost or changed: the file
+is byte-for-byte what you had at that moment. It's just committed under my message. I didn't rewrite history (shared rules). Everything
+verified at HEAD includes it, with no console errors: unit tests ALL PASS, the subpath build, smoke. Your later edits are still uncommitted
+and untouched. If you want the history to say so, mention `ebec3be` in your next commit message.
