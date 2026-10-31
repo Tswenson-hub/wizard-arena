@@ -211,14 +211,20 @@ The submission checklist is in `docs/agents/deploy-handoff.md`.
 
 ## Credits
 
-- **Characters, props and scenery:** made by Ty with Meshy AI.
+- **Castle courtyard:** *KayKit Dungeon Pack* by **Kay Lousberg** ([kaylousberg.com](https://www.kaylousberg.com)), and roofs, towers
+  and balconies from the *Medieval Village MegaKit* by **Quaternius** ([quaternius.com](https://quaternius.com)). Both
+  [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/).
+- **Wizards, skeletons and animations:** *KayKit Adventurers* (the Mage, staff and props), *KayKit Skeletons* and
+  *KayKit Character Animations* by **Kay Lousberg** ([kaylousberg.com](https://www.kaylousberg.com)), CC0 1.0.
+- **Characters, props and scenery (farm era, being retired in round 15):** made by Ty with Meshy AI.
 - **Spell models and textures:** the Glacial Bulwark ice wall (`models/ice_wall.glb`) and the Toxic Flask acid puddle
   (`models/acid_puddle.glb`, and its concept render cut out as `textures/fx/acid_puddle.webp`) were made by Ty with Meshy AI.
 - **Mountain vista and ground textures:** the painted mountains (`textures/sky/mountain_vista.webp`) and the tileable grass and dirt
   (`textures/ground/`) were made by Ty with Meshy AI.
+- **Particle sprites:** *Particle Pack* by **Kenney** ([kenney.nl](https://kenney.nl)), CC0 1.0 ([`textures/particles/CREDITS.md`](public/textures/particles/CREDITS.md)).
 - **Magic sound effects:** *Magic Spell SFX Soundpack* by **Leonardo Calvo** ([thesoundrack](https://thesoundrack.itch.io/freemagicspellsfx)),
   licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Clips were trimmed, loudness-matched and re-encoded.
 - **Other sound effects:** *Basic Spell Impacts* (lentikula, CC0), *80 CC0 RPG SFX* (OpenGameArt, CC0), Kenney audio packs (CC0),
-  and effects and music supplied by Ty from Pixabay (Pixabay Content License).
-- **Menu music:** "Nordic Fantasia" by turning_pages (Pixabay).
+  a goat bleat by Kinoton (Freesound, CC0), and six effects supplied by Ty from Pixabay (Pixabay Content License).
+- **Menu music:** "Medieval: The Old Tower Inn" by **RandomMind** (OpenGameArt, CC0 1.0).
 - Per-file sources and licences: [`public/sounds/CREDITS.md`](public/sounds/CREDITS.md).
