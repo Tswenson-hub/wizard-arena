@@ -48,7 +48,7 @@ recursion fix in wizard.js), `190a8c3` (names filter), `8b4f50a` / `e609576` (re
 - **`DAMAGE_SCALE`:** 1.3 → 1.36.
 - **Attribution:** a ram's `death` names its spell (`spell`), and loadoutbalance uses it.
 - **Trapped Relic** needed no change: the castle's 18 props took it from 75% of Utility kills to 43–57% (c0), then 50% and 33% (c1) and
-  59% and 40% (c2). With Roll dealing no damage, about 50% is the floor.
+  57% and 40% (c2). With Roll dealing no damage, about 50% is the floor.
 
 `loadoutbalance.mjs <port> 12 75 <diff>` with `/tmp/wa-pace/observe.mjs` alongside. Analysis: `/tmp/wa-spells/analyze.mjs <json> 900`.
 Data in `/tmp/wa-spells/r15/c0` (castle baseline, old one-shot rams), `c1` (ram_charge), `c2` (plus Frostfall and the damage scale; the
@@ -60,10 +60,10 @@ committed state).
 | respawn → first damage (median) | 5.3 s | 5.7 s | **5.4 s** | 5.1 s | 5.8 s | **4.9 s** | ~6 s |
 | engagements ending in a kill | 49% | 46% | **42%** | 42% | 38% | **42%** | ~50% |
 | TTK (median damage chain) | 3.9 s | 3.0 s | **4.2 s** | 3.0 s | 4.0 s | **3.4 s** | 3–4 s |
-| ram killing blows | 16 | 11 | 7 | 15 | 10 | 2 | |
+| ram killing blows | 16 | 11 | 7 | 15 | 9 | 2 | |
 
 - **Noise:** random loadouts swing ±15% between identical runs. Normal fell from c1 to c2 despite more damage, while hard rose.
-- **Frostfall:** 46% of Power (c1 normal), then 27% and 6% in c2.
+- **Frostfall:** 46% of Power (c1 normal), then 32% (7 of 22) and 6% in c2.
 - **Run-to-run "dominant" flags in c2:**
   - Fireball 31% of Primary on normal (19 kills; hard 9%).
   - Cyclone 41% of Power on hard (7 of 17; normal 2).
