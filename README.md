@@ -132,21 +132,20 @@ public/js/editor.js        The map editor (public/edit.html, server/mapedit.js s
 public/js/main.js          Client bootstrap, local player controller, camera, HUD, message handling.
 public/js/wizard.js        Skinned wizard instances + animation state machine.
 public/js/select.js        The spell builder (slot rows of spell cards, presets, saves, preview).
-public/js/looks.js         The generic wizard body, its tint and aura by element mix, retargeted clips.
+public/js/looks.js         The KayKit bodies (Mage players, Skeleton bots), the BONES map, the element tint and aura.
 public/js/spellanim.js     Per-spell cast animation table (which clip, timed to each spell's release).
 server/match.js            The four-player free-for-all: warm-up, first to 10, results, rematch.
-public/js/world.js         The farmstead: ground, sky, buildings, high ground, cover, grass,
-                           Meshy model loading (FARM_MODELS), prop mesh factories.
+public/js/world.js         The castle courtyard: ground, sky, instanced kit pieces from layout.json, trees outside
+                           the walls, prop mesh factories, camera blockers.
 public/js/effects.js       Projectile visuals, particles, debris, teleport/impact effects.
 public/js/net.js           WebSocket wrapper.      public/js/input.js   Keyboard + pointer lock.
 public/js/audio.js         3D positional sound (HRTF panners, reverb, compressor) over the
                            samples in public/sounds (see CREDITS.md there); synth fallback.
-public/models/wizard.glb   The Meshy wizard with all animation clips merged into one 1.4 MB file.
-public/models/*.glb        Meshy goat, potion barrel and farmhouse, shrunk for the web with
-                           tools/optimize-models.sh (the farmhouse went from 222 MB to 5.5 MB).
-public/js/goats.js         Goat visuals (procedural grazing / rearing / galloping / dizzy).
-server/goats.js            Goat state machine: graze/wander in the pen, windup, charge (leaping the
-                           fence), ram, dizzy, return home through the gate.
+public/models/castle/      KayKit Dungeon pieces (meshopt GLBs sharing one webp atlas); village/ the Quaternius ones.
+public/models/characters/  The KayKit Mage, four Skeletons and clips.glb (tools/build-characters.mjs).
+public/models/*.glb        Trees, the potion barrel, the ram, the ice wall and acid puddle (meshopt,
+                           tools/optimize-models.sh).
+public/js/rams.js          Ram visuals (Ram Guard, Battering Ram, Stampede, Ram Ride, the Sling's call).
 server/bots.js             Server-side AI wizards (Easy / Normal / Hard).
 bot.js                     CLI to add or clear bots on a running server.
 tools/test/                Headless checks: modematch (FFA), loadoutbalance (spell kill shares),
@@ -165,10 +164,9 @@ distance, map layout and prop placement — lives in `public/shared/constants.js
 
 ### Animation clips
 
-The GLB was assembled from the Meshy exports with `@gltf-transform`: the rigged character plus the
-`Running`, `Walking`, `Stand_Dodge_2` (used as the hit flinch), `Stand_Dodge_3` (blink + its opening
-second doubles as the idle stance), `Two_Handed_Parry` (ward), `Charged_Spell_Cast` (meteor) and
-`mage_soell_cast` (spark) clips, with textures resized to 1024 px WebP.
+`models/characters/clips.glb` holds the KayKit Character Animations (Rig_Medium) clips, shared by the Mage and the
+Skeletons (same rig, matched by bone name, no retargeting). `public/js/spellanim.js` cuts and re-times them per spell so
+each release frame lands on the server's timing.
 
 ## Deploying
 
@@ -216,11 +214,12 @@ The submission checklist is in `docs/agents/deploy-handoff.md`.
   [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/).
 - **Wizards, skeletons and animations:** *KayKit Adventurers* (the Mage, staff and props), *KayKit Skeletons* and
   *KayKit Character Animations* by **Kay Lousberg** ([kaylousberg.com](https://www.kaylousberg.com)), CC0 1.0.
-- **Characters, props and scenery (farm era, being retired in round 15):** made by Ty with Meshy AI.
+- **Trees, potion barrel and ram:** the trees outside the walls (`models/pine`, `oak`, `birch` and their `_far` versions), the potion
+  barrel (`models/potion.glb`) and the ram (`models/ram.glb`) were made by Ty with Meshy AI.
 - **Spell models and textures:** the Glacial Bulwark ice wall (`models/ice_wall.glb`) and the Toxic Flask acid puddle
   (`models/acid_puddle.glb`, and its concept render cut out as `textures/fx/acid_puddle.webp`) were made by Ty with Meshy AI.
-- **Mountain vista and ground textures:** the painted mountains (`textures/sky/mountain_vista.webp`) and the tileable grass and dirt
-  (`textures/ground/`) were made by Ty with Meshy AI.
+- **Mountain vista and ground textures:** the painted mountains (`textures/sky/mountain_vista.webp`) and the tileable grass
+  (`textures/ground/grass.webp`) were made by Ty with Meshy AI.
 - **Particle sprites:** *Particle Pack* by **Kenney** ([kenney.nl](https://kenney.nl)), CC0 1.0 ([`textures/particles/CREDITS.md`](public/textures/particles/CREDITS.md)).
 - **Magic sound effects:** *Magic Spell SFX Soundpack* by **Leonardo Calvo** ([thesoundrack](https://thesoundrack.itch.io/freemagicspellsfx)),
   licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Clips were trimmed, loudness-matched and re-encoded.
