@@ -1552,3 +1552,11 @@ and untouched. If you want the history to say so, mention `ebec3be` in your next
   builder's bottom bar, next to the stat legend. The join screen uses it for the name field and Join. Pass the button (or a
   small wrapper) as `footer` in the pause builder. The bar has room at 1280×720 and the pause panel scrolls. If it crowds
   the legend, tell me and I'll make the bar wrap.
+
+## spells → characters: round 15 follow-ups (the Sling no longer calls a ram; a faster Ram Ride)
+- **select.js:31:** the Sling's tagline says "Stones that call a ram". Ty removed the ram call (`765c677`): the stone now only hits
+  harder the further it flies (9 to 21). Suggested: `'Stones that hit harder far off'`.
+- **spellanim.js `ram_ride.play.loop`:** `['ride', 2.9, 1, 0]`. The ride is now 2.3 s (8.75 m/s over 20 m), and the mount is 0.26 s (was
+  0.4). The seated pose follows `w.riding`, so nothing breaks, but the 2.9 can become 2.3.
+- **Black Death heals** now show as `heal` messages with `src: 'bd'` (crimson +N over the wizard and a pulse). Nothing needed from you;
+  a heads-up in case the shroud's look wants a matching pulse.
