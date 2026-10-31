@@ -41,6 +41,43 @@ recursion fix in wizard.js), `190a8c3` (names filter), `8b4f50a` / `e609576` (re
   - `goat_e2e.py` is replaced by `tools/test/ram_e2e.py` (Ram Guard, Battering Ram, a Sling bot's call, a Skeleton bot).
   - botmatch counts ram events.
 
+### Meteor Rain's kill ring and the Sling's range damage (Ty, via the coordinator: `fea2ad3`, plus the glow fix)
+- **Meteor Rain:**
+  - Only `MRAIN.killRadius` (2.4 m, was the whole 4 m) kills. The dive path still kills.
+  - Between 2.4 m and the 4 m edge, `meteor_rain_splash` deals `MRAIN.splash` [44, 30] base (60 at the kill ring, falling to 41 at the
+    edge), with a 0.4 s stun.
+  - The aim marker (`effects.cataAim`'s new `inner` argument) shows the kill ring as a red disc with a pale ring inside the old circle.
+  - Bots count targets inside the kill ring when they pick where to dive.
+  - The card reads "kill 2.4 m · 60–41".
+- **Shepherd's Sling:**
+  - `C.slingDamage(flown)` runs linearly from `near` 6.6 to `far` 15.5 base over 0–28 m, so 9 point blank, 15 at 15 m, 21 from 28 m.
+  - server.js sets it per hit from `proj.from`. A stone that flew 18 m or more is flagged `long` on the hit, and the client shows it as a
+    big number.
+  - The stone gets an additive glow that grows and brightens over 28 m, and a golden streak once it has flown about 6 m.
+  - The ram call, the magazine (2) and the reload are unchanged.
+  - Sling bots keep 16–24 m (`prefRange` in bots.js).
+  - The card reads "9–21 + ram", and the blurb says "more damage the further it flies".
+- **Unit test:** `slingChecks` finds a clear 24 m line in the courtyard. A 24 m hit dealt 19 (flagged long) and a 3 m hit 10. ALL PASS.
+- **Balance** (c3: 12 × 75 s each, `/tmp/wa-spells/r15/c3/`):
+
+| | normal | hard |
+|---|---|---|
+| kills / player / min | 2.08 | 1.55 |
+| respawn → first damage | 5.8 s | 5.5 s |
+| engagements ending in a kill | 49% | 41% |
+| TTK (median) | 3.4 s | 3.2 s |
+| Meteor Rain: share of Ultimate killing blows | 87.5% (7 of 8) | 40% (2 of 5) |
+| Meteor Rain kills per run equipped | 0.88 (7 / 8 runs) | 0.33 (2 / 6) |
+| Sling: share of Primary killing blows | 10.3% (7 of 68) | 18% (9 of 50) |
+
+  - **Meteor Rain's slot share is mostly structural:** it's the only ultimate whose hits reliably finish anyone (Blizzard, Brew, Night
+    Cage and Stampede scored 0–1 killing blows). Ultimates as a whole got 8 of 125 kills on normal.
+  - Its kills per run equipped (0.88 normal, 0.33 hard) are within the noise of earlier runs (c0–c2: 0.33–0.67).
+  - The splash finished nobody in these runs.
+  - If Ty wants the share itself down, the levers are making other ultimates finish more, or a smaller kill ring still.
+- **Screenshots:** `/tmp/wa-spells/r15/r16/meteor_ring.png` (the marker from above), `sling_t010.png` and `sling_t085.png` (the stone 0.1 s
+  and 0.85 s into its flight).
+
 ### Camera and staff tip (coordinator's follow-up: `d56fdcf`, `86c03ff`)
 - **Camera** (`CAM` in main.js `updateCamera`):
   - An over-the-shoulder boom: 5 m back from a point 1.2 m to the body's right, at 1.95 m (the hat brim).
