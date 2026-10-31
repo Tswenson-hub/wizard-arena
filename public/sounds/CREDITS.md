@@ -1,8 +1,9 @@
 # Sound credits
 
 Sounds and music in this folder come from these sources. Everything is CC0 (public domain) except the spell pack by
-Leonardo Calvo, which is **CC BY 4.0** and needs the credit below, and the six Pixabay files Ty supplied ("Provided by Ty
-(Pixabay)" below). Round 14: the menu music and the goat bleats, which were Pixabay tracks, are now CC0 (see their rows).
+Leonardo Calvo, which is **CC BY 4.0** and needs the credit below, and Ty's own files (the tables at the end). Round 14: the
+menu music and the goat bleats, which were Pixabay tracks, are now CC0. Round 15: the last six Pixabay files (the potion,
+flask and brew sounds) are replaced by CC0 ones too ("Flasks and potions" below), so nothing here is from Pixabay any more.
 An in-game credits line (join screen and pause menu) credits Leonardo Calvo and the music.
 
 - **Magic Spell Full Pack** by **Leonardo Calvo** (thesoundrack, www.leonardocalvocomposer.com). License: **CC BY 4.0** (https://creativecommons.org/licenses/by/4.0/).
@@ -14,7 +15,10 @@ An in-game credits line (join screen and pause menu) credits Leonardo Calvo and 
 - **"Single Goat Bleating 2x"** by Kinoton (Freesound, freesound.org/people/Kinoton/sounds/581240/), the goat bleats since round 14 (they replaced Pixabay files). License: CC0 1.0
 - Kenney (www.kenney.nl): Impact Sounds, Sci-Fi Sounds, RPG Audio, Interface Sounds, Digital Audio packs. License: CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/)
 - OpenGameArt.org CC0 entries: "Park ambiences" by thimras, "Swishes Sound Pack" by artisticdude, "Air whoosh" by pyranostudios. License: CC0 1.0
-- Files provided by Ty (six of them from Pixabay): see the tables at the end.
+- **Round 15, the flasks and potions** (OpenGameArt, all CC0 1.0): "Glass Break" by Till Behrend; "75 CC0 breaking / falling / hit
+  sfx" and "100 CC0 SFX" by rubberduck; "boiling water loops" by tinyworlds; "Fantasy Accessory SFX Library" by Vehicle (Jan Schupke);
+  "Bubble Sound Effects" by bmaczero. See "Flasks and potions" below.
+- Files provided by Ty: see the tables at the end.
 
 ## Kenney and OpenGameArt (CC0)
 Processing: decoded, downmixed to mono (except `ambient_loop`, stereo), leading silence trimmed, short fade-outs, peak-normalized, some files layered from 2 sources, loops cut with an equal-power crossfade; encoded to AAC .m4a with macOS `afconvert`.
@@ -149,20 +153,19 @@ short fades, peak-normalized to -1 dB (the ward loop to about -7 dB so it sits u
 | `blizzard_cast.m4a` | `Rime ULT.mp3` | Blizzard's start: its loudest onset (6.0-7.2 s of the original) |
 | `blizzard_loop.m4a` | `Rime ULT.mp3` | Under the 2.5 s Blizzard cone, following Rime: 6.8-9.2 s looped with a 0.4 s crossfade seam, faded out at the end |
 
-## Provided by Ty (Pixabay)
-Files Ty downloaded from Pixabay (Pixabay Content License: free to use, no attribution required), credited here by their
-original filename and author. Processing as for Ty's other files: decoded, downmixed to mono, leading silence trimmed (not
-the loops), short fades, peak-normalized to -1 dB, AAC .m4a at 44.1 kHz via `afconvert`. Loops are cut with a
-0.4-0.5 s equal-power crossfade seam.
+## Flasks and potions (round 15: CC0, replacing Ty's six Pixabay files)
+All from OpenGameArt under CC0 1.0. Processing: decoded, downmixed to mono, resampled to 44.1 kHz, leading silence trimmed,
+layered where noted, short fades, peak-normalized to the old files' levels, AAC .m4a 80 kbps via `afconvert`. The fizz loop
+is a 3.5 s cut with a 0.35 s equal-power crossfade seam and 12 ms of wrap-around padding at each end (audio.js's loop points).
 
-| File | Source (Ty's file, author) | Used for |
+| File | Source | Used for |
 |---|---|---|
-| `potion_shatter.m4a` | `universfield-glass-hit-192119.mp3`, Universfield, provided by Ty (Pixabay) | Potion Toss shattering on impact (pitch varied per throw; the stun throw lower) |
-| `toxic_smash.m4a` | `universfield-glass-bottle-smash-277554.mp3`, Universfield, provided by Ty (Pixabay) | Toxic Flask breaking open |
-| `smoke_flask.m4a` | `freesound_community-breaking-glass-83809.mp3` (first 2.2 s), freesound_community, provided by Ty (Pixabay) | Smoke Flask smashed at her feet |
-| `flask_land.m4a` | `freesound_community-breaking-glass-83809.mp3` (first 0.75 s), freesound_community, provided by Ty (Pixabay) | Flask Step landing |
-| `fizz_loop.m4a` | `freesound_community-soda-fizzing-80464.mp3` (1.0-4.5 s, looped), freesound_community, provided by Ty (Pixabay) | The Toxic Flask pool while it lasts (3D at the pool, fading out at the end) |
-| `brew_drink.m4a` | `freesound_community-soda-fizzing-80464.mp3` (0.4-1.9 s), freesound_community, provided by Ty (Pixabay) | Berserker Brew, the drink |
+| `potion_shatter.m4a` | "Glass Break" by Till Behrend (opengameart.org/content/glass-break) → `glass_breaking.wav` | Potion Toss shattering on impact (pitch varied per throw; the stun throw lower) |
+| `toxic_smash.m4a` | rubberduck, "75 CC0 breaking / falling / hit sfx" → `bfh1_glass_breaking_06.ogg` + `bfh1_glass_falling_02.ogg`, with `splash_01.ogg` from rubberduck's "100 CC0 SFX" | Toxic Flask breaking open |
+| `smoke_flask.m4a` | rubberduck, "100 CC0 SFX" → `glass_04.ogg`, then a hiss from tinyworlds' "boiling water loops" (`cooking_without_cover_01.ogg`, 1.0-2.8 s, faded) | Smoke Flask smashed at her feet |
+| `flask_land.m4a` | rubberduck, "75 CC0 breaking / falling / hit sfx" → `bfh1_glass_falling_04.ogg` | Flask Step landing |
+| `fizz_loop.m4a` | tinyworlds, "boiling water loops" (opengameart.org/content/boiling-water-loops) → `cooking_without_cover_01.ogg` (2.0-5.5 s, looped) | The Toxic Flask pool while it lasts (3D at the pool, fading out at the end) |
+| `brew_drink.m4a` | Vehicle, "Fantasy Accessory SFX Library" (opengameart.org/node/48440) → `bottle-glass-uncork-03.wav`, then three glugs from bmaczero's "Bubble Sound Effects" (`bubbles-single1.wav`, `bubbles-single2.wav`) | Berserker Brew, the drink |
 
 ## Provided by Ty (second batch: voices, grass steps, telekinesis)
 Original files supplied by Ty. Processing: decoded, downmixed to mono, split into single sounds by an energy envelope
