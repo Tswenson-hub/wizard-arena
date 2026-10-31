@@ -41,6 +41,31 @@ recursion fix in wizard.js), `190a8c3` (names filter), `8b4f50a` / `e609576` (re
   - `goat_e2e.py` is replaced by `tools/test/ram_e2e.py` (Ram Guard, Battering Ram, a Sling bot's call, a Skeleton bot).
   - botmatch counts ram events.
 
+### Camera and staff tip (coordinator's follow-up: `d56fdcf`, `86c03ff`)
+- **Camera** (`CAM` in main.js `updateCamera`):
+  - An over-the-shoulder boom: 5 m back from a point 1.2 m to the body's right, at 1.95 m (the hat brim).
+  - The crosshair ray runs parallel to the boom through that side point, so the Mage and its hat sit left of the crosshair at any boom
+    length.
+  - Walls shorten the side step first (to 0.45 m at least), then the boom: both environment's `cameraClearance` and `surfaceSegmentHit`
+    on the castle's boxes, with a 0.35 m margin. A boom pulled in close rises up to 0.7 m.
+  - `aimPoint` (TK throws) ignores what's between the camera and us by the real boom length, and stops at castle walls and floors.
+  - Measured with the screen at 1280 px wide (crosshair at x 640): in the courtyard and on the wall-walk, a boom of 5.1 m with the hat tip
+    at x ≈ 516.
+  - Backed against the north wall: the boom collapses to the side point (1.4 m) and rises. The view is clear and the camera doesn't clip
+    into the wall, but the body is then out of frame.
+  - Screenshots: `/tmp/wa-spells/r15/cam/` (`courtyard_north.png`, `courtyard_east.png`, `wallwalk_south.png`, `wallwalk_along.png`,
+    `backed_north_wall.png`, `backed_corner.png`, each with a `_shot` frame).
+- **The staff tip is at the staff head** (checked from the side with a second camera: the tip projects onto the orb). The KayKit idle
+  carries the staff low at the hip, 0.4 m up, which is why it read low. At a cast's release the orb is at body-local
+  (right 0.36, up 0.91, ahead 1.22).
+  - `C.castPoint(p, yaw)` = right 0.33, up 0.95, ahead 0.85 (held in so a shot never starts past a wall in front), or the chest if a wall
+    is between.
+  - The client uses the live tip when it's raised and in reach, else `castPoint`. The server's default origin is `castPoint`, and bots'
+    bolts and lobs aim from it.
+  - Measured on our own shots' `proj` echo: right 0.33, up 0.95, ahead 0.85.
+- **modematch-unit** after environment's dressing: trap-test spots also need a clear strip along x, and parking spots are chosen
+  separately. ALL PASS.
+
 ### Phase C (the fun pass on the castle blockout)
 - **Rams:** a Sling's ram and a provoked guard ram now hit for 41 plus a knockdown (hit kind `ram_charge`, base 30) instead of killing.
   Only Stampede's rams (an ultimate) still flatten.
