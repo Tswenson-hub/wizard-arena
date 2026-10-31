@@ -47,9 +47,8 @@
   - The chip re-opens it, there are no page errors, and the document width equals the viewport.
   - Screenshots: `first_1280.png` (the card), `tip_1280.png` (Brew's tooltip), `after_390.png` and `after_860.png` (the
     notice).
-- **Bubble screenshots** in a live match: `ward_ward.png` (the bubble around a wizard was `ward_ward.png` before the TK
-  check overwrote it), `ward_black_death.png` and the TK shell (the latest `ward_ward.png`). `pause_1280.png` is the
-  pause builder.
+- **Bubble screenshots** in a live match: `ward_black_death.png` (the shroud) and `ward_ward.png`, which now shows the TK
+  shell; the TK check overwrote the blue Ward shot, which I had looked at before. `pause_1280.png` is the pause builder.
 - **Card numbers against the spells agent's round 14 constants** (`ab77100`), with damage ×1.3 on the cards:
   - Spark 12 → 16, Hex 14 → 18, Sling 10 → 13 + ram, Fireball 16/24 → 21/31, Skim 3 × 12
   - Meteor cooldown 4 s, Battering Ram 70 (not "kill"), Trapped Relic 6 s, Sanguine Lash 9 s, Frostfall 10 s
