@@ -181,12 +181,18 @@ async function serverChecks() {
     // the whole disc), and a prop moved to each spot (debugProp). Spots 9-12 are where the four testers park.
     const inside = (x, z, m) => (C.insideArena && Number.isFinite(C.ARENA_BOUNDS?.x0)) ? C.insideArena(x, z, m) : Math.hypot(x, z) < C.ARENA_RADIUS - m;
     const flat = (x, z, r) => { for (let dx = -r; dx <= r; dx += 0.75) for (let dz = -r; dz <= r; dz += 0.75) if (dx * dx + dz * dz <= r * r && C.surfaceTopAt(x + dx, z + dz) >= 0.05) return false; return true; };
+    // (the trap tests also stand and shoot along the prop's x axis, out to 4.6 m: that strip must be clear too)
+    const strip = (x, z) => { for (let dx = -4.6; dx <= 4.6; dx += 0.4) for (const dz of [-0.6, 0, 0.6]) if (C.surfaceTopAt(x + dx, z + dz) >= 0.05) return false; return true; };
     const clear = (x, z, r) => inside(x, z, r) && C.COLLIDERS.every(c => Math.hypot(c.x - x, c.z - z) > c.r + r)
-      && A.props.every(p => Math.hypot(p.x - x, p.z - z) > r) && flat(x, z, r);
+      && A.props.every(p => Math.hypot(p.x - x, p.z - z) > r) && flat(x, z, r) && strip(x, z);
     const spots = [];
     for (let x = -34; x <= 34; x++) for (let z = -34; z <= 34; z++) if (clear(x, z, 3.5) && spots.every(q => Math.hypot(q[0] - x, q[1] - z) > 9.5)) spots.push([x, z]);
-    ok(spots.length >= 13, `thirteen open spots for the trap and roll tests and the parking (${spots.length})`);
-    const park = (c, i) => place(c, spots[9 + i] || [0, 0]);   // out of the way, on open ground of its own
+    // parking: open ground (no strip needed), 9.5 m from every test spot and from each other
+    const parks = [];
+    for (let x = -34; x <= 34; x++) for (let z = -34; z <= 34; z++) if (inside(x, z, 2) && flat(x, z, 2) && A.props.every(p => Math.hypot(p.x - x, p.z - z) > 2)
+      && spots.slice(0, 9).every(q => Math.hypot(q[0] - x, q[1] - z) > 9.5) && parks.every(q => Math.hypot(q[0] - x, q[1] - z) > 4)) parks.push([x, z]);
+    ok(spots.length >= 9 && parks.length >= 4, `nine open spots for the trap and roll tests (${spots.length}) and four to park on (${parks.length})`);
+    const park = (c, i) => place(c, parks[i] || [0, 0]);   // out of the way, on open ground of its own
     [A, B, V, R].forEach(park);
     const open = A.props.filter(p => p.state === 'idle').slice(0, 8);   // (spots[7] is the roll test's)
     open.forEach((p, i) => { const sp = spots[i < 7 ? i : 8]; p.x = sp[0]; p.z = sp[1]; A.send({ t: 'debugProp', id: p.id, x: p.x, z: p.z }); });
