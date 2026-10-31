@@ -2328,6 +2328,16 @@ function sanitizeDir(d, p) {
   if (Array.isArray(d) && d.length === 3 && d.every(Number.isFinite) && len3(d) > 0.01) return norm3(d);
   return [Math.sin(p.yaw), 0, Math.cos(p.yaw)];
 }
+// A typed name with a slur or an obscenity in it (letters only, leetspeak folded, so "f.u.c.k" and "fuk" match too).
+const RUDE = ['fuck', 'fuk', 'shit', 'cunt', 'bitch', 'nigg', 'nigga', 'fag', 'faggot', 'retard', 'whore', 'slut', 'rape', 'penis', 'vagina',
+  'dick', 'cock', 'pussy', 'porn', 'nazi', 'hitler', 'kike', 'spic', 'chink', 'tranny', 'twat', 'wank', 'asshole', 'bastard', 'dildo', 'cum'];
+const RUDE_EXACT = new Set(['ass', 'cum', 'fag', 'spic', 'dick', 'cock', 'rape']);   // short ones: only as a whole word (not "class", "cumin", "grape")
+function rudeName(name) {
+  const fold = (t) => t.toLowerCase().replace(/[0@]/g, 'o').replace(/[1!|]/g, 'i').replace(/3/g, 'e').replace(/[4]/g, 'a').replace(/[5$]/g, 's').replace(/7/g, 't');
+  const words = fold(name).split(/[^a-z]+/).filter(Boolean), joined = words.join('');
+  return RUDE.some(w => RUDE_EXACT.has(w) ? words.includes(w) : joined.includes(w)) || words.some(w => RUDE_EXACT.has(w));
+}
+
 function sanitizeOrigin(p, o) {
   if (Array.isArray(o) && o.length === 3 && o.every(Number.isFinite) && dist2D(o, p.p) < 2.5 && o[1] > p.p[1] - 1 && o[1] < p.p[1] + 3) return o;
   return [p.p[0], p.p[1] + 1.3, p.p[2]];
@@ -2349,7 +2359,8 @@ wss.on('connection', (ws) => {
       if (msg.t === 'addBot' || msg.t === 'removeBots') { handle({ bot: null }, msg); return; }
       if (msg.t !== 'join') return;
       id = nextId++;
-      const name = String(msg.name || 'Wizard').replace(/[^\w \-'!?.]/g, '').trim().slice(0, C.MAX_NAME_LEN) || `Wizard${id}`;
+      let name = String(msg.name || 'Wizard').replace(/[^\w \-'!?.]/g, '').trim().slice(0, C.MAX_NAME_LEN) || `Wizard${id}`;
+      if (rudeName(name)) name = `Wizard${id}`;   // round 15 (CrazyGames: a profanity filter on names other players see)
       const lo = C.sanitizeLoadout(msg.loadout);
       const p = newPlayer(id, name, lo || C.DEFAULT_LOADOUT, msg.voice);
       if (['easy', 'normal', 'hard'].includes(msg.difficulty)) p.botPref = msg.difficulty;   // fill bots play at this
