@@ -24,6 +24,7 @@
 | When | Initial download | Build | Notes |
 |---|---|---|---|
 | `b10be88` (round 14, farm) | **16.9 MB** in 383 responses | 313 files, 30.4 MB unzipped, 22.8 MB zip | sounds 2.5, farmhouse 2.0, silo 1.6, wizard.glb 1.4, barn 1.3, textures 1.1, wizards/ 0.8 (lazy), vendor 0.8, js 0.5 |
+| `51355b3` (characters and castle kit in, farm not yet removed) | not measured (game server mid-change) | 372 files, 32.3 MB unzipped | characters/ 1.3 MB (6), castle/ 0.3 MB (51); fails on 7 absolute paths |
 
 The unzipped 30.4 MB is mostly what round 15 removes: `models/wizards/` 12.8 MB (15 files, the Meshy heroes, `clip-pool.glb`, `jeb2`) and
 the farm models in `models/` 12.2 MB. Re-measure after Phase B's delete:

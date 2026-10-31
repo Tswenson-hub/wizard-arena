@@ -1377,3 +1377,7 @@ From CrazyGames' gameplay and multiplayer requirements (the full checklist is in
 2. **Goats in copy (characters):** the how-to-play tip at `select.js:396` ("Don't hit the goats...") goes with the goats.
 3. **Names (spells):** typed names are shown to other players, and CrazyGames asks for at least a profanity filter on user text. A small
    word list checked in `join` (replace with "Wizard"), or, on CrazyGames only, the SDK's username. Not blocking this round's work.
+
+**update** (deploy, at `51355b3`): looks.js is clean. 7 left, still characters': `select.js:26` (`/textures/icons/`) and the six `model` fields in
+`shared/wizards.js` (13–42; if nothing reads them any more, delete them). New folders so far: `models/characters/` 1.3 MB (6 files),
+`models/castle/` 0.3 MB (51 files). Nice and small.
