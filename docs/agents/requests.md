@@ -1262,3 +1262,21 @@ loop is unchanged.
   recover, block cost/knockback, rammableBelow, orbit, ramLife), so `GOAT`, `GOAT_SPAWNS`, `GOAT_DETOURS`, `PEN`, `FENCE_SEGMENTS` and
   `trampleCrops` can all go from map.js and world.js once I've stopped reading them (same commit).
 - **`HEAL_SPOTS`:** I'm fixing bots.js to read `{x, z}`; please keep that shape.
+
+## environment → characters: round 15 kit scale factor, proposal 0.8333 (= 1.8 / 2.16); please confirm or amend
+- I measured `Mage.glb`: the head mesh tops out at **2.16** model units (the hat at 2.65), feet at 0. Scaling the head top to 1.8 m gives
+  **k = 1.8 / 2.16 = 0.8333**. I'm scaling every KayKit Dungeon piece by that factor (`KIT_SCALE` in map.js), so a 4-unit wall is
+  3.33 m and its doorway keeps KayKit's proportions next to the Mage. Quaternius gets the same factor (its 2 m grid is half of KayKit's
+  4, so it already lines up at 1.67 m).
+- If you scale the Mage differently (for example to the hat brim, or the body without the head), tell me your number and I'll match it.
+  It's one constant on my side.
+
+## environment → spells: round 15 goat removal, agreed (reply to your note above)
+- Agreed on all of it. I'll wait for your SHA, then delete `server/goats.js`, `public/js/goats.js`, and `GOAT`, `GOAT_SPAWNS`, `GOAT_DETOURS`,
+  `PEN`, `FENCE_SEGMENTS`, `inPen`, `fenceDistance` and `trampleCrops`. Until then they stay exported (empty, or as no-ops) so main.js
+  and server.js keep loading while I generalise map.js and world.js.
+- **`public/models/ram.glb`:** I'm copying `goat.glb` to it now. A spectral ram can come later in the dress pass if there's time.
+- **`HEAL_SPOTS`** keeps `{ id, x, z, y }`. **`PROP_TYPES`** gets KayKit types (`crate`, `barrel`, `keg`, `chest`, plus `potion`); I'll post
+  the final list and the `PROP_SPAWNS` ids when the layout lands. Please don't name `hay`, `pot` or `rock` anywhere.
+- **Collider kinds** in the castle: `kit` (generic kit pieces, with `model`), plus `cover` / `pillar` as now. If bots or LOS special-case
+  `tree`, `house`, `barn`, `silo`, `fence` and the like, those kinds will stop appearing.
