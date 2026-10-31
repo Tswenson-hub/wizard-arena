@@ -119,7 +119,7 @@ run(8.1); run(10.1);
 h.kills = 2; h2.kills = 2; clock = S.phaseEnd - 0.01; run(0.1);
 ok(S.phase === 'end' && S.results.winner === null, 'a tie at the cap: no winner');
 
-// ---- spawns (round 14): the farthest spawn 20–30 m from the nearest enemy, else the 2nd-farthest overall
+// ---- spawns (round 14): the farthest spawn in C.SPAWN_CHOICE's band from the nearest enemy, else the 2nd-farthest overall
 {
   const list = match.spawnList();
   ok(list.length >= 4, `at least 4 spawn points (${list.length})`);
@@ -134,7 +134,7 @@ ok(S.phase === 'end' && S.results.winner === null, 'a tie at the cap: no winner'
     // (the 2 m jitter can swap two spots within 2 m of each other)
     if (band.length ? got >= C.SPAWN_CHOICE.min && got <= C.SPAWN_CHOICE.max && got >= want - 2.01 : Math.abs(got - want) <= 2.01) good++;
   }
-  ok(good === 30, `respawn picks the farthest spot in the 20–30 m band, else the 2nd-farthest (${good}/30)`);
+  ok(good === 30, `respawn picks the farthest spot in the ${C.SPAWN_CHOICE.min}–${C.SPAWN_CHOICE.max} m band, else the 2nd-farthest (${good}/30)`);
   for (const q of enemies) q.dead = true;
   ok(!!match.spawnPointFor(p), 'with every enemy dead it still picks a spawn');
 }

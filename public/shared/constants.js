@@ -81,7 +81,7 @@ export const RESPAWN_TIME = 2.0;      // round 14 (pacing): was 3
 // Round 14: after a respawn, `time` s of no damage taken (ends early when you cast an attack). The respawn picks the
 // spawn farthest from enemies among those `min`–`max` m from the nearest one (else the 2nd-farthest overall).
 export const SPAWN_PROTECT = { time: 1.5 };
-export const SPAWN_CHOICE = { min: 20, max: 30 };
+export const SPAWN_CHOICE = { min: 18, max: 26 };   // the brief's 20–30 gave 29 m and 7.0 s to first damage on normal; this, 25 m and 6.1 s
 // Round 14: every primary's magazine reloads in this long (was 1.5 s).
 export const PRIMARY_RELOAD = 1.2;
 
