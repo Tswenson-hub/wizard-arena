@@ -1,234 +1,275 @@
-// The per-spell animation table (characters track, round 11). Every player is the same generic wizard
-// (the base wizard.glb); each spell names the clip its cast plays, cut from the clip pool (every clip of the
-// six hero exports, retargeted onto the base rig: looks.js bakeClipPool, tools/bake-clip-pool.py), and
-// retimed so its release frame lands where the spell actually fires.
+// The animation table (characters track). Round 15: every body is a KayKit character on the Rig_Medium skeleton, and every clip
+// below is cut from KayKit's Character Animations (clips.glb, built by tools/build-characters.mjs): no retargeting.
+// Each spell names the clip its cast plays, retimed so its release frame lands where the spell actually fires.
 //
 // A clip spec ("pick") is one of:
-//   'hero.Clip'                          a whole pool clip ('base.<key>' for the base wizard's own clips)
-//   ['hero.Clip', from, to, duration?]   the part between two clip times (s), optionally stretched to `duration`
-//   { clip, from, to, warp, yaw }        that part retimed through warp [[clipTime, newTime], ...] (piecewise
-//                                        linear, in clip times); `yaw` turns it (deg) for moves from a bladed stance;
-//                                        `reverse: true` plays it backwards; `flatY: dy` pins the Hips dy m above
-//                                        standing height (no root motion at all: for airborne clips)
-// Root motion is stripped. Release times below were measured on the pool (the right hand's speed peak,
-// /tmp/wa-characters/r11/trace.py) and checked on contact sheets.
+//   'Clip'                               a whole clip
+//   ['Clip', from, to, duration?]        the part between two clip times (s), optionally stretched to `duration`
+//   { clip, from, to, warp, ... }        that part retimed through warp [[clipTime, newTime], ...] (piecewise linear, in clip
+//                                        times); `yaw` turns it (deg); `reverse: true` plays it backwards; `flatY: dy` pins the
+//                                        hips dy m above standing height (airborne moves); `pinXZ: true` keeps their rise and fall
+// Release times were measured on the clips (the staff tip's speed peak and height, /tmp/wa-characters/r15/tr.py) and checked on
+// contact sheets.
 //
-// Each entry:
-//   keys     clip keys this spell adds to the body: `${id}` (its cast), `${id}1..n` (one per primary shot),
-//            and named extras (an ultimate's channel, a ride, an arrival)
+// Each spell entry:
+//   keys     clip keys this spell adds to the body: `${id}` (its cast), `${id}1..n` (one per primary shot), and named extras
 //   play     when main.js plays what: phase -> [key, duration, timeScale, startAt] (Wizard.oneShot's arguments)
 //              shot     a primary shot, as it fires; '#' is the shot number (1..magazine)
 //              cast     an instant cast, as the server confirms it
 //              windup   the start of a wind-up; the release frame lands on the wind-up's end
 //              release  the moment a held or aimed spell fires
-//              channel / hold / loop    held states (play LoopOnce + clamp)
-//   release  seconds into `play`'s main key where the spell visibly leaves the hand
+//              channel / hold / loop / hover / dive / land    held states and Meteor Rain's flight
+//   release  seconds into `play`'s main key where the spell visibly leaves the staff
 //   legacy   the older shared key names (wizard.js / main.js) this spell fills on a body that has it equipped:
 //            combo1..3, spin, lash, ult, float, ride, flask_step, arrival
-//   grade    'good' (a clear, readable tell), 'ok' (works, not ideal), 'missing' (a stand-in: see `need`)
-//   need     what to export from Meshy next, for 'ok' and 'missing' spells
+//   grade    'good' (a clear, readable tell), 'ok' (works, not ideal); `need`: what would read better
 
-// A strike cut around its peak (clip time `peak`): `lead` s before it squeezed into 0.08 s (the cross-fade in),
-// `follow` s after it played at about real speed. For primary shots: play at 1x from 0 the moment the shot fires.
-const strike = (clip, peak, lead = 0.25, follow = 0.45, yaw) =>
-  ({ clip, from: Math.max(0, peak - lead), to: peak + follow, warp: [[Math.max(0, peak - lead), 0], [peak, 0.08], [peak + follow, 0.08 + follow * 0.9]], ...(yaw ? { yaw } : {}) });
-// A wind-up cut: clip time `from` at 0, the release (clip time `peak`) at `windup` s, then `follow` s after it.
-const windup = (clip, from, peak, windupS, follow = 0.5) =>
-  ({ clip, from, to: peak + follow, warp: [[from, 0], [peak, windupS], [peak + follow, windupS + follow]] });
+// A strike cut around its peak (clip time `peak`): `lead` s before it squeezed into 0.08 s (the cross-fade in), `follow` s after
+// it at about real speed. For primary shots: play at 1x from 0 the moment the shot fires.
+const strike = (clip, peak, lead = 0.25, follow = 0.45, extra) =>
+  ({ clip, from: Math.max(0, peak - lead), to: peak + follow, warp: [[Math.max(0, peak - lead), 0], [peak, 0.08], [peak + follow, 0.08 + follow * 0.9]], ...extra });
+// A wind-up cut: clip time `from` at 0, the release (clip time `peak`) at `windupS` s, then `follow` s after it.
+const windup = (clip, from, peak, windupS, follow = 0.5, extra) =>
+  ({ clip, from, to: peak + follow, warp: [[from, 0], [peak, windupS], [peak + follow, windupS + follow]], ...extra });
 const shot = (n = 0.7) => ['#', n, 1, 0];
-const ROLL = { clip: 'cinder.Roll_Dodge', from: 0.55, to: 1.8, warp: [[0.55, 0], [0.86, 0.08], [1.47, 0.32], [1.8, 0.45]] };
 
-// Shared by every generic body (not tied to a spell).
+// KayKit clip moments (s), measured: the staff thrust of Ranged_Magic_Shoot, the gathered thrust of Spellcasting_Long, the
+// overhead raise of Ranged_Magic_Raise, the staff driven into the ground in Ranged_Magic_Summon, Throw's release.
+const SHOOT = 0.25, LONG = 1.5, RAISE = 0.38, SLAM = 2.45, THROW = 0.73;
+const DODGE = (dir) => ({ clip: `Dodge_${dir}`, from: 0, to: 0.4, warp: [[0, 0], [0.4, 0.45]] });
+
+// Shared by every body (not tied to a spell).
 export const COMMON_ANIMS = {
-  walk_fight: 'cinder.Walk_Fight_Forward',   // a guarded walk, for slow movement (wind-ups, warding, slowed)
-  back: 'cinder.Walk_Fight_Back',            // walking backward relative to facing
-  float: ['rime.Fall2', 0, 0.67, 1.0],       // airborne: knees up, arms out (jumps, falls, Skyward's descent)
-  hit_waist: ['cinder.Hit_Reaction_to_Waist', 0.2, 1.45, 0.75],     // hit by a thrown object
-  tk_lift: { clip: 'cinder.mage_soell_cast_6', warp: [[0, 0], [0.7, 0.1], [1.2, 0.35], [2.3, 1.1]] },
-  tk_throw: { clip: 'cinder.mage_soell_cast_4', warp: [[0, 0], [0.45, 0.08], [0.65, 0.18], [2.2, 1.0]] },
-  death: 'embibe.dying_backwards',           // staggers back, flat by about 1.4 s (knockdown and getup are cut from it)
-  // Round 13 agility, cut from Ty's second Jeb export (jeb2.*: Basic_Jump, Backflip, Dive_Down_and_Land_2, Jumping_Punch,
-  // Crouch_Walk_with_Torch). Airborne cuts pin the hips (flatY: the jump arc moves the body); landings and the crouch
-  // keep the hips' rise and fall but not their drift (pinXZ).
-  // The push-off: Basic_Jump from the end of its crouch, the legs driving straight and the arms coming up, in 0.25 s.
-  jump: { clip: 'jeb2.Basic_Jump', from: 1.72, to: 2.25, warp: [[1.72, 0], [2.25, 0.25]], flatY: 0 },
-  // The air jump: a layout front flip (Backflip played backwards: it starts in its landing tuck, turns forward through
-  // inverted at 0.2 s, and opens out arms up) and, jumping backwards, the backflip itself; 0.45 s each, then the float.
-  double_jump: { clip: 'jeb2.Backflip', from: 0.6, to: 1.4, warp: [[0.6, 0], [1.4, 0.45]], flatY: 0.1, reverse: true },
-  double_jump_back: { clip: 'jeb2.Backflip', from: 0.6, to: 1.4, warp: [[0.6, 0], [1.4, 0.45]], flatY: 0.1 },
-  // A plain jump's landing: Basic_Jump's dip and rise (crouched by 0.04 s, up by 0.3 s)
-  land_soft: { clip: 'jeb2.Basic_Jump', from: 2.42, to: 3.6, warp: [[2.42, 0], [2.55, 0.04], [2.9, 0.12], [3.6, 0.3]], pinXZ: true },
-  // A hard landing (after an air jump, or a drop of 3 m or more): Dive_Down_and_Land_2's three-point crouch, one hand
-  // down and the staff out, then up (crouched by 0.05 s, held to 0.17 s, standing by 0.4 s)
-  land: { clip: 'jeb2.Dive_Down_and_Land_2', from: 0.58, to: 1.8, warp: [[0.58, 0], [0.7, 0.05], [1.1, 0.17], [1.8, 0.4]], pinXZ: true },
-  // Casting in the air: Jumping_Punch's in-air strike, knees tucked, the strike at 0.1 s (wizard.js plays it in place
-  // of a cast's own clip while airborne)
-  air_cast: { clip: 'jeb2.Jumping_Punch', from: 0.95, to: 1.45, warp: [[0.95, 0], [1.2, 0.1], [1.45, 0.45]], flatY: 0 },
-  // Crouching (C / Ctrl): Crouch_Walk_with_Torch, its walk and a held frame of it
-  crouch_walk: { clip: 'jeb2.Crouch_Walk_with_Torch', warp: [[0, 0], [1.1, 1.1]], pinXZ: true },
-  crouch: { clip: 'jeb2.Crouch_Walk_with_Torch', from: 0.25, to: 0.3, warp: [[0.25, 0], [0.3, 1.0]], pinXZ: true },
+  // locomotion (wizard.js time-scales each to the ground speed by its measured gait speed)
+  idle: 'Idle_A',
+  run: 'Running_A',
+  walk: 'Walking_A',
+  walk_fight: 'Walking_A',                  // the normal walk (3 m/s)
+  back: 'Walking_Backwards',
+  strafe_left: 'Running_Strafe_Left',
+  strafe_right: 'Running_Strafe_Right',
+  crouch: 'Crouching',                      // the crouched idle (C / Ctrl)
+  crouch_walk: 'Sneaking',
+  // the base casts (the named phases below play these)
+  cast_fast: strike('Ranged_Magic_Shoot', SHOOT, 0.2, 0.45),                     // the quick one-handed thrust, released at 0.08 s
+  cast_release: { clip: 'Ranged_Magic_Spellcasting_Long', from: 1.3, to: 2.53, warp: [[1.3, 0], [LONG, 0.1], [2.53, 0.75]] },
+  cast_heavy: { clip: 'Ranged_Magic_Spellcasting', loop: true },                // gathering through a wind-up (a held loop)
+  windup: { clip: 'Ranged_Magic_Spellcasting_Long', from: 0, to: LONG },          // the gather alone, to stretch over a wind-up
+  block: 'Melee_Blocking',                  // held behind a ward
+  block_tap: ['Melee_Block', 0, 0.6],
+  stun: 'Hit_A',                            // a flinch
+  hit_waist: 'Hit_B',                       // hit by a thrown object: the bigger stagger
+  dash: DODGE('Forward'),
+  throw: strike('Throw', THROW, 0.3, 0.5),
+  summon: windup('Ranged_Magic_Summon', 1.6, SLAM, 0.8, 0.6),
+  drink: { clip: 'Use_Item', warp: [[0, 0], [0.3, 0.55], [1.2, 1.15], [1.6, 1.6]] },
+  ledge_climb: ['Jump_Land', 0.05, 0.6, 0.45],    // the pull-up: crouched over the edge, rising
+  tk_lift: { clip: 'Ranged_Magic_Raise', from: 0, to: 1.0, warp: [[0, 0], [RAISE, 0.35], [1.0, 0.9]] },   // the staff raised: the lift
+  tk_throw: strike('Throw', THROW, 0.25, 0.6),                                                         // the fling
+  death: 'Death_B',                         // falls forward, flat by about 0.9 s (2.6 s)
+  // knockdown / getup: Death_A's backward fall cut to the flat moment, then Lie_StandUp (looks.js knockClips)
+  // jumps (round 13 hooks): the push-off, the air jump (wizard.js adds the procedural flip, FLIPS below), landings, the air cast
+  float: { clip: 'Jump_Idle', loop: true },
+  jump: { clip: 'Jump_Start', from: 0.27, to: 0.55, warp: [[0.27, 0], [0.55, 0.25]], pinXZ: true },
+  double_jump: { clip: 'Jump_Start', from: 0.2, to: 0.5, warp: [[0.2, 0], [0.3, 0.12], [0.5, 0.45]], flatY: 0.1 },
+  double_jump_back: { clip: 'Jump_Start', from: 0.2, to: 0.5, warp: [[0.2, 0], [0.3, 0.12], [0.5, 0.45]], flatY: 0.1 },
+  land: { clip: 'Jump_Land', warp: [[0, 0], [0.3, 0.12], [0.67, 0.4]], pinXZ: true },          // crouched by 0.12 s, up by 0.4 s
+  land_soft: { clip: 'Jump_Land', from: 0.1, to: 0.67, warp: [[0.1, 0], [0.3, 0.08], [0.67, 0.25]], pinXZ: true },
+  air_cast: strike('Ranged_Magic_Shoot', SHOOT, 0.2, 0.4, { flatY: 0 }),
+  // a blink's or a respawn's arrival: Spawn_Air's drop and landing crouch, then up
+  arrival: ['Spawn_Air', 0.55, 1.3, 0.8],
+  hit: 'Hit_A',
+};
+
+// Skeleton bots only (merged over COMMON_ANIMS on a skeleton body).
+export const SKELETON_ANIMS = {
+  taunt: 'Skeletons_Taunt',                 // on a kill
+  spawn: 'Skeletons_Awaken_Standing',       // on a respawn: slumped, then up
+  death: 'Skeletons_Death',                 // collapses into a pile by 0.3 s (2 s)
+  idle: 'Skeletons_Idle',
+};
+
+// Procedural flips (wizard.js): a key here also turns the body about its side axis once over the given time (dir 1: forward,
+// -1: backward). KayKit has no flip clip; the pose underneath is the tucked jump.
+export const FLIPS = {
+  double_jump: { dir: 1, time: 0.45 },
+  double_jump_back: { dir: -1, time: 0.45 },
+  roll_air: { dir: 1, time: 0.42 },
+  roll_air_back: { dir: -1, time: 0.42 },
+  smoke_screen: { dir: -1, time: 0.42 },
+};
+
+// Named phases for main.js (round 15: they replace the old clip-offset calls). Wizard.pose(name, duration?) plays `key`
+// for `dur` s (or the duration given); `fit`: stretch the clip to that duration (wind-ups). `release`: seconds in where the cast
+// visibly leaves the staff (at the default duration).
+export const PHASES = {
+  cast: { key: 'cast_fast', dur: 0.45, release: 0.08 },
+  cast_release: { key: 'cast_release', dur: 0.55, release: 0.1 },
+  windup: { key: 'windup', dur: 1.25, fit: true, release: 1.25 },
+  flinch: { key: 'stun', dur: 0.45, release: 0 },
+  stagger: { key: 'hit_waist', dur: 0.75, fit: true, release: 0 },
+  bound: { key: 'stun', dur: 0.6, fit: true, release: 0 },
+  dash: { key: 'dash', dur: 0.45, release: 0 },
+  block_tap: { key: 'block_tap', dur: 0.5, release: 0 },
+  summon: { key: 'summon', dur: 1.4, release: 0.8 },
+  throw: { key: 'throw', dur: 0.6, release: 0.08 },
+  drink: { key: 'drink', dur: 1.6, fit: true, release: 0.55 },
+  ledge_climb: { key: 'ledge_climb', dur: 0.45, fit: true, release: 0 },
+  tk_lift: { key: 'tk_lift', dur: 0.9, release: 0.35 },
+  tk_throw: { key: 'tk_throw', dur: 0.9, release: 0.08 },
+  arrival: { key: 'arrival', dur: 0.8, release: 0 },
+  taunt: { key: 'taunt', dur: 1.03, release: 0 },
+  spawn: { key: 'spawn', dur: 1.0, release: 0 },
 };
 
 export const SPELL_ANIMS = {
   // ---------------------------------------------------------------- primaries (LMB): one key per shot
   spark: {
-    grade: 'ok', release: 0.08, legacy: ['combo'],
-    keys: { spark1: strike('base.cast_fast', 0.6, 0.25, 0.5), spark2: strike('base.cast_fast', 0.6, 0.25, 0.5), spark3: strike('base.cast_heavy', 0.7, 0.3, 0.5) },
+    grade: 'good', release: 0.08, legacy: ['combo'],
+    // the staff thrust twice, then a wide swing for the finisher
+    keys: { spark1: strike('Ranged_Magic_Shoot', SHOOT, 0.2, 0.45), spark2: strike('Ranged_Magic_Shoot', SHOOT, 0.2, 0.45),
+      spark3: strike('Melee_1H_Attack_Slice_Horizontal', 0.27, 0.25, 0.5) },
     play: { shot: shot() },
-    need: 'a quick one-handed flick (the same flick three times reads as a loop)',
   },
   fireball: {
     grade: 'good', release: 0.08, legacy: ['combo'],
-    // Ty's pick for Cinder: the three strikes of the triple combo, each landing at 0.08 s
+    // a diagonal slash, a backhand sweep, then the overhead chop (the finisher)
     keys: {
-      fireball1: { yaw: 45, clip: 'embibe.Triple_Combo_Attack', from: 0.6, to: 1.0, warp: [[0.6, 0], [0.76, 0.08], [1.0, 0.45]] },
-      fireball2: { yaw: 45, clip: 'embibe.Triple_Combo_Attack', from: 1.36, to: 1.85, warp: [[1.36, 0], [1.5, 0.08], [1.85, 0.45]] },
-      fireball3: { yaw: 45, clip: 'embibe.Triple_Combo_Attack', from: 2.14, to: 3.3, warp: [[2.14, 0], [2.28, 0.08], [2.6, 0.35], [3.3, 0.8]] },
+      fireball1: strike('Melee_1H_Attack_Slice_Diagonal', 0.42, 0.3, 0.45),
+      fireball2: strike('Melee_1H_Attack_Slice_Horizontal', 0.27, 0.25, 0.45),
+      fireball3: strike('Melee_1H_Attack_Chop', 0.59, 0.3, 0.45),
     },
     play: { shot: shot() },
   },
   gale_shear: {
     grade: 'good', release: 0.08, legacy: ['combo'],
-    // wind blades: a forehand slash, a thrust, then the wide spinning crescent (the finisher)
+    // wind blades: a forehand slash, a thrust, then the spinning crescent (the finisher)
     keys: {
-      gale_shear1: strike('cinder.Right_Hand_Sword_Slash', 0.53, 0.25, 0.4),
-      gale_shear2: strike('embibe.Thrust_Slash', 0.73, 0.3, 0.4),
-      gale_shear3: strike('cinder.Axe_Spin_Attack', 0.9, 0.35, 0.6),
+      gale_shear1: strike('Melee_1H_Attack_Slice_Horizontal', 0.27, 0.25, 0.4),
+      gale_shear2: strike('Melee_1H_Attack_Stab', 0.4, 0.3, 0.4),
+      gale_shear3: strike('Melee_2H_Attack_Spin', 0.72, 0.4, 0.6),
     },
     play: { shot: shot() },
   },
   glacial_skim: {
     grade: 'ok', release: 0.08, legacy: ['combo'],
-    // a low two-handed fling (the shards skim the ground), the finisher a full forward throw
+    // a low push along the ground (the shards skim it), the finisher a full throw
     keys: {
-      glacial_skim1: strike('cinder.mage_soell_cast_4', 0.5, 0.3, 0.5),
-      glacial_skim2: strike('cinder.mage_soell_cast_4', 0.5, 0.3, 0.5),
-      glacial_skim3: strike('gale.mage_soell_cast_2', 1.23, 0.3, 0.5),
+      glacial_skim1: strike('Melee_Block_Attack', 0.43, 0.3, 0.45),
+      glacial_skim2: strike('Melee_Block_Attack', 0.43, 0.3, 0.45),
+      glacial_skim3: strike('Throw', THROW, 0.3, 0.5),
     },
     play: { shot: shot() },
-    need: 'a low underhand sweep along the ground (a bowler\'s release)',
+    need: 'an underhand sweep along the ground',
   },
   hex_shards: {
     grade: 'ok', release: 0.08, legacy: ['combo'],
-    // glyphs from the left, from the right, then a high lob: a cross-body slash each way, then the overhead flick
+    // glyphs from the left, from the right, then a straight thrust
     keys: {
-      hex_shards1: strike('cinder.Charged_Slash', 1.17, 0.3, 0.45),
-      hex_shards2: strike('embibe.Triple_Combo_Attack', 0.77, 0.3, 0.45, 45),
-      hex_shards3: strike('base.cast_fast', 0.6, 0.3, 0.5),
+      hex_shards1: strike('Melee_1H_Attack_Slice_Diagonal', 0.42, 0.3, 0.45),
+      hex_shards2: strike('Melee_1H_Attack_Slice_Horizontal', 0.27, 0.25, 0.45),
+      hex_shards3: strike('Ranged_Magic_Shoot', SHOOT, 0.2, 0.45),
     },
     play: { shot: shot() },
-    need: 'a sign-tracing hand gesture (left, right, up): Vesper\'s own cast is too slow for a 0.45 s shot',
+    need: 'a sign-tracing hand gesture',
   },
   sling: {
-    grade: 'ok', release: 0.08, legacy: ['combo'],
-    keys: { sling1: strike('jeb.mage_soell_cast_1', 0.6, 0.25, 0.45), sling2: strike('jeb.mage_soell_cast_1', 1.4, 0.3, 0.45) },
+    grade: 'good', release: 0.08, legacy: ['combo'],
+    keys: { sling1: strike('Throw', THROW, 0.3, 0.45), sling2: strike('Throw', THROW, 0.3, 0.45, { yaw: 15 }) },
     play: { shot: shot() },
-    need: 'a sling whirl and release (overhead circle, sidearm snap)',
   },
   potion_toss: {
     grade: 'good', release: 0.08, legacy: ['combo'],
-    // Embibe's overhand throw (the hand overhead, then flung forward at 2.4 s)
-    keys: { potion_toss1: strike('embibe.Female_Crouch_Pick_Throw_Forward', 2.4, 0.4, 0.4), potion_toss2: strike('embibe.Female_Crouch_Pick_Throw_Forward', 2.4, 0.4, 0.4) },
+    keys: { potion_toss1: strike('Throw', THROW, 0.35, 0.45), potion_toss2: strike('Throw', THROW, 0.35, 0.45, { yaw: 15 }) },
     play: { shot: shot() },
   },
 
   // ---------------------------------------------------------------- power (RMB)
   meteor: {
     grade: 'good', release: 1.25,
-    // the base heavy cast: gathers through the 1.25 s wind-up, hurls at its end
-    keys: { meteor: windup('base.cast_heavy', 0, 1.9, 1.25, 0.8) },
+    // Spellcasting_Long: the staff gathers through the 1.25 s wind-up and thrusts at its end
+    keys: { meteor: windup('Ranged_Magic_Spellcasting_Long', 0, LONG, 1.25, 0.8) },
     play: { windup: ['meteor', 2.05, 1, 0] },
   },
   cyclone: {
     grade: 'good', release: 0.45, legacy: ['spin'],
-    // crouches into the 0.45 s wind-up, then Gale's low spinning sweep through the 0.5 s spin
-    keys: { cyclone: windup('gale.Sweeping_Kick', 0.35, 0.8, 0.45, 0.9), spin: ['gale.Sweeping_Kick', 0.8, 1.7] },
+    // the two-handed spin's wind-up through 0.45 s, then the spin itself through the 0.5 s pulse
+    keys: { cyclone: windup('Melee_2H_Attack_Spin', 0.2, 0.7, 0.45, 0.9), spin: ['Melee_2H_Attack_Spin', 0.6, 1.4] },
     play: { windup: ['cyclone', 0.45 + 0.9, 1, 0] },
   },
   sanguine_lash: {
-    grade: 'good', release: 1.5, legacy: ['lash'],
-    // Vesper's lash: the crouched wind-up fills 1.5 s, the slash lands on the release, then the follow-through
-    keys: { sanguine_lash: { clip: 'cinder.Right_Hand_Sword_Slash', warp: [[0, 0], [0.55, 1.3], [0.85, 1.55], [1.5, 2.1]] } },
+    grade: 'ok', release: 1.5, legacy: ['lash'],
+    // the backhand slash drawn back slowly over the 1.5 s wind-up, striking on the release, then the follow-through
+    keys: { sanguine_lash: { clip: 'Melee_1H_Attack_Slice_Horizontal', warp: [[0, 0], [0.15, 1.3], [0.27, 1.55], [1.37, 2.1]] } },
     play: { windup: ['sanguine_lash', 2.1, 1, 0] },
+    need: 'a crouched whip wind-up',
   },
   frostfall: {
     grade: 'good', release: 0.15,
-    // Rime's charged cast: the two-handed push (peak 1.9 s) as the circle is released
-    keys: { frostfall: { clip: 'rime.Charged_Spell_Cast_1', from: 1.6, to: 3.1, warp: [[1.6, 0], [1.9, 0.15], [3.1, 0.8]] },
-      frostfall_aim: ['rime.Charged_Spell_Cast_1', 0.4, 1.6, 1.0] },   // gathering while the circle is aimed (clamp)
+    // gathering while the circle is aimed (a held loop), then the staff raised overhead as the ice falls
+    keys: { frostfall: { clip: 'Ranged_Magic_Raise', from: 0.1, to: 1.0, warp: [[0.1, 0], [RAISE, 0.15], [1.0, 0.8]] },
+      frostfall_aim: { clip: 'Ranged_Magic_Spellcasting', loop: true } },
     play: { hold: ['frostfall_aim', 99, 1, 0], release: ['frostfall', 0.5, 1, 0] },
   },
   battering_ram: {
-    grade: 'ok', release: 0.8,
-    // Jeb's lunging stomp: lands (0.7 s) at the end of the 0.8 s wind-up, as the ram bursts out
-    keys: { battering_ram: windup('jeb.Angry_Ground_Stomp_2', 0, 0.7, 0.8, 0.8) },
+    grade: 'good', release: 0.8,
+    // the staff driven into the ground at the end of the 0.8 s wind-up, as the ram bursts out
+    keys: { battering_ram: windup('Ranged_Magic_Summon', 1.6, SLAM, 0.8, 0.8) },
     play: { windup: ['battering_ram', 1.6, 1, 0] },
-    need: 'a big two-footed stomp or a ground punch (on the generic wizard the stomp is legs only and reads weakly)',
   },
   toxic_flask: {
-    grade: 'ok', release: 0.15,
-    // the rising lob from Embibe's crouch-pull-and-throw (hand overhead at 3.45 s)
-    keys: { toxic_flask: { clip: 'embibe.Crouch_Pull_and_Throw', from: 3.15, to: 4.0, warp: [[3.15, 0], [3.45, 0.15], [4.0, 0.6]] } },
+    grade: 'good', release: 0.15,
+    keys: { toxic_flask: { clip: 'Throw', from: 0.45, to: 1.2, warp: [[0.45, 0], [THROW, 0.15], [1.2, 0.6]] } },
     play: { cast: ['toxic_flask', 0.6, 1, 0] },
-    need: 'a standing underhand lob (the pool clip starts from a crouch)',
   },
 
   // ---------------------------------------------------------------- mobility (E)
   blink: {
-    grade: 'missing', release: 0,
-    keys: { blink: ['base.dash', 2.0, 2.6, 0.35] },
-    play: { cast: ['blink', 0.35, 1, 0] },
-    need: 'a short forward lunge or vanishing crouch (the base dodge is a sidestep)',
+    grade: 'ok', release: 0,
+    // Spawn_Air's drop and landing crouch: popping in at the far end
+    keys: { blink: ['Spawn_Air', 0.6, 1.25, 0.45] },
+    play: { cast: ['blink', 0.45, 1, 0] },
   },
   skyward: {
     grade: 'ok', release: 0, legacy: ['float'],
-    keys: { skyward: ['base.cast_heavy', 1.7, 2.1, 0.3] },     // arms up as he launches; the descent is the shared float
+    keys: { skyward: { clip: 'Jump_Start', from: 0.2, to: 0.55, warp: [[0.2, 0], [0.55, 0.3]], pinXZ: true } },   // the launch; then the float
     play: { cast: ['skyward', 0.3, 1, 0], loop: ['float', 2.8, 1, 0] },
-    need: 'a crouch-and-launch straight up',
   },
   mirror_step: {
-    grade: 'missing', release: 0,
-    keys: { mirror_step: ['base.dash', 2.0, 2.8, 0.5] },
+    grade: 'ok', release: 0,
+    keys: { mirror_step: ['Spawn_Air', 0.6, 1.25, 0.5] },
     play: { cast: ['mirror_step', 0.5, 1, 0] },
-    need: 'a fast forward dash (a sprint-start lunge); the decoys run with the run clip',
   },
   smoke_screen: {
     grade: 'good', release: 0,
-    // jeb2's Backflip from the take-off to the landing crouch: over by 0.3 s (the 0.25 s dash), up by 0.5 s
-    keys: { smoke_screen: { clip: 'jeb2.Backflip', from: 0.6, to: 1.97, warp: [[0.6, 0], [1.31, 0.3], [1.97, 0.5]], pinXZ: true } },
+    // the tucked jump with a procedural backflip (FLIPS), over by 0.42 s (the 0.25 s dash and the drop), up by 0.5 s
+    keys: { smoke_screen: { clip: 'Jump_Start', from: 0.2, to: 0.5, warp: [[0.2, 0], [0.3, 0.1], [0.5, 0.5]], pinXZ: true } },
     play: { cast: ['smoke_screen', 0.5, 1, 0] },
   },
   roll: {
     grade: 'good', release: 0,
-    // Cinder's Roll_Dodge (the cleanest of the three: one tight forward roll that ends standing; Roll_Dodge_2 spends
-    // 0.7 s shuffling before it goes, Roll_Dodge_4 is a sideways tumble that ends in a low crouch). Cut from the dip
-    // (0.55 s) to standing (1.8 s): tucked by 0.08 s, over by 0.32 s (the 0.35 s dash), up by 0.45 s.
-    // One key per direction relative to facing (rollKey below): forward, back (the same roll reversed), left, right.
+    // KayKit's dodges (0.4 s, stretched to 0.45), one per direction relative to facing (rollKey below). In the air, the same with
+    // the hips pinned and a procedural flip forward or back (FLIPS), and the side dodges as they are.
     keys: {
-      roll: ROLL,
-      roll_back: { ...ROLL, reverse: true },
-      roll_left: { ...ROLL, yaw: 90 },
-      roll_right: { ...ROLL, yaw: -90 },
-      // round 13: in the air the same roll with the hips pinned (flatY) is a flipping air-dodge: a front flip, a backflip,
-      // and a sideways tumble each way (rollKey(dir, yaw, true))
-      roll_air: { ...ROLL, flatY: 0.1 },
-      roll_air_back: { ...ROLL, flatY: 0.1, reverse: true },
-      roll_air_left: { ...ROLL, flatY: 0.1, yaw: 90 },
-      roll_air_right: { ...ROLL, flatY: 0.1, yaw: -90 },
+      roll: DODGE('Forward'), roll_back: DODGE('Backward'), roll_left: DODGE('Left'), roll_right: DODGE('Right'),
+      roll_air: { ...DODGE('Forward'), flatY: 0.1 },
+      roll_air_back: { ...DODGE('Backward'), flatY: 0.1 },
+      roll_air_left: { ...DODGE('Left'), flatY: 0.1 },
+      roll_air_right: { ...DODGE('Right'), flatY: 0.1 },
     },
     play: { cast: ['roll', 0.45, 1, 0] },
   },
   ram_ride: {
     grade: 'ok', release: 0, legacy: ['ride'],
-    keys: { ride: ['jeb.Cautious_Crouch_Walk_Left_inplace', 0.3, 0.42, 1.0] },   // a held wide-legged crouch, straddling the ram
+    keys: { ride: { clip: 'Crouching', loop: true } },     // a low wide crouch on the ram's back
     play: { loop: ['ride', 2.9, 1, 0] },
-    need: 'a seated riding pose (bouncing with the gallop)',
+    need: 'a seated riding pose',
   },
   flask_step: {
     grade: 'good', release: 0.6, legacy: ['flask_step', 'arrival'],
     keys: {
-      flask_step: { clip: 'embibe.Crouch_Charge_and_Throw', from: 4.3, to: 5.7, warp: [[4.3, 0], [5.35, 0.6], [5.7, 0.85]] },
-      arrival: ['embibe.Female_Crouch_Pick_Throw_Forward', 3.45, 4.6, 0.8],    // lands crouched, rises
+      flask_step: { clip: 'Throw', from: 0.2, to: 1.1, warp: [[0.2, 0], [THROW, 0.6], [1.1, 0.85]] },
+      arrival: ['Spawn_Air', 0.55, 1.3, 0.8],
     },
     play: { windup: ['flask_step', 0.85, 1, 0], cast: ['arrival', 0.8, 1, 0] },
   },
@@ -236,45 +277,42 @@ export const SPELL_ANIMS = {
   // ---------------------------------------------------------------- guard (R)
   ward: {
     grade: 'good', release: 0,
-    keys: {},                                      // the base block, held
-    play: { hold: ['block', 99, 0.8, 0] },
+    keys: {},                                      // the shared block, held
+    play: { hold: ['block', 99, 1, 0] },
   },
   black_death: {
     grade: 'ok', release: 0,
     keys: {},
-    play: { hold: ['block', 99, 0.8, 0] },
-    need: 'a hunched, arms-wrapped shroud pose (it blocks from every side; the front-facing block undersells it)',
+    play: { hold: ['block', 99, 1, 0] },
+    need: 'a hunched, arms-wrapped shroud pose',
   },
   firewall: {
-    grade: 'ok', release: 0.2,
-    // gathers low, then spreads both arms wide as the wall rises
-    keys: { firewall: { clip: 'jeb.mage_soell_cast_1', from: 1.2, to: 2.2, warp: [[1.2, 0], [1.4, 0.2], [2.2, 0.8]] } },
+    grade: 'good', release: 0.2,
+    // the staff swept up overhead as the wall rises
+    keys: { firewall: { clip: 'Ranged_Magic_Raise', from: 0.1, to: 1.0, warp: [[0.1, 0], [RAISE, 0.2], [1.0, 0.6]] } },
     play: { cast: ['firewall', 0.6, 1, 0] },
-    need: 'a sweeping arm raise from low to high (a wall rising from the ground)',
   },
   tempest_veil: {
     grade: 'ok', release: 0.15,
-    // no root: a quick two-handed gather, then she keeps moving
-    keys: { tempest_veil: strike('gale.mage_soell_cast_3', 0.93, 0.3, 0.4) },
+    keys: { tempest_veil: strike('Ranged_Magic_Raise', RAISE, 0.3, 0.4) },
     play: { cast: ['tempest_veil', 0.45, 1, 0] },
-    need: 'an upper-body-only arms-around-self swirl (it must blend over running)',
   },
   glacial_bulwark: {
     grade: 'good', release: 0.15,
-    keys: { glacial_bulwark: { clip: 'rime.Charged_Spell_Cast_1', from: 1.6, to: 2.6, warp: [[1.6, 0], [1.9, 0.15], [2.6, 0.6]] } },
+    // a low push forward with the staff as the wall rises in front
+    keys: { glacial_bulwark: { clip: 'Melee_Block_Attack', from: 0.2, to: 0.9, warp: [[0.2, 0], [0.43, 0.15], [0.9, 0.6]] } },
     play: { cast: ['glacial_bulwark', 0.5, 1, 0] },
   },
   ram_guard: {
     grade: 'ok', release: 0,
-    keys: { ram_guard: ['jeb.Block1', 0.3, 1.3, 0.6] },
+    keys: { ram_guard: ['Melee_Block', 0, 0.6] },
     play: { cast: ['ram_guard', 0.6, 1, 0] },
-    need: 'a whistle or shepherd\'s call gesture (the block reads as a ward)',
+    need: 'a whistle or a shepherd\'s call',
   },
   smoke_flask: {
-    grade: 'missing', release: 0.1,
-    keys: { smoke_flask: strike('embibe.Thrust_Slash', 0.73, 0.25, 0.35) },
+    grade: 'good', release: 0.1,
+    keys: { smoke_flask: strike('Throw', THROW, 0.25, 0.35) },
     play: { cast: ['smoke_flask', 0.4, 1, 0] },
-    need: 'a flask smashed down at the feet (a downward throw)',
   },
 
   // ---------------------------------------------------------------- utility (F)
@@ -285,60 +323,51 @@ export const SPELL_ANIMS = {
   },
   trapped_relic: {
     grade: 'ok', release: 0.35,
-    keys: { trapped_relic: ['vesper.mage_soell_cast_5', 9.7, 10.5, 0.5] },   // the curse: a slow hand raised over the object
+    keys: { trapped_relic: ['Ranged_Magic_Spellcasting', 0, 0.67, 0.5] },   // the curse: a hand worked over the object
     play: { cast: ['tk_lift', 0.9, 1, 0], release: ['tk_throw', 0.9, 1, 0], hold: ['trapped_relic', 0.5, 1, 0] },
-    need: 'a curse gesture over an object (both hands, palms down)',
   },
 
   // ---------------------------------------------------------------- ultimates (Q): every one has a 1.3 s wind-up
   meteor_rain: {
     grade: 'good', release: 1.3, legacy: ['ult'],
-    // Wind-up: Jeb's arm-up leap (crouch, then the leap on the release). Cinder's Dive_Down_and_Land is airborne from its
-    // first frame (no crouch or take-off in it), so it takes over in the air: its opening tuck, slowed, is the rise and
-    // hover; its somersault into a head-first plunge is the 0.6 s dive, the plunge landing on the impact. Its vertical
-    // root motion is dropped (flatY): the server flies her. Then she comes up from a crouch out of the blast.
+    // the long gather, the thrust on the release (the leap); then Jump_Idle held through the rise and hover; the dive is the same
+    // pose with wizard.js's procedural pitch (mrainDive); then the landing crouch out of the blast
     keys: {
-      meteor_rain: windup('jeb.Sword_Judgment', 0.2, 0.83, 1.3, 0.2),
-      mrain_hover: { clip: 'cinder.Dive_Down_and_Land', from: 0, to: 0.6, warp: [[0, 0], [0.6, 4.5]], flatY: 0 },
-      mrain_dive: { clip: 'cinder.Dive_Down_and_Land', from: 0.6, to: 1.6, warp: [[0.6, 0], [1.0, 0.18], [1.6, 0.6]], flatY: -0.45 },   // head 10 cm off the ground at the impact
-      mrain_land: { clip: 'jeb2.Dive_Down_and_Land_2', from: 0.6, to: 2.1, warp: [[0.6, 0], [1.2, 0.35], [2.1, 0.8]], pinXZ: true },   // the three-point landing, then up
+      meteor_rain: windup('Ranged_Magic_Spellcasting_Long', 0, LONG, 1.3, 0.2),
+      mrain_hover: { clip: 'Jump_Idle', loop: true, flatY: 0 },
+      mrain_dive: { clip: 'Jump_Start', from: 0.2, to: 0.3, warp: [[0.2, 0], [0.3, 0.6]], flatY: -0.2 },
+      mrain_land: { clip: 'Jump_Land', warp: [[0, 0], [0.3, 0.25], [0.67, 0.8]], pinXZ: true },
     },
-    // windup: on ultWindup; hover: on mrainLeap (rise + hover, at most 4.5 s; mrainDive cuts it); dive: on mrainDive
-    // (msg.left = 0.6 s, so the plunge lands with mrainLand); land: on mrainLand
     play: { windup: ['meteor_rain', 1.5, 1, 0], hover: ['mrain_hover', 4.5, 1, 0], dive: ['mrain_dive', 0.6, 1, 0], land: ['mrain_land', 0.8, 1, 0] },
   },
   eye_of_storm: {
     grade: 'ok', release: 1.3, legacy: ['ult', 'spin'],
-    // a turning, rising gather, then the spinning sweep, repeated while she is the tornado
-    keys: { eye_of_storm: windup('gale.mage_soell_cast_2', 0, 1.23, 1.3, 0.3), spin: ['gale.Sweeping_Kick', 0.8, 1.7] },
+    keys: { eye_of_storm: windup('Ranged_Magic_Spellcasting_Long', 0, LONG, 1.3, 0.3), spin: ['Melee_2H_Attack_Spin', 0.6, 1.4] },
     play: { windup: ['eye_of_storm', 1.6, 1, 0], channel: ['spin', 0.7, 1, 0] },
-    need: 'a looping full-body spin (a tornado), to replace the repeated sweep',
   },
   blizzard: {
     grade: 'good', release: 1.3, legacy: ['ult'],
-    // Rime's charged cast: the gather fills the wind-up, then the push is held through the 2.5 s cone
-    keys: { blizzard: windup('rime.Charged_Spell_Cast_1', 0.4, 1.9, 1.3, 0.1), blizzard_hold: ['rime.Charged_Spell_Cast_1', 1.9, 2.85, 2.5] },
+    // the gather fills the wind-up and thrusts on the release, then the casting loop is held through the 2.5 s cone
+    keys: { blizzard: windup('Ranged_Magic_Spellcasting_Long', 0, LONG, 1.3, 0.1), blizzard_hold: { clip: 'Ranged_Magic_Spellcasting', loop: true } },
     play: { windup: ['blizzard', 1.4, 1, 0], channel: ['blizzard_hold', 2.5, 1, 0] },
   },
   night_cage: {
-    grade: 'ok', release: 1.3, legacy: ['ult'],
-    // the heavy cast: gather, then both hands driven down as the spikes rise
-    keys: { night_cage: windup('base.cast_heavy', 0.3, 1.9, 1.3, 0.6) },
+    grade: 'good', release: 1.3, legacy: ['ult'],
+    // the staff raised, then driven into the ground as the spikes rise
+    keys: { night_cage: windup('Ranged_Magic_Summon', 0.3, SLAM, 1.3, 0.6) },
     play: { windup: ['night_cage', 1.9, 1, 0] },
-    need: 'both fists slammed to the ground (the spikes rise from it)',
   },
   stampede: {
     grade: 'good', release: 1.3, legacy: ['ult'],
-    // Jeb's call: the arm-up leap, then the ground slam on the release
-    keys: { stampede: windup('jeb.Sword_Judgment', 0.2, 1.0, 1.3, 0.8) },
+    keys: { stampede: windup('Ranged_Magic_Summon', 0.3, SLAM, 1.3, 0.8) },
     play: { windup: ['stampede', 2.1, 1, 0] },
   },
   berserker_brew: {
     grade: 'ok', release: 1.3, legacy: ['ult'],
-    // Embibe's drink: the flask at the lips at 0.55 s of the 1.2 s drink, head back, lowered
-    keys: { berserker_brew: { clip: 'embibe.Stand_and_Drink', from: 1.9, to: 5.9, warp: [[1.9, 0], [3.0, 0.55], [4.5, 1.15], [5.9, 1.6]] } },
+    // Use_Item: the hand at the lips at 0.55 s, held, lowered by 1.6 s
+    keys: { berserker_brew: { clip: 'Use_Item', warp: [[0, 0], [0.3, 0.55], [1.2, 1.15], [1.6, 1.6]] } },
     play: { windup: ['berserker_brew', 1.6, 1, 0] },
-    need: 'a drink with a flask in hand: the generic wizard holds no flask, so the left-hand drink barely reads (or fit Embibe\'s potion prop)',
+    need: 'a flask in the hand',
   },
 };
 

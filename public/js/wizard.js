@@ -1,6 +1,7 @@
 // A wizard in the scene: cloned skinned model, animation state machine, nameplate, colour ring.
 import * as THREE from 'three';
-import { makeWizardBody } from './looks.js';
+import { makeWizardBody, botBody, BONES, BODY_TOP } from './looks.js';
+import { FLIPS, PHASES } from './spellanim.js';
 import * as C from '../shared/constants.js';
 
 // Shared telekinesis visuals: glowing motes along the beam and a shell around the held prop.
@@ -35,15 +36,29 @@ const shellMat = bubbleMaterial(TK_COLOR, { opacity: 0.9, fill: 0.05, rim: 0.9, 
 const CYC = C.SPELLBOOK.cyclone, LASH = C.SPELLBOOK.sanguine_lash;
 // Natural ground speed (m/s) of each locomotion clip at 1x, so playback = actual speed / natural speed and the
 // feet don't slide. looks.js measures each body's clips (clip.userData.speed); these are the fallbacks.
-const NATURAL_SPEED = { run: 4.6, walk_fight: 0.73, back: 0.56, crouch_walk: 1.3 };
+const NATURAL_SPEED = { run: 4.6, walk_fight: 1.5, back: 1.2, crouch_walk: 1.0, strafe_left: 3.5, strafe_right: 3.5 };
+// The ward bubble around the body (round 15, the KayKit Mage with its hat): radius, half-height and centre height (m).
+const WARD = { r: 1.25, h: 1.3, y: 1.05 };
 // Normal movement is a walk (Ty): the fight walk forward and sideways, the backward walk backward, each time-scaled
 // to the ground speed by its measured gait speed. 'run' only plays for a body without the fight walk.
 
 // Round 13: casting on the move. A cast that doesn't root plays on the upper body while the legs keep walking: each
 // is a copy of its clip with only its own bones' tracks (LEG_BONES: the hips and legs; everything else is upper body),
 // so every bone has exactly one action driving it. Whole-body moves never split (jumps, flips, rolls, falls, hits).
-const LEG_BONES = new Set(['Hips', ...['Left', 'Right'].flatMap(s => ['UpLeg', 'Leg', 'Foot', 'ToeBase'].map(b => s + b))]);
-const WHOLE_BODY = /^(jump|double_jump|land|roll|dash|death|stun|knockdown|getup|hit_waist|mrain_|ride|spin|arrival|flask_step|float|lash|ult$|air_cast|crouch|smoke_screen|blink|mirror_step|skyward)/;
+const LEG_BONES = new Set([BONES.root, BONES.hips, ...BONES.legs]);
+const WHOLE_BODY = /^(jump|double_jump|land|roll|dash|death|stun|knockdown|getup|hit_waist|mrain_|ride|spin|arrival|flask_step|float|lash|ult$|air_cast|crouch|smoke_screen|blink|mirror_step|skyward|spawn|ledge_climb)/;
+// Looping clips (every other key plays once and holds its last frame until the one-shot ends).
+const LOOPS = new Set(['idle', 'run', 'walk', 'walk_fight', 'back', 'strafe_left', 'strafe_right', 'crouch', 'crouch_walk', 'block', 'cast_heavy', 'float', 'ride', 'spin']);
+// Round 15: main.js's older calls into the Meshy clips by offset (oneShot('cast_heavy', d, 1.5, 1.9) and the like), translated to
+// the named phases (spellanim.js PHASES) until main.js calls pose() itself.
+function legacyPhase(name, timeScale, startAt) {
+  if (timeScale === 1 && startAt === 0) return null;
+  if (name === 'cast_fast') return 'cast';
+  if (name === 'cast_heavy') return startAt >= 1.5 ? 'cast_release' : 'windup';
+  if (name === 'stun') return timeScale >= 2 ? 'flinch' : 'bound';
+  if (name === 'dash') return 'dash';
+  return null;
+}
 // Landings and flips may cut these short (an air cast, a flip, an air roll); anything else playing at touchdown goes on.
 const LANDABLE = /^(jump|double_jump|float|air_cast|roll_air)/;
 
@@ -135,7 +150,9 @@ export class Wizard {
     // round 11: the generic wizard, its look by the loadout's spell mix (looks.js); `voice` picks the grunts
     this.loadout = C.sanitizeLoadout(info.loadout) || { ...C.DEFAULT_LOADOUT };
     this.voice = C.sanitizeVoice(info.voice);
-    const body = makeWizardBody(this.loadout);
+    // round 15: players are the KayKit Mage; bots are Skeletons (the snapshot's `body`, else one picked from the bot's name)
+    this.bodyKind = info.body || (info.bot ? botBody(info.name ?? info.id) : 'mage');
+    const body = makeWizardBody(this.loadout, { body: this.bodyKind });
     const clips = body.clips;
     this.body = body;   // looks.js: optional extras such as Vesper's setWhip / setWhipGlow
     this.model = body.model;
@@ -149,13 +166,10 @@ export class Wizard {
       a.enabled = true; a.setEffectiveWeight(0); a.play();
       this.actions[k] = a;
     }
-    this.actions.idle.setLoop(THREE.LoopPingPong);
-    this.actions.cast_fast.setLoop(THREE.LoopOnce); this.actions.cast_fast.clampWhenFinished = true;
-    this.actions.cast_heavy.setLoop(THREE.LoopOnce); this.actions.cast_heavy.clampWhenFinished = true;
-    this.actions.stun.setLoop(THREE.LoopOnce); this.actions.stun.clampWhenFinished = true;
-    this.actions.dash.setLoop(THREE.LoopOnce); this.actions.dash.clampWhenFinished = true;
-    // optional clips some bodies have (looks.js): a death fall, Gale's cyclone sweep
-    for (const k of ['death', 'spin', 'lash', 'float', 'tk_lift', 'tk_throw', 'hit_waist', 'knockdown', 'getup', 'jump', 'double_jump', 'double_jump_back', 'land', 'land_soft', 'air_cast']) if (this.actions[k]) { this.actions[k].setLoop(THREE.LoopOnce); this.actions[k].clampWhenFinished = true; }
+    for (const [k, a] of Object.entries(this.actions)) {
+      if (LOOPS.has(k) || a.getClip().userData?.loop) continue;
+      a.setLoop(THREE.LoopOnce); a.clampWhenFinished = true;
+    }
 
     this.current = null;
     this.oneShotUntil = 0;
@@ -168,10 +182,10 @@ export class Wizard {
     this.group.add(ring);
     this.ring = ring;
 
-    // ward (block) bubble
+    // ward (block) bubble: round 15, around the KayKit body and its hat (2.2 m) and the staff held out in front
     this.ward = new THREE.Mesh(bubbleGeo, bubbleMaterial(0x6cd0ff));
-    this.ward.scale.set(1.2, 1.3, 1.2);
-    this.ward.position.y = 1.0;
+    this.ward.scale.set(WARD.r, WARD.h, WARD.r);
+    this.ward.position.y = WARD.y;
     this.ward.visible = false;
     this.group.add(this.ward);
     // Black Death has its own look: a black shroud (an opaque dark core) inside a crimson rim instead of the blue bubble
@@ -180,17 +194,19 @@ export class Wizard {
       const u = this.ward.material.uniforms;
       u.color.value.setHex(0x90081c); u.fill.value = 0; u.rim.value = 1.1; u.ripple.value = 0.35; u.whiten.value = 0.04;
       this.wardFill = new THREE.Mesh(bubbleGeo, new THREE.MeshBasicMaterial({ color: 0x040006, transparent: true, opacity: 0, depthWrite: false }));
-      this.wardFill.scale.set(1.18, 1.28, 1.18);
-      this.wardFill.position.y = 1.0;
+      this.wardFill.scale.set(WARD.r * 0.98, WARD.h * 0.98, WARD.r * 0.98);
+      this.wardFill.position.y = WARD.y;
       this.wardFill.visible = false;
       this.wardFill.renderOrder = 5;
       this.ward.renderOrder = 6;
       this.group.add(this.wardFill);
     }
 
-    // charge glow at the staff hand
-    this.hand = this.model.getObjectByName('RightHand') || this.model;
-    this.head = this.model.getObjectByName('Head') || this.model;
+    // charge glow at the staff head (body.tip: the staff's head on the Mage, the weapon's end on a skeleton); `hand` is the right
+    // hand slot, `head` the head bone
+    this.hand = body.hand || this.model;
+    this.head = body.head || this.model;
+    this.tip = body.tip || this.hand;
     this.chargeOrb = new THREE.Mesh(new THREE.IcosahedronGeometry(0.18, 1),
       new THREE.MeshBasicMaterial({ color: 0xff8a3c, transparent: true, opacity: 0.9 }));
     this.chargeOrb.visible = false;
@@ -288,7 +304,7 @@ export class Wizard {
     this.bound = false; this.slowed = false; this.lashing = false;
 
     this.nameplate = makeNameplate(this.bot ? `${info.name} · ${this.bot}` : info.name, info.color);
-    this.nameplate.position.y = 2.25;
+    this.nameplate.position.y = BODY_TOP + 0.4;
     this.nameplate.visible = !isLocal;
     this.group.add(this.nameplate);
 
@@ -297,7 +313,7 @@ export class Wizard {
     const bg = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 0.12), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.6, depthTest: false }));
     this.hpFill = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 0.09), new THREE.MeshBasicMaterial({ color: 0xff5c6a, depthTest: false }));
     this.hpBar.add(bg, this.hpFill);
-    this.hpBar.position.y = 2.0;
+    this.hpBar.position.y = BODY_TOP + 0.17;
     this.hpBar.renderOrder = 11; bg.renderOrder = 11; this.hpFill.renderOrder = 12;
     this.hpBar.visible = !isLocal;
     this.group.add(this.hpBar);
@@ -333,8 +349,7 @@ export class Wizard {
     const prev = this.current ? this.actions[this.current] : null;
     this.current = name;
     next.reset();
-    next.setEffectiveTimeScale(name === 'run' ? 1.35 : name === 'idle' ? 0.6 : name === 'block' ? 0.8 : 1);
-    if (name === 'cast_heavy') next.setEffectiveTimeScale(1.5);
+    next.setEffectiveTimeScale(1);
     next.setEffectiveWeight(1);
     if (prev) { prev.crossFadeTo(next, fade, false); }
     else next.fadeIn(fade);
@@ -342,6 +357,8 @@ export class Wizard {
 
   // Short interrupt (cast, flinch, blink) that returns to the base state afterwards.
   oneShot(name, duration, timeScale = 1, startAt = 0) {
+    const ph = legacyPhase(name, timeScale, startAt);
+    if (ph) return this.pose(ph, duration);
     // round 13: a cast in the air plays the air strike (knees tucked) instead of its ground clip; not a rooting wind-up,
     // which hangs the caster in its own pose (hovering)
     if (this.actions.air_cast && duration <= 1.2 && !WHOLE_BODY.test(name) && !this.castRooted && !this.hovering && !this.dead
@@ -355,6 +372,19 @@ export class Wizard {
     else a.fadeIn(0.08);
     this.current = name;
     this.oneShotUntil = performance.now() / 1000 + duration;
+    const f = FLIPS[name];
+    this.flip = f ? { dir: f.dir, time: f.time, t: 0 } : null;
+  }
+
+  // Round 15: a named animation phase (spellanim.js PHASES: cast, cast_release, windup, flinch, stagger, bound, dash, block_tap,
+  // summon, throw, drink, ledge_climb, tk_lift, tk_throw, arrival, taunt, spawn), held `duration` s (its default if omitted).
+  // `fit`: stretch the clip to the duration (a wind-up; PHASES sets it where it's the norm). False if this body lacks the phase.
+  pose(name, duration, { fit } = {}) {
+    const ph = PHASES[name], a = ph && this.actions[ph.key];
+    if (!a) return false;
+    const d = duration ?? ph.dur, clipLen = a.getClip().duration;
+    this.oneShot(ph.key, d, (fit ?? ph.fit) ? clipLen / Math.max(0.05, d) : 1, 0);
+    return true;
   }
 
   // The upper-body ('up') or legs ('legs') copy of a clip's action, made the first time it's asked for.
@@ -538,7 +568,9 @@ export class Wizard {
     this.prevPos.copy(p);
     const speed = Math.hypot(this.vel.x, this.vel.z);
     const fwd = speed > 0.01 ? (this.vel.x * Math.sin(this.group.rotation.y) + this.vel.z * Math.cos(this.group.rotation.y)) / speed : 1;
-    return { speed, backward: fwd < -0.3 };
+    // sideways when the motion is mostly across the facing (strafe clips); side > 0: to the body's left
+    const side = speed > 0.01 ? (this.vel.x * Math.cos(this.group.rotation.y) - this.vel.z * Math.sin(this.group.rotation.y)) / speed : 0;
+    return { speed, backward: fwd < -0.3, side: Math.abs(side) > 0.75 ? Math.sign(side) : 0 };
   }
 
   // The locomotion clip for this direction: the fight walk forward and sideways, the backward fight walk when
@@ -547,6 +579,7 @@ export class Wizard {
     if (m.speed < 0.4 || (this.inAir ?? this.group.position.y > 0.3) || this.castRooted) return null;   // casting: the cast or idle pose, never a walk
     if (m.backward && this.actions.back) return 'back';
     if (this.sprinting && !slow && this.actions.run) return 'run';   // Sprint (Shift): the Running clip comes back for it
+    if (m.side && !slow && this.actions.strafe_left) return m.side > 0 ? 'strafe_left' : 'strafe_right';
     return this.actions.walk_fight ? 'walk_fight' : 'run';
   }
 
@@ -569,6 +602,11 @@ export class Wizard {
 
   updateAnimation(moving, dt) {
     const m = this.measureVelocity(dt);
+    // back from the dead: a skeleton claws its way up, a mage drops in; a skeleton taunts over a kill
+    if (this.wasDead && !this.dead) this.pose(this.actions.spawn ? 'spawn' : 'arrival');
+    this.wasDead = this.dead;
+    if (this.kills > (this.lastKills ?? this.kills) && this.actions.taunt && !this.dead && !this.inOneShot()) this.pose('taunt');
+    this.lastKills = this.kills;
     // Skyward Flash descent: a body with a float clip (Rime) holds its airborne pose until it lands
     const floating = !this.dead && this.actions.float && (this.inAir ?? this.group.position.y > 0.3);
     if (floating) this.floatT = (this.floatT ?? 0) + dt; else this.floatT = 0;
@@ -619,13 +657,13 @@ export class Wizard {
     this.ward.visible = wu.opacity.value > 0.01;
     // the bubble swells in as it comes up
     const sw = 0.9 + 0.1 * wu.opacity.value;
-    this.ward.scale.set(1.2 * sw, 1.3 * sw, 1.2 * sw);
+    this.ward.scale.set(WARD.r * sw, WARD.h * sw, WARD.r * sw);
     if (this.wardFill) {
       const m = this.wardFill.material;
       m.opacity += (w * 0.97 - m.opacity) * Math.min(1, dt * 14);
       this.wardFill.visible = m.opacity > 0.01;
-      const c = 1.18 + Math.sin(tNow * 9) * 0.03;
-      this.wardFill.scale.set(c, 1.28 + Math.cos(tNow * 7) * 0.04, c);
+      const c = WARD.r * 0.98 + Math.sin(tNow * 9) * 0.03;
+      this.wardFill.scale.set(c, WARD.h * 0.98 + Math.cos(tNow * 7) * 0.04, c);
     }
     // Vesper's whip: out in her hand through the Lash, coiled at her hip again half a second after
     if (this.whipOut && this.lashT < 0) {
@@ -640,7 +678,7 @@ export class Wizard {
       const gold = this.ultWinding && !this.charging;
       this.chargeOrb.material.color.setHex(gold ? 0xffd860 : 0xff8a3c); this.chargeLight.color.setHex(gold ? 0xffc040 : 0xff7a2a);
       this.chargeT += dt;
-      const hp = new THREE.Vector3(); this.hand.getWorldPosition(hp);
+      const hp = new THREE.Vector3(); this.tip.getWorldPosition(hp);
       this.chargeOrb.visible = true;
       this.chargeOrb.position.copy(hp);
       const s = 0.4 + Math.min(1.3, this.chargeT) * 1.2 + Math.sin(this.chargeT * 30) * 0.08;
@@ -677,8 +715,20 @@ export class Wizard {
     // hanging in the air through a rooting wind-up (main.js sets `hovering`): a slow float bob
     this.hoverK = (this.hoverK ?? 0) + ((this.hovering && !this.dead ? 1 : 0) - (this.hoverK ?? 0)) * Math.min(1, dt * 6);
     const bob = this.hoverK > 0.001 ? this.hoverK * (0.06 + Math.sin(performance.now() / 1000 * 5.2) * 0.06) : 0;
-    this.model.position.y = -this.dissolve * 1.6 + hop + this.rideLift + bob;
-    this.model.rotation.x = this.dissolve * 0.5;
+    // round 15: the procedural flip (spellanim FLIPS: the air jump, air rolls, Smoke Screen) turns the body once about its middle;
+    // Meteor Rain's dive pitches it head-first
+    let flip = 0;
+    if (this.flip) {
+      this.flip.t += dt;
+      const k = Math.min(1, this.flip.t / this.flip.time);
+      flip = this.flip.dir * Math.PI * 2 * (k * k * (3 - 2 * k));
+      if (k >= 1 || this.dead) this.flip = null;
+    }
+    this.diveK = (this.diveK ?? 0) + ((this.current === 'mrain_dive' && !this.dead ? 1 : 0) - (this.diveK ?? 0)) * Math.min(1, dt * 10);
+    const pitch = flip + this.diveK * 1.45, mid = 0.85;
+    this.model.position.y = -this.dissolve * 1.6 + hop + this.rideLift + bob + mid - mid * Math.cos(pitch);
+    this.model.position.z = -mid * Math.sin(pitch);
+    this.model.rotation.x = this.dissolve * 0.5 + pitch;
   }
 
   updateCyclone(dt) {
@@ -815,7 +865,7 @@ export class Wizard {
   // Telekinesis beam: motes along a curve from the staff hand to `to`, drifting outward.
   drawBeam(to) {
     const now = performance.now() / 1000;
-    const hand = new THREE.Vector3(); this.hand.getWorldPosition(hand);
+    const hand = new THREE.Vector3(); this.tip.getWorldPosition(hand);
     const mid = hand.clone().lerp(to, 0.5); mid.y += 0.35;
     this.beam.visible = true;
     this.beam.children.forEach((m, i) => {

@@ -137,8 +137,7 @@ function makeBuilderPreview(el) {
     body.model.rotation.y = pv.yaw;
     scene.add(body.model);
     pv.mixer = new THREE.AnimationMixer(body.model);
-    pv.idle = pv.mixer.clipAction(body.clips.idle).setLoop(THREE.LoopPingPong);
-    pv.idle.timeScale = 0.6;
+    pv.idle = pv.mixer.clipAction(body.clips.idle);
     pv.idle.play();
     pv.cur = pv.idle;
     rim.color.setHex(body.look.color);
@@ -157,7 +156,7 @@ function makeBuilderPreview(el) {
     const shots = Object.keys(clips).filter(k => k.startsWith(d.id) && /\d$/.test(k) && k.length === d.id.length + 1).length;
     let args = shots ? spellPlay(d.id, 'shot', (d.step % shots) + 1) : null;
     for (const ph of DEMO) if (!args) args = spellPlay(d.id, ph);
-    const [k, dur, scale, from] = args || ['cast_fast', 0.9, 1.6, 0.3];
+    const [k, dur, scale, from] = args || ['cast_fast', 0.6, 1, 0];
     const clip = clips[k] || pv.body.clips[k];
     if (!clip) { d.next = Infinity; return; }
     const a = pv.mixer.clipAction(clip);
@@ -191,10 +190,11 @@ function makeBuilderPreview(el) {
     // a slow sway around a three-quarter view, so casts read from the front
     pv.body.model.rotation.y = pv.yaw + Math.sin(now / 2400) * 0.35;
     camera.aspect = W / H;
-    // frame the whole body, a staff raised overhead and arms flung wide (3 m tall, 2.1 m wide) whatever the panel's shape
+    // frame the whole body: the Mage with its hat (2.2 m), the staff raised overhead or held out in front (2.7 m tall, 2.3 m
+    // wide), whatever the panel's shape
     const span = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
-    camera.position.set(0, 1.15, Math.max(3.0 / span, 2.1 / (span * camera.aspect)));
-    camera.lookAt(0, 0.95, 0);
+    camera.position.set(0, 1.25, Math.max(2.7 / span, 2.3 / (span * camera.aspect)));
+    camera.lookAt(0, 1.15, 0);
     camera.updateProjectionMatrix();
     renderer.render(scene, camera);
   }
