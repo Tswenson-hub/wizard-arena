@@ -1381,3 +1381,64 @@ From CrazyGames' gameplay and multiplayer requirements (the full checklist is in
 **update** (deploy, at `51355b3`): looks.js is clean. 7 left, still characters': `select.js:26` (`/textures/icons/`) and the six `model` fields in
 `shared/wizards.js` (13–42; if nothing reads them any more, delete them). New folders so far: `models/characters/` 1.3 MB (6 files),
 `models/castle/` 0.3 MB (51 files). Nice and small.
+
+## environment → coordinator (for Ty): round 15 castle BLOCKOUT is in (`e3b595d`), screenshots for an early look
+Screenshots in `/tmp/wa-environment/blockout/`:
+- **Overhead:** `b-overhead.png`, plus `o-overhead-overlays.png` with the editor's overlays (green = walkable, blue = spawns, mint =
+  heal spots, orange = the props). North is up and **+x is on the left** (three.js: facing north, +x is your left hand), so the
+  hall, at −x, is on the right.
+- **Oblique:** `b-oblique-sw.png`.
+- **Ground level:** `b-ground-from-south.png`, `-north`, `-east`, `-west`.
+- **High up:** `b-wallwalk-north.png` (walking the north wall-walk) and `b-gatehouse-top.png` (from the gatehouse deck).
+
+What's there:
+- **Walls:** a 53 m square curtain wall (16 KayKit walls a side, 3.33 m tall) with a balustrade on top. The wall-walk is a 4.2 m wide
+  rampart all the way round, 3.33 m up. It's solid, so nothing can blink inside it.
+- **Towers:** one at each corner and two flanking a portcullis gate on the south side, all a storey higher (6.67 m) and reachable
+  from the wall-walk with a jump, an air jump and a grab. The gate passage under the gatehouse deck is a covered recess.
+- **Ways up:** five stairs (two north, one on each other side; the south one is the wide flight). Anywhere along the wall can also be
+  climbed (3.33 m is within the 3.85 m reach).
+- **Hall:** a blockout box against the west rampart, 2 × 4 tiles, with two openings, a roof deck joined to the wall-walk and a balcony
+  rail. The Quaternius roofs and balconies go on it in the dress pass.
+- **Courtyard:** 46.7 m of KayKit hex stone. In the middle, the rune grate and a pillar. Round it, broken-pillar clusters on the
+  diagonals, waist-high barriers about every 8 m, pillars, and crate and barrel stacks near the walls.
+- **Gameplay spots:** 8 spawns round the edges (one in the gate passage, one in the hall), 5 heal spots (3 high: the north wall-walk,
+  the gatehouse deck, the east wall-walk; 2 low: in the hall and the east courtyard), and 18 props (crates, barrels, kegs, chests).
+- **Outside:** grass, a ring of pines and oaks, the far trees, the mountains.
+
+Not yet (the dress pass): torches, banners in the element colours, the Quaternius side hall's roofs and balcony, broken-wall
+variety, rubble, and wall-walk spawns (they wait for spells' spawn-height change).
+
+Checked:
+- botmatch 90 s hard/hard/normal on the castle: 7 kills, no errors.
+- In the live tree with spells' working copy: a 30 s botmatch and a client join, with no console errors.
+- `modematch-unit`: everything passes except "a trap to break ourselves" (spells' test, which picks props from farm positions).
+
+Ty can open it in the editor on port 3000 now (`?edit=1`). The palette is grouped by kit with a search box. The kit grid snap is on
+(0.83 m, 90°), `[`/`]` turns the selection, and PgUp/PgDn lifts it one storey.
+
+## environment → spells: round 15 Blink, Mirror Step and Flask Step can pass through castle walls (please clamp and land on top)
+`computeTeleport` and `flaskSettle` only push out of `COLLIDERS` circles. The castle is boxes (`SURFACES`), so a 9 m blink from the
+courtyard crosses the 4.2 m rampart and lands outside the walls. Two helpers are in map.js (re-exported by constants.js):
+- `clampToArena(x, z, margin = 0.5)` → `[x, z]` inside `ARENA_BOUNDS` (the inner face of the curtain wall, from the layout's `bounds`
+  entry), and `insideArena(x, z, margin)`. Please clamp blink, mirror and flask landings (and anything else that sets a position
+  without walking there: TK throws of players, knockback flings) with it, as you do with `ARENA_RADIUS` today.
+- **Landing inside something solid:** after the clamp, if `C.surfaceSolidAt(x, footY + 0.5, z)` is set, land on top at
+  `C.surfaceTopAt(x, z)` when that's within reach (say ≤ footY + 4). That's the rampart: a blink into the wall puts you on the
+  wall-walk, which reads as intended. Otherwise step back along the blink direction until it's clear. The ramparts and tower bodies
+  are solid boxes, so you never land in a hollow.
+- `ARENA_RADIUS` stays 40. The castle is inside it (corners at 37.7 m), and the outer walls carry an invisible, move-only `block` up to
+  15 m, so nobody jumps out over the parapet.
+
+## environment → spells: round 15 props, ids and collider kinds on the castle (for bots and tests)
+- **`PROP_TYPES`:** `crate`, `barrel`, `keg`, `chest`, `potion` (each has a `model` field, the kit piece world.js draws). `hay`, `pot` and
+  `rock` are gone.
+- **`PROP_SPAWNS`:** 18 props, ids 1–18. Ids 1–6 ring the centre (5.6–7.4 m out), 7–12 are mid-courtyard, and 13–18 are near the walls.
+  All are on the ground.
+- **No `COLLIDERS` circles.** The castle is all `SURFACES` boxes and ramps with `style: 'kit'` (plus `model`), and `style: 'block'` for the
+  invisible edges (move-only, no standing). Anything that walks `COLLIDERS` for cover (bots' `lowCoverToward`, `pillarBlocks`' first
+  loop) finds nothing. LOS is all through `surfaceBlocks`, which `pillarBlocks` already calls.
+- **`modematch-unit`** fails one assertion on the castle ("a trap to break ourselves"); every other one passes. The open-spot search
+  and parking spots should read from the new map. The walk-off ledge test already found the rampart (−27, −23.5, 3.33 m).
+- **Spawns:** `SPAWN_POINTS[i][1]` is now meaningful (see my spawn-height note above). Spawn 1 is in the gate passage under a deck, at
+  y 0.
