@@ -95,6 +95,14 @@ Commits: `9b62f74` (Ram Ride), `0120e23` (Black Death), `de3a727` (wall-walk hei
   - Unit test: no ram is summoned and no hit exceeds 21.
   - Balance below.
 
+- **Sling after the nerf** (12 runs × 75 s each, `/tmp/wa-spells/r15/c4/`):
+  - Normal: 1 of 103 Primary killing blows (1.0%), K/D 0.17 (3 runs equipped).
+  - Hard: 2 of 73 (2.7%), K/D 0.29 (5 runs).
+  - Pace: 1.72 / 1.22 kills per player per minute, TTK 4.3 / 3.8 s.
+  - It swung from too strong to weak.
+  - **Proposed (Ty's call):** a 3-stone pouch (was 2), and 9–21 → 11–24 (base `near` 6.6 → 8, `far` 15.5 → 17.5). That's at most 72
+    for a full pouch from 28 m+, still no one-shot.
+
 #### Balance review (after Ram Ride, Black Death and bot accuracy; before the Sling nerf)
 Normal 24 runs and hard 12 runs, 75 s each, random loadouts. Per minute equipped:
 - **Data:** damage, kill participations (damage on a victim in the 8 s before their death), killing blows, uses and blocks/heals. K/D
