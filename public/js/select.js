@@ -28,7 +28,7 @@ const iconOf = (id) => `/textures/icons/${SPELL_ICON[id] || id}.png`;
 // spells agent's tuning never makes it wrong. The tooltip has the full blurb and every stat.
 const CARD_LINE = {
   spark: 'Fast bolts, long reach', glacial_skim: 'Ground shards that slow', fireball: 'Big, hot bolts', gale_shear: 'A short-range wind blade',
-  potion_toss: 'Arcing potions that splash', sling: 'Stones that call a goat', hex_shards: 'Glyphs that curve in',
+  potion_toss: 'Arcing potions that splash', sling: 'Stones that call a ram', hex_shards: 'Glyphs that curve in',
   toxic_flask: 'A pool of poison', meteor: 'A slow, heavy fireball', cyclone: 'Spin and fling them away', sanguine_lash: 'A whip that binds',
   frostfall: 'Drop a block of ice', battering_ram: 'A ram charges ahead',
   smoke_flask: 'Smoke that eats spells', ward: 'Block from the front', firewall: 'A wall of flame', black_death: 'Block all round, heal',
@@ -393,7 +393,7 @@ export function openHowToPlay() {
       <div class="htp-keys">${Object.entries(KEYS).map(([h, list]) => `<dl><h3>${h}</h3>${list.map(([ks, t]) =>
         `<dt>${ks.map(k => k.startsWith('×') ? `<span>${k}</span>` : `<kbd>${k}</kbd>`).join('')}</dt><dd>${esc(t)}</dd>`).join('')}</dl>`).join('')}</div>
       <div class="htp-more">${MORE_KEYS.map(([k, t]) => `<span><kbd>${k}</kbd> ${esc(t)}</span>`).join('')}</div>
-      <p class="htp-tip">Don't hit the goats: an angry goat charges, unless your shield faces it.</p>
+      <p class="htp-tip">Watch for rams: a charging ram flattens you, unless your shield faces it.</p>
       <button type="button" class="htp-close">Got it</button>
     </div>`;
   const close = () => {
