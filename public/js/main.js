@@ -237,12 +237,15 @@ ui.form.addEventListener('submit', async (e) => {
 //    lost while the page still has focus (that's Esc), or Esc pressed over the prompt.
 //  - the "Click to play" prompt (#lockPrompt): not captured yet after joining, the lock refused (an iframe without
 //    pointer-lock, Chrome's cool-down after Esc), or lost to another window or tab.
-let menuOpen = false;
+let menuOpen = false, lastMenuSent = false;
 function updateLockUI() {
   const inGame = !!me, free = inGame && !input.locked;
   ui.clickToPlay.classList.toggle('hidden', !free || !menuOpen);
   ui.lockPrompt.classList.toggle('hidden', !free || menuOpen);
   document.body.classList.toggle('paused', free && menuOpen);
+  // tell the server when the Esc menu is open: it waits longer before calling us idle (C.IDLE.waiting)
+  const open = free && menuOpen;
+  if (inGame && open !== lastMenuSent) { lastMenuSent = open; net.send({ t: 'menu', open }); }
   updateBotTally();
   updateRespawnBtn();
 }
@@ -307,8 +310,15 @@ function updateBotTally() {
   const n = [...players.values()].filter(w => w.botLevel).length;
   ui.botTally.textContent = n ? `(${n} in arena)` : '';
 }
+// Idle players (after round 16): the server tells us when we're idle (watching; a bot has our place) or disconnected for it.
+let idleNow = false, kickedNow = false;
+function setIdleNote(on) { idleNow = on; $('#idleNote').classList.toggle('hidden', !on || kickedNow); }
+function backFromIdle() { if (!idleNow || kickedNow) return; setIdleNote(false); net.send({ t: 'activity' }); }
+document.addEventListener('keydown', backFromIdle, true);
+document.addEventListener('mousedown', backFromIdle, true);
+$('#rejoinBtn').addEventListener('click', () => location.reload());
 net.onClose = () => {
-  if (!me) return;
+  if (!me || kickedNow) return;
   ui.status.textContent = 'Disconnected from server — refresh to rejoin.';
   ui.status.style.color = '#ff5c6a';
 };
@@ -937,6 +947,13 @@ function handleMessage(msg) {
       break;
     }
     case 'notice': feed(esc(msg.text)); break;   // a server note for us (e.g. the match is full)
+    case 'idle': setIdleNote(!!msg.on); break;
+    case 'kicked': {   // disconnected for inactivity: a friendly note and a Rejoin button
+      kickedNow = true; setIdleNote(false);
+      $('#kickedNote').classList.remove('hidden');
+      try { document.exitPointerLock?.(); } catch { /* not locked */ }
+      break;
+    }
     case 'heal': {   // Night Cage, Sanguine Aegis, Blood Siphon: green numbers (ours by the HP bar)
       const w = players.get(msg.id);
       if (!w) break;

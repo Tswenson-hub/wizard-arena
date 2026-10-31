@@ -141,6 +141,14 @@ kbd {
 #lockPrompt .lp-big { font-size: 34px; font-weight: 800; letter-spacing: 1px; color: var(--gold); animation: lpPulse 1.6s ease-in-out infinite; }
 #lockPrompt .lp-sub { margin-top: 8px; font-size: 14px; color: var(--dim); max-width: 340px; }
 @keyframes lpPulse { 50% { opacity: 0.72; } }
+/* idle players: the overlay over the game, and the inactivity disconnect */
+#idleNote, #kickedNote { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(8,6,16,0.5); z-index: 7; }
+#kickedNote { background: rgba(8,6,16,0.82); z-index: 30; }
+#idleNote .lp-card, #kickedNote .lp-card { padding: 22px 38px; border-radius: 14px; text-align: center; background: rgba(16,12,26,0.92); border: 1px solid rgba(255,214,120,0.35); box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
+#idleNote .lp-big, #kickedNote .lp-big { font-size: 30px; font-weight: 800; color: var(--gold); }
+#idleNote .lp-big { animation: lpPulse 1.6s ease-in-out infinite; }
+#idleNote .lp-sub, #kickedNote .lp-sub { margin-top: 8px; font-size: 14px; color: var(--dim); max-width: 360px; }
+#kickedNote #rejoinBtn { margin-top: 16px; width: auto; padding: 9px 28px; border: none; border-radius: 8px; font-weight: 700; background: var(--gold); color: #2a1d05; cursor: pointer; }
 .pause-group { display: flex; align-items: center; gap: 8px; }
 .pause-label { font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--dim); }
 .pause-top .vol-row { margin: 0; }

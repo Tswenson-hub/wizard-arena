@@ -704,6 +704,33 @@ async function respawnChecks(join, since) {
   await wait(300);
   ok((snapOf(K)?.kills ?? 0) === kills0 + 1, `and the attacker gets the kill (${kills0} → ${snapOf(K)?.kills})`);
   for (const c of [P, K]) c.ws.close();
+  await wait(300);
+  await idleChecks(join, since);
+}
+
+// ---- after round 16: idle players. No input for C.IDLE.spectate s: they watch and a bot plays; any input seats them again;
+// C.IDLE.kick s: disconnected. (debugIdle shortens the times to 1.5 / 3 / 5 s on this test server.)
+async function idleChecks(join, since) {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  const H = await join('Idler', { utility: 'telekinesis' });
+  let closed = false; H.ws.on('close', () => { closed = true; });
+  H.send({ t: 'matchDebug', size: 2 }); H.send({ t: 'debugIdle', spectate: 1.5, waiting: 3, kick: 5 }); H.send({ t: 'activity' });
+  await wait(1200);
+  const me = () => H.msgs.filter(m => m.t === 'snap').pop()?.players.find(q => q.id === H.id);
+  const fightersNow = () => (H.msgs.filter(m => m.t === 'snap').pop()?.players || []).filter(q => !q.spectator).length;
+  ok(!me()?.spectator, 'a player who just did something is playing');
+  let n = H.msgs.length;
+  await wait(2500);   // idle past 1.5 s
+  ok(since(H, n, m => m.t === 'idle' && m.on).length === 1 && !!me()?.spectator, 'idle: they watch instead (told so)');
+  await wait(1200);
+  ok(fightersNow() === 2 && (H.msgs.filter(m => m.t === 'snap').pop()?.players || []).some(q => q.bot && !q.spectator), `and a bot takes the place (${fightersNow()} fighters)`);
+  n = H.msgs.length;
+  H.send({ t: 'activity' }); await wait(1500);
+  ok(since(H, n, m => m.t === 'idle' && !m.on).length === 1 && !me()?.spectator && since(H, n, m => m.t === 'respawn' && m.id === H.id).length >= 1,
+    'any input seats them again (a bot makes way)');
+  n = H.msgs.length;
+  await wait(5600);   // past the 5 s kick
+  ok(since(H, n, m => m.t === 'kicked' && m.reason === 'inactivity').length === 1 && closed, `idle long enough: disconnected for inactivity (closed ${closed})`);
 }
 
 console.log(fails ? `${fails} FAILED` : 'ALL PASS');

@@ -67,7 +67,7 @@ export function createMatch(ctx) {
   function fillBots() {
     if (!humans().length) return;
     // humans waiting while bots hold places: a bot leaves, the earliest spectator sits down
-    for (const h of humans().filter(p => p.spectator && !p.watchOnly).sort((a, b) => a.id - b.id)) {
+    for (const h of humans().filter(p => p.spectator && !p.watchOnly && !p.idle).sort((a, b) => a.id - b.id)) {
       if (fighters().length >= S.size) {
         const bots = fighters().filter(p => p.bot).sort((a, b) => (b.fill ? 1 : 0) - (a.fill ? 1 : 0) || b.id - a.id);
         if (!bots.length) break;
@@ -222,6 +222,15 @@ export function createMatch(ctx) {
         }
       }
       seat(p);
+    },
+    // Idle players (server.js tracks input): an idle fighter watches instead and a bot takes the place; back from idle, the
+    // spectator queue above seats them again when there's room (a fill bot makes way).
+    setIdle(p, idle) {
+      if (p.bot || !!p.idle === idle) return;
+      p.idle = idle;
+      if (idle && !p.spectator) spectate(p);
+      S.fillCheckAt = 0;
+      ctx.send(p.id, { t: 'idle', on: idle });
     },
     onLeave(p) {
       // last human gone: server.js clears the bots; wait for the next arrival

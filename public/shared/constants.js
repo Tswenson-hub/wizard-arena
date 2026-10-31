@@ -28,6 +28,10 @@ export const LEDGE = { reach: 1.2, time: 0.45, rise: 0.3 };
 // Round 16: the Esc menu's Respawn button. Free and instant when you haven't been hurt for `safeAfter` s; otherwise it counts
 // as a death, credited to whoever hurt you last. At most once per `cooldown` s.
 export const RESPAWN_NOW = { safeAfter: 5, cooldown: 3 };
+// Idle players (after round 16: Ty found an idle tab holding a seat in every match). No input for `spectate` s (or `waiting` s while
+// dead or in the Esc menu): they watch instead, and a bot takes the place. Any input seats them again when there's room.
+// No input for `kick` s: disconnected, with a Rejoin button.
+export const IDLE = { spectate: 45, waiting: 90, kick: 300 };
 // Round 10 (Ty): a thrown object (a prop, a potion barrel, a crate) that hits an unblocked wizard knocks them down (round 15: so do
 // a ram's charge and a Ram Ride running into you):
 // flung back about 2 m, they fall (fall), lie there (down) and get up (getup), unable to move, act or shield throughout.

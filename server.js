@@ -64,7 +64,7 @@ function newPlayer(id, name, loadout = C.DEFAULT_LOADOUT, voice = 'male') {
   const sp = C.SPAWN_POINTS[(id - 1) % C.SPAWN_POINTS.length];
   loadout = C.sanitizeLoadout(loadout) || { ...C.DEFAULT_LOADOUT };
   return {
-    id, name,
+    id, name, lastInputAt: now(),
     loadout, pendingLoadout: null, voice: C.sanitizeVoice(voice),
     color: C.loadoutColor(loadout),
     p: [sp[0], sp[1] || 0, sp[2]], yaw: 0, anim: 'idle',
@@ -1389,8 +1389,47 @@ function updateMeteorRain(p, t, dt) {
 }
 
 // ---------------------------------------------------------------- simulation
+// ---------------------------------------------------------------- idle players (after round 16)
+// A human's last input: any action, or a state report that moves, turns or crouches (an idle tab sends the same report).
+// C.IDLE.spectate s without one (C.IDLE.waiting while dead or in the Esc menu): they watch and a bot plays (match.setIdle);
+// C.IDLE.kick s: disconnected ('kicked'). Their next input brings them back. Tests shorten the times with debugIdle.
+const idleCfg = { ...C.IDLE };
+let nextIdleCheck = 0;
+const PASSIVE = new Set(['state', 'menu', 'matchDebug', 'debugPlace', 'debugProp', 'debugCharge', 'debugIdle', 'addBot', 'removeBots']);
+function noteInput(p, msg) {
+  if (p.bot) return;
+  if (msg.t === 'menu') p.inMenu = !!msg.open;
+  let active = !PASSIVE.has(msg.t);
+  if (msg.t === 'state' && validVec(msg.p)) {
+    const L = p.lastReport, yaw = Number.isFinite(msg.yaw) ? msg.yaw : 0;
+    if (!L || Math.hypot(msg.p[0] - L.p[0], msg.p[2] - L.p[2]) > 0.05 || Math.abs(yaw - L.yaw) > 0.02 || !!msg.crouch !== L.crouch) active = true;
+    p.lastReport = { p: msg.p.slice(), yaw, crouch: !!msg.crouch };
+  }
+  if (!active) return;
+  p.lastInputAt = now();
+  if (p.idle) match.setIdle(p, false);
+}
+function checkIdle(t) {
+  if (t < nextIdleCheck) return;
+  nextIdleCheck = t + 0.5;
+  for (const p of [...players.values()]) {
+    if (p.bot || p.watchOnly) continue;
+    const idleFor = t - (p.lastInputAt ?? t);
+    if (idleFor > idleCfg.kick) { kickIdle(p); continue; }
+    if (!p.idle && idleFor > ((p.dead || p.inMenu) ? idleCfg.waiting : idleCfg.spectate)) match.setIdle(p, true);
+  }
+}
+function kickIdle(p) {
+  const ws = sockets.get(p.id);
+  send(p.id, { t: 'kicked', reason: 'inactivity' });
+  console.log(`[idle] ${p.name} (#${p.id}) disconnected for inactivity`);
+  if (ws) setTimeout(() => ws.close(4000, 'inactivity'), 150);
+  p.lastInputAt = Infinity;   // (once)
+}
+
 function simulate(dt) {
   const t = now();
+  checkIdle(t);
   updateBots(dt, world);
   match.tick(dt);
   updatePotions(t);
@@ -2369,7 +2408,14 @@ wss.on('connection', (ws) => {
       return;
     }
     const p = players.get(id);
-    if (p) handle(p, msg);
+    if (!p) return;
+    noteInput(p, msg);
+    if (msg.t === 'debugIdle') {   // tests only (WA_DEBUG=1): shorter idle times for this server
+      if (process.env.WA_DEBUG) for (const k of ['spectate', 'waiting', 'kick']) if (Number.isFinite(msg[k])) idleCfg[k] = msg[k];
+      return;
+    }
+    if (msg.t === 'menu' || msg.t === 'activity') return;
+    handle(p, msg);
   });
 
   ws.on('close', () => {
