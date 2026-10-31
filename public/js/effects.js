@@ -250,8 +250,9 @@ export class Effects {
       g.add(stone);
       g.userData.spin = new THREE.Vector3(9, 6, 4);
       // round 15: it hits harder the further it flies, and shows it: a warm glow that grows and brightens over the flight
-      const glow = new THREE.Mesh(this.sphereGeo, this.mat(0xffc870, { opacity: 0 }));
-      glow.scale.setScalar(0.15); g.add(glow); g.userData.slingGlow = glow;
+      // (its own material: the opacity is per stone)
+      const glow = new THREE.Mesh(this.sphereGeo, new THREE.MeshBasicMaterial({ color: 0xffb050, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+      glow.scale.setScalar(0.12); g.add(glow); g.userData.slingGlow = glow;
       if (msg.fin) { const ring = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.03, 6, 20), this.mat(0xffe0a0, { opacity: 0.8 })); g.add(ring); }
     } else if (msg.kind === 'fireball') {
       // Cinder's Fireball: a white-hot core in a fat flame shell, bigger again for the 3rd shot
@@ -1347,7 +1348,7 @@ export class Effects {
       if (pr.group.userData.ring) pr.group.userData.ring.rotation.y += dt * 8;
       if (pr.group.userData.slingGlow) {   // Sling: 0 at the hand, full at C.SPELLS.sling.farDist flown
         pr.slingK = Math.min(1, pr.age * C.SPELLS.sling.speed / C.SPELLS.sling.farDist);
-        const gl = pr.group.userData.slingGlow; gl.material.opacity = 0.1 + 0.6 * pr.slingK; gl.scale.setScalar(0.15 + 0.3 * pr.slingK);
+        const gl = pr.group.userData.slingGlow; gl.material.opacity = 0.08 + 0.7 * pr.slingK; gl.scale.setScalar(0.12 + 0.16 * pr.slingK);
       }
       const interval = (pr.kind === 'heavy' || pr.kind === 'lash' || pr.kind === 'fireball' ? 0.025 : 0.035) * (this.low ? 2 : 1);
       if (pr.trail > interval) { pr.trail = 0; this.trail(pr); }
