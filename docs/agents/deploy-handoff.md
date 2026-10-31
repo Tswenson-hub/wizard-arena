@@ -17,14 +17,23 @@
 - **Initial download** (`fe5123e`): `deploy/subpath_test.py` counts the bytes CrazyGames counts (load start to the first `gameplayStart`),
   plus at "Ready" and by folder; `--max-mb 20` fails over the target.
 - **Store art** (`14f2d24`): `deploy/capture_store.py <game url> [out]` (below).
-- **README credits** (`896c7f2`): Kay Lousberg (four KayKit packs) and Quaternius, CC0; Kenney particles; RandomMind's CC0 menu music.
-  The Meshy credit line stays (marked "farm era") until Phase B deletes those models.
+- **README credits** (`896c7f2`, `ad5bb1b`): Kay Lousberg (four KayKit packs) and Quaternius, CC0; Kenney particles; RandomMind's CC0 menu
+  music. After Phase B, Meshy is credited only for what's still shipped: trees, potion barrel, ram, ice wall, acid puddle, mountains, grass.
+- **Phase B clean-up** (`2337150`, `ebec3be`, `0baa724`, `8c808cf`): deleted 25 farm GLBs, `textures/ground/dirt_path.webp`, `wizard.glb`,
+  `models/wizards/` (15 files), `tools/bake-clip-pool.py`, `tools/prepare-wizard-model.sh` (each grepped unreferenced first); dropped
+  the presets' dead `tint`/`model`, the `registerModel` stub, the deleted names in the editor's `SPECIAL_MODELS`, and the last absolute
+  path (`select.js:26`). Noted in requests.md.
+- **Verified at `8c808cf`:** `modematch-unit` ALL PASS (96 checks); `npm run build:crazygames -- --ref HEAD` exit 0 with no warnings;
+  `subpath_test.py --max-mb 20` PASS, 7.7 MB initial, no request outside `/game/`, no failures, no console errors, SDK start/stop
+  (`/tmp/wa-deploy/phaseb-subpath.png`, the castle); `smoke.py` on a HEAD server PASS 3 of 4 runs, the 4th failed only "still connected"
+  (0 frames in 2 s while the page compiled shaders), fixed in `smoke.py` by waiting up to 8 s (then PASS, first frame after 1.5 s).
 
 ### Download budget (target under 20 MB to the first gameplayStart)
 | When | Initial download | Build | Notes |
 |---|---|---|---|
 | `b10be88` (round 14, farm) | **16.9 MB** in 383 responses | 313 files, 30.4 MB unzipped, 22.8 MB zip | sounds 2.5, farmhouse 2.0, silo 1.6, wizard.glb 1.4, barn 1.3, textures 1.1, wizards/ 0.8 (lazy), vendor 0.8, js 0.5 |
 | `51355b3` (characters and castle kit in, farm not yet removed) | not measured (game server mid-change) | 372 files, 32.3 MB unzipped | characters/ 1.3 MB (6), castle/ 0.3 MB (51); fails on 7 absolute paths |
+| **`8c808cf` (Phase B: farm, Meshy wizards and dirt texture deleted)** | **7.7 MB** in 355 responses | **377 files, 9.4 MB unzipped, 6.6 MB zip**, zero absolute paths | sounds 2.5, characters 1.3, textures 0.9, vendor 0.8, castle 0.5, js 0.5, ram 0.3, village 0.3, potion 0.3 |
 
 The unzipped 30.4 MB is mostly what round 15 removes: `models/wizards/` 12.8 MB (15 files, the Meshy heroes, `clip-pool.glb`, `jeb2`) and
 the farm models in `models/` 12.2 MB. Re-measure after Phase B's delete:
