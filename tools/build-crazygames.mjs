@@ -1,11 +1,13 @@
 // npm run build:crazygames: the client as static files for CrazyGames (deploy-owned).
-//   node tools/build-crazygames.mjs [--server wss://host] [--out dist/crazygames] [--ref <commit>] [--no-zip]
+//   node tools/build-crazygames.mjs [--server wss://host] [--out dist/crazygames] [--ref <commit>] [--no-zip] [--allow-abs]
 //   --ref builds from a commit's public/ (git archive) instead of the working tree: use it for the upload, so
 //   nobody's uncommitted work ships. Without it, uncommitted changes under public/ are listed as a warning.
 // Writes <out>/ and <out>.zip (index.html at the zip's root):
-//   - public/ minus the map editor (edit.html, js/editor.js) and OS junk
-//   - every URL relative ('/models/x' -> './models/x'): CrazyGames serves the game from a subpath. Anything still
-//     absolute in the sources is rewritten here and listed as a warning, and the build fails if one survives
+//   - public/ minus the map editor (edit.html, js/editor*.js) and OS junk; fails on unconverted source formats (.gltf, .fbx...)
+//   - every URL relative: CrazyGames serves the game from a subpath, so a root path ('/models/x') misses. The build
+//     FAILS on any root-absolute path in the sources and lists each file:line, so it's fixed in the source.
+//     --allow-abs rewrites them in the copy instead ('/models/x' -> './models/x') with a warning: for a test build
+//     while an owner's fix is pending, never for the upload
 //   - three.js vendored: only the files the client imports (followed through the addons' own imports)
 //   - config.js setting window.WA_SERVER (default wss://wizard-arena-76od.onrender.com), read by net.js
 //   - the CrazyGames SDK v3 and deploy/crazygames/platform.js (guarded gameplayStart / gameplayStop)
@@ -23,13 +25,17 @@ const OUT = path.resolve(ROOT, arg('--out', 'dist/crazygames'));
 const ZIP = !process.argv.includes('--no-zip');
 const SDK_URL = 'https://sdk.crazygames.com/crazygames-sdk-v3.js';
 const REF = arg('--ref', null);
+const ALLOW_ABS = process.argv.includes('--allow-abs');
 const THREE = path.join(ROOT, 'node_modules', 'three');
 
 // CrazyGames' published limits (developer docs, "Technical requirements"); re-check them before submitting
 const LIMITS = { files: 1500, totalMB: 250, initialMB: 50 };
-const EXCLUDE = new Set(['edit.html', 'js/editor.js']);
+// the map editor's page and scripts (editor.js, and any editor-*.js it grows) never ship
+const EDITOR = /^edit\.html$|^js\/editor([-_.][\w-]+)?\.js$|^css\/edit(or)?\.css$/;
 const JUNK = /(^|\/)(\.DS_Store|Thumbs\.db|\.gitkeep)$|\.(orig|bak|tmp)$/;
 const TEXT = /\.(html|js|mjs|css|json)$/;
+// source formats that must be converted (GLB with meshopt, webp) before they go in public/
+const RAW = /\.(gltf|fbx|obj|mtl|blend|blend1|dae|3ds|max|psd|tga|exr|hdr)$/i;
 // a quote, backtick or "(" then a root-absolute path into one of the client's folders
 const ABS = /(["'`(])\/(?=(vendor|models|textures|sounds|css|js|shared|icons|favicon)\b)/g;
 
@@ -58,20 +64,37 @@ if (REF) {
 }
 const tracked = new Set(git('ls-files', 'public').split('\n').filter(Boolean).map(f => f.slice('public/'.length)));
 for (const f of walk(PUBLIC)) {
-  if (EXCLUDE.has(f) || JUNK.test(f)) continue;
+  if (EDITOR.test(f) || JUNK.test(f)) continue;
   if (!tracked.has(f)) warnings.push(`untracked file shipped: public/${f}`);
   fs.mkdirSync(path.join(OUT, path.dirname(f)), { recursive: true });
   fs.copyFileSync(path.join(PUBLIC, f), path.join(OUT, f));
 }
 if (tmp) fs.rmSync(tmp, { recursive: true, force: true });
 
-// ---- 2. relative URLs
+// ---- 2. relative URLs, and no unconverted source formats
+const raw = walk(OUT).filter(f => RAW.test(f));
+if (raw.length) {
+  console.error('source-format files in public/ (convert to GLB/webp with tools/optimize-models.sh, or remove):\n  ' + raw.join('\n  '));
+  process.exit(1);
+}
+const absAt = [];
 for (const f of walk(OUT).filter(f => TEXT.test(f))) {
   const p = path.join(OUT, f), src = fs.readFileSync(p, 'utf8');
-  const hits = src.match(ABS);
-  if (!hits) continue;
-  fs.writeFileSync(p, src.replace(ABS, '$1./'));
-  warnings.push(`rewrote ${hits.length} absolute path(s) in ${f} (make them relative in the source)`);
+  const hits = [...src.matchAll(ABS)];
+  if (!hits.length) continue;
+  for (const m of hits) {
+    const line = src.slice(0, m.index).split('\n').length;
+    absAt.push(`${f}:${line}: ${src.slice(m.index, src.indexOf('\n', m.index)).trim().slice(0, 60)}`);
+  }
+  if (ALLOW_ABS) {
+    fs.writeFileSync(p, src.replace(ABS, '$1./'));
+    warnings.push(`--allow-abs: rewrote ${hits.length} absolute path(s) in ${f} (not for the upload: fix the source)`);
+  }
+}
+if (absAt.length && !ALLOW_ABS) {
+  console.error(`root-absolute paths in the sources (CrazyGames serves from a subpath, so these 404). Make them relative ('./models/...'),\n` +
+    `or pass --allow-abs for a test build:\n  ` + absAt.join('\n  '));
+  process.exit(1);
 }
 
 // ---- 3. the server URL: config.js, and net.js must read it
@@ -133,7 +156,7 @@ for (const f of files.filter(f => TEXT.test(f))) {
   const src = fs.readFileSync(path.join(OUT, f), 'utf8');
   for (const m of src.matchAll(ABS)) left.push(`${f}: ...${src.slice(m.index, m.index + 40)}`);
 }
-if (/edit\.html|editor\.js/.test(files.join('\n'))) left.push('map editor files in the build');
+for (const f of files.filter(f => EDITOR.test(f))) left.push(`map editor file in the build: ${f}`);
 if (left.length) { console.error('absolute paths left in the build:\n  ' + left.join('\n  ')); process.exit(1); }
 
 const size = (f) => fs.statSync(path.join(OUT, f)).size;
@@ -152,6 +175,14 @@ console.log(`files: ${files.length} (limit ${LIMITS.files})`);
 console.log(`size: ${MB(total)} unzipped${ZIP ? `, ${MB(zipBytes)} zip (${path.relative(ROOT, OUT)}.zip)` : ''} (limit ${LIMITS.totalMB} MB)`);
 console.log(`three: ${need.size} files vendored`);
 console.log('largest: ' + biggest.map(([f, b]) => `${f} ${MB(b)}`).join(', '));
+// by folder (models/ split one level deeper: castle, village, characters...), to track the download budget
+const byDir = new Map();
+for (const f of files) {
+  const parts = f.split('/');
+  const k = parts.length === 1 ? '(root)' : parts[0] === 'models' && parts.length > 2 ? parts.slice(0, 2).join('/') + '/' : parts[0] + '/';
+  const e = byDir.get(k) || { n: 0, b: 0 }; e.n++; e.b += size(f); byDir.set(k, e);
+}
+console.log('by folder: ' + [...byDir].sort((a, b) => b[1].b - a[1].b).map(([k, e]) => `${k} ${MB(e.b)} (${e.n})`).join(', '));
 for (const w of warnings) console.log('warning: ' + w);
 const over = files.length > LIMITS.files || total > LIMITS.totalMB * 1048576;
 if (over) { console.error('OVER CrazyGames limits'); process.exit(1); }
