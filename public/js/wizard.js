@@ -356,8 +356,9 @@ export class Wizard {
   }
 
   // Short interrupt (cast, flinch, blink) that returns to the base state afterwards.
-  oneShot(name, duration, timeScale = 1, startAt = 0) {
-    const ph = legacyPhase(name, timeScale, startAt);
+  // `raw`: play `name` as given (pose() does: its own keys are never translated back into phases, or a fitted `stun` loops).
+  oneShot(name, duration, timeScale = 1, startAt = 0, raw = false) {
+    const ph = !raw && legacyPhase(name, timeScale, startAt);
     if (ph) return this.pose(ph, duration);
     // round 13: a cast in the air plays the air strike (knees tucked) instead of its ground clip; not a rooting wind-up,
     // which hangs the caster in its own pose (hovering)
@@ -383,7 +384,7 @@ export class Wizard {
     const ph = PHASES[name], a = ph && this.actions[ph.key];
     if (!a) return false;
     const d = duration ?? ph.dur, clipLen = a.getClip().duration;
-    this.oneShot(ph.key, d, (fit ?? ph.fit) ? clipLen / Math.max(0.05, d) : 1, 0);
+    this.oneShot(ph.key, d, (fit ?? ph.fit) ? clipLen / Math.max(0.05, d) : 1, 0, true);
     return true;
   }
 

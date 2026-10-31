@@ -8,7 +8,7 @@ import { buildWorld, makePropMesh, spinners, loadModels } from './world.js';
 import * as World from './world.js';   // round 14: cameraClearance / cameraCutaway (environment), looked up by name
 import { RamView, loadRamModel } from './rams.js';
 import { Wizard } from './wizard.js';
-import { registerModel, loadWizardModels } from './looks.js';
+import { loadWizardModels } from './looks.js';
 import { Effects } from './effects.js';
 import * as Select from './select.js';
 import { loadLoadout, saveLoadout, loadVoice, saveVoice } from './loadout-store.js';
@@ -203,10 +203,8 @@ ui.joinBtn.disabled = true;
 
 const loader = new GLTFLoader();
 loadRamModel(loader);   // (not waited on: a ram is a box until it arrives)
-const wizardLoaded = new Promise((res, rej) => loader.load('./models/wizard.glb', (gltf) => { registerModel(gltf); res(); }, (ev) => {
-  if (ev.total) ui.loadStatus.textContent = `Loading wizard… ${Math.round(ev.loaded / ev.total * 100)}%`;
-}, rej));
-Promise.all([wizardLoaded.then(() => loadWizardModels(loader)), loadModels(loader, scene)]).then(() => {
+// round 15: the KayKit bodies and clips (looks.js loads models/characters/*); wizard.glb is retired
+Promise.all([loadWizardModels(loader), loadModels(loader, scene)]).then(() => {
   ui.loadStatus.textContent = 'Ready. Pick a name and enter.';
   ui.joinBtn.disabled = false;
   if (!ui.name.value) ui.name.value = 'Wizard' + Math.floor(Math.random() * 900 + 100);
@@ -464,12 +462,9 @@ function setProp(data, initial = false) {
   }
 }
 
-// Telekinesis gestures (looks.js clips): the arm raising a lift, the fling of a throw. Bodies without them
-// fall back to the quick cast.
-function tkGesture(w, clip) {
-  const a = w.actions[clip];
-  if (a) w.oneShot(clip, Math.min(0.9, a.getClip().duration), 1, 0);
-  else w.oneShot('cast_fast', 0.4, 2.6, 0.3);
+// Telekinesis gestures (the tk_lift / tk_throw phases): the arm raising a lift, the fling of a throw; else the quick cast.
+function tkGesture(w, phase) {
+  if (!w.pose(phase)) w.pose('cast', 0.4);
 }
 
 // Roll (round 12): the roll clip for its direction against the body's facing (spellanim.rollKey), else a dash.
@@ -477,7 +472,7 @@ function tkGesture(w, clip) {
 function playRoll(w, dir, air = false) {
   const a = spellPlay('roll', 'cast');
   if (a && spellanim.rollKey) a[0] = spellanim.rollKey(dir, w.group.rotation.y, !!air);
-  if (a && w.actions?.[a[0]]) w.oneShot(...a); else w.oneShot('dash', 0.4, 2.5, 2.2);
+  if (a && w.actions?.[a[0]]) w.oneShot(...a); else w.pose('dash', 0.4);
 }
 
 // Round 11: a spell's own animation (spellanim.js, characters agent) when the body has its clip: true if it played.
@@ -525,7 +520,7 @@ function handleMessage(msg) {
         shake(msg.blocked ? 0.5 : 1.0);
         if (msg.blocked) { local.vel.x += msg.dir[0] * C.RAM.blockKnockback; local.vel.z += msg.dir[2] * C.RAM.blockKnockback; feed('Your ward stopped the ram!'); }
       } else if (Math.hypot(msg.p[0] - local.pos.x, msg.p[2] - local.pos.z) < 12) shake(0.3);
-      if (target && msg.blocked) target.oneShot('stun', 0.45, 3.0, 0.3);
+      if (target && msg.blocked) target.pose('flinch', 0.45);
       break;
     }
     case 'ramBonk': {
@@ -555,21 +550,21 @@ function handleMessage(msg) {
         if (msg.kind !== 'prop' && msg.kind !== 'flaskstep' && !(msg.kind === 'skim' && owner.inOneShot() && !combo)) effects.muzzle(msg);
         if ((combo || msg.kind === 'shear') && C.PRIMARY_KINDS.has(msg.kind)) effects.slash([msg.p[0] + msg.v[0] * 0.04, msg.p[1], msg.p[2] + msg.v[2] * 0.04], owner.color ?? 0xffffff, msg.fin ? 1.2 : 0.9);
         if (msg.fin && C.PRIMARY_KINDS.has(msg.kind) && !(performance.now() - (owner.finSndAt || 0) < 150)) { owner.finSndAt = performance.now(); sfx.finisher(msg.p, C.primaryElement(owner.loadout)); }   // the 3rd-shot accent, by element (once for Skim's three shards)
-        if (msg.kind === 'potion') { if (!combo) owner.oneShot('cast_fast', 0.45, 2.4, 0.25); sfx.play('potion_toss', { pos: msg.p, vol: 0.8, jitter: 0.08 }); }
-        else if (msg.kind === 'toxic') { if (!playSpell(owner, 'toxic_flask', 'cast')) owner.oneShot('cast_fast', 0.5, 2, 0.25); sfx.play('potion_toss', { pos: msg.p, vol: 0.85, rate: 0.85 }); }
+        if (msg.kind === 'potion') { if (!combo) owner.pose('throw', 0.45); sfx.play('potion_toss', { pos: msg.p, vol: 0.8, jitter: 0.08 }); }
+        else if (msg.kind === 'toxic') { if (!playSpell(owner, 'toxic_flask', 'cast')) owner.pose('throw', 0.5); sfx.play('potion_toss', { pos: msg.p, vol: 0.85, rate: 0.85 }); }
         else if (msg.kind === 'flaskstep') { sfx.play('whoosh', { pos: msg.p, vol: 0.6, rate: 1.3 }); }
-        else if (msg.kind === 'fast') { if (!combo) owner.oneShot('cast_fast', 0.45, 2.6, 0.25); if (!msg.fin) sfx.castFast(msg.p); }
-        else if (msg.kind === 'fireball') { if (!combo) owner.oneShot('cast_fast', 0.5, 2.3, 0.25); sfx.play('spark_cast', { pos: msg.p, vol: 0.7, rate: msg.fin ? 0.75 : 0.85 }); }
-        else if (msg.kind === 'shear') { if (!combo) owner.oneShot('cast_fast', 0.35, 3, 0.25); sfx.play('shear_cast', { pos: msg.p, vol: msg.fin ? 0.95 : 0.75, rate: msg.fin ? 0.9 : 1, jitter: 0.06 }); }
-        else if (msg.kind === 'hex') { if (!combo) owner.oneShot('cast_fast', 0.45, 2.6, 0.25); sfx.play('hex_cast', { pos: msg.p, vol: 0.75, rate: 1 + (msg.curve?.shot ?? 0) * 0.08, jitter: 0.04 }); }
-        else if (msg.kind === 'sling') { if (!combo) owner.oneShot('cast_fast', 0.4, 2.6, 0.25); sfx.play('sling_cast', { pos: msg.p, vol: 0.75, jitter: 0.06 }); }   // (it used to fall through to the thrown-prop branch)
-        else if (msg.kind === 'skim') { if (!owner.inOneShot()) { if (!combo) owner.oneShot('cast_fast', 0.4, 2.8, 0.25); sfx.castSkim(msg.p); } }   // three per cast
+        else if (msg.kind === 'fast') { if (!combo) owner.pose('cast', 0.45); if (!msg.fin) sfx.castFast(msg.p); }
+        else if (msg.kind === 'fireball') { if (!combo) owner.pose('cast', 0.5); sfx.play('spark_cast', { pos: msg.p, vol: 0.7, rate: msg.fin ? 0.75 : 0.85 }); }
+        else if (msg.kind === 'shear') { if (!combo) owner.pose('cast', 0.35); sfx.play('shear_cast', { pos: msg.p, vol: msg.fin ? 0.95 : 0.75, rate: msg.fin ? 0.9 : 1, jitter: 0.06 }); }
+        else if (msg.kind === 'hex') { if (!combo) owner.pose('cast', 0.45); sfx.play('hex_cast', { pos: msg.p, vol: 0.75, rate: 1 + (msg.curve?.shot ?? 0) * 0.08, jitter: 0.04 }); }
+        else if (msg.kind === 'sling') { if (!combo) owner.pose('cast', 0.4); sfx.play('sling_cast', { pos: msg.p, vol: 0.75, jitter: 0.06 }); }   // (it used to fall through to the thrown-prop branch)
+        else if (msg.kind === 'skim') { if (!owner.inOneShot()) { if (!combo) owner.pose('cast', 0.4); sfx.castSkim(msg.p); } }   // three per cast
         else if (msg.kind === 'lash') {
           // a body with its own lash clip is already mid-strike: let the follow-through play
-          if (!owner.actions.lash) owner.oneShot('cast_heavy', 0.5, 1.8, 1.9);
+          if (!owner.actions.lash) owner.pose('cast_release', 0.5);
           owner.lashT = -1; owner.lashing = false; sfx.lashCrack(msg.p); effects.slash(msg.p, 0xff2a3c, 1.3);
         }
-        else if (msg.kind === 'heavy') { owner.charging = false; owner.oneShot('cast_heavy', 0.55, 1.5, 1.9); sfx.castHeavy(msg.p); }
+        else if (msg.kind === 'heavy') { owner.charging = false; owner.pose('cast_release', 0.55); sfx.castHeavy(msg.p); }
         else { tkGesture(owner, 'tk_throw'); sfx.throw_(msg.p); if (owner.carrying) startCarry(owner, null); }
       }
       break;
@@ -604,14 +599,14 @@ function handleMessage(msg) {
         effects.hitFlash(c, msg.kind === 'skim' ? 0xbfeaff : 0xff3b4e);
         // a hurled prop doubles them over (hit_waist); other interrupting hits flinch
         if (msg.knockdown) { target.knockDown(C.KNOCKDOWN); effects.dust(target.group.position, 6); sfx.play('hit_heavy', { pos: c, vol: 1 }); }   // round 10: knocked flat
-        else if (msg.kind === 'prop' && target.actions.hit_waist) target.oneShot('hit_waist', target.actions.hit_waist.getClip().duration, 1, 0);
-        else if (C.hitSpec(msg.kind)?.stun !== 0 && msg.int !== false) target.oneShot('stun', msg.kind === 'heavy' ? 0.5 : 0.55, 3.0, 0.3);
+        else if (msg.kind === 'prop' && target.pose('stagger')) { /* doubled over */ }
+        else if (C.hitSpec(msg.kind)?.stun !== 0 && msg.int !== false) target.pose('flinch', msg.kind === 'heavy' ? 0.5 : 0.55);
         sfx.hitBody(c);
         sfx.voice(target, target === me ? null : c);   // a grunt, by gender (rate-limited per wizard)
         if (msg.slow) target.slowed = true;
         if (msg.launch) target.launch(msg.launch);
-        if (msg.bind && (msg.freeze || msg.kind === 'frostfall')) { target.bound = true; target.frozen = true; target.endLash(); target.cancelCyclone(); target.oneShot('stun', 0.15, 3, 0.3); }
-        else if (msg.bind) { target.bound = true; target.endLash(); target.cancelCyclone(); effects.bind([c.x, c.y - 1, c.z]); sfx.bind(c); target.oneShot('stun', msg.bind, 0.6, 0.2); }
+        if (msg.bind && (msg.freeze || msg.kind === 'frostfall')) { target.bound = true; target.frozen = true; target.endLash(); target.cancelCyclone(); target.pose('flinch', 0.15); }
+        else if (msg.bind) { target.bound = true; target.endLash(); target.cancelCyclone(); effects.bind([c.x, c.y - 1, c.z]); sfx.bind(c); target.pose('bound', msg.bind); }
       }
       if (target === me) {
         if (!msg.blocked) {
@@ -692,7 +687,7 @@ function handleMessage(msg) {
       const p = w === me ? [local.pos.x, 0, local.pos.z] : msg.p;
       effects.skyward(p, msg.top);
       sfx.skyward([p[0], 1, p[2]]);
-      w.oneShot('dash', 0.5, 2.5, 2.2);
+      w.pose('dash', 0.5);
       if (w !== me) { w.targetPos.set(msg.p[0], msg.top, msg.p[2]); w.group.position.copy(w.targetPos); }
       break;
     }
@@ -731,7 +726,7 @@ function handleMessage(msg) {
     case 'lashMiss': {
       const w = players.get(msg.id);
       if (!w) break;
-      w.oneShot('stun', msg.root, 0.5, 0.2);   // recovery: doubled over, rooted
+      w.pose('stagger', msg.root);   // recovery: doubled over, rooted
       if (w === me) { local.rootUntil = Math.max(local.rootUntil, now + msg.root); local.vel.set(0, 0, 0); feed('Your lash missed: <b>recovering</b>'); }
       break;
     }
@@ -740,7 +735,7 @@ function handleMessage(msg) {
       if (!w) break;
       effects.mirror(msg.from, [msg.to, ...msg.decoys.map(d => d.p)]);
       sfx.mirror([msg.from[0], 1, msg.from[2]]);
-      w.oneShot('dash', 0.4, 2.5, 2.2);
+      w.pose('dash', 0.4);
       // (round 13: from the air it comes out at that height, then falls)
       if (w === me) {
         local.pos.set(msg.to[0], msg.to[1] || 0, msg.to[2]); local.vel.multiplyScalar(0.5);
@@ -783,8 +778,11 @@ function handleMessage(msg) {
       effects.smoke(msg.p, msg.left);
       const w = players.get(msg.owner);
       if (w) {
-        if (w.actions.back) w.oneShot('back', SMOKE.dashTime + 0.1, w.actions.back.getClip().duration / (SMOKE.dashTime + 0.1) * 0.5, 0);
-        else w.oneShot('dash', SMOKE.dashTime + 0.1, 2.5, 2.2);
+        // the backflip (spellanim's smoke_screen key), else a backward walk, else the dash
+        if (!playSpell(w, 'smoke_screen', 'cast')) {
+          if (w.actions.back) w.oneShot('back', SMOKE.dashTime + 0.1, w.actions.back.getClip().duration / (SMOKE.dashTime + 0.1) * 0.5, 0);
+          else w.pose('dash', SMOKE.dashTime + 0.1);
+        }
         sfx.smoke([msg.p[0], 1, msg.p[2]]);
       }
       break;
@@ -792,7 +790,7 @@ function handleMessage(msg) {
     case 'frostfall': {
       frosts.set(msg.id, effects.frostfall(msg.p, msg.left));
       const w = players.get(msg.owner);
-      if (w) { w.oneShot('cast_heavy', FROST.castPose, 1.5, 1.9); sfx.frostCast(wpos(w)); }
+      if (w) { w.pose('cast_release', FROST.castPose); sfx.frostCast(wpos(w)); }
       sfx.play('frostfall_fall', { pos: [msg.p[0], 3, msg.p[2]], vol: 0.9, jitter: 0, delay: Math.max(0, msg.left - 1.5) });   // the rising whoosh lands with the ice
       if (Math.hypot(msg.p[0] - local.pos.x, msg.p[2] - local.pos.z) < FROST.radius + 0.5 && msg.owner !== myId) feed('<b>Ice from above!</b> Get out of the shadow');
       break;
@@ -863,7 +861,7 @@ function handleMessage(msg) {
       effects.teleport(msg.from, msg.to);
       if (w) {
         sfx.teleport(msg.to);
-        w.oneShot('dash', 0.5, 2.5, 2.2);
+        w.pose('dash', 0.5);
         if (w !== me) { w.targetPos.set(msg.to[0], msg.to[1] || 0, msg.to[2]); w.group.position.copy(w.targetPos); }
         else if (local.pos.distanceTo(new THREE.Vector3(msg.to[0], msg.to[1] || 0, msg.to[2])) > 1.5) local.pos.set(msg.to[0], msg.to[1] || 0, msg.to[2]);
       }
@@ -946,7 +944,7 @@ function handleMessage(msg) {
       break;
     case 'grab': {
       const w = players.get(msg.id);
-      if (w && w !== me) w.oneShot('tk_lift', msg.time, 1.6, 0);
+      if (w && w !== me) w.pose('tk_lift', msg.time);
       if (w) sfx.play('step_grass', { pos: wpos(w), vol: 0.6, rate: 0.8 });
       break;
     }
@@ -1009,7 +1007,7 @@ function handleMessage(msg) {
       if (!w) break;
       w.ultWinding = true;
       // the ultimate's own wind-up at 1x (its release lands on 1.3 s), else the shared ult clip squeezed into the wind-up
-      if (!playSpell(w, msg.ult, 'windup')) w.oneShot(w.actions.ult ? 'ult' : 'cast_heavy', msg.left, w.actions.ult ? w.actions.ult.getClip().duration / msg.left : 0.9, w.actions.ult ? 0 : 0.3);
+      if (!playSpell(w, msg.ult, 'windup')) w.pose('windup', msg.left);
       effects.ultTell(w.group, msg.left, C.loadoutBolt(w.loadout));
       sfx.ultWindup(wpos(w));   // the shared sting; it peaks on the release
       if (w === me && !local.ultWind) local.ultWind = { start: now };
@@ -1032,7 +1030,7 @@ function handleMessage(msg) {
       w.blizzYaw = msg.yaw;
       if (w.blizzFx) effects.stopBlizzard(w.blizzFx);
       w.blizzFx = effects.blizzard(w, msg.left);
-      w.oneShot('cast_heavy', msg.left, 0.4, 1.2);
+      w.pose('windup', msg.left);
       // Ty's Rime ULT: a punchy start, then its strongest stretch looped under the cone (faded out at the end)
       sfx.play('blizzard_cast', { pos: wpos(w), vol: 1, jitter: 0 });
       w.blizzSnd?.stop(0.1);
@@ -1121,7 +1119,7 @@ function handleMessage(msg) {
       // Battering Ram's wind-up: the caster stomps; a ghost ram paws the ground in front of him, kicking up dust, and snorts
       const w = players.get(msg.id);
       if (!w) break;
-      if (!playSpell(w, 'battering_ram', 'windup')) w.oneShot('cast_heavy', msg.left, 1.5, 1.9);   // the stomp lands on the release
+      if (!playSpell(w, 'battering_ram', 'windup')) w.pose('summon', msg.left, { fit: true });   // the stomp lands on the release
       const B = SPELL.battering_ram, d = [Math.sin(msg.yaw), Math.cos(msg.yaw)], gp = w.group.position;
       ghostRams.get(msg.id)?.dispose(scene);
       const ghost = new RamView({ id: -msg.id, p: [gp.x + d[0] * B.spawnDist, gp.z + d[1] * B.spawnDist], y: gp.y, yaw: msg.yaw, s: 'windup' }, scene);
@@ -1142,12 +1140,12 @@ function handleMessage(msg) {
       ghostRams.get(msg.id)?.dispose(scene); ghostRams.delete(msg.id);
       if (msg.id === myId) { local.ramWind = null; castSlow(); }
       const w = players.get(msg.id);
-      if (w) { w.oneShot('cast_heavy', 0.55, 1.5, 1.9); sfx.play('battering_ram', { pos: wpos(w), vol: 1, jitter: 0.04 }); }
+      if (w) { w.pose('cast_release', 0.55); sfx.play('battering_ram', { pos: wpos(w), vol: 1, jitter: 0.04 }); }
       break;
     }
     case 'ramGuard': {
       const w = players.get(msg.id);
-      if (w) { if (w.actions.block) w.oneShot('block', 0.5, 1, 0); sfx.play('ram_guard_cast', { pos: wpos(w), vol: 0.9, jitter: 0.04 }); }
+      if (w) { w.pose('block_tap', 0.5); sfx.play('ram_guard_cast', { pos: wpos(w), vol: 0.9, jitter: 0.04 }); }
       break;
     }
     case 'ride': {
@@ -1169,14 +1167,14 @@ function handleMessage(msg) {
       break;
     case 'rideThrown': {
       const w = players.get(msg.id);
-      if (w) { w.oneShot('stun', 0.6, 2, 0.2); feed(`<b>${esc(w.name)}</b> was thrown off the ram!`); }
+      if (w) { w.pose('stagger', 0.6); feed(`<b>${esc(w.name)}</b> was thrown off the ram!`); }
       if (msg.id === myId) local.ride = null;
       break;
     }
     case 'stampede': {
       stampedeFx.set(msg.id, Object.assign(effects.stampedeLane(msg.p, msg.dir, msg.width, msg.length, msg.left), { owner: msg.owner }));
       const w = players.get(msg.owner);
-      if (w) w.oneShot(w.actions.ult ? 'ult' : 'cast_heavy', STAMP.castPose, w.actions.ult ? 1 : 1.5, w.actions.ult ? 0 : 1.9);
+      if (w && !playSpell(w, 'stampede', 'cast')) w.pose('summon', STAMP.castPose, { fit: true });
       // the rumble rolling down the lane
       sfx.play('stampede', { pos: [msg.p[0] + msg.dir[0] * 14, 0.5, msg.p[2] + msg.dir[2] * 14], vol: 1.1, jitter: 0 });
       for (let i = 0; i < 3; i++) sfx.bleat([msg.p[0] + msg.dir[0] * (4 + i * 6), 1, msg.p[2] + msg.dir[2] * (4 + i * 6)], true, { vol: 0.8, delay: 0.15 + i * 0.35, owner: 'stampede' });   // the herd
@@ -1203,7 +1201,7 @@ function handleMessage(msg) {
     case 'toxicThrow': break;   // the throw pose plays from the projectile
     case 'flaskWind': {
       const w = players.get(msg.id);
-      if (w) { w.oneShot(w.actions.combo1 ? 'combo1' : 'cast_heavy', msg.left, 1, w.actions.combo1 ? 0 : 1.2); effects.burst(w.group.position.clone().setY(1.3), 0xa050e0, 8, 1.5, 0.3, -1); sfx.play('swell', { pos: wpos(w), vol: 0.6, rate: 1.2 }); }
+      if (w) { if (!playSpell(w, 'flask_step', 'windup')) w.pose('windup', msg.left); effects.burst(w.group.position.clone().setY(1.3), 0xa050e0, 8, 1.5, 0.3, -1); sfx.play('swell', { pos: wpos(w), vol: 0.6, rate: 1.2 }); }
       break;
     }
     case 'flaskCancel':
@@ -1215,10 +1213,9 @@ function handleMessage(msg) {
       sfx.play('flask_land', { pos: msg.to, vol: 0.9, jitter: 0.06 });
       sfx.play('blink', { pos: msg.from, vol: 0.35, rate: 0.8 });
       if (w) {
-        const arr = w.actions.arrival;
-        if (arr) w.oneShot('arrival', Math.min(1, arr.getClip().duration), 1, 0); else w.oneShot('dash', 0.4, 2.5, 2.2);
-        if (w === me) { local.flaskWind = null; local.pos.set(msg.to[0], 0, msg.to[2]); local.vel.set(0, 0, 0); }
-        else { w.targetPos.set(msg.to[0], 0, msg.to[2]); w.group.position.copy(w.targetPos); }
+        if (!w.pose('arrival')) w.pose('dash', 0.4);
+        if (w === me) { local.flaskWind = null; local.pos.set(msg.to[0], msg.to[1] || 0, msg.to[2]); local.vel.set(0, 0, 0); }
+        else { w.targetPos.set(msg.to[0], msg.to[1] || 0, msg.to[2]); w.group.position.copy(w.targetPos); }
       }
       break;
     }
@@ -1231,8 +1228,7 @@ function handleMessage(msg) {
     case 'brew': {
       const w = players.get(msg.id);
       if (!w) break;
-      const drink = w.actions.ult;   // Stand_and_Drink, if the body has it as 'ult'
-      if (drink) w.oneShot('ult', SPELL.berserker_brew.drink, drink.getClip().duration / SPELL.berserker_brew.drink, 0); else w.oneShot('cast_heavy', SPELL.berserker_brew.drink, 1.2, 1.5);
+      if (!playSpell(w, 'berserker_brew', 'cast')) w.pose('drink', SPELL.berserker_brew.drink, { fit: true });
       if (w.brewFx) effects.stopAura(w.brewFx);
       w.brewFx = effects.brewAura(w, msg.left);
       sfx.play('brew_drink', { pos: wpos(w), vol: 1, jitter: 0.03 });
@@ -1243,7 +1239,7 @@ function handleMessage(msg) {
     case 'cage': {
       cages.set(msg.id, { ...msg, x: msg.p[0], z: msg.p[2], fx: effects.nightCage(msg.p, msg.left) });
       const w = players.get(msg.owner);
-      if (w) { w.oneShot('cast_heavy', CAGE.castPose, 1.5, 1.9); sfx.play('night_cage', { pos: [msg.p[0], 1, msg.p[2]], vol: 1, jitter: 0 }); sfx.play('night_cage_chains', { pos: [msg.p[0], 1, msg.p[2]], vol: 0.8, delay: 0.25 }); }
+      if (w) { w.pose('cast_release', CAGE.castPose); sfx.play('night_cage', { pos: [msg.p[0], 1, msg.p[2]], vol: 1, jitter: 0 }); sfx.play('night_cage_chains', { pos: [msg.p[0], 1, msg.p[2]], vol: 0.8, delay: 0.25 }); }
       if (msg.foes.includes(myId)) feed(msg.inside.includes(myId) ? `<b>Caged!</b> You can't leave <b>${esc(w?.name || '?')}</b>'s Night Cage` : `<b>${esc(w?.name || '?')}</b>'s Night Cage: you can't get in`);
       break;
     }
@@ -1260,7 +1256,7 @@ function handleMessage(msg) {
     case 'firewall': {
       firewalls.set(msg.id, { data: msg, fx: effects.firewall(msg) });
       const w = players.get(msg.owner);
-      if (w) w.oneShot('cast_fast', 0.45, 2.2, 0.25);
+      if (w) w.pose('cast', 0.45);
       sfx.play('spark_cast', { pos: [msg.x, 1, msg.z], vol: 0.7, rate: 0.55 });   // Ty's fireball sound, deeper: the ignite
       sfx.play('firewall_cast', { pos: [msg.x, 1, msg.z], vol: 1, jitter: 0.03 });
       break;
@@ -1609,9 +1605,10 @@ const aimOrigin = new THREE.Vector3();
 function computeAim() {
   camera.getWorldDirection(aimDir);
   const target = tmp.v1.copy(camera.position).addScaledVector(aimDir, 40);
-  me.hand.getWorldPosition(aimOrigin);
-  // keep the origin sane even mid-animation
-  if (aimOrigin.distanceTo(local.pos) > 2 || aimOrigin.y < 0.3) aimOrigin.set(local.pos.x, local.pos.y + 1.3, local.pos.z);
+  (me.tip || me.hand).getWorldPosition(aimOrigin);   // round 15: from the staff's head (looks.js tip), else the hand
+  // keep the origin sane even mid-animation (within reach of the chest, above the knees)
+  const chestY = local.pos.y + 1.1;
+  if (Math.hypot(aimOrigin.x - local.pos.x, aimOrigin.y - chestY, aimOrigin.z - local.pos.z) > 1.8 || aimOrigin.y < local.pos.y + 0.9) aimOrigin.set(local.pos.x, local.pos.y + 1.3, local.pos.z);
   aimDir.copy(target).sub(aimOrigin).normalize();
 }
 
@@ -2225,7 +2222,7 @@ function updateLocal(dt) {
       local.grab = { start: now, from: [local.pos.x, local.pos.y, local.pos.z], to };
       local.jump = null; local.vel.set(0, 0, 0); local.sprinting = false;
       net.send({ t: 'grab', dir });
-      me.oneShot('tk_lift', C.LEDGE.time, 1.6, 0);   // the climb pose (stand-in until a pull-up clip exists)
+      if (!me.pose('ledge_climb', C.LEDGE.time)) me.pose('tk_lift', C.LEDGE.time);   // the pull-up
     }
   }
   if (local.grab) {
