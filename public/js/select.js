@@ -24,7 +24,32 @@ const SPELL_ICON = {
   sanguine_lash: 'lash', battering_ram: 'ram', toxic_flask: 'toxic', glacial_bulwark: 'bulwark', flask_step: 'flaskstep',
 };
 const iconOf = (id) => `/textures/icons/${SPELL_ICON[id] || id}.png`;
+// A card's one-line description (round 14): short enough for two lines on the smallest card, and free of numbers so the
+// spells agent's tuning never makes it wrong. The tooltip has the full blurb and every stat.
+const CARD_LINE = {
+  spark: 'Fast bolts, long reach', glacial_skim: 'Ground shards that slow', fireball: 'Big, hot bolts', gale_shear: 'A short-range wind blade',
+  potion_toss: 'Arcing potions that splash', sling: 'Stones that call a goat', hex_shards: 'Glyphs that curve in',
+  toxic_flask: 'A pool of poison', meteor: 'A slow, heavy fireball', cyclone: 'Spin and fling them away', sanguine_lash: 'A whip that binds',
+  frostfall: 'Drop a block of ice', battering_ram: 'A ram charges ahead',
+  smoke_flask: 'Smoke that eats spells', ward: 'Block from the front', firewall: 'A wall of flame', black_death: 'Block all round, heal',
+  tempest_veil: 'Swallow spells, keep casting', ram_guard: 'Rams take your hits', glacial_bulwark: 'A freezing ice wall',
+  flask_step: 'Teleport where it lands', ram_ride: 'Gallop on a ram', blink: 'Teleport forward', skyward: 'Shoot up, float down',
+  mirror_step: 'Dash and leave decoys', smoke_screen: 'Leap back into smoke',
+  telekinesis: 'Lift an object and hurl it', trapped_relic: 'Turn an object into a trap', roll: 'Roll out of the way',
+  meteor_rain: 'Leap up, dive as a blaze', blizzard: 'A cone of freezing snow', eye_of_storm: 'Become a tornado',
+  stampede: 'A lane of charging rams', berserker_brew: 'Harder potions, half cooldowns', night_cage: 'A ring nobody crosses',
+};
 const firstSentence = (s) => (s || '').split(/(?<=\.)\s/)[0];
+const cardLine = (s) => CARD_LINE[s.id] || firstSentence(s.blurb);
+// The tags a card shows, most telling first (the tooltip lists them all; fit() drops any that don't fit).
+const TAG_ORDER = ['Combo', 'Stuns', 'Roots', 'Knockdown', 'Slows', 'Heal', 'Teleport', 'Dodge', 'Channel', 'Summon', 'Lob', 'Area',
+  'Wind-up', 'Dash', 'Shield', 'Hitscan-like', 'Interrupts', 'Projectile'];
+const tagRank = (t) => { const i = TAG_ORDER.indexOf(t); return i < 0 ? TAG_ORDER.length : i; };
+// The stat symbols (an SVG mask each, so they look the same on every system) and their legend.
+const STATS = [['dmg', 'Damage'], ['cd', 'Cooldown'], ['rng', 'Range'], ['dur', 'Duration'], ['wu', 'Wind-up']];
+// a stat on a card: its number and unit kept together by a narrow space ("0.45 s" -> "0.45 s", narrower)
+const tight = (v) => String(v).replace(/(\d) (s|m|s\/|%)/g, '$1\u202f$2');
+const tagHTML = (t) => `<i${t === 'Combo' ? ' class="combo"' : ''}>${esc(t)}</i>`;
 // Phases a hovered card demonstrates, in order of preference (a primary shows its magazine's shots in turn).
 const DEMO = ['windup', 'cast', 'release', 'channel', 'loop', 'hold'];
 
@@ -32,7 +57,8 @@ function builderHTML() {
   return `<div class="sb-top">
       <div class="sb-group sb-presets" role="group" aria-label="Presets"><span class="sb-label">Presets</span>${C.PRESETS.map(p =>
         `<button type="button" class="sb-chip" data-preset="${p.id}" title="${esc(p.hero)}'s old kit: ${esc(C.LOADOUT_SLOTS.map(s => C.SPELLBOOK[p.loadout[s]]?.name).join(', '))}">${esc(p.name)}</button>`).join('')}
-        <button type="button" class="sb-chip sb-random" data-random title="A random spell in every slot">🎲 Randomize</button></div>
+        <button type="button" class="sb-chip sb-random" data-random title="A random spell in every slot">🎲 Randomize</button>
+        <button type="button" class="sb-chip sb-howto" data-howto title="Controls and the goal">How to play</button></div>
       <div class="sb-group sb-saved" role="group" aria-label="Saved loadouts"><span class="sb-label">Saved</span>${Array.from({ length: MAX_SAVED }, (_, i) =>
         `<span class="sb-slotbtn" data-saved="${i}"><button type="button" class="sb-chip sb-load"></button><button type="button" class="sb-save" title="Save the current loadout here">Save</button></span>`).join('')}</div>
     </div>
@@ -55,19 +81,22 @@ function builderHTML() {
     <div class="sb-foot">
       <div class="sb-group sb-voice" role="radiogroup" aria-label="Voice"><span class="sb-label">Voice</span>${C.VOICES.map(v =>
         `<button type="button" class="sb-chip" role="radio" data-voice="${v}">${v === 'male' ? 'Male' : 'Female'}</button>`).join('')}</div>
+      <div class="sb-legend" aria-label="Stat symbols">${STATS.map(([k, t]) => `<span class="st-${k}">${t}</span>`).join('')}</div>
       <div class="sb-extra"></div>
     </div>
-    <div class="sb-tip" role="tooltip" hidden></div>`;
+    <div class="sb-tip" role="tooltip" hidden></div>
+    <div class="sb-desktop" role="note"><b>Best played on a desktop with a keyboard and mouse</b>
+      <span>Wizard Arena needs a wider window, WASD and a mouse. Make the window wider, or come back on a computer.</span></div>`;
 }
 
 function cardHTMLFor(id) {
   const s = C.spellInfo(id);
-  const stats = [['dmg', 'Damage', s.damage], ['cd', 'Cooldown', s.cooldown], ['rng', s.range ? 'Range' : 'Duration', s.range || s.duration], ['wu', 'Wind-up', s.windup]]
-    .filter(([, , v]) => v).map(([k, t, v]) => `<span class="st-${k}" title="${t}">${esc(v)}</span>`).join('');
-  const tags = s.tags.map(t => `<i${t === 'Combo' ? ' class="combo"' : ''}>${esc(t)}</i>`).join('');
-  return `<div class="sb-card" role="radio" tabindex="-1" data-spell="${id}" aria-label="${esc(s.name)}" style="--el:${hex(s.color)}">
+  const stats = [['dmg', 'Damage', s.damage], ['cd', 'Cooldown', s.cooldown], s.range ? ['rng', 'Range', s.range] : ['dur', 'Duration', s.duration], ['wu', 'Wind-up', s.windup]]
+    .filter(([, , v]) => v).map(([k, t, v]) => `<span class="st-${k}" title="${t}: ${esc(v)}">${esc(tight(v))}</span>`).join('');
+  const tags = s.tags.slice().sort((a, b) => tagRank(a) - tagRank(b)).map(tagHTML).join('');
+  return `<div class="sb-card" role="radio" tabindex="-1" data-spell="${id}"${s.combos.length ? ' data-combo' : ''} aria-label="${esc(s.name)}" style="--el:${hex(s.color)}">
       <div class="sb-head"><img class="sb-icon" src="${iconOf(id)}" alt="" draggable="false"><b class="sb-name">${esc(s.name)}</b></div>
-      <div class="sb-blurb">${esc(firstSentence(s.blurb))}</div>
+      <div class="sb-blurb">${esc(cardLine(s))}</div>
       <div class="sb-stats">${stats}</div>
       <div class="sb-tags">${tags}</div>
     </div>`;
@@ -75,11 +104,11 @@ function cardHTMLFor(id) {
 
 function tipHTML(id) {
   const s = C.spellInfo(id);
-  const row = (k, v) => v ? `<dt>${k}</dt><dd>${esc(v)}</dd>` : '';
+  const row = (k, v, st) => v ? `<dt class="st-${st}">${k}</dt><dd>${esc(v)}</dd>` : '';
   return `<div class="tip-head" style="--el:${hex(s.color)}"><img src="${iconOf(id)}" alt=""><div><b>${esc(s.name)}</b><span>${esc(C.ELEMENTS[s.element].name)} · ${esc(C.SLOT_INFO[s.slot].label)} (${esc(C.SLOT_INFO[s.slot].key)})</span></div></div>
     <p>${esc(s.blurb)}</p>
-    <dl>${row('Damage', s.damage)}${row('Cooldown', s.cooldown)}${row('Range', s.range)}${row('Duration', s.duration)}${row('Wind-up', s.windup)}</dl>
-    <div class="sb-tags">${s.tags.map(t => `<i${t === 'Combo' ? ' class="combo"' : ''}>${esc(t)}</i>`).join('')}</div>
+    <dl>${row('Damage', s.damage, 'dmg')}${row('Cooldown', s.cooldown, 'cd')}${row('Range', s.range, 'rng')}${row('Duration', s.duration, 'dur')}${row('Wind-up', s.windup, 'wu')}</dl>
+    <div class="sb-tags">${s.tags.slice().sort((a, b) => tagRank(a) - tagRank(b)).map(tagHTML).join('')}</div>
     ${s.combos.map(c => `<div class="tip-combo"><b>Combo: ${esc(c.name)}</b> with ${esc(c.spells.filter(x => x !== id).map(x => C.SPELLBOOK[x].name).join(', '))}. ${esc(c.text)}</div>`).join('')}`;
 }
 
@@ -261,6 +290,7 @@ export function mountSpellBuilder(container, { loadout, voice, onChange, onVoice
     if (!b) return;
     if (b.dataset.preset) setLoadout(C.PRESETS.find(p => p.id === b.dataset.preset).loadout);
     else if ('random' in b.dataset) setLoadout(C.randomLoadout());
+    else if ('howto' in b.dataset) openHowToPlay();
     else if (b.dataset.voice) { if (b.dataset.voice !== vox) { vox = b.dataset.voice; paint(); onVoice?.(vox); } }
     else if (b.classList.contains('sb-load')) { const s = saved[+b.parentElement.dataset.saved]; if (s) setLoadout(s.loadout); }
     else if (b.classList.contains('sb-save')) {
@@ -300,17 +330,29 @@ export function mountSpellBuilder(container, { loadout, voice, onChange, onVoice
     next.focus();
   });
 
-  // a card whose content overflows (a two-line name on a short screen) drops its blurb
+  // Nothing on a card is cut off (the tooltip has everything): tags that don't fit on its one line are left off whole;
+  // a card still too full (a short screen) drops its tag row, or its description instead if that's enough. A combo
+  // card would rather keep its Combo tag, so it tries dropping the description first.
+  const over = (c) => c.scrollHeight > c.clientHeight + 1;
   const fit = () => {
-    const cards = $$('.sb-card');
-    for (const c of cards) c.classList.remove('tight');
-    for (const c of cards) if (c.scrollHeight > c.clientHeight + 1) c.classList.add('tight');
+    const cards = $$('.sb-card').filter(c => c.offsetParent);
+    for (const c of cards) { c.classList.remove('tight', 'notags'); for (const i of c.querySelectorAll('.sb-tags i')) i.hidden = false; }
+    for (const c of cards) {
+      const row = c.querySelector('.sb-tags'), w = row.clientWidth;
+      for (const i of row.querySelectorAll('i')) if (i.offsetLeft - row.offsetLeft + i.offsetWidth > w + 0.5) i.hidden = true;
+    }
+    const first = (c) => 'combo' in c.dataset ? 'tight' : 'notags', second = (c) => 'combo' in c.dataset ? 'notags' : 'tight';
+    for (const c of cards.filter(over)) c.classList.add(first(c));
+    for (const c of cards.filter(over)) c.classList.replace(first(c), second(c));
+    for (const c of cards.filter(over)) c.classList.add(first(c));
   };
   const ro = new ResizeObserver(() => requestAnimationFrame(fit));
   ro.observe($('.sb-rows'));
 
   paint();
   pv.setLoadout(cur);
+  // the how-to-play card greets a first visit on the join screen (not the pause menu's builder)
+  if (container.closest('#join') && !howToSeen()) openHowToPlay();
   const io = new IntersectionObserver((en) => pv.setVisible(en[en.length - 1].isIntersecting));
   io.observe(root);
 
@@ -322,4 +364,50 @@ export function mountSpellBuilder(container, { loadout, voice, onChange, onVoice
     get voice() { return vox; },
     destroy() { io.disconnect(); ro.disconnect(); pv.destroy(); root.remove(); },
   };
+}
+
+// ---------------------------------------------------------------- how to play (round 14)
+// openHowToPlay(): the controls and the goal, as a card over the page. It opens by itself on a first visit (remembered
+// in localStorage), and again from the builder's "How to play" chip (or anything else that calls it, the "?" say).
+// Esc, the button or a click outside closes it.
+const HOWTO_KEY = 'waHowToPlaySeen';
+const howToSeen = () => { try { return !!localStorage.getItem(HOWTO_KEY); } catch { return false; } };
+const KEYS = {
+  Moving: [[['W', 'A', 'S', 'D'], 'Move'], [['Mouse'], 'Look and aim'], [['Space'], 'Jump'], [['Space', '×2'], 'Double jump'],
+    [['Shift'], 'Sprint'], [['C'], 'Crouch']],
+  'Your six spells': [[['LMB'], 'Primary: a magazine, then a reload'], [['RMB'], 'Power'], [['R'], 'Shield (hold or tap)'],
+    [['E'], 'Mobility'], [['F'], 'Utility'], [['Q'], 'Ultimate, once charged']],
+};
+const MORE_KEYS = [['T', 'Reload early'], ['M', 'Mute'], ['Esc', 'Menu and your loadout']];
+let howTo = null;
+export function openHowToPlay() {
+  if (howTo) { howTo.querySelector('.htp-close').focus(); return; }
+  const back = document.createElement('div');
+  back.className = 'htp-back';
+  back.innerHTML = `<div class="htp" role="dialog" aria-modal="true" aria-labelledby="htpTitle">
+      <h2 id="htpTitle">How to play</h2>
+      <div class="htp-goal"><b>Free-for-all, four wizards.</b> The first to <b>15 kills</b> wins.</div>
+      <div class="htp-build"><b>Build your wizard: one spell per slot.</b> Each row of cards is a slot with its own key.
+        Hover a card for its full stats; cards tagged <i class="combo">Combo</i> work together.
+        <div class="sb-legend">${STATS.map(([k, t]) => `<span class="st-${k}">${t}</span>`).join('')}</div></div>
+      <div class="htp-keys">${Object.entries(KEYS).map(([h, list]) => `<dl><h3>${h}</h3>${list.map(([ks, t]) =>
+        `<dt>${ks.map(k => k.startsWith('×') ? `<span>${k}</span>` : `<kbd>${k}</kbd>`).join('')}</dt><dd>${esc(t)}</dd>`).join('')}</dl>`).join('')}</div>
+      <div class="htp-more">${MORE_KEYS.map(([k, t]) => `<span><kbd>${k}</kbd> ${esc(t)}</span>`).join('')}</div>
+      <p class="htp-tip">Don't hit the goats: an angry goat charges, unless your shield faces it.</p>
+      <button type="button" class="htp-close">Got it</button>
+    </div>`;
+  const close = () => {
+    try { localStorage.setItem(HOWTO_KEY, '1'); } catch { /* private mode: it shows again next time */ }
+    removeEventListener('keydown', onKey, true);
+    back.remove(); howTo = null;
+  };
+  const onKey = (e) => {
+    if (e.key === 'Escape' || e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); close(); }
+    else if (e.key === 'Tab') { e.preventDefault(); back.querySelector('.htp-close').focus(); }
+  };
+  back.addEventListener('click', (e) => { if (e.target === back || e.target.closest('.htp-close')) close(); });
+  addEventListener('keydown', onKey, true);
+  document.body.appendChild(back);
+  howTo = back;
+  back.querySelector('.htp-close').focus({ preventScroll: true });
 }
