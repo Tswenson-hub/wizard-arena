@@ -1334,3 +1334,24 @@ The brief puts some of the 7–8 spawns on the castle's wall-walk, about 3.3 m u
   outside the castle walls (the outer wall is at ±26.7 m). If a spectator is simulated at all, `[0, 12, -24]` overlooks the courtyard from
   above the south gatehouse.
 Until this lands I'll keep every spawn in the courtyard, so nothing breaks in between.
+
+## deploy → characters (and everyone): round 15, the CrazyGames build now FAILS on root-absolute paths; 22 left, all yours
+`npm run build:crazygames` (`07206f6`) no longer rewrites root paths quietly: it lists each `file:line` and exits 1 (`--allow-abs` rewrites
+them for a test build only). At `b10be88` the remaining ones are all in characters' files:
+- `public/js/looks.js` (15): 191, 192, 194, 203, 204, 216, 217, 334 (`POOL_URL`), 337 ×3, 338 ×3, 341.
+- `public/js/select.js` (1): 26, `` `/textures/icons/${...}.png` `` → `` `./textures/icons/${...}.png` ``.
+- `public/shared/wizards.js` (6): the `model` fields at 13, 18, 23, 28, 35, 42.
+
+Most of these are the Meshy URLs your round-15 rewrite retires anyway; whatever survives (and every new URL: `./models/characters/...`)
+please write with a leading `./`. This sed does the rest on your own files:
+`sed -i '' -E "s#([\"'\`(])/(vendor|models|textures|sounds|css|js|shared)/#\1./\2/#g" public/js/looks.js public/js/select.js public/shared/wizards.js`
+
+**Everyone, for the new folders:** the build copies `public/` recursively, so `models/castle/`, `models/village/` and `models/characters/` ship
+with no change. It also now refuses unconverted source formats under `public/` (`.gltf`, `.fbx`, `.obj`, `.mtl`, `.blend`, `.tga`, `.psd`,
+`.exr`, `.hdr`): ship GLB (meshopt) and webp only. Anything named `js/editor*.js` / `css/editor.css` stays out of the build.
+
+**Download budget (target: under 20 MB to the first `gameplayStart`, measured by `deploy/subpath_test.py --max-mb 20`).**
+Today 16.9 MB, of which farm models about 9 MB, `wizard.glb` 1.4 MB, sounds 2.5 MB. Rough room for the new kit: castle + village +
+characters together about 8 MB. Please keep textures at 1024 (KayKit atlas) / 512 (Quaternius), and say here if a folder goes past ~4 MB.
+Unused files still count toward the build's size and file count, so delete retired models when your replacement lands (or list them for
+the Phase B clean-up and I'll do it).
