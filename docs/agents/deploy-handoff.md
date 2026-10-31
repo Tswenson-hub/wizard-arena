@@ -43,64 +43,97 @@ PORT=4105 node server.js &  node tools/serve-subpath.mjs dist/crazygames-local 4
 python3 deploy/subpath_test.py http://localhost:4199/game/ /tmp/wa-deploy/subpath.png --max-mb 20
 ```
 
-## CrazyGames submission checklist (round 15)
+## CrazyGames submission checklist (round 15, final draft)
 Sources: docs.crazygames.com, "Technical requirements", "Gameplay requirements", "Game covers" and "Multiplayer" (read 2026-10-30).
 
-**1. Build and server**
-- `npm run build:crazygames -- --ref <approved sha>` (no `--allow-abs`; it must exit 0). Run `deploy/subpath_test.py --max-mb 20` on it.
+### What to upload (all ready at `04fd64b`)
+| What | Path | Notes |
+|---|---|---|
+| **Game zip** | `dist/crazygames.zip` (gitignored; rebuild with `npm run build:crazygames -- --ref <sha>`) | from `04fd64b`, 377 files, 9.4 MB unzipped, 6.6 MB zip, sha256 `c48d1a4e…5853`; talks to `wss://wizard-arena-76od.onrender.com` |
+| **Cover, landscape 1920×1080** | `deploy/crazygames/store/covers/cover-hero-landscape-1920x1080.jpg` | recommended: the Mage up close in the courtyard |
+| **Cover, portrait 800×1200** | `deploy/crazygames/store/covers/cover-hero-portrait-800x1200.jpg` | same frame, cropped |
+| **Cover, square 800×800** | `deploy/crazygames/store/covers/cover-hero-square-800x800.jpg` | same frame, cropped |
+| Alternative covers | `deploy/crazygames/store/covers/cover-vista-*.jpg` | the courtyard from above, mid-fight; same three sizes |
+| **Screenshots, 1920×1080** | `deploy/crazygames/store/screens/01-overhead.jpg` … `09-ground-east.jpg` | 01 overhead, 02 wall-walk, 03–05 gameplay with the HUD (03 a Blizzard call-out, 04 two skeletons, 05 the hall), 06–09 ground level from 4 sides. Best to lead with 04, 03, 01, 02 |
+| **Preview video** | not made | required: 15–20 s, 1080p landscape **and** 1080p portrait (2:3), < 50 MB, no sound, cursor, logos or black bars; open on the cover's frame. Record from a real browser (OBS); headless is too slow |
+
+Each cover has the title only ("Wizard Arena", Cinzel Decorative) over a clean render, with no HUD, borders, logos or other text (their
+rules). The three covers in each set are crops of one 2400×2400 frame, so they match. Made by `deploy/capture_store.py` (below) and
+picked by eye from four runs; the raw renders are in `dist/store-r3`, `-r4`, `-r5` until `dist/` is cleaned.
+
+### 1. Build and server
+- `npm run build:crazygames -- --ref <approved sha>` (no `--allow-abs`; it must exit 0). `public/` hasn't changed since `04fd64b`, so the
+  zip above stands unless something under `public/` is committed after it (rebuild then).
 - Render must run the **same commit's** server (the protocol changes between rounds): the coordinator pushes it to `main` (Ty's go-ahead)
   before or with the upload. Then `python3 deploy/smoke.py https://wizard-arena-76od.onrender.com`.
-- Upload `dist/crazygames.zip` (HTML5, index.html at the zip's root).
-- Limits: 250 MB total, 1,500 files, initial download 50 MB desktop (20 MB for the mobile homepage, which we don't target, but under 20 is
-  the round's goal), relative paths only, Chrome and Edge, smooth on a 4 GB Chromebook.
+- Upload `dist/crazygames.zip` as HTML5 (index.html at the zip's root).
+- Limits: 250 MB total, 1,500 files, initial download 50 MB desktop / 20 MB mobile homepage, relative paths only. We're at 377 files,
+  **7.7 MB initial**.
 
-**2. The form**
-- **Title:** Wizard Arena
-- **Short description** (one line): *Build your own wizard from 35 spells and duel three rivals in a castle courtyard free-for-all.*
-- **Description:**
-  > Build your wizard, then prove it in the courtyard. Pick one spell for each of six slots (primary, power, shield, mobility, utility and
-  > ultimate) from a spellbook of 35, across fire, ice, wind, earth, blood, alchemy and arcane. Every combination plays differently: lob
-  > fireballs from the wall-walk, freeze a rival mid-dash, lift a crate with telekinesis and hurl it, or curse a barrel and wait.
-  >
-  > Matches are four-wizard free-for-alls, first to 15 kills. Skeleton bots fill any empty seat instantly, so there is always a fight,
-  > on easy, normal or hard. Dodge, double-jump, roll, climb the towers for high ground and time your shield to turn the duel.
-  >
-  > Change your loadout from the menu at any time; it takes effect on your next respawn.
-- **Controls** (matches the in-game how-to-play card, select.js `KEYS`):
-  > WASD move · Mouse look and aim · Space jump (twice to double jump) · Shift sprint · C crouch
-  > Left click primary spell · Right click power spell · R shield · E mobility · F utility · Q ultimate (once charged)
-  > T reload · M mute · Esc menu and loadout
-- **Tags** (pick from their list; these are the closest fits): Multiplayer, PvP, Shooter, Third-person, Magic, Wizard, Fantasy, 3D,
-  Arena, Battle. Category: **Action** (or Shooter).
-- **Multiplayer:** yes, real-time online. **Lobby size 4** (free-for-all; bots fill empty seats, nobody waits).
+### 2. The form (ready to paste)
+**Title:** `Wizard Arena`
+
+**Short description:**
+```
+Build your own wizard from 35 spells and duel three rivals in a castle courtyard free-for-all.
+```
+
+**Description:**
+```
+Build your wizard, then prove it in the courtyard. Pick one spell for each of six slots (primary, power, shield, mobility, utility and ultimate) from a spellbook of 35, across fire, ice, wind, earth, blood, alchemy and arcane. Every combination plays differently: lob fireballs from the wall-walk, freeze a rival mid-dash, lift a crate with telekinesis and hurl it, or curse a barrel and wait.
+
+Matches are four-wizard free-for-alls, first to 15 kills. Skeleton bots fill any empty seat instantly, so there is always a fight, on easy, normal or hard. Dodge, double-jump, roll, climb the towers for high ground and time your shield to turn the duel.
+
+Change your loadout from the menu at any time; it takes effect on your next respawn.
+```
+
+**Controls** (matches the in-game how-to-play card, select.js `KEYS`):
+```
+WASD: move
+Mouse: look and aim
+Space: jump (press again in the air to double jump)
+Shift: sprint
+C: crouch
+Left click: primary spell
+Right click: power spell
+R: shield (hold or tap)
+E: mobility spell
+F: utility spell
+Q: ultimate (once charged)
+T: reload early
+M: mute
+Esc: menu and loadout
+```
+
+**Tags** (choose from their list; these are the closest fits): `Multiplayer`, `PvP`, `Magic`, `Wizard`, `Fantasy`, `3D`, `Third-person`,
+`Shooter`, `Arena`, `Battle`. **Category:** Action (or Shooter).
+
+**Settings:**
+- **Multiplayer:** yes, real-time online. **Lobby size: 4** (free-for-all; bots fill empty seats, so nobody waits).
 - **Devices:** **desktop only** (keyboard and mouse; the builder shows a desktop notice under ~900 px). Mobile and tablet off.
-- **Orientation:** landscape.
+- **Orientation:** **landscape**.
 - **SDK:** v3, Basic Launch: `gameplayStart` / `gameplayStop`, `loadingStart` / `loadingStop`. No ads, no Data or User module.
 - **Age:** PEGI 12-friendly (fantasy magic, no blood; skeletons collapse). CrazyGames' audience is 13+.
 
-**3. Art** (`python3 deploy/capture_store.py <game url> dist/store`, run on the castle once it lands; about 6 min headless)
-- **Covers, all three required:** landscape **1920×1080**, portrait **800×1200**, square **800×800**, the same look across them. The
-  script writes `covers/cover-{hero,vista}-{landscape,portrait,square}-WxH.{png,jpg}`: a clean render (no HUD) with only the title
-  ("Wizard Arena" in Cinzel Decorative). Their rules: the title only, no other text, borders, icons or store logos, nothing blurry.
-  Pick hero or vista (or have Ty compose a better shot by hand, which usually looks best).
-- **Screenshots:** `screens/*.png` at 1920×1080: overhead, ground level from 4 sides, the wall-walk, three gameplay frames with the HUD.
-- **Preview video, required, not scripted:** 15–20 s, **1080p landscape (16:9) AND 1080p portrait (2:3)**, under 50 MB, no sound, no
-  cursor, no logos or black bars; open on the cover's frame. Record from a real browser (OBS) while playing; headless rendering is too
-  slow for video.
+### 3. Re-making the art
+`WA_DEBUG=1 PORT=4105 node server.js` from the approved commit (a private port, never live), then
+`python3 deploy/capture_store.py http://localhost:4105 dist/store --stage` (about 3–4 min headless). `--stage` uses the debug
+`debugPlace` hook to stand our wizard in the open for the hero and about 9 m from a bot for the gameplay frames, and
+`--only hero,vista,overhead,ground,wallwalk,gameplay` retakes single shots. Shots vary run to run (bots, spells, deaths):
+look at them and keep the best of each.
 
-**4. Open items that can fail review** (owners in brackets)
-- **"Land in gameplay within 1 click"** (gameplay requirements). Today a first visit shows the how-to-play card ("Got it"), then the
-  builder ("Enter"), then "Click to play" for pointer lock: 3 clicks. Suggest (characters/spells): the builder starts with a preset
-  selected so **Enter** alone starts a match, and the how-to-play card doesn't block it on CrazyGames (show the controls in-match
-  instead, or let Enter on the card also join). Worth deciding with Ty before submitting.
-- **Moderation:** player names are typed and shown to others; CrazyGames asks for at least a profanity filter on user text
-  (spells: `join`). Not done. Alternative: on CrazyGames, use the SDK's username (User module) instead of a typed name.
-- **Privacy note:** we keep the name, loadout and settings in localStorage and send the typed name to our server for the match, nothing
-  stored after it. A short note behind the "?" with a contact address covers it; Ty decides.
-- **Licensing:** `public/sounds/CREDITS.md` still lists six Pixabay files (Phase C replaces them); none may remain at upload.
-- **Goat leftovers** in copy: the how-to-play tip "Don't hit the goats" (characters, select.js:396); README's farm/goat text (coordinator).
-- **Optional, for more traffic:** CrazyGames' "online with friends" (invite links and room data through the SDK, CrazyGames usernames)
-  earns the multiplayer landing page; not needed to submit.
+### 4. Review risks
+- **Open, Ty's call: "land in gameplay within 1 click"** (gameplay requirements). A first visit is the how-to-play card ("Got it", or
+  Enter), the builder's "Enter" button (a default loadout and a random name are already filled in), then "Click to play" for pointer lock. The lock click is unavoidable and
+  usually accepted as the one click; the card is the extra one. Options: let Enter on the card also join, or show the card over the first
+  match instead (characters, select.js).
+- **Done:** names go through a profanity filter on the server (`rudeName` in `join`, spells). The goat tip in the how-to-play card is now
+  the ram tip. No Pixabay files left (`public/sounds/CREDITS.md`, round 15 "Flasks and potions"); everything is CC0 or CC BY 4.0
+  (Leonardo Calvo, credited in-game and in the README).
+- **Privacy note:** we keep the name, loadout and settings in localStorage and send the typed name to our server for the match only.
+  A short note behind the "?" with a contact address covers it; Ty decides.
+- **Optional, more traffic:** CrazyGames' "online with friends" (invite links and room data through the SDK, CrazyGames usernames)
+  earns a place on their multiplayer landing page; not needed to submit.
 
 ## Round 14: the CrazyGames build
 **Build:** `npm run build:crazygames -- --ref HEAD` (use `--ref` for the upload, so only committed files ship; without it the
