@@ -23,7 +23,7 @@ const SPELL_ICON = {
   spark: 'fast', gale_shear: 'shear', glacial_skim: 'skim', hex_shards: 'hex', potion_toss: 'potion', meteor: 'heavy',
   sanguine_lash: 'lash', battering_ram: 'ram', toxic_flask: 'toxic', glacial_bulwark: 'bulwark', flask_step: 'flaskstep',
 };
-const iconOf = (id) => `/textures/icons/${SPELL_ICON[id] || id}.png`;
+const iconOf = (id) => `./textures/icons/${SPELL_ICON[id] || id}.png`;
 // A card's one-line description (round 14): short enough for two lines on the smallest card, and free of numbers so the
 // spells agent's tuning never makes it wrong. The tooltip has the full blurb and every stat.
 const CARD_LINE = {
