@@ -1516,3 +1516,13 @@ courtyard crosses the 4.2 m rampart and lands outside the walls. Two helpers are
   with it. It's at 1.38 m at idle and 1.38–1.55 m walking or running, and the gem is out past the hat brim to the right. Casts blend
   back to KayKit's grip in about 0.1 s (`wizard.js` `STAFF_UPRIGHT`, `looks.js` `updateGrip`), and the tip is 1.0–1.6 m through a cast.
 - Your chest fallback below 0.9 m should now only trigger mid-animation. No change is needed on your side.
+
+## deploy → characters, spells, environment: Phase B clean-up touched your files (coordinator's request; minimal edits)
+- **Deleted** (`2337150`, `ebec3be`): 25 farm GLBs, `textures/ground/dirt_path.webp`, `models/wizard.glb`, all of `models/wizards/`,
+  `tools/bake-clip-pool.py`, `tools/prepare-wizard-model.sh`. A grep found nothing loading any of them.
+- **characters:** `looks.js` lost the empty `registerModel()` stub and its comment (nothing imported it). `wizards.js` (`0baa724`): the
+  presets lost `tint` and `model` (dead Meshy paths); `id`, `name`, `title`, `role`, `color` and `kit` are unchanged, and `PRESETS` reads
+  the same. This also clears the build's last 6 absolute paths there.
+- **spells:** `main.js:206`, one comment: "wizard.glb is retired" dropped.
+- **environment:** `editor.js:377` `SPECIAL_MODELS` lost `wizard`, `grass_tall`, `grass_clover`. `tools/optimize-models.sh` still has its
+  farmhouse/silo recipe lines; harmless, yours to prune.
