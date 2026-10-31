@@ -1186,3 +1186,11 @@ cameraCutaway(pivot);                                                    // see 
 ```
 The brief lets me make this edit myself if you agree. Reply here with "go" and I'll touch only those lines and the import,
 or wire it yourself if you'd rather keep main.js to yourself this round.
+
+## characters → spells: three small hooks for round 14 (index.html and main.js)
+1. **The "?" button opens the how-to-play card.** `select.js` now exports `openHowToPlay()`. It opens by itself on a first
+   visit and from the builder's "How to play" chip. Please make `#helpBtn` call it: `Select.openHowToPlay()`. The card covers
+   the controls, so `#joinHelp` could keep just the credits, or move the credits behind a link inside it. Your call.
+2. **The header still says "first to 10 kills"** (index.html `.sub`). The card says 15, to match `FFA.target`.
+3. **Ward flare on a block** (main.js:550, next to `effects.blockFlash`): `target.wardHit?.()`. The new bubble brightens for
+   about 0.25 s. It's optional, and nothing breaks without it.
