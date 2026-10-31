@@ -43,7 +43,7 @@ const ready = new Promise(r => { readyResolve = r; });
 export const looksReady = () => ready;
 
 // ---------------------------------------------------------------- the pick DSL (spellanim.js specs)
-// A pick is 'Clip', ['Clip', from, to, duration?], or { clip, from, to, warp, yaw, reverse, flatY, pinXZ } (see spellanim.js).
+// A pick is 'Clip', ['Clip', from, to, duration?], or { clip, from, to, warp, yaw, reverse, flatY, pinXZ, bend } (see spellanim.js).
 
 // Resample `clip` between two of its times onto a fresh 60 fps clip starting at 0 (every track kept: the compressed clips are
 // sparse, and three's subclip drops tracks without a key in the range), optionally stretched to `duration`.
@@ -57,19 +57,23 @@ function cutClip(clip, key, from = 0, to = clip.duration, duration) {
   return new THREE.AnimationClip(key, out, tracks);
 }
 
-// Retime a clip through piecewise-linear [[clipTime, newTime], ...] points.
+// Retime a clip through piecewise-linear [[clipTime, newTime], ...] points, resampled at 60 fps. Two points with the same clip
+// time hold that pose between their new times (a drawn-back strike held through a wind-up).
 function warpClip(clip, key, points) {
-  const c = clip.clone(); c.name = key;
-  const map = (t) => {
+  const end = points[points.length - 1][1], N = Math.max(2, Math.round(end * 60) + 1);
+  const src = (t) => {
     for (let i = 1; i < points.length; i++) {
       const [a0, b0] = points[i - 1], [a1, b1] = points[i];
-      if (t <= a1 || i === points.length - 1) return b0 + (t - a0) * (b1 - b0) / (a1 - a0);
+      if (t <= b1 || i === points.length - 1) return b1 > b0 ? a0 + (t - b0) * (a1 - a0) / (b1 - b0) : a1;
     }
     return t;
   };
-  for (const tr of c.tracks) for (let i = 0; i < tr.times.length; i++) tr.times[i] = map(tr.times[i]);
-  c.duration = points[points.length - 1][1];
-  return c;
+  const tracks = clip.tracks.map(t => {
+    const ip = t.createInterpolant(), w = t.getValueSize(), times = new Float32Array(N), vals = new Float32Array(N * w);
+    for (let i = 0; i < N; i++) { times[i] = end * i / (N - 1); vals.set(ip.evaluate(src(times[i])), i * w); }
+    return new t.constructor(t.name, times, vals);
+  });
+  return new THREE.AnimationClip(key, end, tracks);
 }
 
 function reverseClip(clip, key) {
@@ -108,8 +112,8 @@ function pinHipsXZ(clip, scene) {
   const { hips, up } = hipsFrame(scene);
   const rest = hips.position, v = new THREE.Vector3(), uu = up.lengthSq();
   for (const t of clip.tracks) if (hipsTrack(t, 'position')) for (let i = 0; i < t.values.length; i += 3) {
-    v.fromArray(t.values, i).sub(rest);
-    v.copy(up).multiplyScalar(v.dot(up) / uu).add(rest).toArray(t.values, i);
+    const k = v.fromArray(t.values, i).sub(rest).dot(up) / uu;
+    v.copy(up).multiplyScalar(k).add(rest).toArray(t.values, i);
   }
   return clip;
 }
@@ -130,6 +134,24 @@ function yawClip(clip, scene, deg) {
   return clip;
 }
 
+// Bend bones forward (deg about the body's side axis; negative: back) all through a clip: { spine: 20, chest: 15, head: -10 }
+// (BONES roles), for a hunched stance laid over a clip.
+function bendClip(clip, scene, bend) {
+  scene.updateMatrixWorld(true);
+  const sceneQ = scene.getWorldQuaternion(new THREE.Quaternion()).invert();
+  for (const [role, deg] of Object.entries(bend)) {
+    const b = scene.getObjectByName(BONES[role]);
+    if (!b) continue;
+    const P = b.parent.getWorldQuaternion(new THREE.Quaternion()).premultiply(sceneQ);
+    const R = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), deg * Math.PI / 180);
+    const L = P.clone().invert().multiply(R).multiply(P), q = new THREE.Quaternion();
+    let tr = clip.tracks.find(t => t.name === `${b.name}.quaternion`);
+    if (!tr) clip.tracks.push(tr = new THREE.QuaternionKeyframeTrack(`${b.name}.quaternion`, [0], b.quaternion.toArray()));
+    for (let i = 0; i < tr.values.length; i += 4) q.fromArray(tr.values, i).premultiply(L).toArray(tr.values, i);
+  }
+  return clip;
+}
+
 // One clip for `key` from a pick spec, or null.
 function pickClip(key, pick) {
   const spec = Array.isArray(pick) ? { clip: pick[0], from: pick[1], to: pick[2], duration: pick[3] } : typeof pick === 'object' ? pick : { clip: pick };
@@ -143,6 +165,7 @@ function pickClip(key, pick) {
   if (spec.flatY != null) flatHips(out, scene, spec.flatY);
   else if (spec.pinXZ) pinHipsXZ(out, scene);
   if (spec.yaw) yawClip(out, scene, spec.yaw);
+  if (spec.bend) bendClip(out, scene, spec.bend);
   if (spec.loop) out.userData = { loop: true };
   return out;
 }

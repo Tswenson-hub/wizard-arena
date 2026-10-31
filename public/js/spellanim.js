@@ -7,7 +7,9 @@
 //   ['Clip', from, to, duration?]        the part between two clip times (s), optionally stretched to `duration`
 //   { clip, from, to, warp, ... }        that part retimed through warp [[clipTime, newTime], ...] (piecewise linear, in clip
 //                                        times); `yaw` turns it (deg); `reverse: true` plays it backwards; `flatY: dy` pins the
-//                                        hips dy m above standing height (airborne moves); `pinXZ: true` keeps their rise and fall
+//                                        hips dy m above standing height (airborne moves); `pinXZ: true` keeps their rise and fall;
+//                                        `bend: { spine, chest, head }` leans those bones forward (deg) all through (a hunch).
+//                                        Two warp points with the same clip time hold that pose between their new times.
 // Release times were measured on the clips (the staff tip's speed peak and height, /tmp/wa-characters/r15/tr.py) and checked on
 // contact sheets.
 //
@@ -37,6 +39,11 @@ const shot = (n = 0.7) => ['#', n, 1, 0];
 // overhead raise of Ranged_Magic_Raise, the staff driven into the ground in Ranged_Magic_Summon, Throw's release.
 const SHOOT = 0.3, LONG = 1.5, RAISE = 0.38, SLAM = 2.45, THROW = 0.73;
 const DODGE = (dir) => ({ clip: `Dodge_${dir}`, from: 0, to: 0.4, warp: [[0, 0], [0.4, 0.45]] });
+// The ground roll's tuck under the procedural tumble (FLIPS): Jump_Land's crouch, reached by 0.06 s, held low through the turn,
+// up by 0.45 s. Its lean is the dodge's direction.
+const TUCK = (lean) => ({ clip: 'Jump_Land', warp: [[0, 0], [0.25, 0.06], [0.3, 0.34], [0.67, 0.45]], pinXZ: true, bend: { spine: 25 * lean, chest: 20 * lean } });
+// The blink's arrival: Spawn_Ground from the body bursting up out of the ground, the hop and the landing crouch, squeezed.
+const POP = (d) => ({ clip: 'Spawn_Ground', from: 0.3, to: 1.2, warp: [[0.3, 0], [0.8, d * 0.55], [1.2, d]], pinXZ: true });
 
 // Shared by every body (not tied to a spell).
 export const COMMON_ANIMS = {
@@ -91,12 +98,20 @@ export const SKELETON_ANIMS = {
 
 // Procedural flips (wizard.js): a key here also turns the body about its side axis once over the given time (dir 1: forward,
 // -1: backward). KayKit has no flip clip; the pose underneath is the tucked jump.
+// `axis`: 'x' somersaults (forward/back), 'z' rolls sideways (dir 1: to the body's right). `pivot`: the turn's centre above the
+// feet (m, default 0.85). `squash`: the body shrinks by this much mid-turn and back, so a tumble on the ground stays a tight ball.
 export const FLIPS = {
   double_jump: { dir: 1, time: 0.45 },
   double_jump_back: { dir: -1, time: 0.45 },
   roll_air: { dir: 1, time: 0.42 },
   roll_air_back: { dir: -1, time: 0.42 },
+  roll_air_left: { dir: -1, time: 0.42, axis: 'z' },
+  roll_air_right: { dir: 1, time: 0.42, axis: 'z' },
   smoke_screen: { dir: -1, time: 0.42 },
+  roll: { dir: 1, time: 0.36, pivot: 1.0, squash: 0.4 },
+  roll_back: { dir: -1, time: 0.36, pivot: 1.0, squash: 0.4 },
+  roll_left: { dir: -1, time: 0.36, pivot: 1.0, squash: 0.4, axis: 'z' },
+  roll_right: { dir: 1, time: 0.36, pivot: 1.0, squash: 0.4, axis: 'z' },
 };
 
 // Named phases for main.js (round 15: they replace the old clip-offset calls). Wizard.pose(name, duration?) plays `key`
@@ -153,25 +168,24 @@ export const SPELL_ANIMS = {
   },
   glacial_skim: {
     grade: 'ok', release: 0.08, legacy: ['combo'],
-    // a low push along the ground (the shards skim it), the finisher a full throw
+    // the staff thrust low along the ground (the shards skim it), leaning in, a little to each side; the finisher a low throw
     keys: {
-      glacial_skim1: strike('Melee_Block_Attack', 0.43, 0.3, 0.45),
-      glacial_skim2: strike('Melee_Block_Attack', 0.43, 0.3, 0.45),
-      glacial_skim3: strike('Throw', THROW, 0.3, 0.5),
+      glacial_skim1: strike('Ranged_Magic_Shoot', SHOOT, 0.2, 0.45, { bend: { spine: 18, chest: 22 }, yaw: 12 }),
+      glacial_skim2: strike('Ranged_Magic_Shoot', SHOOT, 0.2, 0.45, { bend: { spine: 18, chest: 22 }, yaw: -12 }),
+      glacial_skim3: strike('Throw', THROW, 0.3, 0.5, { bend: { spine: 12, chest: 12 } }),
     },
     play: { shot: shot() },
     need: 'an underhand sweep along the ground',
   },
   hex_shards: {
-    grade: 'ok', release: 0.08, legacy: ['combo'],
-    // glyphs from the left, from the right, then a straight thrust
+    grade: 'good', release: 0.08, legacy: ['combo'],
+    // glyphs from the left, from the right (the staff thrust from a turned stance), then the staff swept up for the high lob
     keys: {
-      hex_shards1: strike('Melee_1H_Attack_Slice_Diagonal', 0.42, 0.3, 0.45),
-      hex_shards2: strike('Melee_1H_Attack_Slice_Horizontal', 0.27, 0.25, 0.45),
-      hex_shards3: strike('Ranged_Magic_Shoot', SHOOT, 0.2, 0.45),
+      hex_shards1: strike('Ranged_Magic_Shoot', SHOOT, 0.2, 0.45, { yaw: 30 }),
+      hex_shards2: strike('Ranged_Magic_Shoot', SHOOT, 0.2, 0.45, { yaw: -30 }),
+      hex_shards3: strike('Ranged_Magic_Raise', 0.3, 0.25, 0.45),
     },
     play: { shot: shot() },
-    need: 'a sign-tracing hand gesture',
   },
   sling: {
     grade: 'good', release: 0.08, legacy: ['combo'],
@@ -198,9 +212,10 @@ export const SPELL_ANIMS = {
     play: { windup: ['cyclone', 0.45 + 0.9, 1, 0] },
   },
   sanguine_lash: {
-    grade: 'ok', release: 1.5, legacy: ['lash'],
-    // the backhand slash drawn back slowly over the 1.5 s wind-up, striking on the release, then the follow-through
-    keys: { sanguine_lash: { clip: 'Melee_1H_Attack_Slice_Horizontal', warp: [[0, 0], [0.15, 1.3], [0.27, 1.55], [1.37, 2.1]] } },
+    grade: 'good', release: 1.5, legacy: ['lash'],
+    // the backhand drawn back by 0.4 s and held there, hunched, through the 1.5 s wind-up (the coil tightens); the slash cracks on
+    // the release (its peak, clip 0.27 s, at 1.5 s), then the follow-through
+    keys: { sanguine_lash: { clip: 'Melee_1H_Attack_Slice_Horizontal', warp: [[0, 0], [0.2, 0.4], [0.2, 1.4], [0.27, 1.5], [1.37, 2.1]], bend: { spine: 12, chest: 10 } } },
     play: { windup: ['sanguine_lash', 2.1, 1, 0] },
     need: 'a crouched whip wind-up',
   },
@@ -225,9 +240,9 @@ export const SPELL_ANIMS = {
 
   // ---------------------------------------------------------------- mobility (E)
   blink: {
-    grade: 'ok', release: 0,
-    // Spawn_Air's drop and landing crouch: popping in at the far end
-    keys: { blink: ['Spawn_Air', 0.6, 1.25, 0.45] },
+    grade: 'good', release: 0,
+    // bursting up out of the ground at the far end (Spawn_Ground), a hop and the landing crouch
+    keys: { blink: POP(0.45) },
     play: { cast: ['blink', 0.45, 1, 0] },
   },
   skyward: {
@@ -236,8 +251,8 @@ export const SPELL_ANIMS = {
     play: { cast: ['skyward', 0.3, 1, 0], loop: ['float', 2.8, 1, 0] },
   },
   mirror_step: {
-    grade: 'ok', release: 0,
-    keys: { mirror_step: ['Spawn_Air', 0.6, 1.25, 0.5] },
+    grade: 'good', release: 0,
+    keys: { mirror_step: POP(0.5) },
     play: { cast: ['mirror_step', 0.5, 1, 0] },
   },
   smoke_screen: {
@@ -248,10 +263,11 @@ export const SPELL_ANIMS = {
   },
   roll: {
     grade: 'good', release: 0,
-    // KayKit's dodges (0.4 s, stretched to 0.45), one per direction relative to facing (rollKey below). In the air, the same with
-    // the hips pinned and a procedural flip forward or back (FLIPS), and the side dodges as they are.
+    // a tucked crouch with a procedural tumble (FLIPS: a somersault forward or back, a sideways roll each way), one per direction
+    // relative to facing (rollKey below): over by 0.36 s (the 0.35 s dash), up by 0.45 s. In the air, KayKit's dodges with the
+    // hips pinned and the same tumble.
     keys: {
-      roll: DODGE('Forward'), roll_back: DODGE('Backward'), roll_left: DODGE('Left'), roll_right: DODGE('Right'),
+      roll: TUCK(1), roll_back: TUCK(-0.6), roll_left: TUCK(0.5), roll_right: TUCK(0.5),
       roll_air: { ...DODGE('Forward'), flatY: 0.1 },
       roll_air_back: { ...DODGE('Backward'), flatY: 0.1 },
       roll_air_left: { ...DODGE('Left'), flatY: 0.1 },
@@ -261,9 +277,8 @@ export const SPELL_ANIMS = {
   },
   ram_ride: {
     grade: 'ok', release: 0, legacy: ['ride'],
-    keys: { ride: { clip: 'Crouching', loop: true } },     // a low wide crouch on the ram's back
+    keys: { ride: { clip: 'Sit_Chair_Idle', loop: true } },     // seated on the ram's back, legs forward
     play: { loop: ['ride', 2.9, 1, 0] },
-    need: 'a seated riding pose',
   },
   flask_step: {
     grade: 'good', release: 0.6, legacy: ['flask_step', 'arrival'],
@@ -282,9 +297,10 @@ export const SPELL_ANIMS = {
   },
   black_death: {
     grade: 'ok', release: 0,
-    keys: {},
-    play: { hold: ['block', 99, 1, 0] },
-    need: 'a hunched, arms-wrapped shroud pose',
+    // the block hunched over (spine and chest bent forward, the head ducked): wizard.js holds it instead of the block
+    keys: { shroud: { clip: 'Melee_Blocking', loop: true, bend: { spine: 22, chest: 18, head: 12 } } },
+    play: { hold: ['shroud', 99, 1, 0] },
+    need: 'an arms-wrapped shroud pose',
   },
   firewall: {
     grade: 'good', release: 0.2,

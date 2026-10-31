@@ -48,7 +48,7 @@ const WARD = { r: 1.25, h: 1.3, y: 1.05 };
 const LEG_BONES = new Set([BONES.root, BONES.hips, ...BONES.legs]);
 const WHOLE_BODY = /^(jump|double_jump|land|roll|dash|death|stun|knockdown|getup|hit_waist|mrain_|ride|spin|arrival|flask_step|float|lash|ult$|air_cast|crouch|smoke_screen|blink|mirror_step|skyward|spawn|ledge_climb)/;
 // Looping clips (every other key plays once and holds its last frame until the one-shot ends).
-const LOOPS = new Set(['idle', 'run', 'walk', 'walk_fight', 'back', 'strafe_left', 'strafe_right', 'crouch', 'crouch_walk', 'block', 'cast_heavy', 'float', 'ride', 'spin']);
+const LOOPS = new Set(['idle', 'run', 'walk', 'walk_fight', 'back', 'strafe_left', 'strafe_right', 'crouch', 'crouch_walk', 'block', 'shroud', 'cast_heavy', 'float', 'ride', 'spin']);
 // Round 15: main.js's older calls into the Meshy clips by offset (oneShot('cast_heavy', d, 1.5, 1.9) and the like), translated to
 // the named phases (spellanim.js PHASES) until main.js calls pose() itself.
 function legacyPhase(name, timeScale, startAt) {
@@ -374,7 +374,7 @@ export class Wizard {
     this.current = name;
     this.oneShotUntil = performance.now() / 1000 + duration;
     const f = FLIPS[name];
-    this.flip = f ? { dir: f.dir, time: f.time, t: 0 } : null;
+    this.flip = f ? { ...f, t: 0 } : null;
   }
 
   // Round 15: a named animation phase (spellanim.js PHASES: cast, cast_release, windup, flinch, stagger, bound, dash, block_tap,
@@ -630,7 +630,7 @@ export class Wizard {
       // moving slowly in a wind-up or behind a ward: the fight walk; standing: the cast or ward pose
       const loco = this.locomotion(m, windup || this.blocking || this.slowed);
       if (windup) this.setBase(loco || 'cast_heavy', 0.1);
-      else if (this.blocking) this.setBase(loco || 'block');
+      else if (this.blocking) this.setBase(loco || (this.guardStyle === 'black_death' && this.actions.shroud ? 'shroud' : 'block'));
       else if (loco) this.setBase(loco, 0.15);
       else this.setBase('idle', 0.25);
     }
@@ -718,18 +718,27 @@ export class Wizard {
     const bob = this.hoverK > 0.001 ? this.hoverK * (0.06 + Math.sin(performance.now() / 1000 * 5.2) * 0.06) : 0;
     // round 15: the procedural flip (spellanim FLIPS: the air jump, air rolls, Smoke Screen) turns the body once about its middle;
     // Meteor Rain's dive pitches it head-first
-    let flip = 0;
+    // A ground roll (spellanim FLIPS with `axis` 'z' for a sideways roll, `pivot` and `squash`) shrinks the body mid-turn so the
+    // tumble stays a tight ball on the ground.
+    let flip = 0, roll = 0, squash = 1, mid = 0.85;
     if (this.flip) {
-      this.flip.t += dt;
-      const k = Math.min(1, this.flip.t / this.flip.time);
-      flip = this.flip.dir * Math.PI * 2 * (k * k * (3 - 2 * k));
+      const f = this.flip;
+      f.t += dt;
+      const k = Math.min(1, f.t / f.time), a = f.dir * Math.PI * 2 * (k * k * (3 - 2 * k));
+      if (f.axis === 'z') roll = a; else flip = a;
+      mid = f.pivot ?? mid;
+      squash = 1 - (f.squash || 0) * Math.sin(Math.PI * k);
       if (k >= 1 || this.dead) this.flip = null;
     }
     this.diveK = (this.diveK ?? 0) + ((this.current === 'mrain_dive' && !this.dead ? 1 : 0) - (this.diveK ?? 0)) * Math.min(1, dt * 10);
-    const pitch = flip + this.diveK * 1.45, mid = 0.85;
-    this.model.position.y = -this.dissolve * 1.6 + hop + this.rideLift + bob + mid - mid * Math.cos(pitch);
-    this.model.position.z = -mid * Math.sin(pitch);
+    // the turn's centre, `mid` up the (squashed) body, stays put
+    const pitch = flip + this.diveK * 1.45, c = mid * squash;
+    this.model.scale.setScalar(squash);
+    this.model.position.y = -this.dissolve * 1.6 + hop + this.rideLift + bob + c - c * Math.cos(pitch) * Math.cos(roll);
+    this.model.position.z = -c * Math.sin(pitch);
+    this.model.position.x = c * Math.sin(roll) * Math.cos(pitch);
     this.model.rotation.x = this.dissolve * 0.5 + pitch;
+    this.model.rotation.z = roll;
   }
 
   updateCyclone(dt) {
