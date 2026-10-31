@@ -568,14 +568,15 @@ export const SPELLBOOK = {
   },
   black_death: {
     id: 'black_death', slot: 'guard', name: 'Black Death', short: 'Black Death', ward: true, allSides: true,
-    blurb: 'Hold: a black shroud blocks spells from every side, for about 3.5 s of stamina. Each block heals you for 30% of the damage it absorbed and charges your next Lash.',
+    blurb: 'Hold: a black shroud blocks spells from every side, for about 3.5 s of stamina. Each block heals you for 60% of the damage it absorbed and charges your next Lash, and the shroud mends you 4 HP a second while it\'s up.',
     cooldown: 0,
     drainMul: 2.0,          // stamina drains this much faster than the base ward rate (about 3.6 s from full; round 14: 2.5, 2.9 s)...
     hitCostMul: 2,          // ...and each blocked hit costs this much more (2.5 left Vesper last in the balance match)
     lashCdPerDamage: 0.1,   // each absorbed point cuts Sanguine Lash's cooldown by this (s)...
     bonusPerDamage: 0.5,    // ...and stores this much bonus damage for the next Lash...
     maxBonus: 14,           // ...up to this
-    healPerDamage: 0.3,     // Ty: each blocked hit heals her this share of the damage it absorbed
+    healPerDamage: 0.6,     // Ty: each blocked hit heals her this share of the damage it absorbed (round 15, Ty: 'needs to do more healing'; was 0.3)
+    holdHeal: 4,            // round 15: HP a second while the shroud is held (about 14 over a full hold)
   },
   tempest_veil: {
     id: 'tempest_veil', slot: 'guard', name: 'Tempest Veil', short: 'Veil',

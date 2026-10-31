@@ -926,6 +926,12 @@ function handleMessage(msg) {
       const w = players.get(msg.id);
       if (!w) break;
       if (w === me) hudNumber(`+${msg.amt}`, 'heal');
+      // round 15: Black Death's mending shows over the wizard for everyone (crimson), with a pulse at their feet
+      if (msg.src === 'bd' && !w.dead) {
+        floatNumber(w, `+${msg.amt}`, 'heal bd');
+        effects.groundRing(w.group.position.clone().setY(w.group.position.y + 0.05), 1.6, 0xff2a48, 0.7, 0.45);
+        effects.burst(w.group.position.clone().setY(w.group.position.y + 1.1), 0xff3050, 6, 1.4, 0.4, -0.5);
+      }
       break;
     }
     case 'potion': {   // a health potion drunk (by) or back on its stand

@@ -436,12 +436,14 @@ function guardAbsorbed(p, attacker, absorbed, t) {
     const B = C.SPELLBOOK.black_death;
     if (kit(p).power === 'sanguine_lash' && p.cd.power > t) p.cd.power = Math.max(t, p.cd.power - absorbed * B.lashCdPerDamage);
     p.lashBonus = Math.min(B.maxBonus, (p.lashBonus || 0) + absorbed * B.bonusPerDamage);
-    heal(p, absorbed * B.healPerDamage, t, 0.5);
+    heal(p, absorbed * B.healPerDamage, t, 0.5, 'bd');
   }
 }
 // Healing (Black Death's blocks, a Night Cage): up to max HP; `shimmer` s of the crimson healing glow on clients.
-function heal(p, amount, t, shimmer = 0.3) {
+// `src` 'bd' (Black Death) shows crimson numbers and a pulse on clients.
+function heal(p, amount, t, shimmer = 0.3, src = null) {
   if (p.dead || !(amount > 0) || p.hp >= C.MAX_HP) return;   // nothing to heal: no glow
+  if (src) p.healSrc = src;
   const before = p.hp;
   p.hp = Math.min(C.MAX_HP, p.hp + amount);
   p.healUntil = Math.max(p.healUntil || 0, t + shimmer);
@@ -1479,6 +1481,7 @@ function simulate(dt) {
     // stamina
     if (p.blocking) {
       p.st -= C.STAMINA_DRAIN_BLOCKING * (C.SPELLBOOK[kit(p).guard]?.drainMul ?? 1) * dt;
+      if (kit(p).guard === 'black_death') heal(p, C.SPELLBOOK.black_death.holdHeal * dt, t, 0.3, 'bd');   // round 15: the shroud mends while held
       if (p.st <= 0) {
         p.st = 0; p.blocking = false; p.blockReleasedAt = t;
         p.stunUntil = Math.max(p.stunUntil, t + C.BLOCK_BREAK_STUN * 0.6);
@@ -1517,7 +1520,7 @@ function simulate(dt) {
     p.regen = !p.dead && p.hp < C.MAX_HP && t - (p.lastDamagedAt ?? -1e9) >= C.REGEN.delay;
     if (p.regen) p.hp = Math.min(C.MAX_HP, p.hp + C.REGEN.rate * dt);
     // heals show as one green number about every 0.4 s, not one per tick
-    if (p.healAcc >= 1 && t >= (p.healShownAt || 0) + 0.4) { broadcast({ t: 'heal', id: p.id, amt: Math.round(p.healAcc) }); p.healAcc = 0; p.healShownAt = t; }
+    if (p.healAcc >= 1 && t >= (p.healShownAt || 0) + 0.4) { broadcast({ t: 'heal', id: p.id, amt: Math.round(p.healAcc), ...(p.healSrc ? { src: p.healSrc } : {}) }); p.healAcc = 0; p.healShownAt = t; p.healSrc = null; }
     if (p.jump) {
       const e = t - p.jump.start;
       if (p.bot) {

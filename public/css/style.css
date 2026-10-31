@@ -249,6 +249,7 @@ body.paused #abilities, body.paused #bars, body.paused #mBanner, body.paused #so
 #dmgLayer .dn.big { color: #ff8a3c; font-size: 26px; }
 #dmgLayer .dn.ult { color: #e080ff; font-size: 30px; }
 #dmgLayer .dn.heal { color: #6dff8a; font-size: 18px; }
+#dmgLayer .dn.heal.bd { color: #ff4d6a; font-size: 20px; text-shadow: 0 0 6px rgba(255, 30, 60, 0.7), 0 1px 2px #000; }   /* round 15: Black Death's mending */
 #dmgLayer .dn.blocked { color: #b8bcc8; font-size: 14px; letter-spacing: 1px; }
 #bars { overflow: visible; }
 #bars .hn { position: absolute; bottom: 100%; font: 800 18px/1 system-ui, sans-serif; text-shadow: 0 1px 0 #000, 0 0 4px rgba(0,0,0,0.8); pointer-events: none; animation: hnRise 1.1s ease-out forwards; }

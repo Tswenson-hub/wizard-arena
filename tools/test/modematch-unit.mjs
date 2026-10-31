@@ -524,6 +524,40 @@ async function rideChecks(join, since) {
   const hit = since(V, n, m => m.t === 'hit' && m.target === V.id && m.kind === 'ram_shove')[0];
   ok(!!hit && hit.dmg > 0 && !!hit.knockdown, `an enemy in the ride's path is knocked flat (${hit ? `${hit.dmg} damage, knockdown ${hit.knockdown}` : 'no hit'})`);
   for (const c of [H, V]) c.ws.close();
+  await wait(300);
+  await blackDeathChecks(join, since);
+}
+
+// ---- round 15: Black Death heals more: 60% of what it absorbs, plus a mend while held (BD.holdHeal a second), shown as 'bd' heals
+async function blackDeathChecks(join, since) {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  const BD = C.SPELLBOOK.black_death;
+  const S = await join('Shooter', { primary: 'fireball', utility: 'telekinesis' }), D = await join('Shroud', { guard: 'black_death', utility: 'telekinesis' });
+  S.send({ t: 'matchDebug', size: 2 }); S.send({ t: 'removeBots' }); await wait(600);
+  const line = clearLine(10);
+  ok(!!line, `a clear line for the Black Death test (${line ? `${line.a[0]}, ${line.a[2]}` : 'none'})`);
+  if (!line) { for (const c of [S, D]) c.ws.close(); return; }
+  const at = (d) => [line.a[0] + line.dir[0] * d, 0, line.a[2] + line.dir[1] * d];
+  S.send({ t: 'debugPlace', p: at(0), yaw: line.yaw, resetCd: true }); D.send({ t: 'debugPlace', p: at(8), yaw: line.yaw + Math.PI, resetCd: true });
+  await wait(2200);   // (past spawn protection)
+  const fire = () => { const o = [at(0)[0], 1.3, at(0)[2]], tg = [at(8)[0], 1.0, at(8)[2]], d = tg.map((v, i) => v - o[i]), l = Math.hypot(...d);
+    S.send({ t: 'cast', kind: 'fireball', origin: o, dir: d.map(v => v / l) }); };
+  const hpOf = () => D.msgs.filter(m => m.t === 'snap').pop()?.players.find(q => q.id === D.id)?.hp;
+  fire(); await wait(800);   // hurt first, so there's something to heal
+  const hurt = hpOf();
+  let n = D.msgs.length;
+  D.send({ t: 'block', on: true }); await wait(1200);   // held, nothing incoming: the mend
+  const mend = since(D, n, m => m.t === 'heal' && m.id === D.id).reduce((a, m) => a + m.amt, 0);
+  ok(hurt < C.MAX_HP && mend >= BD.holdHeal * 0.7 && since(D, n, m => m.t === 'heal' && m.id === D.id).every(m => m.src === 'bd'),
+    `holding Black Death mends (${mend} HP in 1.2 s from ${hurt}, shown as 'bd')`);
+  await wait(1300);   // (the shooter's next shot)
+  n = D.msgs.length; fire(); await wait(700);
+  const blocked = since(D, n, m => m.t === 'hit' && m.target === D.id && m.blocked)[0];
+  const healed = since(D, n, m => m.t === 'heal' && m.id === D.id).reduce((a, m) => a + m.amt, 0);
+  const want = (blocked?.absorbed ?? 0) * BD.healPerDamage;
+  ok(!!blocked && healed >= want - 1, `a blocked hit heals ${Math.round(BD.healPerDamage * 100)}% of what it absorbed (absorbed ${blocked?.absorbed}, healed ${healed} incl. the mend)`);
+  D.send({ t: 'block', on: false });
+  for (const c of [S, D]) c.ws.close();
 }
 
 console.log(fails ? `${fails} FAILED` : 'ALL PASS');
