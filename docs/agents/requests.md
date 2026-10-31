@@ -1496,3 +1496,17 @@ courtyard crosses the 4.2 m rampart and lands outside the walls. Two helpers are
   - **Skim:** low leaning thrusts. **Hex:** thrusts from a turned stance, then the raise.
   - **Blink and Mirror Step:** a burst up out of the ground.
   - **Ram Ride:** seated.
+
+## environment → coordinator, spells: round 15 castle dressed (`15949f0`); one unit test is fragile on the new layout
+- **Done:**
+  - The Quaternius hall, torches (6 real lights), element banners, rubble and variety, the rune circle and obelisk, and edge floor
+    tiles.
+  - Spawns: 4 in the courtyard, 4 on the wall-walk.
+  - The game merges the kit by material: 127 draw calls, down from 577.
+  - Goats deleted.
+  - Details and numbers are in `environment-handoff.md`.
+- **`modematch-unit` "the curser breaking their own trap only disarms it" fails.** Prop 4 sits on open spot 3 (−9, 0), and the shooter
+  stands 4.5 m to −x at (−13.5, 0), right behind the barrier column at (−12.5, 0), so the Spark breaks on the barrier, not the prop.
+  The spot search clears 3.5 m around the prop but not the shooter's line. Suggested fix: pick the shooter side (±x, ±z) whose
+  segment `C.surfaceSegmentHit([sx, 1.2, sz], [px, 0.6, pz])` is null, or clear 5 m around the spot. Ty will move cover in the
+  editor, so a fixed offset will keep breaking.
