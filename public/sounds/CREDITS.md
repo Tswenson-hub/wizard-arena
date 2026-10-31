@@ -1,7 +1,8 @@
 # Sound credits
 
 Sounds and music in this folder come from these sources. Everything is CC0 (public domain) except the spell pack by
-Leonardo Calvo, which is **CC BY 4.0** and needs the credit below, and the menu music, under the Pixabay Content License.
+Leonardo Calvo, which is **CC BY 4.0** and needs the credit below, and the six Pixabay files Ty supplied ("Provided by Ty
+(Pixabay)" below). Round 14: the menu music and the goat bleats, which were Pixabay tracks, are now CC0 (see their rows).
 An in-game credits line (join screen and pause menu) credits Leonardo Calvo and the music.
 
 - **Magic Spell Full Pack** by **Leonardo Calvo** (thesoundrack, www.leonardocalvocomposer.com). License: **CC BY 4.0** (https://creativecommons.org/licenses/by/4.0/).
@@ -9,10 +10,11 @@ An in-game credits line (join screen and pause menu) credits Leonardo Calvo and 
 - **Basic Spell Impacts** by **lentikula**. License: CC0 1.0
 - **80 CC0 RPG SFX** (OpenGameArt). License: CC0 1.0
 - **Victory** fanfare (OpenGameArt). License: CC0 1.0. `defeat.m4a` is derived from it (slowed and low-passed).
-- **"Nordic Fantasia Lofi (Skyrim Lofi Opener)"** by turning_pages, from Pixabay (`turning_pages-nordic-fantasia-lofi-skyrim-lofi-opener-406706.mp3`). License: Pixabay Content License
+- **"Medieval: The Old Tower Inn"** by RandomMind (OpenGameArt, opengameart.org/content/medieval-the-old-tower-inn), the menu music since round 14 (it replaced a Pixabay track). License: CC0 1.0
+- **"Single Goat Bleating 2x"** by Kinoton (Freesound, freesound.org/people/Kinoton/sounds/581240/), the goat bleats since round 14 (they replaced Pixabay files). License: CC0 1.0
 - Kenney (www.kenney.nl): Impact Sounds, Sci-Fi Sounds, RPG Audio, Interface Sounds, Digital Audio packs. License: CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/)
 - OpenGameArt.org CC0 entries: "Park ambiences" by thimras, "Swishes Sound Pack" by artisticdude, "Air whoosh" by pyranostudios. License: CC0 1.0
-- Files provided by Ty (some from Pixabay, including the goat bleats by dragon-studio): see the last four tables.
+- Files provided by Ty (six of them from Pixabay): see the tables at the end.
 
 ## Kenney and OpenGameArt (CC0)
 Processing: decoded, downmixed to mono (except `ambient_loop`, stereo), leading silence trimmed, short fade-outs, peak-normalized, some files layered from 2 sources, loops cut with an equal-power crossfade; encoded to AAC .m4a with macOS `afconvert`.
@@ -41,7 +43,7 @@ Processing: decoded, downmixed to mono (except `ambient_loop`, stereo), leading 
 | `ui_click.m4a` | Kenney Interface Sounds (kenney.nl/assets/interface-sounds) — `toggle_004.ogg` | CC0 1.0 |  |
 | `ambient_loop.m4a` | OpenGameArt "Park ambiences" by thimras (opengameart.org/content/park-ambiences) — `park_ambience_wind.wav`<br>OpenGameArt "Park ambiences" by thimras (opengameart.org/content/park-ambiences) — `park_ambience_birds.wav` (from 30.0s, -3 dB) | CC0 1.0 | 20 s crossfade loop; wind bed with birds mixed under (stereo) |
 
-## Sound pass (Magic Spell Full Pack, Basic Spell Impacts, 80 CC0 RPG SFX, Victory, Pixabay music)
+## Sound pass (Magic Spell Full Pack, Basic Spell Impacts, 80 CC0 RPG SFX, Victory, the menu music)
 Processing: decoded, trimmed, faded, loudness-matched (active RMS about -16 dBFS plus a per-file gain, -1 dBFS peak
 ceiling); one-shots mono 44.1 kHz 64 kbps AAC, loops stereo 24 kHz 48 kbps with a 0.35 s seamless crossfade, the music
 stereo 44.1 kHz 80 kbps.
@@ -128,7 +130,7 @@ stereo 44.1 kHz 80 kbps.
 | `score_tick.m4a` | 80-CC0-RPG-SFX.zip → item_coins_01.ogg | CC0 (80-CC0-RPG-SFX) |  |
 | `countdown_tick.m4a` | 80-CC0-RPG-SFX.zip → lock_02.ogg | CC0 (80-CC0-RPG-SFX) |  |
 | `vote.m4a` | 80-CC0-RPG-SFX.zip → item_gem_04.ogg | CC0 (80-CC0-RPG-SFX) |  |
-| `menu_music.m4a` | turning_pages-nordic-fantasia-lofi-skyrim-lofi-opener-406706.mp3 | Pixabay Content License (credit Pixabay) | join screen, end screen, vote; loop with a short fade |
+| `menu_music.m4a` | RandomMind, "Medieval: The Old Tower Inn" (OpenGameArt) → `Loop_The_Old_Tower_Inn.wav` | CC0 1.0 | join screen, end screen, vote. Round 14 (replaced the Pixabay track): loudness-matched to the old track (+1.5 dB, active RMS -19 dBFS), a 0.35 s equal-power crossfade seam, 12 ms of wrap-around padding at each end for audio.js's loop points; stereo 44.1 kHz 80 kbps AAC, 49.6 s |
 
 ## Provided by Ty (Wizard Arena owner)
 Original files supplied by Ty for this game. Processing as above: decoded, downmixed to mono, leading silence trimmed,
@@ -200,10 +202,12 @@ where a file holds several, short fades, loudness-matched to the set (active RMS
 | `tk_hold_loop.m4a` | `Telekinesis_Pull.mp3`, 6.0-9.0 s looped, 0.4 s crossfade seam | Telekinesis hold hum (loop) |
 | `tk_throw.m4a` | `telekinesis_throw.mp3`, whole file, trimmed | Telekinesis throw |
 
-## Provided by Ty (Pixabay: dragon-studio)
-Pixabay Content License; credited to dragon-studio on Pixabay. Processed as the batch above.
+## Goat bleats (round 14: CC0, replacing Ty's Pixabay files by dragon-studio)
+Both cut from one Freesound recording: Kinoton, "Single Goat Bleating 2x" (freesound.org/people/Kinoton/sounds/581240/),
+CC0 1.0. Processing: the HQ preview decoded, downmixed to mono at 44.1 kHz, each bleat cut out by its energy envelope with
+an 8 ms fade-in and an 80 ms fade-out, peak-normalized to -1 dB, AAC .m4a 64 kbps via `afconvert`.
 
-| File | Source (Ty's file, author) | Used for |
+| File | Source | Used for |
 |---|---|---|
-| `goat_bleat_1.m4a` | `dragon-studio-goat-sound-390298.mp3` (0.80-1.36 s), dragon-studio, provided by Ty (Pixabay) | Goats and rams: grazing, angered, summoned, called and bonked (pitch-varied; angry ones lower and louder) |
-| `goat_bleat_2.m4a` | `dragon-studio-goat-baa-390303.mp3` (0.38-1.06 s), dragon-studio, provided by Ty (Pixabay) | Goats and rams: grazing, angered, summoned, called and bonked (pitch-varied; angry ones lower and louder) |
+| `goat_bleat_1.m4a` | Kinoton, "Single Goat Bleating 2x", the first bleat (0.36-1.16 s) | Goats and rams: grazing, angered, summoned, called and bonked (pitch-varied; angry ones lower and louder) |
+| `goat_bleat_2.m4a` | Kinoton, "Single Goat Bleating 2x", the second bleat (2.10-2.92 s) | Goats and rams: grazing, angered, summoned, called and bonked (pitch-varied; angry ones lower and louder) |
