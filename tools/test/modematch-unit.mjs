@@ -388,9 +388,11 @@ async function agilityChecks(join, since, spots) {
     J.send({ t: 'state', p: [sx, 0, sz], yaw: 0 }); await wait(400);   // (a full movement budget)
     let n = J.msgs.length;
     J.send({ t: 'cast', kind: 'fast', origin: [sx, 1.3, sz], dir: [0, 0, 1] });
-    await walk(J, 0.3, k => [sx, 0, sz + 0.54 * k]);   // 1.8 m/s: 60% of the walk
+    // 1.6 m/s: under the 60% cap (1.8 m/s) with room for the reports' arrival jitter (walking at the cap itself got clamped now
+    // and then), and far above a root; then a fresh snapshot (20 Hz) before reading where the server has us
+    await walk(J, 0.3, k => [sx, 0, sz + 0.48 * k]); await wait(150);
     ok(since(J, n, m => m.t === 'proj' && m.owner === J.id).length === 1, 'a Spark cast while walking is accepted');
-    ok(Math.abs(snap(J).p[2] - (sz + 0.54)) < 0.05, `and the caster keeps moving at 60% through the cast (${(snap(J).p[2] - sz).toFixed(2)} of 0.54 m)`);
+    ok(Math.abs(snap(J).p[2] - (sz + 0.48)) < 0.05, `and the caster keeps moving through the cast, slowed but not rooted (${(snap(J).p[2] - sz).toFixed(2)} of 0.48 m)`);
     await reset(J, sx, sz); J.send({ t: 'state', p: [sx, 0, sz], yaw: 0 }); await wait(400);
     J.send({ t: 'chargeStart' }); await wait(60);
     await walk(J, 0.6, k => [sx, 0, sz + 1.8 * k]);
