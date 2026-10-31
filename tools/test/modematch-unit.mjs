@@ -64,6 +64,19 @@ const bots = () => fighters().filter(p => p.bot);
   ok(C.dominantElement(C.PRESETS[0].loadout) === 'fire' && C.dominantElement({ ...L, primary: 'spark', guard: 'ward', utility: 'telekinesis', power: 'cyclone', mobility: 'blink', ultimate: 'eye_of_storm' }) === 'wind', 'the dominant element follows the mix (arcane only when nothing else)');
 }
 
+// ---- round 16: Meteor Rain's aim sway (C.meteorSway): deterministic per seed, about 1.5-2 m at the default aim distance
+{
+  const S = C.SPELLBOOK.meteor_rain.sway;
+  let peak = 0, same = true, diff = false;
+  for (let t = 0; t < 4; t += 0.05) {
+    const a = C.meteorSway(42, t, S.ref), b = C.meteorSway(42, t, S.ref), c = C.meteorSway(7, t, S.ref);
+    peak = Math.max(peak, Math.hypot(a[0], a[1]));
+    if (a[0] !== b[0] || a[1] !== b[1]) same = false;
+    if (Math.hypot(a[0] - c[0], a[1] - c[1]) > 0.3) diff = true;
+  }
+  ok(same && diff && peak > 1.2 && peak < 2.6, `Meteor Rain's sway is the same path for the same seed, another for another, up to ${peak.toFixed(2)} m`);
+}
+
 // ---- a human arrives: bots fill to 4
 const h = mk(false); h.botPref = 'hard'; join(h);
 run(0.1);
@@ -676,9 +689,10 @@ async function respawnChecks(join, since) {
   ok(!since(P, n, m => m.t === 'respawn' && m.id === P.id).length && since(P, n, m => m.t === 'respawnNowRefused').length === 1, `a second one within ${R.cooldown} s is refused`);
   // hurt: the hitter lands a fireball; then a respawn counts as a death, credited to the hitter
   await wait(R.cooldown * 1000 + 100);
-  const pp = snapOf(P)?.p || at(0);
-  P.send({ t: 'debugPlace', p: [pp[0], pp[1], pp[2]], yaw: 0 }); K.send({ t: 'debugPlace', p: [pp[0] + 6, pp[1], pp[2]], yaw: -Math.PI / 2, resetCd: true }); await wait(1700);
-  const o = [pp[0] + 6, pp[1] + 1.3, pp[2]], d = [pp[0] - o[0], pp[1] + 1 - o[1], pp[2] - o[2]], l = Math.hypot(...d);
+  // (back on the clear line: the safe respawn put us at a spawn, maybe behind cover)
+  const pp = at(0), kp = at(7);
+  P.send({ t: 'debugPlace', p: pp, yaw: line.yaw }); K.send({ t: 'debugPlace', p: kp, yaw: line.yaw + Math.PI, resetCd: true }); await wait(1700);
+  const o = [kp[0], kp[1] + 1.3, kp[2]], d = [pp[0] - o[0], pp[1] + 1 - o[1], pp[2] - o[2]], l = Math.hypot(...d);
   n = P.msgs.length;
   K.send({ t: 'cast', kind: 'fireball', origin: o, dir: d.map(v => v / l) }); await wait(600);
   const hurt = since(P, n, m => m.t === 'hit' && m.target === P.id && m.dmg > 0).length > 0;

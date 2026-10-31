@@ -657,7 +657,7 @@ function tryUltimate(me, world, t, act, target) {
   } else if (U === 'meteor_rain') {
     // leap when someone is reachable: we'll pick the spot from up there
     if (airborne(me, t) || !foesNear(me, world, me.p, MRAIN.range - 2, t, { ground: true }).length) return false;
-    b.mrainCommit = null;
+    b.mrainCommit = null; b.mrainErr = null;
     act({ t: 'ult' });
   } else if (U === 'blizzard') {
     // the facing that puts the most enemies in the cone
@@ -787,9 +787,14 @@ function flyMeteorRain(me, world, t, act) {
   if (!best) return;
   const tr = tracks.get(best.id), lead = (MRAIN.dive + 0.1) * b.cfg.lead;
   const lj = lead * Math.max(0, 1 + gauss() * (b.cfg.leadJitter ?? 0)), pe = placeJitter(b.cfg, best);   // (round 15: a guessed lead, a placement error)
-  const at = [best.p[0] + (tr ? tr.v[0] : 0) * lj + gauss() * pe, best.p[2] + (tr ? tr.v[1] : 0) * lj + gauss() * pe];
+  b.mrainErr ??= [gauss() * pe, gauss() * pe];   // (held for the hover, not re-rolled every think)
+  // round 16: the same sway as a player's (C.meteorSway, this cast's seed): the bot steers against part of it, as a player would
+  const aim = [best.p[0] + (tr ? tr.v[0] : 0) * lj + b.mrainErr[0], best.p[2] + (tr ? tr.v[1] : 0) * lj + b.mrainErr[1]];
+  const sw = C.meteorSway(M.seed ?? 0, t - M.start, dist2D([M.from[0], 0, M.from[1]], [aim[0], 0, aim[1]]));
+  const correct = b.cfg === DIFFICULTY.hard ? 0.6 : b.cfg === DIFFICULTY.normal ? 0.4 : 0.15;
+  const at = [aim[0] + sw[0] * (1 - correct), aim[1] + sw[1] * (1 - correct)];
   act({ t: 'mrainAim', at });
-  if (t >= b.mrainCommit || rooted(best, t) || isStunned(best, t)) { b.mrainCommit = null; act({ t: 'mrainDive', at }); }
+  if (t >= b.mrainCommit || rooted(best, t) || isStunned(best, t)) { b.mrainCommit = null; b.mrainErr = null; act({ t: 'mrainDive', at }); }
 }
 // Blizzard: keep the cone on the nearest enemies (the server turns it slowly toward our facing).
 function steerBlizzard(me, world, t) {

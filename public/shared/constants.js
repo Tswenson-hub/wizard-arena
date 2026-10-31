@@ -339,6 +339,19 @@ export function hexAt(c, age) {
   return { p, v: tan };
 }
 
+// Round 16: Meteor Rain's aim sway: the offset [dx, dz] (m) added to the aim, `t` s into the hover, aiming `dist` m out, for the
+// cast's `seed` (the server picks it and sends it in mrainLeap). Two summed sines per axis at seed-picked periods and phases,
+// so it's smooth, never quite repeats within a hover, and the server (or a bot) gets the same path from the same seed.
+export function meteorSway(seed, t, dist) {
+  const S = SPELLBOOK.meteor_rain.sway, TAU = Math.PI * 2;
+  const r = (k) => { const x = Math.sin((seed + 1) * 12.9898 + k * 78.233) * 43758.5453; return x - Math.floor(x); };
+  const per = (k) => S.period[0] + r(k) * (S.period[1] - S.period[0]);
+  const a = S.amp * Math.max(0.5, Math.min(1.5, (dist || S.ref) / S.ref));
+  const dx = a * (0.68 * Math.sin(TAU * t / per(1) + TAU * r(3)) + 0.32 * Math.sin(TAU * t / (per(2) * 0.55) + TAU * r(4)));
+  const dz = a * (0.68 * Math.sin(TAU * t / per(5) + TAU * r(6)) + 0.32 * Math.sin(TAU * t / (per(7) * 0.55) + TAU * r(8)));
+  return [dx, dz];
+}
+
 // Round 15: Shepherd's Sling hits harder the further the stone has flown (base damage, before DAMAGE_SCALE).
 export const slingDamage = (flown) => { const S = SPELLS.sling; return S.near + (S.far - S.near) * Math.max(0, Math.min(1, flown / S.farDist)); };
 
@@ -642,6 +655,9 @@ export const SPELLBOOK = {
     hover: 4,            // longest hover; then she dives on her last aim
     radius: 4,           // the landing circle (its outer edge: the splash)
     killRadius: 2.4,     // round 15 (Ty: it took 75% of Ultimate kills): only this inner circle kills; was the whole 4 m
+    // round 16 (Ty: still too strong): while she hovers, her aim drifts on a smooth path (meteorSway); the player steers against
+    // it. `amp` m at `ref` m of aim distance (scaling with it, 0.5-1.5x), periods in `period` s; holding C halves it.
+    sway: { amp: 1.75, ref: 14, period: [1.2, 2.0], steady: 0.5 },
     splash: [44, 30],    // base damage between the kill ring and the edge (×1.36: 60 at the ring, 41 at the edge)
     range: 24,           // farthest landing from where she leapt
     dive: 0.6,

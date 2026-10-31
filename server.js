@@ -1259,9 +1259,9 @@ function updateUltWindup(p, t) {
     broadcast({ t: 'blizzard', id: p.id, yaw: p.yaw, left: BLIZ.duration });
   } else if (U === 'meteor_rain') {
     // (round 13: she rises from where she is, which may be a roof or a hang in mid-air, not from y 0)
-    p.mrain = { phase: 'rise', from: [p.p[0], p.p[2]], y0: Math.min(p.p[1], MRAIN.height), start: t, hoverAt: t + MRAIN.rise, hoverUntil: t + MRAIN.rise + MRAIN.hover, at: null, aimSentAt: 0 };
+    p.mrain = { phase: 'rise', from: [p.p[0], p.p[2]], y0: Math.min(p.p[1], MRAIN.height), start: t, hoverAt: t + MRAIN.rise, hoverUntil: t + MRAIN.rise + MRAIN.hover, at: null, aimSentAt: 0, seed: Math.floor(Math.random() * 100000) };   // (seed: round 16's aim sway)
     p.flightUntil = 0; p.jump = null; p.fall = null; p.hover = null;
-    broadcast({ t: 'mrainLeap', id: p.id, p: [p.p[0], p.mrain.y0, p.p[2]], top: MRAIN.height, rise: MRAIN.rise, hover: MRAIN.hover });
+    broadcast({ t: 'mrainLeap', id: p.id, p: [p.p[0], p.mrain.y0, p.p[2]], top: MRAIN.height, rise: MRAIN.rise, hover: MRAIN.hover, seed: p.mrain.seed });
   }
   broadcast({ t: 'ult', id: p.id, ult: U });
 }

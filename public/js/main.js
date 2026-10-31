@@ -1073,7 +1073,7 @@ function handleMessage(msg) {
       sfx.play('meteor_rain_launch', { pos: [msg.p[0], 1, msg.p[2]], vol: 1.1, jitter: 0 });
       w.mrainAura = effects.flameAura(w.group);
       playSpell(w, 'meteor_rain', 'hover');   // Dive_Down_and_Land's opening tuck, held through the hover
-      if (w === me) { local.ultWind = null; local.hover = null; local.jump = null; local.fall = null; local.airDash = null; local.mrain = { phase: 'rise', start: now, from: [msg.p[0], msg.p[2]], y0: msg.p[1] || 0, top: msg.top, rise: msg.rise, hoverUntil: now + msg.rise + msg.hover, lastAim: 0 }; }
+      if (w === me) { local.ultWind = null; local.hover = null; local.jump = null; local.fall = null; local.airDash = null; local.mrain = { phase: 'rise', start: now, from: [msg.p[0], msg.p[2]], y0: msg.p[1] || 0, top: msg.top, rise: msg.rise, hoverUntil: now + msg.rise + msg.hover, lastAim: 0, seed: msg.seed ?? 0, steady: 1 }; }
       break;
     }
     case 'mrainAim': {
@@ -2098,6 +2098,11 @@ function updateLocal(dt) {
       let at = groundTarget(60);
       const d = Math.hypot(at[0] - M.from[0], at[2] - M.from[1]);
       if (d > MRAIN.range) at = [M.from[0] + (at[0] - M.from[0]) * MRAIN.range / d, 0, M.from[1] + (at[2] - M.from[1]) * MRAIN.range / d];
+      // round 16: the circle sways (C.meteorSway, this cast's seed); holding C steadies it to half. The circle shown is where she lands.
+      M.steady += ((input.down('KeyC') ? MRAIN.sway.steady : 1) - M.steady) * Math.min(1, dt * 4);
+      const sw = C.meteorSway(M.seed, now - M.start, Math.min(d, MRAIN.range));
+      at = [at[0] + sw[0] * M.steady, 0, at[2] + sw[1] * M.steady];
+      at[1] = C.topFloorAt ? C.topFloorAt(at[0], at[2]) : 0;
       mrainMark.visible = true; mrainMark.position.set(at[0], at[1] ?? 0, at[2]);
       if (now - M.lastAim > 0.2) { M.lastAim = now; net.send({ t: 'mrainAim', at: [at[0], at[2]] }); }
       if (M.phase === 'hover' && (input.lmbPressed || input.justPressed('KeyQ'))) net.send({ t: 'mrainDive', at: [at[0], at[2]] });
