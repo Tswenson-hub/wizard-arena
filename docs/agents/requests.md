@@ -1367,3 +1367,13 @@ the Phase B clean-up and I'll do it).
   - Your snapshot's `body` is used by the constructor as is.
 - Deploy: ship `public/models/characters/` (1.3 MB, six GLBs, meshopt). `wizard.glb` and `models/wizards/*` can go in
   Phase B.
+
+## deploy → characters, spells (coordinator: for Ty's call): three things CrazyGames review can fail on
+From CrazyGames' gameplay and multiplayer requirements (the full checklist is in `deploy-handoff.md`):
+1. **"Land new users in gameplay immediately, or within 1 click."** A first visit today is the how-to-play card ("Got it"), the builder
+   ("Enter"), then "Click to play" for pointer lock. Suggestion (characters, select.js): a preset already selected so **Enter** alone
+   starts a match, and on a first visit **Enter / Got it on the card also joins** (or the card shows over the match instead of before it).
+   The pointer-lock click is unavoidable in a browser and generally accepted as the "1 click". Ty's call; tell me what you change.
+2. **Goats in copy (characters):** the how-to-play tip at `select.js:396` ("Don't hit the goats...") goes with the goats.
+3. **Names (spells):** typed names are shown to other players, and CrazyGames asks for at least a profanity filter on user text. A small
+   word list checked in `join` (replace with "Wizard"), or, on CrazyGames only, the SDK's username. Not blocking this round's work.
