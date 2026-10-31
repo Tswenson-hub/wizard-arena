@@ -7,8 +7,30 @@ import * as C from '../shared/constants.js';
 const TK_COLOR = 0xb48cff;
 const moteGeo = new THREE.IcosahedronGeometry(1, 0);
 const moteMat = new THREE.MeshBasicMaterial({ color: 0xd9c4ff, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false });
-const shellMat = new THREE.MeshBasicMaterial({ color: TK_COLOR, transparent: true, opacity: 0.35, wireframe: true, blending: THREE.AdditiveBlending, depthWrite: false });
 const BEAM_MOTES = 12;
+
+// An energy bubble (round 14, instead of the wireframe balls): a bright fresnel rim, a faint fill, and slow ripples
+// drifting up its surface. Additive, so it only ever lightens what's behind it. `opacity` fades the whole bubble.
+const bubbleGeo = new THREE.SphereGeometry(1, 40, 24);
+function bubbleMaterial(color, { opacity = 0, fill = 0.07, rim = 1, ripple = 0.25, whiten = 0.35 } = {}) {
+  return new THREE.ShaderMaterial({
+    uniforms: { color: { value: new THREE.Color(color) }, opacity: { value: opacity }, fill: { value: fill }, rim: { value: rim },
+      ripple: { value: ripple }, whiten: { value: whiten }, time: { value: 0 }, hit: { value: 0 } },
+    vertexShader: `varying vec3 vN; varying vec3 vV; varying vec3 vP;
+      void main() { vP = position; vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }`,
+    fragmentShader: `uniform vec3 color; uniform float opacity, fill, rim, ripple, whiten, time, hit; varying vec3 vN; varying vec3 vV; varying vec3 vP;
+      void main() {
+        float f = 1.0 - abs(dot(normalize(vN), normalize(vV)));
+        float edge = pow(f, 3.0) * rim + pow(f, 1.4) * 0.18;
+        float waves = 0.5 + 0.5 * sin(vP.y * 9.0 - time * 2.6 + sin(atan(vP.z, vP.x) * 3.0 + time * 0.7) * 1.2);
+        float a = fill + edge + waves * waves * ripple * (0.25 + f) + hit * (0.25 + f * 0.6);
+        gl_FragColor = vec4(mix(color, vec3(1.0), clamp(edge * whiten + hit * 0.4, 0.0, 0.6)) * a * opacity, 1.0);
+      }`,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  });
+}
+const shellMat = bubbleMaterial(TK_COLOR, { opacity: 0.9, fill: 0.05, rim: 0.9, ripple: 0.18 });
 
 const CYC = C.SPELLBOOK.cyclone, LASH = C.SPELLBOOK.sanguine_lash;
 // Natural ground speed (m/s) of each locomotion clip at 1x, so playback = actual speed / natural speed and the
@@ -147,21 +169,23 @@ export class Wizard {
     this.ring = ring;
 
     // ward (block) bubble
-    this.ward = new THREE.Mesh(new THREE.IcosahedronGeometry(1.25, 1),
-      new THREE.MeshBasicMaterial({ color: 0x7ad8ff, transparent: true, opacity: 0.0, wireframe: true, depthWrite: false }));
+    this.ward = new THREE.Mesh(bubbleGeo, bubbleMaterial(0x6cd0ff));
+    this.ward.scale.set(1.2, 1.3, 1.2);
     this.ward.position.y = 1.0;
+    this.ward.visible = false;
     this.group.add(this.ward);
-    this.wardFill = new THREE.Mesh(new THREE.IcosahedronGeometry(1.2, 1),
-      new THREE.MeshBasicMaterial({ color: 0x5cc8ff, transparent: true, opacity: 0.0, depthWrite: false, side: THREE.DoubleSide }));
-    this.wardFill.position.y = 1.0;
-    this.group.add(this.wardFill);
-    // Black Death has its own look: a black shroud instead of the blue bubble
+    // Black Death has its own look: a black shroud (an opaque dark core) inside a crimson rim instead of the blue bubble
     this.guardStyle = this.loadout.guard;
     if (this.guardStyle === 'black_death') {
-      this.ward.material.color.setHex(0x8a0020);
-      this.wardFill.material.color.setHex(0x040006);
-      this.wardFill.scale.setScalar(1.05);
+      const u = this.ward.material.uniforms;
+      u.color.value.setHex(0x90081c); u.fill.value = 0; u.rim.value = 1.1; u.ripple.value = 0.35; u.whiten.value = 0.04;
+      this.wardFill = new THREE.Mesh(bubbleGeo, new THREE.MeshBasicMaterial({ color: 0x040006, transparent: true, opacity: 0, depthWrite: false }));
+      this.wardFill.scale.set(1.18, 1.28, 1.18);
+      this.wardFill.position.y = 1.0;
+      this.wardFill.visible = false;
       this.wardFill.renderOrder = 5;
+      this.ward.renderOrder = 6;
+      this.group.add(this.wardFill);
     }
 
     // charge glow at the staff hand
@@ -587,11 +611,22 @@ export class Wizard {
     // ward bubble
     const w = this.blocking && !this.dead ? 1 : 0;
     const style = this.guardStyle, tNow = performance.now() / 1000;
-    const fill = style === 'black_death' ? 0.97 : 0.12;
-    this.ward.material.opacity += (w * 0.55 - this.ward.material.opacity) * Math.min(1, dt * 14);
-    this.wardFill.material.opacity += (w * fill - this.wardFill.material.opacity) * Math.min(1, dt * 14);
-    this.ward.rotation.y += dt * (style === 'black_death' ? 2.4 : 0.8); this.ward.rotation.x += dt * 0.3;
-    if (style === 'black_death') { const c = 1.05 + Math.sin(tNow * 9) * 0.03; this.wardFill.scale.set(c, 1.05 + Math.cos(tNow * 7) * 0.04, c); this.wardFill.rotation.y += dt * 1.5; }
+    const wu = this.ward.material.uniforms;
+    wu.opacity.value += (w - wu.opacity.value) * Math.min(1, dt * 14);
+    wu.time.value = tNow * (style === 'black_death' ? 1.8 : 1);
+    this.wardHitK = Math.max(0, (this.wardHitK || 0) - dt * 4);
+    wu.hit.value = this.wardHitK;
+    this.ward.visible = wu.opacity.value > 0.01;
+    // the bubble swells in as it comes up
+    const sw = 0.9 + 0.1 * wu.opacity.value;
+    this.ward.scale.set(1.2 * sw, 1.3 * sw, 1.2 * sw);
+    if (this.wardFill) {
+      const m = this.wardFill.material;
+      m.opacity += (w * 0.97 - m.opacity) * Math.min(1, dt * 14);
+      this.wardFill.visible = m.opacity > 0.01;
+      const c = 1.18 + Math.sin(tNow * 9) * 0.03;
+      this.wardFill.scale.set(c, 1.28 + Math.cos(tNow * 7) * 0.04, c);
+    }
     // Vesper's whip: out in her hand through the Lash, coiled at her hip again half a second after
     if (this.whipOut && this.lashT < 0) {
       this.whipCoilAt ||= tNow + 0.5;
@@ -727,6 +762,9 @@ export class Wizard {
     this.hpBar.quaternion.copy(camera.quaternion);
   }
 
+  // A spell broke on our ward: the bubble flares for a moment (main.js calls it next to effects.blockFlash).
+  wardHit() { this.wardHitK = 1; }
+
   // Start (or stop, with null) holding a prop by telekinesis. `liftFrom` is where it rises from.
   setCarry(mesh, liftFrom = null) {
     if (this.carry) { this.scene.remove(this.carry.holder); this.carry = null; }
@@ -737,7 +775,7 @@ export class Wizard {
     const spec = C.PROP_TYPES[type];
     const holder = new THREE.Group();
     mesh.position.y = -spec.h * 0.5;             // pivot at the prop's middle
-    const shell = new THREE.Mesh(moteGeo, shellMat);
+    const shell = new THREE.Mesh(bubbleGeo, shellMat);
     shell.scale.setScalar(spec.r + 0.25);
     holder.add(mesh, shell);
     const start = liftFrom ? new THREE.Vector3(liftFrom[0], spec.h * 0.5, liftFrom[2]) : this.holdPoint();
@@ -768,7 +806,8 @@ export class Wizard {
     } else c.holder.position.lerp(hold, Math.min(1, dt * 16));
     c.holder.rotateOnAxis(c.spin, dt * (c.t < 1 ? 6 : 0.9));
     c.shell.rotation.y += dt * 2; c.shell.rotation.x += dt * 1.3;
-    c.shell.material.opacity = 0.25 + Math.sin(now * 6) * 0.08;
+    c.shell.material.uniforms.opacity.value = 0.8 + Math.sin(now * 6) * 0.2;
+    c.shell.material.uniforms.time.value = now;
 
     this.drawBeam(c.holder.position);
   }
