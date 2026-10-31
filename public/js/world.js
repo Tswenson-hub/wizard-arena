@@ -38,7 +38,7 @@ const cyl = (rt, rb, h, seg, material, x = 0, y = 0, z = 0) => { const m = new T
 const GROUND_TEX = {};
 function groundTexture(name) {
   if (GROUND_TEX[name]) return GROUND_TEX[name];
-  const t = new THREE.TextureLoader().load(`/textures/ground/${name}.webp`);
+  const t = new THREE.TextureLoader().load(`./textures/ground/${name}.webp`);
   t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8;
   return (GROUND_TEX[name] = t);
 }
@@ -153,7 +153,7 @@ export function buildWorld(scene) {
   spinners.length = 0; grassChunks.length = 0;
   computeScatter(); computeGrass();
   scene.background = new THREE.Color(SKY.horizon);
-  new THREE.TextureLoader().load('/textures/sky.jpg', (tex) => {
+  new THREE.TextureLoader().load('./textures/sky.jpg', (tex) => {
     tex.mapping = THREE.EquirectangularReflectionMapping;
     tex.colorSpace = THREE.SRGBColorSpace;
     scene.background = tex;
@@ -259,7 +259,7 @@ export function buildWorld(scene) {
 // toward its foot is the fog's colour. Turned so the paintings' warm, lit flank faces the sun.
 const VISTA = { r: 160, y0: 24, h: 44, tiles: 6 };
 function mountainVista() {
-  const tex = new THREE.TextureLoader().load('/textures/sky/mountain_vista.webp');
+  const tex = new THREE.TextureLoader().load('./textures/sky/mountain_vista.webp');
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.wrapS = THREE.MirroredRepeatWrapping; tex.wrapT = THREE.ClampToEdgeWrapping;
   tex.repeat.set(VISTA.tiles, 1); tex.anisotropy = 4;
@@ -1106,26 +1106,28 @@ function purpleRunes(root) {
 // Farm pieces with a Meshy model: [stand-in name, url, height in metres, yaw that turns it to face +z].
 // A model that fails to load leaves its procedural stand-in in place.
 const FARM_MODELS = () => [
-  ['tractor', '/models/tractor.glb', 3.0, Math.PI / 2],     // exported nose toward -x
-  ['cart', '/models/horse_cart.glb', C.CART.height],          // model space as measured for its colliders in map.js
-  ['pillar', '/models/rune_pillar.glb', C.PILLAR_HEIGHT, 0, true],
-  ['archway', '/models/archway.glb', C.ARCHWAY.height, 0, true],
-  ['obelisk', '/models/obelisk.glb', C.OBELISK.height, 0, true],
-  ['scarecrow', '/models/scarecrow.glb', 2.4],
-  ['barn', '/models/barn.glb', C.BARN.height],               // model space as measured for the colliders in map.js
-  ['silo', '/models/silo.glb', C.SILO.height],
-  ['well', '/models/well.glb', C.WELL.height, 0, false, [-0.05, 0]],   // its stone ring sits 0.05 of its height off the bbox centre
+  ['tractor', './models/tractor.glb', 3.0, Math.PI / 2],     // exported nose toward -x
+  ['cart', './models/horse_cart.glb', C.CART.height],          // model space as measured for its colliders in map.js
+  ['pillar', './models/rune_pillar.glb', C.PILLAR_HEIGHT, 0, true],
+  ['archway', './models/archway.glb', C.ARCHWAY.height, 0, true],
+  ['obelisk', './models/obelisk.glb', C.OBELISK.height, 0, true],
+  ['scarecrow', './models/scarecrow.glb', 2.4],
+  ['barn', './models/barn.glb', C.BARN.height],               // model space as measured for the colliders in map.js
+  ['silo', './models/silo.glb', C.SILO.height],
+  ['well', './models/well.glb', C.WELL.height, 0, false, [-0.05, 0]],   // its stone ring sits 0.05 of its height off the bbox centre
 ];
 
-export function loadModels(loader, scene) {
+// `cameraGrid: false` skips the camera blockers (the editor, which rebuilds the world after every change).
+export function loadModels(loader, scene, { cameraGrid = true } = {}) {
   loader.setMeshoptDecoder?.(MeshoptDecoder);   // the map's models are meshopt-compressed (tools/optimize-models.sh)
   const load = (url) => new Promise((res, rej) => loader.load(url, res, undefined, rej));
+  const solid = (o) => { o.userData.cam = 'solid'; return o; };   // the camera boom stops at it (see cameraClearance)
   return Promise.all([
-    load('/models/goat.glb').then(g => { models.goat = fitModel(g, 1.25); }),
-    load('/models/potion.glb').then(g => { models.potion = fitModel(g, C.PROP_TYPES.potion.h); }),
-    load('/models/farmhouse.glb').then(g => {
+    load('./models/goat.glb').then(g => { models.goat = fitModel(g, 1.25); }),
+    load('./models/potion.glb').then(g => { models.potion = fitModel(g, C.PROP_TYPES.potion.h); }),
+    load('./models/farmhouse.glb').then(g => {
       // The wizard's farmhouse on the north side of the courtyard, front door facing the well.
-      const house = fitModel(g, C.FARMHOUSE.height);
+      const house = solid(fitModel(g, C.FARMHOUSE.height));
       house.position.set(C.FARMHOUSE.x, 0, C.FARMHOUSE.z);
       house.rotation.y = C.FARMHOUSE.yaw;
       house.traverse(o => { if (o.isMesh) o.receiveShadow = false; });
@@ -1134,22 +1136,25 @@ export function loadModels(loader, scene) {
     }),
     ...FARM_MODELS().map(([name, url, h, yaw, runes, shift]) => load(url).then(g => {
       if (runes) purpleRunes(g.scene);
-      models[name] = fitModel(g, h, yaw);
+      models[name] = solid(fitModel(g, h, yaw));
       if (shift) models[name].position.set(shift[0] * h, 0, shift[1] * h);
       swapModel(name, models[name]);
       if (name === 'pillar') layFallenPillars(models[name]);
     }, () => {})),
     // Trees and rocks repeat dozens of times: one InstancedMesh per model.
-    ...Object.entries(SCATTER).map(([name, items]) => load(`/models/${name}.glb`).then(g => {
-      scene.add(instanced(g, items, !name.endsWith('_far')));
+    ...Object.entries(SCATTER).map(([name, items]) => load(`./models/${name}.glb`).then(g => {
+      const group = instanced(g, items, !name.endsWith('_far'));
+      scene.add(group);
+      if (name.startsWith('rock')) solid(group);
+      else if (!name.endsWith('_far')) seeThrough(g.scene);   // canopies cut a hole between the camera and us instead
       for (const s of SCATTER_STANDINS[name] || []) swapModel(s, new THREE.Group());
       if (name === 'rock_jagged') models.rockProp = fitModel({ scene: g.scene.clone() }, C.PROP_TYPES.rock.h);
     }, () => {})),
     // The high ground (C.PIECE_MODELS): each model fitted to 1 m, then scaled to the piece's height and stretch.
-    ...[...new Set(C.PIECE_MODELS.map(p => p.model))].map(name => load(`/models/${name}.glb`).then(g => {
+    ...[...new Set(C.PIECE_MODELS.map(p => p.model))].map(name => load(`./models/${name}.glb`).then(g => {
       const unit = fitModel(g, 1);
       for (const P of C.PIECE_MODELS.filter(p => p.model === name)) {
-        const holder = new THREE.Group();
+        const holder = solid(new THREE.Group());
         holder.add(unit.clone());
         holder.position.set(P.x, P.y, P.z);
         holder.rotation.y = P.yaw;
@@ -1159,12 +1164,12 @@ export function loadModels(loader, scene) {
       }
     }, () => {})),
     // the silo leaning up to the hay loft: the silo model at half size, tilted so its top is the ramp's surface
-    load('/models/silo.glb').then(g => {
+    load('./models/silo.glb').then(g => {
       const S = C.LEANING_SILO; if (!S) return;
       const unit = fitModel(g, 1);   // body radius 0.45 of its height, axis at y 0.45
       const h = S.r / 0.45, dx = S.top[0] - S.foot[0], dz = S.top[1] - S.foot[1], L = Math.hypot(dx, dz);
       const pitch = Math.atan2(S.top[2] - S.foot[2], L);
-      const outer = new THREE.Group(), inner = new THREE.Group(), body = unit.clone();
+      const outer = solid(new THREE.Group()), inner = new THREE.Group(), body = unit.clone();
       body.scale.setScalar(h); body.position.y = -0.45 * h;          // its axis on the inner group's origin
       inner.add(body); inner.rotation.z = pitch; outer.add(inner);
       outer.rotation.y = Math.atan2(-dz, dx);                         // model +x along the ramp
@@ -1172,29 +1177,147 @@ export function loadModels(loader, scene) {
       scene.add(outer);
     }, () => {}),
     // Ty's two vases stand in for the plain pot prop, alternating.
-    load('/models/vase_terracotta.glb').then(g => { models.vases[0] = fitModel(g, C.PROP_TYPES.pot.h); }, () => {}),
-    load('/models/vase_teal.glb').then(g => { models.vases[1] = fitModel(g, C.PROP_TYPES.pot.h); }, () => {}),
+    load('./models/vase_terracotta.glb').then(g => { models.vases[0] = fitModel(g, C.PROP_TYPES.pot.h); }, () => {}),
+    load('./models/vase_teal.glb').then(g => { models.vases[1] = fitModel(g, C.PROP_TYPES.pot.h); }, () => {}),
     // Grass: cosmetic clumps, chunked and instanced (see GRASS).
-    ...['tall', 'clover'].map(kind => load(`/models/grass_${kind}.glb`).then(g => {
+    ...['tall', 'clover'].map(kind => load(`./models/grass_${kind}.glb`).then(g => {
       scene.add(grassMeshes(g, GRASS_ITEMS[kind]));
-      scene.onBeforeRender = (renderer, sc, camera) => grassTick(camera);
+      scene.onBeforeRender = (renderer, sc, camera) => { grassTick(camera); cutawayTick(); };
     }, () => {})),
     // Decoration placed in the map editor (layout kind 'deco'): any model, fitted to its height.
-    ...[...new Set(C.DECOS.map(d => d.model))].map(name => load(`/models/${name}.glb`).then(g => {
-      const unit = fitModel(g, 1);
+    ...[...new Set(C.DECOS.map(d => d.model))].map(name => load(`./models/${name}.glb`).then(g => {
+      const unit = fitModel(g, 1), tree = TREE_MODEL.test(name);
+      if (tree) seeThrough(g.scene);
       for (const d of C.DECOS.filter(q => q.model === name)) {
         const holder = new THREE.Group(); holder.add(unit.clone());
+        if (!tree) solid(holder);
         holder.position.set(d.x, d.y, d.z); holder.rotation.y = d.yaw; holder.scale.setScalar(d.h);
         scene.add(holder);
       }
     }, () => {})),
     // One round bale, two sizes: the throwable prop and the big courtyard cover stacks.
-    load('/models/hay.glb').then(g => {
-      models.haystack = fitModel({ scene: g.scene.clone() }, 1.7);
+    load('./models/hay.glb').then(g => {
+      models.haystack = solid(fitModel({ scene: g.scene.clone() }, 1.7));
       models.hay = fitModel(g, C.PROP_TYPES.hay.h);
       swapModel('haystack', models.haystack);
     }, () => {}),
-  ]);
+  ]).then(() => { if (cameraGrid) buildCameraGrid(scene); });
+}
+
+// ------------------------------------------------------------ camera blockers
+// The third-person camera mustn't end up inside a Meshy model. Once the models are placed, the triangles of every model
+// tagged solid (userData.cam: buildings, the high ground, hay stacks, rocks, decos) are rasterised into a coarse world
+// grid, and cameraClearance() walks the boom through it. Tree canopies aren't in it (the camera would keep snapping in
+// near trees): their materials cut a dithered see-through hole around the line from the camera to us (cameraCutaway).
+// Props and goats move and stay out; trunks and the procedural pieces are COLLIDERS, which main.js already checks.
+const TREE_MODEL = /^(pine|oak|birch)/;
+const CAM = { cell: 0.4, half: C.ARENA_RADIUS + 8, y0: -2, y1: 24, pad: 0.22, margin: 0.25 };
+let camGrid = null;   // { cells: Uint8Array, n, ny }
+
+function buildCameraGrid(scene) {
+  const n = Math.ceil(2 * CAM.half / CAM.cell), ny = Math.ceil((CAM.y1 - CAM.y0) / CAM.cell);
+  const cells = new Uint8Array(n * n * ny);
+  const mark = (x, y, z) => {
+    const i = Math.floor((x + CAM.half) / CAM.cell), k = Math.floor((z + CAM.half) / CAM.cell), j = Math.floor((y - CAM.y0) / CAM.cell);
+    if (i >= 0 && i < n && k >= 0 && k < n && j >= 0 && j < ny) cells[(j * n + k) * n + i] = 1;
+  };
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), m = new THREE.Matrix4(), im = new THREE.Matrix4();
+  const raster = (mesh, world) => {   // every triangle, sampled at least once per cell along its edges
+    const pos = mesh.geometry.attributes.position, idx = mesh.geometry.index, tris = (idx ? idx.count : pos.count) / 3;
+    const v = (t, out) => out.fromBufferAttribute(pos, idx ? idx.getX(t) : t).applyMatrix4(world);
+    for (let t = 0; t < tris; t++) {
+      v(3 * t, a); v(3 * t + 1, b); v(3 * t + 2, c);
+      const steps = Math.ceil(Math.max(a.distanceTo(b), b.distanceTo(c), c.distanceTo(a)) / CAM.cell);
+      for (let u = 0; u <= steps; u++) for (let w = 0; w <= steps - u; w++) {
+        const p = u / steps, q = w / steps, r = 1 - p - q;
+        mark(a.x * r + b.x * p + c.x * q, a.y * r + b.y * p + c.y * q, a.z * r + b.z * p + c.z * q);
+      }
+    }
+  };
+  const walk = (o, on) => {
+    on ||= o.userData.cam === 'solid';
+    if (on && o.isMesh && o.geometry?.attributes.position) {
+      if (o.isInstancedMesh) for (let i = 0; i < o.count; i++) { o.getMatrixAt(i, im); raster(o, m.multiplyMatrices(o.matrixWorld, im)); }
+      else raster(o, o.matrixWorld);
+    }
+    for (const ch of o.children) walk(ch, on);
+  };
+  const t0 = performance.now();
+  scene.updateMatrixWorld(true);
+  walk(scene, false);
+  camGrid = { cells, n, ny, ms: Math.round(performance.now() - t0) };
+}
+
+function camSolid(x, y, z) {
+  const { cells, n, ny } = camGrid;
+  const i = Math.floor((x + CAM.half) / CAM.cell), k = Math.floor((z + CAM.half) / CAM.cell), j = Math.floor((y - CAM.y0) / CAM.cell);
+  return i >= 0 && i < n && k >= 0 && k < n && j >= 0 && j < ny && cells[(j * n + k) * n + i] === 1;
+}
+
+// How far along the segment from `from` (the wizard's head) to `to` (where the camera wants to be) it can go before it
+// would be inside or within CAM.pad of a solid model, as a fraction 0..1 (1: nothing in the way). The pad applies from
+// half a metre out (a post right beside the head shouldn't swallow the boom), and a head that is itself in a solid cell
+// (brushing a deck's underside) skips that solid until the boom comes out of it.
+export function cameraClearance(from, to) {
+  if (!camGrid) return 1;
+  const dx = to.x - from.x, dy = to.y - from.y, dz = to.z - from.z, len = Math.hypot(dx, dy, dz);
+  if (len < 1e-3) return 1;
+  const P = CAM.pad, padded = (x, y, z) => camSolid(x, y, z) || camSolid(x + P, y, z) || camSolid(x - P, y, z)
+    || camSolid(x, y + P, z) || camSolid(x, y - P, z) || camSolid(x, y, z + P) || camSolid(x, y, z - P);
+  let free = !camSolid(from.x, from.y, from.z);
+  for (let d = 0; d <= len + CAM.margin; d += 0.1) {
+    const t = Math.min(d, len) / len, x = from.x + dx * t, y = from.y + dy * t, z = from.z + dz * t;
+    if (!free) { free = !camSolid(x, y, z); continue; }
+    if (d < 0.5 ? camSolid(x, y, z) : padded(x, y, z)) return Math.max(0, d - CAM.margin) / len;
+  }
+  return 1;
+}
+
+// Foliage see-through: the tree materials discard a dithered tube of fragments around the line from the camera to
+// `target` (the wizard's head), widening toward the wizard. Call it every frame the over-the-shoulder camera is live;
+// a frame without a call turns it off (cutawayTick, from the scene's onBeforeRender).
+const cut = { uCutTarget: { value: new THREE.Vector3() }, uCutOn: { value: 0 }, fresh: false };
+export function cameraCutaway(target) {
+  if (!target) { cut.uCutOn.value = 0; return; }
+  cut.uCutTarget.value.copy(target); cut.uCutOn.value = 1; cut.fresh = true;
+}
+function cutawayTick() {
+  if (!cut.fresh) cut.uCutOn.value = 0;
+  cut.fresh = false;
+}
+function seeThrough(root) {
+  root.traverse(o => {
+    if (!o.isMesh || o.material.userData.seeThrough) return;
+    const mat = o.material;
+    mat.userData.seeThrough = true;
+    mat.customProgramCacheKey = () => 'see-through';
+    mat.onBeforeCompile = (sh) => {
+      sh.uniforms.uCutTarget = cut.uCutTarget; sh.uniforms.uCutOn = cut.uCutOn;
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vCutWorld;')
+        .replace('#include <project_vertex>', `#include <project_vertex>
+          vec4 cutW = vec4(transformed, 1.0);
+          #ifdef USE_INSTANCING
+            cutW = instanceMatrix * cutW;
+          #endif
+          vCutWorld = (modelMatrix * cutW).xyz;`);
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vCutWorld;\nuniform vec3 uCutTarget;\nuniform float uCutOn;')
+        .replace('void main() {', `void main() {
+          if (uCutOn > 0.5) {
+            vec3 ab = uCutTarget - cameraPosition;
+            float t = dot(vCutWorld - cameraPosition, ab) / max(dot(ab, ab), 1e-4);
+            if (t > 0.0 && t < 0.98) {
+              float r = mix(0.6, 1.3, t), d = length(vCutWorld - cameraPosition - ab * t);
+              const float B[16] = float[16](0., 8., 2., 10., 12., 4., 14., 6., 3., 11., 1., 9., 15., 7., 13., 5.);
+              ivec2 q = ivec2(mod(gl_FragCoord.xy, 4.0));   // 4x4 ordered dither: a soft rim, not a hard cut
+              float bayer = (B[q.x + 4 * q.y] + 0.5) / 16.0;
+              if (1.0 - smoothstep(0.55 * r, r, d) > bayer) discard;
+            }
+          }`);
+    };
+    mat.needsUpdate = true;
+  });
 }
 
 // ------------------------------------------------------------ props

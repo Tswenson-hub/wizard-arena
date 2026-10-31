@@ -45,7 +45,7 @@ async function rebuild() {
     buildWorld(s);
     const first = !scene;
     if (first) { scene = s; s.add(helpers); }
-    await loadModels(loader, s);
+    await loadModels(loader, s, { cameraGrid: false });
     if (!first) { scene = s; s.add(helpers); }
   })();
   await building;
