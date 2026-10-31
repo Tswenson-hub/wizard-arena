@@ -1,5 +1,5 @@
 // Shared between server and client. Keep this file dependency-free.
-// Map layout (arena size, obstacles, props, goats, spawns) lives in map.js and is re-exported here.
+// Map layout (arena size, obstacles, props, spawns) lives in map.js and is re-exported here.
 import { COLLIDERS, ARENA_RADIUS, LOS_HEIGHT, surfaceBlocks, SURFACES } from './map.js';
 import * as MAPNS from './map.js';   // (optional helpers, such as losVolumeBlocks, looked up by name)
 import { WIZARDS, DEFAULT_WIZARD } from './wizards.js';
@@ -15,7 +15,7 @@ export const HIT_CENTER_Y = 0.95;     // centre of the hit-sphere above feet
 export const HIT_RADIUS = 0.75;
 // Round 10 (Ty: "+30% for every spell, ultimate and thrown object"): every damage source is multiplied by this in
 // server.js applyHit, so it's tuned in one place. Healing, shields (wall HP, stamina costs) and ult charge per hit are not.
-// Goat, ram and Meteor Rain one-shots stay one-shots. D(n) is a blurb's number at this scale.
+// Ram and Meteor Rain one-shots stay one-shots. D(n) is a blurb's number at this scale.
 export const DAMAGE_SCALE = 1.3;
 export const D = (n) => Math.round(n * DAMAGE_SCALE);
 // Round 10: out of combat (no damage taken for `delay` s), health comes back at `rate` HP a second, up to full.
@@ -25,9 +25,9 @@ export const POTION = { heal: 35, respawn: 20, radius: 0.9, height: 1.0 };
 // Round 10: ledge grab. Jumping at an edge whose top is out of the jump's reach (but at most `reach` above its apex)
 // pulls you up onto it in `time` s (cast-rooted). ledgeTarget is the one rule for client, server and bots.
 export const LEDGE = { reach: 1.2, time: 0.45, rise: 0.3 };
-// Round 10 (Ty): a thrown object (a prop, a potion barrel, hay, a goat) that hits an unblocked wizard knocks them down:
+// Round 10 (Ty): a thrown object (a prop, a potion barrel, a crate) that hits an unblocked wizard knocks them down:
 // flung back about 2 m, they fall (fall), lie there (down) and get up (getup), unable to move, act or shield throughout.
-export const KNOCKDOWN = { kinds: ['prop', 'goat', 'battering_ram'], fall: 0.4, down: 0.8, getup: 0.4, fling: 24 };   // fling: m/s, decays to ~2 m
+export const KNOCKDOWN = { kinds: ['prop', 'battering_ram'], fall: 0.4, down: 0.8, getup: 0.4, fling: 24 };   // fling: m/s, decays to ~2 m
 KNOCKDOWN.total = KNOCKDOWN.fall + KNOCKDOWN.down + KNOCKDOWN.getup;
 import { surfaceHeight as _sh, STEP_UP as _step } from './map.js';
 // From feet at p ([x, y, z]) facing dir ([x, z], unit), in a jump peaking at apexY: where we'd end up standing, or null.
@@ -297,8 +297,22 @@ export function hexAt(c, age) {
   return { p, v: tan };
 }
 
-// A goat hurled by telekinesis hits exactly like a thrown prop (Ty), it just doesn't break.
-SPELLS.goat = { ...SPELLS.prop };
+// The summoned rams (Ram Guard, Battering Ram, Stampede, Ram Ride and the Sling's call): server.js simulates them.
+// Round 15: these were map.js's GOAT numbers; the map goats are gone.
+export const RAM = {
+  radius: 0.6,          // body radius for collisions and hits
+  hitY: 0.7,            // centre of the hit sphere above the ground
+  windup: 0.7,          // a Sling's ram rears this long before it charges
+  chargeSpeed: 12.5,
+  chargeTime: 3.0,      // longest a charge lasts
+  turnRate: 2.0,        // rad/s of homing (a provoked guard ram, a Sling's ram): you can sidestep late or blink
+  dizzyTime: 2.2,       // after hitting a pillar, a wall or a ward
+  recoverTime: 1.2,     // after a charge runs out
+  blockCost: 50,        // stamina a ward spends stopping a ram
+  blockKnockback: 7,
+  rammableBelow: 1.0,   // wizards whose feet are higher than this (Skyward Flash, a wall-walk) are passed under
+  ramScale: 1.15,       // (visual) the ram model's scale
+};
 
 export const TELEPORT = {
   distance: 9,
@@ -383,10 +397,10 @@ export const SPELLBOOK = {
   },
   sling: {
     id: 'sling', slot: 'primary', name: "Shepherd's Sling", short: 'Sling',
-    blurb: 'Sling stones, 2 to a pouch. A hit calls the nearest calm goat to charge the target. The 2nd breaks a wind-up.',
+    blurb: 'Sling stones, 2 to a pouch. A hit calls a ram out of the ground beside the target to charge them. The 2nd breaks a wind-up.',
     cooldown: SPELLS.sling.cooldown,
     magazine: 2, reload: PRIMARY_RELOAD, idleReload: 2,
-    callRange: 22,       // a calm map goat this close to the target answers the call
+    callDist: 7,         // round 15: the called ram appears this far from the target, off to one side
     callLockout: 6,      // seconds before the same target can have another ram called on it (balance match: 3 was too many)
   },
   hex_shards: {
@@ -443,9 +457,9 @@ export const SPELLBOOK = {
     windup: 0.8,         // round 10 (Ty: too strong): a stomp and a ghost ram pawing the ground first; cast-rooted, interruptible
     interruptCd: 3,      // the cooldown an interrupted wind-up leaves
     spawnDist: 1.4,
-    maxTime: 3,          // the charge runs at GOAT.chargeSpeed for at most this long
+    maxTime: 3,          // the charge runs at RAM.chargeSpeed for at most this long
     // round 14 (Ty): no longer a one-shot. What the charge does to an enemy (a hit kind, 'battering_ram'): D(54) = 70
-    // and a knockdown (KNOCKDOWN.kinds). The goat module already decided a ward, wall or Veil stopped it.
+    // and a knockdown (KNOCKDOWN.kinds). server.js ramHits already decided a ward, wall or Veil stopped it.
     damage: 54, stun: 0, knockback: 0, staminaCost: 0, unblockable: true,
     cooldown: 12,        // balance match: 9 left Jeb on top (most of his kills were ram one-shots)
   },
@@ -933,7 +947,7 @@ export const COMBOS = [
   { id: 'sky_frost', name: 'Hail from Above', spells: ['skyward', 'frostfall'],
     text: 'Frostfall can be cast mid-air during a Skyward Flash.' },
   { id: 'herd', name: 'Herd Call', spells: ['sling', 'ram_guard'],
-    text: 'A Sling hit with no calm goat in reach sends one of your guard rams at the target.' },
+    text: 'A Sling hit also sends one of your circling guard rams at the target.' },
 ];
 export const hasCombo = (lo, comboId) => { const c = COMBOS.find(k => k.id === comboId); return !!(c && lo && c.spells.every(id => Object.values(lo).includes(id))); };
 export const combosOf = (lo) => COMBOS.filter(c => hasCombo(lo, c.id));          // the combos a loadout has active

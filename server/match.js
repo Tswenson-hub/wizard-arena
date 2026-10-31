@@ -7,7 +7,7 @@
 //   isEnemy(a, b)            players: may a hurt b? (anyone but yourself, outside the intermission)
 //   spawnPointFor(p)         [x, 0, z, yaw]: an FFA spawn near the fight but not on it (C.SPAWN_CHOICE)
 //   onJoin(p) / onLeave(p)   a human or bot entered or left (a bot with no room is removed again at once)
-//   onDamage(target, attacker, dmg)   attacker may be undefined (goats, environment)
+//   onDamage(target, attacker, dmg)   attacker may be undefined (the environment)
 //   onKill(target, attacker, cause)
 //   onPickup / onDrop / onPropBroken / canThrow   prop hooks (no rules use them now)
 //   tick(dt)                 every simulation step
@@ -17,7 +17,7 @@
 //   welcomeExtras(p)         merged into the 'welcome' message
 //
 // ctx (from server.js): { players, props, now, broadcast, send, addBot, removePlayer, respawn, propPublic,
-//   addUltCharge(p, pct) }, plus optional resetGoats() and resetUlt(p).
+//   addUltCharge(p, pct) }, plus optional resetRams() and resetUlt(p).
 // Debug (only with MATCH_DEBUG=1 in the server's environment): { t: 'matchDebug', target, cap, warmup, endTime,
 // botDiff, skip: true, spectate: true, pinBots: true | false, size }.
 
@@ -103,7 +103,7 @@ export function createMatch(ctx) {
     for (const p of players.values()) { p.kills = 0; p.deaths = 0; p.mDmg = 0; }
   }
   function resetUlt(p) { if (ctx.resetUlt) ctx.resetUlt(p); else ctx.addUltCharge(p, -1000); }
-  // Between matches: everyone respawns, props back where they started, goats home, ultimate charge 0.
+  // Between matches: everyone respawns, props back where they started, rams gone, ultimate charge 0.
   function resetArena() {
     for (const pr of props.values()) {
       if (pr.state === 'thrown') continue;   // in flight: it shatters where it lands and respawns as usual
@@ -114,7 +114,7 @@ export function createMatch(ctx) {
       pr.state = 'idle'; pr.carrier = null; pr.respawnAt = 0; pr.trap = null;
       ctx.broadcast({ t: 'prop', prop: ctx.propPublic(pr) });
     }
-    ctx.resetGoats?.();
+    ctx.resetRams?.();
     for (const p of players.values()) { resetUlt(p); if (!p.spectator) ctx.respawn(p); }
     clearStats();
   }

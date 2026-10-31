@@ -4,9 +4,9 @@ import * as C from '../shared/constants.js';
 import { Net } from './net.js';
 import { Input } from './input.js';
 import { Sfx } from './audio.js';
-import { buildWorld, makePropMesh, spinners, loadModels, trampleCrops } from './world.js';
+import { buildWorld, makePropMesh, spinners, loadModels } from './world.js';
 import * as World from './world.js';   // round 14: cameraClearance / cameraCutaway (environment), looked up by name
-import { GoatView } from './goats.js';
+import { RamView, loadRamModel } from './rams.js';
 import { Wizard } from './wizard.js';
 import { registerModel, loadWizardModels } from './looks.js';
 import { Effects } from './effects.js';
@@ -61,7 +61,7 @@ const ui = {
 // ---------------------------------------------------------------- game state
 const players = new Map();   // id -> Wizard
 const props = new Map();     // id -> { data, mesh }
-const goats = new Map();     // id -> GoatView
+const rams = new Map();      // id -> RamView (every summoned ram: Ram Guard, Battering Ram, Stampede, Ride, the Sling's call)
 let me = null;               // local Wizard
 let myId = null;
 
@@ -202,6 +202,7 @@ try {
 ui.joinBtn.disabled = true;
 
 const loader = new GLTFLoader();
+loadRamModel(loader);   // (not waited on: a ram is a box until it arrives)
 const wizardLoaded = new Promise((res, rej) => loader.load('./models/wizard.glb', (gltf) => { registerModel(gltf); res(); }, (ev) => {
   if (ev.total) ui.loadStatus.textContent = `Loading wizard… ${Math.round(ev.loaded / ev.total * 100)}%`;
 }, rej));
@@ -304,7 +305,7 @@ function onWelcome(msg) {
   for (const p of msg.players) addPlayer(p);
   for (const pr of msg.props) setProp(pr, true);
   for (const pj of msg.projectiles) effects.spawnProjectile(withBolt(pj));
-  for (const g of msg.goats || []) addGoat(g);
+  for (const g of msg.rams || []) addRam(g);
   for (const st of msg.stampedes || []) stampedeFx.set(st.id, Object.assign(effects.stampedeLane(st.p, st.dir, st.width, st.length, st.left), { owner: st.owner }));
   for (const w of msg.walls || []) wallUp(w);
   for (const f of msg.frostfalls || []) frosts.set(f.id, effects.frostfall(f.p, f.left));
@@ -316,7 +317,7 @@ function onWelcome(msg) {
   for (const pt of msg.potions || []) setPotion(pt);
   me = players.get(myId);
   for (const d of msg.decoys || []) spawnDecoy(d);
-  local.pos.set(me.targetPos.x, 0, me.targetPos.z);
+  local.pos.set(me.targetPos.x, me.targetPos.y, me.targetPos.z);
   updatePickNote();
   ui.join.classList.add('hidden');
   ui.hud.classList.remove('hidden');
@@ -329,14 +330,13 @@ function onWelcome(msg) {
   updateSoundInd();
 }
 
-// A goat (or one of Jeb's summoned rams) seen for the first time.
-function addGoat(g) {
-  const v = new GoatView(g, scene);   // goats.js gives summoned rams their size, gold tint and orbit/mount motion
-  v.summoned = !!g.summoned; v.owner = g.owner ?? null;
-  goats.set(g.id, v);
+// A ram seen for the first time (rams.js: its size, gold tint and orbit/mount motion).
+function addRam(g) {
+  const v = new RamView(g, scene);
+  rams.set(g.id, v);
   return v;
 }
-const ghostRams = new Map();     // Battering Ram wind-ups: Jeb's id -> a translucent GoatView pawing the ground
+const ghostRams = new Map();     // Battering Ram wind-ups: Jeb's id -> a translucent RamView pawing the ground
 const stampedeFx = new Map();   // Stampede lanes on the ground: id -> effects entry
 const pools = new Map();        // Toxic Flask pools: id -> { p, owner, fx }
 const laneMark = effects.laneAim(STAMP.width, STAMP.length);
@@ -354,8 +354,10 @@ function capPlate(w) {
   np.scale.set(2.4 * k, 0.6 * k, 1);
 }
 function makeWizard(info, isLocal) {
-  const w = new Wizard({ ...info, bot: null }, scene, isLocal);
+  // round 15: `body` is the server's 'mage' (players) or a Skeleton ('skeleton_mage' and so on, bots); looks.js builds it
+  const w = new Wizard({ ...info, bot: null, body: info.body || 'mage' }, scene, isLocal);
   w.botLevel = info.bot || null;
+  w.bodyKind = info.body || 'mage';   // (w.body is looks.js's body object)
   return w;
 }
 function addPlayer(info) {
@@ -369,7 +371,7 @@ function addPlayer(info) {
 // A player's loadout changed (at a respawn): rebuild their Wizard (the look follows the spell mix), keeping its state.
 function rebuildWizard(w, loadout, color, voice = w.voice) {
   const g = w.group.position;
-  const info = { id: w.id, name: w.name, color: color ?? C.loadoutColor(loadout), bot: w.botLevel, loadout, voice, p: [g.x, g.y, g.z], yaw: w.group.rotation.y };
+  const info = { id: w.id, name: w.name, color: color ?? C.loadoutColor(loadout), bot: w.botLevel, body: w.bodyKind, loadout, voice, p: [g.x, g.y, g.z], yaw: w.group.rotation.y };
   stopWizardAudio(w);
   w.dispose(scene);
   const n = makeWizard(info, w === me);
@@ -429,7 +431,6 @@ function applySnapshot(w, s) {
     }
   }
   if (s.carrying !== w.carrying) startCarry(w, s.carrying);
-  w.carryingGoat = s.carryingGoat || null;
 }
 
 // Show wizard `w` holding prop `id` (or nothing). A prop still rising lifts from where it stood.
@@ -504,31 +505,31 @@ function handleMessage(msg) {
         applySnapshot(w, s);
       }
       updateDecoys(msg.decoys || []);
-      for (const g of msg.goats || []) { const v = goats.get(g.id) || addGoat(g); v.apply(g); }
-      // a summoned ram no longer in the snapshot is gone, even if we missed its goatGone
-      if (msg.goats) { const ids = new Set(msg.goats.map(g => g.id)); for (const [id, v] of goats) if (v.summoned && !ids.has(id)) { v.dispose(scene); goats.delete(id); } }
+      for (const g of msg.rams || []) { const v = rams.get(g.id) || addRam(g); v.apply(g); }
+      // a ram no longer in the snapshot is gone, even if we missed its ramGone
+      if (msg.rams) { const ids = new Set(msg.rams.map(g => g.id)); for (const [id, v] of rams) if (!ids.has(id)) { v.dispose(scene); rams.delete(id); } }
       matchUI.onSnapshot(msg);
       matchSnapSounds(msg.match);
       break;
-    case 'goatAngry': {
-      const g = goats.get(msg.id);
-      if (g) { g.apply({ p: [g.target.x, g.target.z], yaw: g.targetYaw, s: 'windup', tgt: msg.target }); sfx.bleat(g.group.position.clone().setY(1), true, { vol: 1.2, owner: g.id }); }   // angered: rearing to charge
-      if (msg.target === myId) feed('You angered a goat! <b>Ward (R) facing it</b> or get out of the way');
+    case 'ramAngry': {   // a guard ram that took a shot turns on the shooter
+      const g = rams.get(msg.id);
+      if (g) { g.apply({ p: [g.target.x, g.target.z], yaw: g.targetYaw, s: 'charge', tgt: msg.target, mode: 'charge' }); sfx.bleat(g.group.position.clone().setY(1), true, { vol: 1.2, owner: g.id }); }
+      if (msg.target === myId) feed('A guard ram is charging you! <b>Ward (R) facing it</b> or get out of the way');
       break;
     }
-    case 'goatRam': {
+    case 'ramHit': {
       const target = players.get(msg.target);
       effects.ram(msg.p, msg.blocked);
-      sfx.goatRam(msg.p, msg.blocked);
+      sfx.ramHit(msg.p, msg.blocked);
       if (target === me) {
         shake(msg.blocked ? 0.5 : 1.0);
-        if (msg.blocked) { local.vel.x += msg.dir[0] * C.GOAT.blockKnockback; local.vel.z += msg.dir[2] * C.GOAT.blockKnockback; feed('Your ward stopped the goat!'); }
+        if (msg.blocked) { local.vel.x += msg.dir[0] * C.RAM.blockKnockback; local.vel.z += msg.dir[2] * C.RAM.blockKnockback; feed('Your ward stopped the ram!'); }
       } else if (Math.hypot(msg.p[0] - local.pos.x, msg.p[2] - local.pos.z) < 12) shake(0.3);
       if (target && msg.blocked) target.oneShot('stun', 0.45, 3.0, 0.3);
       break;
     }
-    case 'goatBonk': {
-      sfx.goatBonk(msg.p);
+    case 'ramBonk': {
+      sfx.ramBonk(msg.p);
       effects.burst(new THREE.Vector3(msg.p[0], msg.p[1], msg.p[2]), 0xffe066, 12, 3, 0.35);
       break;
     }
@@ -578,14 +579,14 @@ function handleMessage(msg) {
       effects.endProjectile(msg);
       if (msg.hit && pr) {
         const d = Math.hypot(msg.p[0] - local.pos.x, msg.p[2] - local.pos.z);
-        if (pr.kind === 'heavy') { sfx.play('meteor_impact', { pos: msg.p, vol: 1.1, jitter: 0.05 }); shake(0.5 / (1 + d * 0.15)); trampleCrops(msg.p[0], msg.p[2], 2.5); }
+        if (pr.kind === 'heavy') { sfx.play('meteor_impact', { pos: msg.p, vol: 1.1, jitter: 0.05 }); shake(0.5 / (1 + d * 0.15)); World.trampleCrops?.(msg.p[0], msg.p[2], 2.5); }
         else if (msg.surface !== 'player' && pr.kind === 'fast') sfx.impact(msg.p);
         else if (pr.kind === 'skim') sfx.shardHit(msg.p);
         else if (pr.kind === 'fireball') sfx.play('fireball_impact', { pos: msg.p, vol: pr.fin ? 0.9 : 0.7, jitter: 0.06 });
         else if (pr.kind === 'shear') sfx.play('shear_impact', { pos: msg.p, vol: 0.6, jitter: 0.06 });
         else if (pr.kind === 'hex') sfx.play('hex_impact', { pos: msg.p, vol: 0.7, jitter: 0.06 });
         else if (pr.kind === 'sling') sfx.play('sling_impact', { pos: msg.p, vol: 0.7, jitter: 0.08 });
-        if (msg.surface === 'goat' && goats.get(msg.goat)?.state === 'orbit') sfx.play('ram_guard_block', { pos: msg.p, vol: 0.8, jitter: 0.05 });   // a guard ram took it
+        if (msg.surface === 'ram') sfx.play('ram_guard_block', { pos: msg.p, vol: 0.8, jitter: 0.05 });   // a guard ram took it
         if (msg.surface === 'smokeflask') effects.burst(new THREE.Vector3(msg.p[0], msg.p[1], msg.p[2]), 0xa050e0, 10, 2, 0.35, -1);
         // Potion Toss: Ty's glass hit, pitched a little differently each throw (the stun throw lower)
         if (pr.kind === 'potion') { effects.potionShatter(msg.p, C.SPELLS.potion.splash); sfx.play('potion_shatter', { pos: msg.p, vol: 0.9, rate: (pr.fin ? 0.86 : 1) * (0.92 + Math.random() * 0.16), jitter: 0 }); }
@@ -601,9 +602,9 @@ function handleMessage(msg) {
       else if (msg.blocked) { const G = target.loadout?.guard; effects.blockFlash(c, G === 'black_death' ? 0xa0102a : 0x9ae4ff); if (G === 'black_death') sfx.play('black_death_block', { pos: c, vol: 0.75, jitter: 0.06 }); else sfx.block(c); }
       else {
         effects.hitFlash(c, msg.kind === 'skim' ? 0xbfeaff : 0xff3b4e);
-        // a hurled prop or goat doubles them over (hit_waist); other interrupting hits flinch
+        // a hurled prop doubles them over (hit_waist); other interrupting hits flinch
         if (msg.knockdown) { target.knockDown(C.KNOCKDOWN); effects.dust(target.group.position, 6); sfx.play('hit_heavy', { pos: c, vol: 1 }); }   // round 10: knocked flat
-        else if ((msg.kind === 'prop' || msg.kind === 'goat') && target.actions.hit_waist) target.oneShot('hit_waist', target.actions.hit_waist.getClip().duration, 1, 0);
+        else if (msg.kind === 'prop' && target.actions.hit_waist) target.oneShot('hit_waist', target.actions.hit_waist.getClip().duration, 1, 0);
         else if (C.hitSpec(msg.kind)?.stun !== 0 && msg.int !== false) target.oneShot('stun', msg.kind === 'heavy' ? 0.5 : 0.55, 3.0, 0.3);
         sfx.hitBody(c);
         sfx.voice(target, target === me ? null : c);   // a grunt, by gender (rate-limited per wizard)
@@ -676,7 +677,7 @@ function handleMessage(msg) {
       const w = players.get(msg.id);
       const p = w === me ? [local.pos.x, local.pos.y, local.pos.z] : msg.p;
       effects.cyclonePulse(p, CYC.radius);
-      trampleCrops(p[0], p[2], CYC.radius);
+      World.trampleCrops?.(p[0], p[2], CYC.radius);
       sfx.cyclonePulse(p);
       if (w) w.spin();
       if (w === me && local.cyclone) { local.cyclone.pulsed = true; local.cd.power = now + CYC.cooldown; }
@@ -757,16 +758,6 @@ function handleMessage(msg) {
       removeDecoy(msg.id);
       break;
     }
-    case 'goatLift': {
-      const w = players.get(msg.id);
-      if (w) { w.carryingGoat = msg.goat; tkGesture(w, 'tk_lift'); sfx.pickup(wpos(w)); }
-      break;
-    }
-    case 'goatThrow': {
-      const w = players.get(msg.id);
-      if (w) { w.carryingGoat = null; tkGesture(w, 'tk_throw'); sfx.throw_(msg.p); }
-      break;
-    }
     case 'veil': {
       const w = players.get(msg.id);
       if (!w) break;
@@ -810,7 +801,7 @@ function handleMessage(msg) {
       effects.frostfallImpact(frosts.get(msg.id), msg.p);
       frosts.delete(msg.id);
       sfx.frostImpact([msg.p[0], 0.5, msg.p[2]]);
-      trampleCrops(msg.p[0], msg.p[2], FROST.radius);
+      World.trampleCrops?.(msg.p[0], msg.p[2], FROST.radius);
       const d = Math.hypot(msg.p[0] - local.pos.x, msg.p[2] - local.pos.z);
       shake(d < FROST.radius + 1 ? 0.9 : 0.7 / (1 + d * 0.2));
       break;
@@ -900,14 +891,14 @@ function handleMessage(msg) {
       effects.death([w.group.position.x, 0, w.group.position.z]);
       sfx.voice(w, w === me ? null : wpos(w), true);
       if (w === me) {
-        ui.death.querySelector('.big').textContent = msg.cause === 'goat' ? 'Rammed by a goat' : msg.cause === 'ram' ? 'Flattened by a ram' : 'You were vanquished';
+        ui.death.querySelector('.big').textContent = msg.cause === 'ram' ? 'Flattened by a ram' : 'You were vanquished';
         ui.death.classList.remove('hidden'); local.charging = false; local.blocking = false;
         local.cyclone = null; local.flight = null; local.pos.y = 0; local.lash = null; local.fHold = null;
         local.slowUntil = local.rootUntil = local.silenceUntil = local.frozenUntil = 0; local.frostAim = false;
         local.cataAim = false; local.eyeUntil = local.blizzUntil = 0; local.pull = null; local.ride = null; local.ultWind = null; local.mrain = null;
         local.hover = null; local.airDash = null; local.jump = null; local.fall = null; local.airJumped = false; local.jumpSpeed = 0; local.castSlowUntil = 0;
       }
-      if (msg.killer === myId && msg.id !== myId) sfx.killSting();   // our kill (goat kills credited to us too)
+      if (msg.killer === myId && msg.id !== myId) sfx.killSting();   // our kill (a ram's kills are its summoner's)
       killFeed(k && k !== w ? k : null, w, msg.kind || msg.cause);
       if (msg.killer === myId && msg.id !== myId) killMarker();
       if (w === me) showKilledBy(k && k !== w ? k : null, msg.kind || msg.cause);
@@ -918,8 +909,8 @@ function handleMessage(msg) {
       if (!w) break;
       w.dead = false;
       w.bound = w.slowed = w.frozen = false;
-      if (w === me) { local.pos.set(msg.p[0], 0, msg.p[2]); local.vel.set(0, 0, 0); if (Number.isFinite(msg.yaw)) local.yaw = msg.yaw; ui.death.classList.add('hidden'); dmgFrom.clear(); killedBy = null; local.stunUntil = 0; local.slowUntil = local.rootUntil = local.silenceUntil = 0; }
-      else { w.targetPos.set(msg.p[0], 0, msg.p[2]); w.group.position.copy(w.targetPos); }
+      if (w === me) { local.pos.set(msg.p[0], msg.p[1] || 0, msg.p[2]); local.vel.set(0, 0, 0); if (Number.isFinite(msg.yaw)) local.yaw = msg.yaw; ui.death.classList.add('hidden'); dmgFrom.clear(); killedBy = null; local.stunUntil = 0; local.slowUntil = local.rootUntil = local.silenceUntil = 0; }
+      else { w.targetPos.set(msg.p[0], msg.p[1] || 0, msg.p[2]); w.group.position.copy(w.targetPos); }
       effects.teleport(msg.p, msg.p);
       sfx.respawn([msg.p[0], 1, msg.p[2]]);
       break;
@@ -1003,7 +994,7 @@ function handleMessage(msg) {
       const p = w === me ? [local.pos.x, local.pos.y, local.pos.z] : msg.p;
       effects.eyeBurst(p);
       sfx.cyclonePulse(p);
-      trampleCrops(p[0], p[2], EYE.radius * 0.6);
+      World.trampleCrops?.(p[0], p[2], EYE.radius * 0.6);
       if (Math.hypot(p[0] - local.pos.x, p[2] - local.pos.z) < EYE.radius + 1) shake(0.7);
       break;
     }
@@ -1088,7 +1079,7 @@ function handleMessage(msg) {
       effects.scorch(msg.p, !!msg.wall);
       sfx.play('meteor_impact', { pos: [msg.p[0], 0.5, msg.p[2]], vol: 1.4, rate: 0.85 });
       sfx.play('hit_heavy', { pos: [msg.p[0], 0.5, msg.p[2]], vol: 1, delay: 0.03 });
-      trampleCrops(msg.p[0], msg.p[2], MRAIN.radius);
+      World.trampleCrops?.(msg.p[0], msg.p[2], MRAIN.radius);
       const d = Math.hypot(msg.p[0] - local.pos.x, msg.p[2] - local.pos.z);
       shake(d < MRAIN.radius + 2 ? 1 : 0.6 / (1 + d * 0.15));
       endMrain(w);
@@ -1114,14 +1105,14 @@ function handleMessage(msg) {
       // a summoned ram bleats: a charging one angry; a guard's rams one at a time
       if (msg.mode !== 'orbit' || performance.now() - (lastGuardBleat || 0) > 300) { if (msg.mode === 'orbit') lastGuardBleat = performance.now(); sfx.bleat([msg.p[0], 1, msg.p[2]], msg.mode !== 'mount', { vol: msg.mode === 'mount' ? 0.6 : 0.9, owner: msg.id }); }
       break;
-    case 'goatGone': {
-      const g = goats.get(msg.id);
-      if (g) { if (g.state === 'orbit' && performance.now() - (lastGuardBreak || 0) > 400) { lastGuardBreak = performance.now(); sfx.play('ram_guard_break', { pos: g.group.position.clone().setY(1), vol: 0.7, jitter: 0.06 }); } if (g.despawn) g.despawn(scene, effects); else { g.dispose(scene); if (msg.p) effects.ramPoof(msg.p); } goats.delete(msg.id); }
+    case 'ramGone': {
+      const g = rams.get(msg.id);
+      if (g) { if (g.mode === 'orbit' && performance.now() - (lastGuardBreak || 0) > 400) { lastGuardBreak = performance.now(); sfx.play('ram_guard_break', { pos: g.group.position.clone().setY(1), vol: 0.7, jitter: 0.06 }); } g.despawn(scene, effects); rams.delete(msg.id); }
       break;
     }
     case 'ramCalled': {
-      const by = players.get(msg.by), tg = players.get(msg.target), g = goats.get(msg.goat);
-      if (g) sfx.bleat(g.group.position.clone().setY(1), true, { owner: msg.goat });
+      const by = players.get(msg.by), tg = players.get(msg.target), g = rams.get(msg.ram);
+      if (g) sfx.bleat(g.group.position.clone().setY(1), true, { owner: msg.ram });
       if (msg.target === myId) feed(`<b>${esc(by?.name || '?')}</b> called a ram on you! <b>Ward facing it</b> or get out of the way`);
       else if (msg.by === myId) feed(`Your sling calls a ram on <b>${esc(tg?.name || '?')}</b>`);
       break;
@@ -1133,7 +1124,7 @@ function handleMessage(msg) {
       if (!playSpell(w, 'battering_ram', 'windup')) w.oneShot('cast_heavy', msg.left, 1.5, 1.9);   // the stomp lands on the release
       const B = SPELL.battering_ram, d = [Math.sin(msg.yaw), Math.cos(msg.yaw)], gp = w.group.position;
       ghostRams.get(msg.id)?.dispose(scene);
-      const ghost = new GoatView({ id: -msg.id, p: [gp.x + d[0] * B.spawnDist, gp.z + d[1] * B.spawnDist], y: gp.y, yaw: msg.yaw, s: 'windup', summoned: true }, scene);
+      const ghost = new RamView({ id: -msg.id, p: [gp.x + d[0] * B.spawnDist, gp.z + d[1] * B.spawnDist], y: gp.y, yaw: msg.yaw, s: 'windup' }, scene);
       ghost.group.traverse(o => { if (o.material) { o.material = o.material.clone(); o.material.transparent = true; o.material.opacity = 0.45; o.material.depthWrite = false; } });
       ghost.until = performance.now() / 1000 + msg.left + 0.3;
       ghostRams.set(msg.id, ghost);
@@ -1288,16 +1279,7 @@ function handleMessage(msg) {
 // (match-ui.js draws the mode; its tones live here with the rest of the sound)
 let lastMatch = null;
 let lastGuardBreak = 0, lastGuardBleat = 0;
-// Grazing goats bleat now and then, quietly (only the near ones, so a field of them doesn't chatter).
-function updateGoatAudio(dt) {
-  for (const g of goats.values()) {
-    if (g.summoned || (g.state !== 'graze' && g.state !== 'wander')) continue;
-    g.bleatIn = (g.bleatIn ?? 6 + Math.random() * 14) - dt;
-    if (g.bleatIn > 0) continue;
-    g.bleatIn = 9 + Math.random() * 16;
-    if (g.group.position.distanceTo(camera.position) < 28) sfx.bleat(g.group.position.clone().setY(0.8), false, { vol: 0.3, owner: g.id });
-  }
-}   // the guard's rams go together: one break sound
+// (lastGuardBreak: the guard's rams go together, one break sound)
 function matchSounds(msg) {
   if (msg.t === 'matchPhase' && msg.match.phase === 'live' && lastMatch?.phase === 'warmup') sfx.ui('fight_start', 0.8);
   if (msg.t === 'matchEnd') {
@@ -1327,7 +1309,7 @@ function spawnDecoy(d) {
   if (decoys.has(d.id)) return;
   const owner = players.get(d.owner);
   if (!owner) return;
-  const wiz = makeWizard({ id: owner.id, name: owner.name, color: owner.color, bot: owner.botLevel, loadout: owner.loadout, voice: owner.voice, p: d.p, yaw: d.yaw }, false);
+  const wiz = makeWizard({ id: owner.id, name: owner.name, color: owner.color, bot: owner.botLevel, body: owner.bodyKind, loadout: owner.loadout, voice: owner.voice, p: d.p, yaw: d.yaw }, false);
   wiz.hp = owner.hp; wiz.netAnim = 'run';
   if (owner === me) wiz.makeGhost();
   decoys.set(d.id, { wiz, owner: d.owner });
@@ -1483,9 +1465,9 @@ function updatePotions(dt) {
 const KIND_ICON = { fireball: 'fireball', heavy: 'heavy', meteor_rain_hit: 'meteor_rain', firewall_burn: 'firewall', shear: 'shear', cyclone: 'cyclone',
   eye_of_storm: 'eye_of_storm', eye_burst: 'eye_of_storm', skim: 'skim', frostfall: 'frostfall', blizzard_chip: 'blizzard', blizzard_freeze: 'blizzard',
   bulwark_frost: 'bulwark', hex: 'hex', lash: 'lash', trapped_relic: 'trapped_relic', sling: 'sling', potion: 'potion', potion_splash: 'potion',
-  toxic: 'toxic', toxic_pool: 'toxic', prop: 'prop', goat: 'goat', goated: 'goat', ram: 'ram', battering_ram: 'ram', ram_shove: 'ram', fast: 'fast', flaskstep: 'flaskstep' };
+  toxic: 'toxic', toxic_pool: 'toxic', prop: 'prop', ram: 'ram', battering_ram: 'ram', ram_shove: 'ram', fast: 'fast', flaskstep: 'flaskstep' };
 const KIND_NAME = { heavy: 'Meteor', fast: 'Spark', shear: 'Gale Shear', hex: 'Hex Shards', skim: 'Glacial Skim', lash: 'Sanguine Lash', sling: "Shepherd's Sling",
-  potion: 'Potion Toss', potion_splash: 'Potion Toss', toxic: 'Toxic Flask', toxic_pool: 'Toxic Flask', prop: 'a thrown object', goat: 'a goat', goated: 'a goat',
+  potion: 'Potion Toss', potion_splash: 'Potion Toss', toxic: 'Toxic Flask', toxic_pool: 'Toxic Flask', prop: 'a thrown object',
   ram: 'a ram', battering_ram: 'Battering Ram', ram_shove: 'Ram Ride', meteor_rain_hit: 'Meteor Rain', firewall_burn: 'Firewall', eye_burst: 'Eye of the Storm', blizzard_chip: 'Blizzard',
   blizzard_freeze: 'Blizzard', bulwark_frost: 'Glacial Bulwark', flaskstep: 'Flask Step' };
 const iconFor = (kind) => `./textures/icons/${KIND_ICON[kind] || 'skull'}.png`;
@@ -1657,26 +1639,10 @@ function tkTarget() {
     const score = cos - l * 0.002;
     if (score > bestScore) { bestScore = score; best = e; }
   }
-  // liftable goats compete with props (server: tkTarget), for Telekinesis. A goat comes back as { goat }.
-  if (kit().utility === 'telekinesis') for (const g of goats.values()) {
-    if (g.summoned || !LIFTABLE_GOAT_STATES.has(g.state)) continue;
-    const gp = g.group.position;
-    const d2 = Math.hypot(gp.x - p[0], gp.z - p[2]);
-    if (d2 < nd) { nd = d2; near = { goat: g }; }
-    if (d2 > C.TK.range) continue;
-    const vx = gp.x - o.x, vy = gp.y + C.GOAT.hitY - o.y, vz = gp.z - o.z;
-    const l = Math.hypot(vx, vy, vz) || 1;
-    const cos = (vx * camDir.x + vy * camDir.y + vz * camDir.z) / l;
-    if (Math.acos(THREE.MathUtils.clamp(cos, -1, 1)) - Math.atan2(C.GOAT.radius, l) > cone) continue;
-    if (C.pillarBlocks(p, [gp.x, 0, gp.z], 0.1)) continue;
-    const score = cos - l * 0.002;
-    if (score > bestScore) { bestScore = score; best = { goat: g }; }
-  }
   return best || near;
 }
-// Trapped Relic: an object we can curse (not a goat, not a trap already)
-const curseable = (h) => !!h && !h.goat && !cursedProps.has(h.data.id) && !seenTraps.has(h.data.id);
-const LIFTABLE_GOAT_STATES = new Set(['graze', 'wander', 'return', 'recover', 'dizzy', 'stumble']);
+// Trapped Relic: an object we can curse (not a trap already)
+const curseable = (h) => !!h && !cursedProps.has(h.data.id) && !seenTraps.has(h.data.id);
 
 // What the crosshair is pointing at (wizard, pillar, tree or ground), for aiming hurled props.
 function aimPoint() {
@@ -1694,7 +1660,7 @@ function aimPoint() {
   };
   for (const w of players.values()) if (w !== me && !w.dead) hitSphere(tmp.v1.copy(w.group.position).setY(w.group.position.y + C.hitCenterOf(w)), C.hitRadiusOf(w) + 0.3);
   for (const d of decoys.values()) if (d.owner !== myId) hitSphere(tmp.v1.copy(d.wiz.group.position).setY(C.HIT_CENTER_Y), C.HIT_RADIUS + 0.3);
-  for (const g of goats.values()) if (!(g.state === 'held' && me.carryingGoat === g.id)) hitSphere(tmp.v1.copy(g.group.position).setY(g.group.position.y + C.GOAT.hitY), C.GOAT.radius + 0.2);
+  for (const g of rams.values()) hitSphere(tmp.v1.copy(g.group.position).setY(g.group.position.y + C.RAM.hitY), C.RAM.radius + 0.2);
   // pillars and trees as vertical cylinders (2D ray vs circle)
   const hx = camDir.x, hz = camDir.z, hl = Math.hypot(hx, hz) || 1;
   for (const c of C.COLLIDERS) {
@@ -1868,7 +1834,7 @@ function updateLocal(dt) {
   const ultLock = now < local.eyeUntil || now < local.blizzUntil || !!local.ride || !!local.ultWind || !!local.mrain || !!local.flaskWind;   // (a Ram Ride, a wind-up, Meteor Rain too)
   if (canAct) {
     // ultimate (Q): Cataclysm aims a circle (hold, release); the others go off at once
-    const U = K.ultimate, ultReady = local.ult >= C.ULT_CHARGE.max, holdingQ = !!(me.carrying || me.carryingGoat);
+    const U = K.ultimate, ultReady = local.ult >= C.ULT_CHARGE.max, holdingQ = !!me.carrying;
     if (input.justPressed('KeyQ') && ultReady && !ultLock && !busy && !holdingQ && !local.cataAim) {
       if (AIMED_ULTS[U]) local.cataAim = true;
       else { local.ultWind = { start: now }; startHover(C.ULT_CHARGE.windup); net.send({ t: 'ult' }); }
@@ -1914,7 +1880,7 @@ function updateLocal(dt) {
     const startReload = () => { local.ammo = 0; local.reloadUntil = now + MAG.reload; sfx.reload(); };
     if (!local.reloadUntil && local.ammo > 0 && local.ammo < MAG.magazine && now - local.lastShot > MAG.idleReload) startReload();
     if (input.justPressed('KeyT') && !local.reloadUntil && local.ammo < MAG.magazine) { startReload(); net.send({ t: 'reload' }); }   // (R is the shield now)
-    const holding = !!(me.carrying || me.carryingGoat);
+    const holding = !!me.carrying;
     if (local.wasHolding && !holding) local.liftCdUntil = now + SPELL[K.utility].liftCooldown;
     local.wasHolding = holding;
     if (input.lmbPressed && !local.blocking && !busy && !holding && now >= local.cd.fast && !local.reloadUntil && local.ammo > 0) {
@@ -2013,7 +1979,7 @@ function updateLocal(dt) {
         net.send({ t: 'flaskStep', dir: C.flaskLaunch(aimDir.toArray()) });
       } else if (K.mobility === 'ram_ride') {
         // mount up and gallop where we face (steer with the mouse, or A/D)
-        if (me.carrying || me.carryingGoat) { /* not with something in hand */ }
+        if (me.carrying) { /* not with something in hand */ }
         else if (inAirLocal()) { local.rideQueued = now; net.send({ t: 'ride', yaw: local.yaw }); }   // round 13: the ram comes up under us as we land
         else {
           local.cd.mobility = Infinity;   // runs from the dismount (rideEnd)
@@ -2028,7 +1994,7 @@ function updateLocal(dt) {
       }
       if (local.blocking) { local.blocking = false; }
     }
-    // utility: Telekinesis lifts, hurls and sets down (props and goats); Trapped Relic only curses (F on an object, RELIC.hold)
+    // utility: Telekinesis lifts, hurls and sets down props; Trapped Relic only curses (F on an object, RELIC.hold)
     const relic = K.utility === 'trapped_relic';
     // round 13 (Ty): Roll is a Utility on F: along the movement keys, backwards if none; two charges (their cooldown is the
     // F slot's, liftCdUntil), and no root: we keep crouching or sprinting after
@@ -2048,14 +2014,7 @@ function updateLocal(dt) {
         if (local.blocking) local.blocking = false;
       }
     } else if (input.justPressed('KeyF')) {
-      if (me.carryingGoat) {
-        // hurl the goat: like a prop, toward what the crosshair is on
-        if (now >= local.cd.throw) {
-          computeAim();
-          local.cd.throw = now + C.THROW_COOLDOWN;
-          net.send({ t: 'throw', dir: aimDir.toArray(), target: aimPoint() }); castSlow();
-        }
-      } else if (me.carrying) {
+      if (me.carrying) {
         if (now >= local.cd.throw && props.get(me.carrying)?.data.state === 'carried') {
           computeAim();
           local.cd.throw = now + C.THROW_COOLDOWN;
@@ -2189,7 +2148,7 @@ function updateLocal(dt) {
   // Sprint: Shift while moving forward (or diagonally forward); stamina from the server's copy, with the same
   // stop-at-0 / restart-above-15 rule, and nothing that forbids it
   const sprintAllowed = moving && mz > 0 && !local.crouch && !castRooted && !local.ride && !local.flight && !local.blocking
-    && !(me.carrying || me.carryingGoat) && now >= local.blizzUntil && now >= local.eyeUntil;
+    && !me.carrying && now >= local.blizzUntil && now >= local.eyeUntil;
   const wantSprint = (input.down('ShiftLeft') || input.down('ShiftRight')) && sprintAllowed;
   local.sprinting = wantSprint;   // round 10: unlimited (no stamina); round 13: a cast only slows it; not crouching or carrying
   const inAirNow = !!(local.jump || local.fall || local.airDash);
@@ -2331,7 +2290,7 @@ function updateLocal(dt) {
   if (y < 1) for (const e of props.values()) if (e.data.state === 'idle') pushOut(e.data.x, e.data.z, C.PROP_TYPES[e.data.type].r * 0.8);
   for (const w of players.values()) if (w !== me && !w.dead && Math.abs(w.group.position.y - y) < C.PLAYER_HEIGHT) pushOut(w.group.position.x, w.group.position.z, pr);
   // (never the ram we ride: it sits under us a frame behind, and pushing out of it shoved us forward every frame)
-  if (y < 1) for (const g of goats.values()) if (g.state !== 'charge' && g.state !== 'mount' && g.group.position.y < 0.5) pushOut(g.group.position.x, g.group.position.z, C.GOAT.radius);
+  if (y < 1) for (const g of rams.values()) if (g.state !== 'charge' && g.mode !== 'mount' && g.mode !== 'orbit') pushOut(g.group.position.x, g.group.position.z, C.RAM.radius);
   if (y < 1) for (const d of decoys.values()) if (d.owner !== myId) pushOut(d.wiz.group.position.x, d.wiz.group.position.z, pr);
   const r = Math.hypot(local.pos.x, local.pos.z);
   if (r > C.ARENA_RADIUS) { local.pos.x *= C.ARENA_RADIUS / r; local.pos.z *= C.ARENA_RADIUS / r; }
@@ -2415,7 +2374,7 @@ function updateHud(dt) {
   setName('power', shortName(K.power));
   setName('mobility', shortName(K.mobility));
   setName('block', shortName(K.guard));
-  const holdingNow = !!(me.carrying || me.carryingGoat);
+  const holdingNow = !!me.carrying;
   setName('throw', holdingNow ? 'Hurl' : shortName(K.utility));
   const cdFill = (key, until, total) => { const k = total ? Math.max(0, Math.min(1, (until - now) / total)) : 0; ui.ab[key].querySelector('.cd').style.height = `${k * 100}%`; };
   // primary: ammo pips, and the reload sweeping down over the slot
@@ -2436,7 +2395,7 @@ function updateHud(dt) {
   ui.ePips.forEach(el => { if (el.style.display !== 'none') el.style.display = 'none'; });
   ui.fPips.forEach((el, i) => { el.style.display = pips[0] >= 0 && i < pips[1] ? '' : 'none'; el.classList.toggle('full', i < pips[0]); el.classList.toggle('trap', traps >= 0); });
   cdFill('block', local.cd.guard, SPELL[K.guard].cooldown);
-  if (!me.carrying && !me.carryingGoat && now < local.liftCdUntil) cdFill('throw', local.liftCdUntil, SPELL[K.utility].liftCooldown);   // lift cooldown
+  if (!me.carrying && now < local.liftCdUntil) cdFill('throw', local.liftCdUntil, SPELL[K.utility].liftCooldown);   // lift cooldown
   else cdFill('throw', local.cd.throw, C.THROW_COOLDOWN);
   ui.ab.block.classList.toggle('active', local.blocking || me.veiled || [...walls.values()].some(w => w.data.owner === myId) || [...firewalls.values()].some(f => f.data.owner === myId) || me.ramGuard);
   ui.ab.power.classList.toggle('active', local.charging || !!local.cyclone || !!local.lash || local.frostAim);
@@ -2480,14 +2439,7 @@ function updateHud(dt) {
   // hint
   let hint = '';
   tkHover = !me.dead && !holdingNow && K.utility !== 'roll' ? tkTarget() : null;   // (Roll: no lift, no curse)
-  if (tkHover?.goat) {
-    const gp = tkHover.goat.group.position;
-    tkMarker.visible = true;
-    tkMarker.setColor(0xb48cff);
-    tkMarker.position.set(gp.x, gp.y + 0.05, gp.z);
-    tkMarker.scale.setScalar((C.GOAT.radius + 0.35) / TK_RING + Math.sin(now * 6) * 0.04);
-    tkMarker.rotation.y += dt * 1.2;
-  } else if (tkHover && (K.utility === 'telekinesis' || curseable(tkHover))) {
+  if (tkHover && (K.utility === 'telekinesis' || curseable(tkHover))) {
     const spec = C.PROP_TYPES[tkHover.data.type];
     tkMarker.visible = true;
     tkMarker.setColor(K.utility === 'trapped_relic' ? 0xff4060 : 0xb48cff);
@@ -2496,7 +2448,7 @@ function updateHud(dt) {
     tkMarker.scale.setScalar((spec.r + 0.3) / TK_RING + Math.sin(now * 6) * 0.04);
     tkMarker.rotation.y += dt * 1.2;
   } else tkMarker.visible = false;
-  const hunted = !me.dead && [...goats.values()].some(g => g.tgt === myId && (g.state === 'windup' || g.state === 'charge'));
+  const hunted = !me.dead && [...rams.values()].some(g => g.tgt === myId && (g.state === 'windup' || g.state === 'charge') && g.mode !== 'orbit' && g.mode !== 'mount');
   const rooted = now < local.rootUntil, slowed = now < local.slowUntil;
   const inFrost = !me.dead && [...frosts.values()].some(f => f.left > 0 && Math.hypot(f.group.position.x - local.pos.x, f.group.position.z - local.pos.z) < FROST.radius + 0.3);
   const rn = performance.now() / 1000;
@@ -2515,7 +2467,7 @@ function updateHud(dt) {
     const along = dx * st.dir[0] + dz * st.dir[2], side = -dx * st.dir[2] + dz * st.dir[0];
     return players.get(st.owner) !== me && along > -1 && along < st.length && Math.abs(side) < st.width / 2 + 0.5;
   });
-  if (hunted) hint = C.isWard(K.guard) ? 'A goat is charging you! Ward (R) facing it, or get out of the way' : 'A goat is charging you! Shield (R) or get out of the way';
+  if (hunted) hint = C.isWard(K.guard) ? 'A ram is charging you! Ward (R) facing it, or get out of the way' : 'A ram is charging you! Shield (R) or get out of the way';
   else if (bound && now < local.frozenUntil) hint = 'Frozen!';
   else if (bound) hint = 'Bound!';
   else if (inFrost) hint = 'Ice falling! Get out of the shadow';
@@ -2535,11 +2487,9 @@ function updateHud(dt) {
   else if (local.frostAim) hint = 'Release RMB to drop the ice';
   else if (rooted) hint = 'Recovering…';
   else if (local.flight) hint = 'Hold E to hover · C to drop';
-  else if (me.carryingGoat) hint = 'F hurl goat · G set down';
   else if (me.carrying) hint = 'F hurl · G set down';
   else if (now < local.stunUntil) hint = 'Stunned!';
   else if (local.fHold) hint = 'Cursing…';
-  else if (tkHover?.goat) hint = 'F lift goat';
   else if (tkHover && K.utility === 'trapped_relic') hint = cursedProps.has(tkHover.data.id) ? 'Your trap' : seenTraps.has(tkHover.data.id) ? 'A trap! Keep clear' : 'F curse';
   else if (tkHover) hint = 'F lift';
   else if (slowed) hint = 'Slowed by frost';
@@ -2578,7 +2528,7 @@ function updateWizardAudio(w, dt) {
   w.stepT = (w.stepT || 0) + dt;
   if (moving && w.stepT > interval) { w.stepT = 0; sfx.footstep(w.group.position, w === me ? 0.28 : 0.4, w.sprinting, w.id); }
   // a quiet telekinetic hum while something is held
-  const holding = !w.dead && !!(w.carrying || w.carryingGoat);
+  const holding = !w.dead && !!w.carrying;
   if (holding && !w.sndHold) w.sndHold = sfx.loop('tk_hold_loop', { pos, vol: 0.35, fadeIn: 0.25 });
   else if (!holding && w.sndHold) { w.sndHold.stop(0.2); w.sndHold = null; }
   if (w.sndHold) w.sndHold.setPos(pos);
@@ -2612,11 +2562,6 @@ function frame(t) {
       d.wiz.updateAnimation(true, dt);
       d.wiz.faceCamera(camera); capPlate(d.wiz);
     }
-    // telekinesis beam to a held goat (goats.js draws the goat itself)
-    for (const w of players.values()) {
-      const g = w.carryingGoat && goats.get(w.carryingGoat);
-      w.beamTo = g && g.state === 'held' ? g.group.position.clone().setY(g.group.position.y + C.GOAT.hitY) : null;
-    }
     updateUltimates();
     updateSmokeHiding(dt);
     for (const w of players.values()) { w.faceCamera(camera); capPlate(w); }
@@ -2625,7 +2570,6 @@ function frame(t) {
     if (input.justPressed('KeyM')) toggleMute();
     sfx.setListener(camera);
     updateMusic();
-    updateGoatAudio(dt);
     for (const w of players.values()) { const gp = w.group.position; w.inAir = gp.y > groundAt(gp.x, gp.z, gp.y) + 0.25; }   // (on a platform isn't "in the air")
     for (const w of players.values()) updateWizardAudio(w, dt);
     updateFloats(dt); updateKilledBy(); updatePotions(dt);
@@ -2639,13 +2583,13 @@ function frame(t) {
     camera.lookAt(0, 2, 0);
   }
 
-  for (const g of goats.values()) g.update(dt, effects, sfx);
+  for (const g of rams.values()) g.update(dt, effects, sfx);
   for (const [id, g] of ghostRams) { g.update(dt, effects, sfx); if (performance.now() / 1000 > g.until) { g.dispose(scene); ghostRams.delete(id); } }
   // a Ram Ride mount sits right under its rider (the rider is drawn ahead of the snapshots)
-  for (const g of goats.values()) {
-    if (g.state !== 'mount') continue;
+  for (const g of rams.values()) {
+    if (g.mode !== 'mount') continue;
     const w = players.get(g.owner);
-    if (w) { g.group.position.set(w.group.position.x, 0, w.group.position.z); g.group.rotation.y = w.group.rotation.y; }
+    if (w) { const p = w.group.position; g.group.position.set(p.x, groundAt(p.x, p.z, p.y), p.z); g.group.rotation.y = w.group.rotation.y; }
   }
 
   // prop pop-in + spinning crystals
@@ -2662,4 +2606,4 @@ requestAnimationFrame(frame);
 
 // Debug handle for the automated tests (round 14: off unless asked for, with ?debug in the URL or localStorage waDebug = 1).
 const DEBUG = (() => { try { return new URLSearchParams(location.search).has('debug') || localStorage.getItem('waDebug') === '1'; } catch { return false; } })();
-if (DEBUG) window.__wa = { renderer, input, net, local, players, props, goats, effects, scene, camera, sfx, decoys, walls, frosts, frostMark, mrainMark, flaskMark, cageMark, laneMark, cages, firewalls, stampedeFx, C, get cursedProps() { return cursedProps; }, get seenTraps() { return seenTraps; } };
+if (DEBUG) window.__wa = { renderer, input, net, local, players, props, rams, effects, scene, camera, sfx, decoys, walls, frosts, frostMark, mrainMark, flaskMark, cageMark, laneMark, cages, firewalls, stampedeFx, C, get cursedProps() { return cursedProps; }, get seenTraps() { return seenTraps; } };

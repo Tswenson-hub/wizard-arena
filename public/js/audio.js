@@ -112,7 +112,7 @@ export class Sfx {
     return src;
   }
 
-  // A shuffled bag of a key's variants per owner (a wizard, a goat): every variant plays once before any repeats,
+  // A shuffled bag of a key's variants per owner (a wizard, a ram): every variant plays once before any repeats,
   // and a reshuffle never puts the last one first, so the same sample never plays twice in a row.
   fromBag(key, owner) {
     const n = this.buffers[key].length, id = key + ':' + owner;
@@ -212,7 +212,7 @@ export class Sfx {
   footstep(pos, vol = 0.35, sprint = false, owner = 'x') { this.play('step_grass', { pos, vol: sprint ? vol * 1.5 : vol, rate: sprint ? 0.88 : 1, jitter: 0.06, bag: owner }); }
   click() { this.play('ui_click', { vol: 0.5, jitter: 0.02 }); }
   hoof(pos) { this.play('step_grass', { pos, vol: 0.8, rate: 0.7, jitter: 0.12 }); }   // no hoof recordings yet: a grass step, lower
-  goatRam(pos, blocked) { this.play(blocked ? 'ward_block' : 'hit_heavy', { pos, vol: 1.1, rate: blocked ? 0.7 : 1 }); if (!blocked) this.play('hit_light', { pos, vol: 0.9, rate: 0.8 }); }
+  ramHit(pos, blocked) { this.play(blocked ? 'ward_block' : 'hit_heavy', { pos, vol: 1.1, rate: blocked ? 0.7 : 1 }); if (!blocked) this.play('hit_light', { pos, vol: 0.9, rate: 0.8 }); }
   // Arcane Cyclone: a low rising hum on the wind-up, then a swoosh and a deep thump on the spin.
   cycloneWindup(pos) { this.play('swell', { pos, vol: 0.8, rate: 0.55, jitter: 0.03 }); }
   cyclonePulse(pos) {
@@ -222,7 +222,7 @@ export class Sfx {
   // Skyward Flash: the blink, pitched up; a soft thud on landing.
   skyward(pos) { this.play('skyward_launch', { pos, vol: 0.85, jitter: 0.04 }); }
   land(pos) { this.play('skyward_land', { pos, vol: 0.6, jitter: 0.1 }); }
-  goatBonk(pos) { this.play('impact_small', { pos, vol: 1, rate: 0.55 }); this.bleat(pos, false, { delay: 0.05 }); }
+  ramBonk(pos) { this.play('impact_small', { pos, vol: 1, rate: 0.55 }); this.bleat(pos, false, { delay: 0.05 }); }
   // The last shot of a magazine: a heavier, lower crack with a bright ring on top.
   castFinisher(pos) {
     this.play('spark_cast', { pos, vol: 0.8, rate: 0.75, jitter: 0.03 });
@@ -266,7 +266,7 @@ export class Sfx {
   }
 
   // Synthesized goat bleat: a buzzy tone with a fast wobble, shaped by a nasal formant filter.
-  // A goat or ram: calm ones higher and softer, angry ones lower and louder (graze: a quiet one now and then).
+  // A ram: calm ones higher and softer, angry ones lower and louder.
   bleat(pos, angry = true, { vol = null, delay = 0, owner = null } = {}) {
     if (!this.ctx) return;
     if (this.buffers.goat_bleat?.length) {

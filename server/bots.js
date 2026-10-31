@@ -22,7 +22,6 @@ const DIFFICULTY = {
     aggression: 0.55,   // chance per decision to attack when it can
     tk: 0.06,           // chance per decision to lift a prop when one is handy
     punish: 0.25,       // chance it spots and punishes a meteor wind-up
-    goatAware: false,   // checks for goats in its line of fire (Easy bots anger them by accident)
     fooled: 0.5,        // chance it goes after a Mirror Step decoy instead of the real wizard
     saveFinisher: 0,    // chance it holds the magazine's last (interrupting) shot for an enemy wind-up
     relicMemory: false, // stops re-lifting a prop that just blew up on it
@@ -33,12 +32,12 @@ const DIFFICULTY = {
   },
   normal: {
     react: 0.25, aimErr: 3.5, lead: 0.6, dodge: 0.6, blinkDodge: true,
-    think: 1 / 3, speed: 0.95, range: [8, 14], aggression: 0.8, tk: 0.12, punish: 0.7, goatAware: true,
+    think: 1 / 3, speed: 0.95, range: [8, 14], aggression: 0.8, tk: 0.12, punish: 0.7,
     fooled: 0.3, relicMemory: false, saveFinisher: 0.5, jump: 0.5, crouch: 0.5, airCast: 0.08, airJump: 0.5,
   },
   hard: {
     react: 0.12, aimErr: 1.2, lead: 1, dodge: 0.9, blinkDodge: true,
-    think: 1 / 6, speed: 1, range: [9, 15], aggression: 0.95, tk: 0.1, punish: 1, goatAware: true,
+    think: 1 / 6, speed: 1, range: [9, 15], aggression: 0.95, tk: 0.1, punish: 1,
     fooled: 0.15, relicMemory: true, saveFinisher: 0.9, jump: 0.85, crouch: 0.8, airCast: 0.16, airJump: 0.8,
   },
 };
@@ -50,8 +49,6 @@ const EYE = C.SPELLBOOK.eye_of_storm, CAGE = C.SPELLBOOK.night_cage, BLIZ = C.SP
 const SHEAR = C.SPELLS.shear, HEX = C.SPELLS.hex, FIRE = C.SPELLS.fireball;
 const SHEAR_RANGE = SHEAR.speed * SHEAR.life;
 const SLING_S = C.SPELLS.sling, BRAM = C.SPELLBOOK.battering_ram, RGUARD = C.SPELLBOOK.ram_guard, RIDE = C.SPELLBOOK.ram_ride, STAMP = C.SPELLBOOK.stampede;
-// Every goat-like thing: the map goats and any summoned rams the server simulates itself (world.rams).
-const goatsOf = (world) => world.rams?.length ? [...world.goats, ...world.rams] : world.goats;
 const guarded = (q, t) => q.ramGuardUntil > t;
 const POTION = C.SPELLS.potion, TOXIC = C.SPELLS.toxic, TFLASK = C.SPELLBOOK.toxic_flask, SFLASK = C.SPELLBOOK.smoke_flask;
 // An enemy Smoke Flask cloud on the line from `from` to `to`: the shot would vanish into it.
@@ -337,31 +334,26 @@ function think(me, world, t) {
   const d = target ? dist2D(me.p, target.p) : Infinity;
   const los = target ? hasLOS(me.p, target.p) : false;
 
-  // ---- defence: a charging goat is the deadliest thing in the arena
+  // ---- defence: a charging ram is the deadliest thing in the arena
   let reacted = false;
-  for (const g of goatsOf(world)) {
-    const key = 'goat' + g.id;
-    if (g.state !== 'charge' || g.mode === 'mount' || (g.summoned && (g.owner === me.id || !foeId(me, g.owner)))) { b.threats.delete(key); continue; }
-    const vx = Math.sin(g.yaw) * C.GOAT.chargeSpeed, vz = Math.cos(g.yaw) * C.GOAT.chargeSpeed;
+  for (const g of world.rams) {
+    const key = 'ram' + g.id;
+    if (g.state !== 'charge' || g.mode === 'mount' || g.owner === me.id || !foeId(me, g.owner)) { b.threats.delete(key); continue; }
+    const vx = Math.sin(g.yaw) * C.RAM.chargeSpeed, vz = Math.cos(g.yaw) * C.RAM.chargeSpeed;
     const rx = g.x - me.p[0], rz = g.z - me.p[2];
-    const tc = -(rx * vx + rz * vz) / (C.GOAT.chargeSpeed ** 2);
+    const tc = -(rx * vx + rz * vz) / (C.RAM.chargeSpeed ** 2);
     const miss = Math.hypot(rx + vx * tc, rz + vz * tc);
     const homing = g.target === me.id;
-    if (tc <= 0 || tc > 1.7 || (!homing && miss > C.GOAT.radius + C.PLAYER_RADIUS + 0.6)) continue;
+    if (tc <= 0 || tc > 1.7 || (!homing && miss > C.RAM.radius + C.PLAYER_RADIUS + 0.6)) continue;
     let rec = b.threats.get(key);
     if (!rec) { rec = newThreat(cfg, t); b.threats.set(key, rec); }
-    b.goatDanger = t + 0.3;
+    b.ramDanger = t + 0.3;
     if (rec.handled || rec.ignore || reacted || t < rec.seenAt + rec.react) continue;
     rec.handled = true; reacted = true;
-    respondGoat(me, world, g, [vx, 0, vz], tc, t, act);
+    respondRam(me, world, g, [vx, 0, vz], tc, t, act);
   }
   for (const id of b.threats.keys()) if (typeof id === 'number' && !world.projectiles.has(id)) b.threats.delete(id);
-  // a hurled goat comes at us like a thrown prop
-  const flyingGoats = world.goats.filter(g => g.state === 'flying' && g.thrower !== me.id && foeId(me, g.thrower)).map(g => ({
-    id: 'fg' + g.id, kind: 'prop', owner: g.thrower, radius: C.GOAT.radius, g: C.GOAT.throwGravity,
-    p: [g.x, (g.y || 0) + C.GOAT.hitY, g.z], v: [g.vx || 0, g.vy || 0, g.vz || 0] }));
-  for (const id of b.threats.keys()) if (typeof id === 'string' && id.startsWith('fg') && !flyingGoats.some(f => f.id === id)) b.threats.delete(id);
-  for (const proj of [...world.projectiles.values(), ...flyingGoats]) {
+  for (const proj of world.projectiles.values()) {
     if (proj.owner === me.id || !foeId(me, proj.owner)) continue;   // a teammate's flies through us
     const th = threatOf(me, proj);
     // at a walk a sidestep takes a while: start judging a shot earlier than at the old run speed
@@ -413,8 +405,8 @@ function think(me, world, t) {
   reactToStampedes(me, world, t, act);
 
   // ---- maintain ongoing actions
-  if (me.blocking && (t >= b.blockUntil || (me.st < 15 && !b.faceGoat))) { act({ t: 'block', on: false }); b.faceGoat = null; }
-  if (!me.blocking) b.faceGoat = null;
+  if (me.blocking && (t >= b.blockUntil || (me.st < 15 && !b.faceRam))) { act({ t: 'block', on: false }); b.faceRam = null; }
+  if (!me.blocking) b.faceRam = null;
   if (me.charging && t >= b.chargeFireAt) {
     const from = [me.p[0], me.p[1] + 1.3, me.p[2]];
     const tgt = target && !target.dead ? target : null;
@@ -440,12 +432,12 @@ function think(me, world, t) {
   // ---- our ultimate, when it's worth it
   if (b.ultFullAt == null && me.ult >= C.ULT_CHARGE.max) b.ultFullAt = t;
   if (me.ult < C.ULT_CHARGE.max) b.ultFullAt = null;
-  if (free && b.ultFullAt != null && !me.blocking && !busyCasting(me) && !me.carrying && !me.carryingGoat && t >= (b.nextUltCheck || 0)) {
+  if (free && b.ultFullAt != null && !me.blocking && !busyCasting(me) && !me.carrying && t >= (b.nextUltCheck || 0)) {
     b.nextUltCheck = t + cfg.think * rand(0.7, 1.3);
     if (Math.random() < cfg.aggression && tryUltimate(me, world, t, act, target)) return;
   }
 
-  if (!free || !target || me.blocking || me.charging || me.cyclone || me.lash || t < (b.goatDanger || 0)) return;
+  if (!free || !target || me.blocking || me.charging || me.cyclone || me.lash || t < (b.ramDanger || 0)) return;
   // a cast roots us: finish a dodge first, cast from where we mean to stand (a wind-up to punish is worth stopping for)
   if (t < b.dodgeUntil && !busyCasting(target)) return;
   const meAir = airborne(me, t);
@@ -479,21 +471,6 @@ function think(me, world, t) {
 
   if (t < b.nextThink) return;
   b.nextThink = t + cfg.think * rand(0.7, 1.3);
-
-  // ---- holding a goat: hurl it at them (it hits like a thrown prop), or set it down if there's no shot
-  if (me.carryingGoat) {
-    const g = world.goats.find(x => x.id === me.carryingGoat);
-    if (!g || g.state !== 'held' || t < me.cd.throw) return;
-    if (!b.holdSince) b.holdSince = t;
-    if (d < 18 && throwLOS(me, target)) {
-      me.yaw = yawTo(me.p, target.p);
-      const from = C.holdPoint(me.p, me.yaw);
-      b.holdSince = 0;
-      return act({ t: 'throw', dir: aimAt(me, from, target, C.GOAT.throwSpeed, C.GOAT.throwGravity, cfg) });
-    }
-    if (t - b.holdSince > 3) { b.holdSince = 0; act({ t: 'drop' }); }
-    return;
-  }
 
   // ---- holding a prop: throw when they're busy, or after a moment
   if (carried) {
@@ -531,19 +508,6 @@ function think(me, world, t) {
     }
   }
   const tk = K.utility === 'telekinesis';   // round 12: only Telekinesis lifts and throws
-
-  // ---- telekinesis: Normal and Hard bots sometimes grab a calm goat close by to hurl at the target
-  if (tk && cfg.goatAware && !me.carrying && t >= me.cd.lift && d < 18 && Math.random() < cfg.tk * 0.5) {
-    const g = world.goats.find(x => ['graze', 'wander', 'return', 'recover', 'dizzy', 'stumble'].includes(x.state) && !x.holder
-      && Math.hypot(x.x - me.p[0], x.z - me.p[2]) < C.TK.range - 1 && hasLOS(me.p, [x.x, 0, x.z]));
-    if (g) {
-      const from = [me.p[0], me.p[1] + 1.3, me.p[2]];
-      const c = [g.x, (g.y || 0) + C.GOAT.hitY, g.z];
-      me.yaw = yawTo(me.p, c);
-      act({ t: 'pickup', aimOrigin: from, aimDir: [c[0] - from[0], c[1] - from[1], c[2] - from[2]] });
-      if (me.carryingGoat) return;
-    }
-  }
 
   // ---- telekinesis: grab a prop that's roughly between us and them
   if (tk && t >= me.cd.lift && Math.random() < cfg.tk) {
@@ -596,15 +560,15 @@ function think(me, world, t) {
     const stuck = targetStunned || rooted(target, t) || busyCasting(target) || target.slowUntil > t;
     const group = foesNear(me, world, target.p, TFLASK.radius, t, { ground: true }).length >= 2;
     if (stuck || group || Math.random() < 0.3) { lob(me, target, act, cfg, world, 'toxic', TOXIC); if (me.cd.power > t) return; }
-  } else if (K.power === 'battering_ram' && powerReady && !targetAir && !me.carrying && d > 3 && d < C.GOAT.chargeSpeed * BRAM.maxTime - 3) {
+  } else if (K.power === 'battering_ram' && powerReady && !targetAir && !me.carrying && d > 3 && d < C.RAM.chargeSpeed * BRAM.maxTime - 3) {
     // Battering Ram: a straight line the target can't easily leave (stuck, busy, slowed) or from close in; not into a ward
     const stuck = targetStunned || rooted(target, t) || busyCasting(target) || target.slowUntil > t;
     // round 14: no longer a one-shot (70 and a knockdown): best as a finisher, or to set one up from close in
     const finisher = target.hp <= C.D(BRAM.damage);
     if ((stuck || d < 9 || (finisher && Math.random() < 0.6) || Math.random() < 0.25) && !targetWarded && !veiled(target, t)) {
       const from = [me.p[0], 0.7, me.p[2]];
-      const dir = aimAt(me, from, target, C.GOAT.chargeSpeed, 0, cfg);
-      if (!lowLineBlocked([me.p[0], 0.7, me.p[2]], [dir[0], 0, dir[2]], d, C.GOAT.radius * 0.6)) {
+      const dir = aimAt(me, from, target, C.RAM.chargeSpeed, 0, cfg);
+      if (!lowLineBlocked([me.p[0], 0.7, me.p[2]], [dir[0], 0, dir[2]], d, C.RAM.radius * 0.6)) {
         me.yaw = Math.atan2(dir[0], dir[2]);
         act({ t: 'ram', dir: [dir[0], 0, dir[2]] });
         return;
@@ -847,7 +811,7 @@ function reactToStampedes(me, world, t, act) {
     const s = Math.sign(side) || b.strafe;
     const out = [-st.dir[2] * s, 0, st.dir[0] * s];
     const need = STAMP.width / 2 + C.PLAYER_RADIUS + 0.6 - Math.abs(side);
-    const time = st.at + (dx * st.dir[0] + dz * st.dir[2]) / C.GOAT.chargeSpeed - t;   // until the first ram reaches us
+    const time = st.at + (dx * st.dir[0] + dz * st.dir[2]) / C.RAM.chargeSpeed - t;   // until the first ram reaches us
     if (!rec.mob && need > time * C.speedOf() * cfg.speed) {
       rec.mob = true;
       if (veilReady(me, t)) { act({ t: 'veil' }); continue; }
@@ -931,7 +895,7 @@ function bolt(me, target, act, cfg, world, kind) {
   const spec = C.SPELLS[kind];
   const from = [me.p[0], me.p[1] + 1.3, me.p[2]];
   const dir = aimAt(me, from, target, spec.speed, 0, cfg);
-  if (lineBlocked(from, dir, dist2D(me.p, target.p), Math.min(spec.radius, 0.5), cfg.goatAware && world.goats)) return;
+  if (lineBlocked(from, dir, dist2D(me.p, target.p), Math.min(spec.radius, 0.5))) return;
   if (firewallInWay(me, world, from, target.p) || smokeFlaskInWay(me, world, from, target.p)) return;
   me.yaw = yawTo(me.p, target.p);
   act({ t: 'cast', kind, dir });
@@ -966,7 +930,7 @@ function skim(me, target, act, cfg, world, t) {
   const from = [me.p[0], SKIM.height, me.p[2]];
   const dir = aimAt(me, from, target, SKIM.speed, 0, cfg);
   const flat = [dir[0], 0, dir[2]];
-  if (lowLineBlocked(from, flat, range, SKIM.radius) || lineBlocked(from, flat, range, SKIM.radius, cfg.goatAware && world.goats) || firewallInWay(me, world, from, target.p)) return;
+  if (lowLineBlocked(from, flat, range, SKIM.radius) || lineBlocked(from, flat, range, SKIM.radius) || firewallInWay(me, world, from, target.p)) return;
   me.yaw = yawTo(me.p, target.p);
   act({ t: 'cast', kind: 'skim', dir: flat });
 }
@@ -975,7 +939,7 @@ function throwProp(me, target, act, cfg, world) {
   me.yaw = yawTo(me.p, target.p);
   const from = C.holdPoint(me.p, me.yaw);
   const dir = aimAt(me, from, target, C.SPELLS.prop.speed, C.SPELLS.prop.gravity, cfg);
-  if (lineBlocked(from, dir, dist2D(from, target.p), C.SPELLS.prop.radius, cfg.goatAware && world.goats) || firewallInWay(me, world, from, target.p)) return;
+  if (lineBlocked(from, dir, dist2D(from, target.p), C.SPELLS.prop.radius) || firewallInWay(me, world, from, target.p)) return;
   act({ t: 'throw', dir });   // already gravity-compensated, so no aim point for the server to re-solve
 }
 
@@ -987,13 +951,12 @@ function aimProp(me, prop, send) {
   send(from, [c[0] - from[0], c[1] - from[1], c[2] - from[2]]);
 }
 
-// Would a shot along `dir` clip a pillar or tree (or, if given, a goat) within `range` metres?
-function lineBlocked(from, dir, range, radius, goats = null) {
+// Would a shot along `dir` clip a pillar or tree within `range` metres?
+function lineBlocked(from, dir, range, radius) {
   const l = Math.hypot(dir[0], dir[2]) || 1;
   // along the real aim (it may climb to a target on a platform); pillarBlocks adds body height to the ends, so take it off
   const to = [from[0] + dir[0] / l * range, from[1] + (dir[1] || 0) / l * range - 1.1, from[2] + dir[2] / l * range];
-  return !!C.pillarBlocks([from[0], from[1] - 1.1, from[2]], to, radius + 0.15)
-    || (goats || []).some(g => segDist(from, to, g) < C.GOAT.radius + radius + 0.3);
+  return !!C.pillarBlocks([from[0], from[1] - 1.1, from[2]], to, radius + 0.15);
 }
 // The same for something skimming the ground: anything taller than it is in the way.
 function lowLineBlocked(from, dir, range, radius) {
@@ -1010,24 +973,24 @@ function linedUp(me, target, world, t) {
     && segDist(me.p, end, { x: q.p[0], z: q.p[2] }) < 1 && dist2D(me.p, q.p) > 3);
 }
 
-// A goat is charging at us: flash up out of reach, spin it dizzy if the cyclone lands first, wall it
+// A ram is charging at us: flash up out of reach, spin it dizzy if the cyclone lands first, wall it
 // off, ward facing it if we can afford it, else blink, mirror-step or dive aside.
-function respondGoat(me, world, g, vel, tc, t, act) {
+function respondRam(me, world, g, vel, tc, t, act) {
   const b = me.bot, K = kit(me);
   if (me.charging) act({ t: 'chargeRelease', dir: [Math.sin(me.yaw), 0, Math.cos(me.yaw)] });   // abandon the meteor
   if (me.lash) act({ t: 'lashRelease', dir: [Math.sin(me.yaw), 0, Math.cos(me.yaw)] });          // and the lash
   if (!canAct(me, t) || airborne(me, t) || me.cyclone) return;
   if (K.mobility === 'skyward' && b.cfg.blinkDodge && mobilityReady(me, t)) return act({ t: 'skyward' });
-  if (world.cycloneStopsGoats && K.power === 'cyclone' && t >= me.cd.power && !me.carrying
-      && tc > CYC.windup + 0.05 && tc * C.GOAT.chargeSpeed < CYC.windup * C.GOAT.chargeSpeed + CYC.radius) return act({ t: 'cyclone' });
+  if (world.cycloneStopsRams && K.power === 'cyclone' && t >= me.cd.power && !me.carrying
+      && tc > CYC.windup + 0.05 && tc * C.RAM.chargeSpeed < CYC.windup * C.RAM.chargeSpeed + CYC.radius) return act({ t: 'cyclone' });
   if (veiled(me, t)) return;   // it bounces off the veil
   if (veilReady(me, t)) return act({ t: 'veil' });
   if (wallReady(me, t) && Math.hypot(g.x - me.p[0], g.z - me.p[2]) > BULWARK.dist + 1.2) return raiseWall(me, [g.x, 0, g.z], act);
-  if (C.isWard(K.guard) && me.st >= C.GOAT.blockCost + 5) {
+  if (C.isWard(K.guard) && me.st >= C.RAM.blockCost + 5) {
     me.yaw = Math.atan2(g.x - me.p[0], g.z - me.p[2]);
     act({ t: 'block', on: true });
     b.blockUntil = t + tc + 0.45;
-    b.faceGoat = g.id;
+    b.faceRam = g.id;
     return;
   }
   if (K.mobility === 'blink' && mobilityReady(me, t)) return blinkSideways(me, null, act, vel);
@@ -1076,7 +1039,7 @@ function pickProp(me, target, world, t) {
 
 // A prop for a Trapped Relic, on a path the target is likely to take: between them and us (they come for us), by cover,
 // a spawn or a heal spot; not right under their feet (they'd see it flare and step back) and not next to our other trap.
-const HOT_SPOTS = [...(C.HEAL_SPOTS || []).map(h => [h[1], h[2]]), ...C.SPAWN_POINTS.map(s => [s[0], s[2]])];
+const HOT_SPOTS = [...(C.HEAL_SPOTS || []).map(h => [h.x, h.z]), ...C.SPAWN_POINTS.map(s => [s[0], s[2]])];
 const TALL_COVER = C.COLLIDERS.filter(c => c.h >= C.LOS_HEIGHT);
 function curseCandidate(me, target, world, mine = []) {
   let best = null, bs = Infinity;
@@ -1403,7 +1366,7 @@ function moveBot(me, dt, world, t) {
       const strafe = diving ? 0.35 : los ? 0.9 : 1;
       if (!(lowHp && los && wx)) { wx = fx * fwd + fz * strafe * b.strafe; wz = fz * fwd - fx * strafe * b.strafe; }
       // round 10: an enemy holding something to throw, facing us: get off the line (sideways, toward our strafe side)
-      const thrower = [...world.players.values()].find(q => foe(me, q) && !q.dead && (q.carrying || q.carryingGoat) && dist2D(q.p, me.p) < 18
+      const thrower = [...world.players.values()].find(q => foe(me, q) && !q.dead && q.carrying && dist2D(q.p, me.p) < 18
         && facingWithin(q, me.p, 25) && hasLOS(q.p, me.p));
       if (thrower && !me.eye) {
         const lx = me.p[0] - thrower.p[0], lz = me.p[2] - thrower.p[2], ll = Math.hypot(lx, lz) || 1;
@@ -1416,7 +1379,7 @@ function moveBot(me, dt, world, t) {
         // just came up: keep going onto their platform instead of strafing off the stairs
         else if (t < (b.rampUntil || 0) + 1.5 && d > 1.8) { wx = fx; wz = fz; }
       }
-      const fg = me.blocking && b.faceGoat ? world.goats.find(g => g.id === b.faceGoat) : null;
+      const fg = me.blocking && b.faceRam ? world.rams.find(g => g.id === b.faceRam) : null;
       if (fg) me.yaw = Math.atan2(fg.x - me.p[0], fg.z - me.p[2]);
       else if (!me.blocking) me.yaw = Math.atan2(fx, fz);
     } else if (b.lastSeen && t < b.lastSeenUntil && dist2D(me.p, b.lastSeen) > SMOKE.radius + 1) {
@@ -1472,7 +1435,7 @@ function moveBot(me, dt, world, t) {
     const tg = target && !target.dead ? target : null, dT = tg ? dist2D(me.p, tg.p) : 0;
     const far = goal ? Math.hypot(goal[0] - me.p[0], goal[1] - me.p[2]) > 6 : !!tg && (dT > (kit(me).primary === 'gale_shear' ? 7 : cfg.range[1] + 5) || (dT > 8 && !hasLOS(me.p, tg.p)));   // (sprint is free: close in on one we can't see)
     const fleeing = me.hp < 35 && !!tg && dT < 14;
-    const threatened = [...b.threats.values()].some(r => !r.handled && !r.ignore) || t < (b.goatDanger || 0);
+    const threatened = [...b.threats.values()].some(r => !r.handled && !r.ignore) || t < (b.ramDanger || 0);
     const keep = false;   // round 10: sprint is free, nothing to save stamina for
     const want = (far || fleeing) && !keep && wl > 0.01 && !stunned && !flying && !me.blocking && !busyCasting(me) && !me.carrying && t >= b.dodgeUntil;
     if (want !== !!me.sprinting || (want && t - (me.sprintAt || 0) > 0.2)) world.handle(me, { t: 'sprint', on: want });
@@ -1528,7 +1491,7 @@ function moveBot(me, dt, world, t) {
   if (y < 1) for (const prop of world.props.values()) if (prop.state === 'idle') pushOut(prop.x, prop.z, C.PROP_TYPES[prop.type].r * 0.8);
   for (const q of world.players.values()) if (q !== me && !q.dead && Math.abs(q.p[1] - y) < C.PLAYER_HEIGHT) pushOut(q.p[0], q.p[2], pr);
   // (never a mount ram: it sits under its rider, and pushing out of it shoved the rider forward every tick)
-  if (y < 1) for (const g of goatsOf(world)) if ((g.y || 0) < 0.5 && g.state !== 'charge' && g.state !== 'mount' && g.mode !== 'mount') pushOut(g.x, g.z, C.GOAT.radius);
+  if (y < 1) for (const g of world.rams) if ( g.state !== 'charge' && g.state !== 'mount' && g.mode !== 'mount') pushOut(g.x, g.z, C.RAM.radius);
   const r = Math.hypot(me.p[0], me.p[2]);
   if (r > C.ARENA_RADIUS) { me.p[0] *= C.ARENA_RADIUS / r; me.p[2] *= C.ARENA_RADIUS / r; }
 

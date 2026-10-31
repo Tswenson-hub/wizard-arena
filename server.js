@@ -9,12 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import * as C from './public/shared/constants.js';
 import { createBot, updateBots, botKnockback, botNoteRelic, botDash, botPull, BOT_LIMIT } from './server/bots.js';
-import * as Goats from './server/goats.js';
 import { createMatch } from './server/match.js';
-const { createGoats, updateGoats, angerGoat, goatPublic } = Goats;
-// Throwable goats (goats.js, environment): called defensively so either side can land first
-const goatTK = typeof Goats.liftGoat === 'function' && typeof Goats.throwGoat === 'function';
-const goatById = (id) => goats.find(g => g.id === id);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -41,7 +36,6 @@ const players = new Map();   // id -> player
 const sockets = new Map();   // id -> ws
 const projectiles = new Map();
 const props = new Map();
-const goats = createGoats();
 let nextProjId = 1;
 const decoys = new Map();    // Mirror Step decoys: id -> { id, owner, p, dir, yaw, until }
 const walls = new Map();     // Glacial Bulwark walls: id -> { id, owner, x, z, yaw, hp, until }
@@ -54,6 +48,7 @@ let nextFxId = 1;            // ids for decoys and walls
 // ---------------------------------------------------------------- props
 C.PROP_SPAWNS.forEach(([type, x, z], i) => {
   const id = i + 1;
+  if (!C.PROP_TYPES[type]) { console.warn(`[props] spawn ${id}: unknown type '${type}', skipped`); return; }   // (a layout mid-edit)
   props.set(id, { id, type, x, z, state: 'idle', carrier: null, respawnAt: 0, liftUntil: 0 });
 });
 
@@ -72,7 +67,7 @@ function newPlayer(id, name, loadout = C.DEFAULT_LOADOUT, voice = 'male') {
     id, name,
     loadout, pendingLoadout: null, voice: C.sanitizeVoice(voice),
     color: C.loadoutColor(loadout),
-    p: [sp[0], 0, sp[2]], yaw: 0, anim: 'idle',
+    p: [sp[0], sp[1] || 0, sp[2]], yaw: 0, anim: 'idle',
     jump: null, crouch: false,    // round 9: { start, y0, n } while a jump is in the air (n 2: the air jump); crouched (C / Ctrl)
     airJumped: false, jumpSpeed: 0,   // round 13: the air jump is spent (until landing); the speed carried into the air
     hover: null,                  // round 13: { y, cap, until } while a rooting wind-up started in mid-air holds the height
@@ -105,12 +100,12 @@ function newPlayer(id, name, loadout = C.DEFAULT_LOADOUT, voice = 'male') {
 function playerPublic(p) {
   return {
     ...match.playerExtras(p),
-    id: p.id, name: p.name, color: p.color,
+    id: p.id, name: p.name, color: p.color, body: p.body || 'mage',
     p: p.p, yaw: p.yaw, anim: p.anim,
     hp: Math.round(p.hp), st: Math.round(p.st),
     blocking: p.blocking, charging: p.charging,
     stun: p.stunUntil > now(), dead: p.dead,
-    carrying: p.carrying, carryingGoat: p.carryingGoat || null, kills: p.kills, deaths: p.deaths,
+    carrying: p.carrying, kills: p.kills, deaths: p.deaths,
     loadout: p.loadout, voice: p.voice, pendingLoadout: !!p.pendingLoadout, lashing: !!p.lash,
     veil: p.veilUntil > now(), liftCd: p.cd.lift > now() ? +(p.cd.lift - now()).toFixed(2) : 0,
     ammo: p.ammo, reload: p.reloadUntil > now() ? +(p.reloadUntil - now()).toFixed(2) : 0,
@@ -151,7 +146,7 @@ const isVeiled = (p) => p.veilUntil > now();
 // Round 14: spawn protection (C.SPAWN_PROTECT): no damage taken for a moment after a respawn, ended early by an attack.
 const spawnProtected = (p) => p.protUntil > now();
 const PROT_ENDS = new Set(['cast', 'chargeStart', 'cyclone', 'lashStart', 'frostfall', 'ult', 'toxic', 'curse', 'pickup', 'throw', 'ram', 'ride', 'ramGuard']);
-const holding = (p) => !!(p.carrying || p.carryingGoat);   // a prop or a goat floats beside us
+const holding = (p) => !!p.carrying;   // a prop floats beside us
 const EYE = C.SPELLBOOK.eye_of_storm, CAGE = C.SPELLBOOK.night_cage, BLIZ = C.SPELLBOOK.blizzard, MRAIN = C.SPELLBOOK.meteor_rain;
 // Eye of the Storm and Absolute Zero's flare can't be interrupted (no stun, cancel, bind, slow or knockback)
 // (Gale's tornado and Rime's Blizzard)
@@ -366,7 +361,7 @@ function applyHit(target, proj) {
     ...(!blocked && !steady && spec.launch ? { launch: spec.launch } : {}),
   });
 
-  if (target.hp <= 0 && !target.dead) killPlayer(target, attacker, proj.kind === 'goat' ? 'goated' : null, proj.kind);
+  if (target.hp <= 0 && !target.dead) killPlayer(target, attacker, null, proj.kind);
   return { dmg, blocked };
 }
 
@@ -390,7 +385,6 @@ function killPlayer(target, attacker, cause = null, kind = cause) {   // kind: t
   target.deaths++;
   target.respawnAt = now() + C.RESPAWN_TIME;
   if (target.carrying) dropProp(target, true);
-  if (target.carryingGoat) { const g = goatById(target.carryingGoat); target.carryingGoat = null; if (g && g.holder === target.id) Goats.releaseGoat?.(g, goatCtx); }
   if (attacker && attacker.id !== target.id) { attacker.kills++; addUltCharge(attacker, C.ULT_CHARGE.kill); }
   match.onKill(target, attacker, cause);
   broadcast({ t: 'death', id: target.id, killer: attacker ? attacker.id : null, cause, kind });
@@ -398,7 +392,7 @@ function killPlayer(target, attacker, cause = null, kind = cause) {   // kind: t
 
 function respawn(p) {
   const sp = match.spawnPointFor(p) || C.SPAWN_POINTS[Math.floor(Math.random() * C.SPAWN_POINTS.length)];
-  p.p = [sp[0] + rand(-1, 1), 0, sp[2] + rand(-1, 1)];
+  p.p = [sp[0] + rand(-1, 1), sp[1] || 0, sp[2] + rand(-1, 1)];   // (y: a wall-walk spawn's standing height)
   p.hp = C.MAX_HP; p.st = C.MAX_STAMINA;
   p.dead = false; p.stunUntil = 0; p.blocking = false; p.charging = false; p.cyclone = null; p.lash = null; p.flightUntil = 0; p.jump = null; p.crouch = false; p.grab = null; p.knockUntil = 0;
   p.fall = null; p.hover = null; p.airJumped = false; p.jumpSpeed = 0; p.castSlowUntil = 0; p.rideQueued = null;
@@ -541,17 +535,16 @@ function cyclonePulse(p) {
       if (prop.state !== 'idle') continue;
       if (dist2D(p.p, [prop.x, 0, prop.z]) < CYCLONE.radius + C.PROP_TYPES[prop.type].r) breakProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z], p.id);
     }
-    for (const g of allGoats()) {
-      if (g.holder === p.id || g.owner === p.id || Math.hypot(g.x - p.p[0], g.z - p.p[2]) > CYCLONE.radius + C.GOAT.radius) continue;
-      // A goat already rearing or charging gets spun dizzy; any other goat is now angry at the caster.
-      stirGoat(g, p.id);
+    for (const g of rams) {
+      if (g.owner === p.id || Math.hypot(g.x - p.p[0], g.z - p.p[2]) > CYCLONE.radius + C.RAM.radius) continue;
+      stirRam(g);   // a ram rearing or charging gets spun dizzy
     }
   }
   broadcast({ t: 'cyclonePulse', id: p.id, p: p.p, hits });
 }
 
 // `by`: the player whose spell broke it, if any. An enemy breaking a Trapped Relic sets it off where it stands;
-// its own curser (or a goat, or anything without an owner) only disarms it.
+// its own curser (or anything without an owner) only disarms it.
 function breakProp(prop, at, by = null) {
   if (prop.cursedBy && by != null && by !== prop.cursedBy && prop.state === 'idle' && enemyOf(prop.cursedBy, players.get(by))) { relicBlast(prop); return; }
   match.onPropBroken(prop);
@@ -645,8 +638,8 @@ function updateDecoys(dt, t) {
     }
     const r = Math.hypot(d.p[0], d.p[2]);
     if (r > C.ARENA_RADIUS) { d.p[0] *= C.ARENA_RADIUS / r; d.p[2] *= C.ARENA_RADIUS / r; }
-    // a charging goat runs it down
-    if (goats.some(g => g.state === 'charge' && Math.hypot(g.x - d.p[0], g.z - d.p[2]) < C.GOAT.radius + C.PLAYER_RADIUS + 0.25)) endDecoy(d, true);
+    // a charging ram runs it down
+    if (rams.some(g => g.state === 'charge' && Math.hypot(g.x - d.p[0], g.z - d.p[2]) < C.RAM.radius + C.PLAYER_RADIUS + 0.25)) endDecoy(d, true);
   }
 }
 // The decoy (not owned by `ownerId`) a sphere at `pos` with radius `r` touches, if any.
@@ -859,10 +852,9 @@ function frostfallImpact(f) {
     if (prop.state !== 'idle') continue;
     if (dist2D(at, [prop.x, 0, prop.z]) < FROST.radius + C.PROP_TYPES[prop.type].r * 0.5) breakProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z], f.owner);
   }
-  for (const g of allGoats()) {
-    if (g.holder === f.owner || g.owner === f.owner || Math.hypot(g.x - f.x, g.z - f.z) > FROST.radius + C.GOAT.radius * 0.5) continue;
-    // a rearing or charging goat is knocked dizzy; any other goat is now angry at the caster
-    stirGoat(g, f.owner);
+  for (const g of rams) {
+    if (g.owner === f.owner || Math.hypot(g.x - f.x, g.z - f.z) > FROST.radius + C.RAM.radius * 0.5) continue;
+    stirRam(g);   // a rearing or charging ram is knocked dizzy
   }
   broadcast({ t: 'frostfallHit', id: f.id, p: at, hits });
 }
@@ -910,65 +902,50 @@ function relicBlast(prop, victim = null) {
 }
 
 // ---------------------------------------------------------------- Jeb's rams
-// Summoned rams follow the goat contract (docs/agents/round7-jeb.md): server/goats.js (environment) owns them through
-// summonRam / callRam once those exist. Until then (or if they're missing) this file runs a minimal stand-in with
-// the same rules: a straight charge that one-shots the first enemy it meets unless a facing ward, a Veil or Black Death
-// stops it (it goes dizzy), dizzy on colliders, never touching its owner or the owner's team, and despawning once
-// it has recovered. Stand-in rams live in `rams`, not `goats`, and go out in snapshots alongside the goats.
-const envRams = () => typeof Goats.summonRam === 'function';
+// Summoned rams (round 15: the map goats are gone, so this file owns them outright): a straight charge that one-shots
+// the first enemy it meets unless a facing ward, a Veil or Black Death stops it (it goes dizzy), dizzy on colliders,
+// never touching its owner or the owner's team, and despawning once it has recovered. They go out in snapshots as `rams`.
 const rams = [];
 let nextRamId = 1000;
-const G_ = C.GOAT;
+const G_ = C.RAM;
 const SLING = C.SPELLBOOK.sling, BRAM = C.SPELLBOOK.battering_ram, RGUARD = C.SPELLBOOK.ram_guard, RIDE = C.SPELLBOOK.ram_ride, STAMP = C.SPELLBOOK.stampede;
 const ramPublic = (r) => ({ id: r.id, p: [+r.x.toFixed(2), +r.z.toFixed(2)], yaw: +r.yaw.toFixed(2), s: r.state === 'orbit' || r.state === 'mount' ? 'charge' : r.state,
   tgt: r.target, y: 0, holder: null, summoned: true, owner: r.owner, mode: r.mode });
-// Everything goat-like spells interact with: the map goats and any stand-in rams.
-const allGoats = () => rams.length ? [...goats, ...rams] : goats;
-const findRam = (id) => rams.find(r => r.id === id) || goats.find(g => g.id === id);
-// A spell stirs a goat: map goats go dizzy or get angry at the caster; summoned rams only go dizzy.
-function stirGoat(g, casterId) {
-  if (g.summoned) { if (g.state === 'charge' || g.state === 'windup') ramDizzy(g); return; }
-  if (!Goats.dizzyGoat?.(g, goatCtx)) angerGoat(g, casterId, goatCtx);
-}
+const findRam = (id) => rams.find(r => r.id === id);
+// A spell stirs a ram: one rearing or charging goes dizzy.
+function stirRam(g) { if (g.state === 'charge' || g.state === 'windup') ramDizzy(g); }
 
 // opts: { x, z, yaw, ownerId, mode: 'charge' | 'orbit' | 'mount', targetId?, speed?, maxTime?, angle? }
 function summonRam(opts) {
-  const owner = players.get(opts.ownerId);
-  if (envRams()) {
-    const g = Goats.summonRam({ ...opts, team: owner?.team ?? null }, goatCtx);
-    if (g) broadcast({ t: 'ramSpawn', id: g.id, p: [g.x, 0, g.z], mode: opts.mode });
-    return g;
-  }
   const t = now();
   const r = { id: nextRamId++, summoned: true, owner: opts.ownerId, mode: opts.mode, x: opts.x, z: opts.z, yaw: opts.yaw ?? 0,
-    state: opts.mode === 'charge' ? 'charge' : opts.mode, until: t + (opts.maxTime ?? G_.chargeTime), speed: opts.speed ?? G_.chargeSpeed,
+    state: opts.mode === 'charge' ? 'charge' : opts.mode === 'call' ? 'windup' : opts.mode,
+    until: t + (opts.mode === 'call' ? G_.windup : opts.maxTime ?? G_.chargeTime), speed: opts.speed ?? G_.chargeSpeed,
     target: opts.targetId ?? null, angle: opts.angle ?? 0, hardUntil: t + 10, born: t };
   rams.push(r);
   broadcast({ t: 'ramSpawn', id: r.id, p: [r.x, 0, r.z], mode: r.mode });
   return r;
 }
 function despawnRam(r) {
-  if (envRams() && !rams.includes(r)) { Goats.despawnRam?.(r, goatCtx); return; }
   const i = rams.indexOf(r);
   if (i < 0) return;
   rams.splice(i, 1);
-  broadcast({ t: 'goatGone', id: r.id, p: [r.x, 0, r.z] });
+  broadcast({ t: 'ramGone', id: r.id, p: [r.x, 0, r.z] });
 }
 function ramDizzy(r) {
-  if (!rams.includes(r)) { Goats.dizzyGoat?.(r, goatCtx); return; }
+  if (!rams.includes(r)) return;
   r.state = 'dizzy'; r.until = now() + G_.dizzyTime;
-  broadcast({ t: 'goatBonk', id: r.id, p: [r.x, 0.8, r.z] });
+  broadcast({ t: 'ramBonk', id: r.id, p: [r.x, 0.8, r.z] });
 }
-// An orbiting ram took a shot from `shooterId`: it breaks orbit and charges the shooter (homing like a map goat).
+// An orbiting ram took a shot from `shooterId`: it breaks orbit and charges the shooter (homing).
 function ramProvoked(r, shooterId) {
-  if (!rams.includes(r)) { (Goats.ramHitByProjectile || ((g, id) => angerGoat(g, id, goatCtx)))(r, shooterId, goatCtx); return; }
-  if (r.state !== 'orbit') return;
+  if (!rams.includes(r) || r.state !== 'orbit') return;
   r.mode = 'charge'; r.state = 'charge'; r.target = shooterId; r.until = now() + G_.chargeTime;
   const s = players.get(shooterId);
   if (s) r.yaw = Math.atan2(s.p[0] - r.x, s.p[2] - r.z);
-  broadcast({ t: 'goatAngry', id: r.id, target: shooterId });
+  broadcast({ t: 'ramAngry', id: r.id, target: shooterId });
 }
-// The goat rule for a summoned ram meeting an enemy wizard.
+// A summoned ram meeting an enemy wizard.
 function ramHits(r, p, t) {
   const dir = [Math.sin(r.yaw), 0, Math.cos(r.yaw)];
   const facing = p.blocking && p.st > 0 && (C.SPELLBOOK[kit(p).guard]?.allSides
@@ -981,17 +958,17 @@ function ramHits(r, p, t) {
       if (p.bot) botKnockback(p, dir, G_.blockKnockback);
     }
     r.yaw += Math.PI; r.x -= dir[0] * 0.8; r.z -= dir[2] * 0.8;
-    broadcast({ t: 'goatRam', id: r.id, target: p.id, blocked: true, veil: isVeiled(p), dir, p: [p.p[0], 1, p.p[2]] });
+    broadcast({ t: 'ramHit', id: r.id, target: p.id, blocked: true, veil: isVeiled(p), dir, p: [p.p[0], 1, p.p[2]] });
     ramDizzy(r);
     return;
   }
-  broadcast({ t: 'goatRam', id: r.id, target: p.id, blocked: false, dir, p: [p.p[0], 1, p.p[2]] });
+  broadcast({ t: 'ramHit', id: r.id, target: p.id, blocked: false, dir, p: [p.p[0], 1, p.p[2]] });
   const owner = players.get(r.owner);
   p.lastHitBy = owner ? owner.id : null;
   ramStrike(p, owner || null, 'ram', r);
   r.state = 'recover'; r.until = t + G_.recoverTime;
 }
-// A goat or ram that got through to wizard `p` (the goat rules already ruled out a ward, wall or Veil): a kill, except
+// A ram that got through to wizard `p` (ramHits already ruled out a ward, wall or Veil): a kill, except
 // during spawn protection, and except a Battering Ram, which hits for its damage plus a knockdown (round 14).
 function ramStrike(p, attacker, cause, g) {
   if (p.dead || spawnProtected(p)) return;
@@ -1000,16 +977,6 @@ function ramStrike(p, attacker, cause, g) {
     return;
   }
   killPlayer(p, attacker, cause);
-}
-// goats.js's ctx.killPlayer doesn't name the goat (yet): the Battering Ram charging into `p` is the one right there.
-function strikingRam(p) {
-  let best = null, bd = 3;
-  for (const g of allGoats()) {
-    if (g.spell !== 'battering_ram' || g.state !== 'charge') continue;
-    const d = Math.hypot(g.x - p.p[0], g.z - p.p[2]);
-    if (d < bd) { bd = d; best = g; }
-  }
-  return best;
 }
 function updateRams(dt, t) {
   for (const r of [...rams]) {
@@ -1024,8 +991,15 @@ function updateRams(dt, t) {
     }
     if (r.state === 'mount') { if (!owner || owner.dead || !owner.ride) despawnRam(r); continue; }   // placed by the ride
     if (r.state === 'dizzy' || r.state === 'recover') { if (t >= r.until) despawnRam(r); continue; }
+    if (r.state === 'windup') {   // a Sling's ram rearing up, facing its target
+      const tg = players.get(r.target);
+      if (!tg || tg.dead) { despawnRam(r); continue; }
+      r.yaw = Math.atan2(tg.p[0] - r.x, tg.p[2] - r.z);
+      if (t >= r.until) { r.state = 'charge'; r.mode = 'charge'; r.until = t + G_.chargeTime; }
+      continue;
+    }
     if (r.state !== 'charge') continue;
-    // a provoked guard ram homes like a map goat; Battering Rams and Stampede rams run dead straight
+    // a provoked guard ram (or a Sling's) homes; Battering Rams and Stampede rams run dead straight
     const tg = r.target != null && players.get(r.target);
     if (tg && !tg.dead) { const want = Math.atan2(tg.p[0] - r.x, tg.p[2] - r.z); let d = Math.atan2(Math.sin(want - r.yaw), Math.cos(want - r.yaw)); d = clamp(d, -G_.turnRate * dt, G_.turnRate * dt); r.yaw += d; }
     r.x += Math.sin(r.yaw) * r.speed * dt; r.z += Math.cos(r.yaw) * r.speed * dt;
@@ -1048,31 +1022,42 @@ function updateRams(dt, t) {
   }
 }
 
-// Shepherd's Sling: a hit calls the nearest calm map goat to charge the target, credited to the slinger.
-const CALM = new Set(['graze', 'wander', 'return', 'stumble', 'recover']);
+// Shepherd's Sling (round 15: no map goats any more): a hit summons a ram SLING.callDist from the target, off to one
+// side of the slinger's line, which rears for RAM.windup and then charges the target (homing), credited to the slinger.
+function ramCallSpot(target, slinger) {
+  const dx = target.p[0] - slinger.p[0], dz = target.p[2] - slinger.p[2], l = Math.hypot(dx, dz) || 1;
+  const base = Math.atan2(dx / l, dz / l), side = Math.random() < 0.5 ? 1 : -1;
+  // a flank first (90° off the line), then swinging round toward behind the target, then the slinger's own side
+  for (const off of [90, 120, 60, 150, 30, 180, 0]) for (const sg of [side, -side]) {
+    const a = base + sg * off * Math.PI / 180, R = SLING.callDist;
+    const x = target.p[0] + Math.sin(a) * R, z = target.p[2] + Math.cos(a) * R;
+    if (Math.hypot(x, z) > C.ARENA_RADIUS - 2) continue;
+    if (C.COLLIDERS.some(o => o.kind !== 'fence' && o.kind !== 'crop' && segCircle(x, z, target.p[0], target.p[2], o, G_.radius))) continue;
+    return { x, z, yaw: Math.atan2(target.p[0] - x, target.p[2] - z) };
+  }
+  return null;
+}
+// Does the segment (ax, az) → (bx, bz) pass within o.r + pad of collider o?
+function segCircle(ax, az, bx, bz, o, pad) {
+  const vx = bx - ax, vz = bz - az, L2 = vx * vx + vz * vz || 1;
+  const k = clamp(((o.x - ax) * vx + (o.z - az) * vz) / L2, 0, 1);
+  return Math.hypot(ax + vx * k - o.x, az + vz * k - o.z) < o.r + pad;
+}
 function callRamOn(target, slinger) {
   const t = now();
   slinger.slingLock ??= new Map();
-  if (t < (slinger.slingLock.get(target.id) ?? 0)) return;
+  if (t < (slinger.slingLock.get(target.id) ?? 0) || aboveFloor(target) > 0.5 || target.p[1] >= G_.rammableBelow) return;
   let g = null;
-  if (typeof Goats.callRam === 'function') g = Goats.callRam(target.id, slinger.id, target.p, SLING.callRange, goatCtx);
-  else {
-    let bd = SLING.callRange;
-    for (const q of goats) {
-      if (q.summoned || !CALM.has(q.state) || q.holder || (q.y || 0) > 0.05) continue;
-      const d = Math.hypot(q.x - target.p[0], q.z - target.p[2]);
-      if (d < bd) { bd = d; g = q; }
-    }
-    if (g) { angerGoat(g, target.id, goatCtx); g.angeredBy = slinger.id; }   // it charges the target; a kill is the slinger's
-  }
-  // Herd Call (Sling + Ram Guard): no calm goat answered, so one of our circling guard rams goes instead
-  if (!g && hasCombo(slinger, 'herd')) {
-    g = [...goats, ...rams].find(q => q.summoned && q.owner === slinger.id && (q.state === 'orbit' || q.mode === 'orbit')) || null;
-    if (g) ramProvoked(g, target.id);
+  const at = ramCallSpot(target, slinger);
+  if (at) g = summonRam({ ...at, ownerId: slinger.id, mode: 'call', targetId: target.id });
+  // Herd Call (Sling + Ram Guard): one of our circling guard rams goes as well
+  if (hasCombo(slinger, 'herd')) {
+    const h = rams.find(q => q.owner === slinger.id && q.state === 'orbit');
+    if (h) { ramProvoked(h, target.id); g ??= h; }
   }
   if (!g) return;
   slinger.slingLock.set(target.id, t + SLING.callLockout);
-  broadcast({ t: 'ramCalled', goat: g.id, target: target.id, by: slinger.id });
+  broadcast({ t: 'ramCalled', ram: g.id, target: target.id, by: slinger.id });
 }
 
 // Ram Ride: mount (can't act), gallop forward along the rider's facing for RIDE.distance, dismount, the ram goes.
@@ -1083,7 +1068,7 @@ function startRide(p, yaw) {
   p.ride = { start: t, rideAt: t + RIDE.mount, dismountAt: t + RIDE.mount + rideTime, endAt: t + RIDE.mount + rideTime + RIDE.dismount, yaw, shoved: new Set() };
   p.yaw = yaw;
   const r = summonRam({ x: p.p[0], z: p.p[2], yaw, ownerId: p.id, mode: 'mount', maxTime: RIDE.mount + RIDE.distance / RIDE.speed + RIDE.dismount + 1 });
-  p.ride.ram = r?.id ?? null; p.ride.ramObj = r || null;   // (goats.js adds it to the array on its next update)
+  p.ride.ram = r?.id ?? null; p.ride.ramObj = r || null;   // 
   p.rootUntil = Math.max(p.rootUntil, p.ride.rideAt);   // getting on
   if (p.blocking) { p.blocking = false; p.blockReleasedAt = t; }
   broadcast({ t: 'ride', id: p.id, yaw, ram: p.ride.ram, mount: RIDE.mount, ride: rideTime, dismount: RIDE.dismount });
@@ -1162,7 +1147,7 @@ function endUltimates(p) {
 const inSight = (from, q) => !C.pillarBlocks(from, q.p, 0);
 const outward = (from, q) => { const dx = q.p[0] - from[0], dz = q.p[2] - from[2], l = Math.hypot(dx, dz); return l > 0.05 ? [dx / l, 0, dz / l] : [Math.sin(q.yaw), 0, Math.cos(q.yaw)]; };
 
-// Spells and ultimates that crush an area break the props in it, pop enemy decoys and stir the goats.
+// Spells and ultimates that crush an area break the props in it, pop enemy decoys and stir the rams.
 function crushArea(ownerId, x, z, r) {
   const owner = players.get(ownerId);
   for (const d of [...decoys.values()]) if (d.owner !== ownerId && enemies(owner, players.get(d.owner)) && Math.hypot(d.p[0] - x, d.p[2] - z) < r) endDecoy(d, true);
@@ -1170,9 +1155,9 @@ function crushArea(ownerId, x, z, r) {
     if (prop.state !== 'idle') continue;
     if (Math.hypot(prop.x - x, prop.z - z) < r + C.PROP_TYPES[prop.type].r * 0.5) breakProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z], ownerId);
   }
-  for (const g of allGoats()) {
-    if (g.holder === ownerId || g.owner === ownerId || Math.hypot(g.x - x, g.z - z) > r + C.GOAT.radius * 0.5) continue;
-    stirGoat(g, ownerId);
+  for (const g of rams) {
+    if (g.owner === ownerId || Math.hypot(g.x - x, g.z - z) > r + C.RAM.radius * 0.5) continue;
+    stirRam(g, ownerId);
   }
 }
 
@@ -1436,7 +1421,6 @@ function updateMeteorRain(p, t, dt) {
 function simulate(dt) {
   const t = now();
   updateBots(dt, world);
-  updateGoats(goats, dt, goatCtx);
   match.tick(dt);
   updatePotions(t);
   updateDecoys(dt, t);
@@ -1520,8 +1504,6 @@ function simulate(dt) {
       if (p.p[1] > fl + 0.01) { if (!p.vy && !p.jumpSpeed) p.jumpSpeed = takeoffSpeed(p, t); p.vy = (p.vy || 0) - C.JUMP.gravity * dt; p.p[1] = Math.max(fl, p.p[1] + p.vy * dt); if (p.p[1] <= fl) { p.vy = 0; touchedDown(p); } }
       else { p.p[1] = fl; p.vy = 0; if (p.airJumped || p.rideQueued || p.jumpSpeed) touchedDown(p); }
     }
-    // goats.js drops a held goat itself (holder dead, stunned or gone); forget it when it's no longer ours
-    if (p.carryingGoat) { const g = goatById(p.carryingGoat); if (!g || g.state !== 'held' || g.holder !== p.id) p.carryingGoat = null; }
     // telekinesis: however we let go of something (thrown, set down, knocked away, dropped), the next lift waits
     const held = holding(p);
     if (p.wasHolding && !held) p.cd.lift = t + C.SPELLBOOK[kit(p).utility].liftCooldown;
@@ -1594,18 +1576,14 @@ function simulate(dt) {
     }
     if (done) continue;
 
-    // goats: no damage, but a spell makes it angry at its caster. A goat in the air is hit at its height;
-    // a held one takes the hit for its holder (it drops and charges the caster). Not by its own holder's shots.
-    for (const g of allGoats()) {
-      if (g.holder && g.holder === proj.owner) continue;
-      // Jeb's rams: a guard ram absorbs an enemy's shot and charges the shooter; other summoned rams let shots through
-      if (g.summoned && (g.owner === proj.owner || !enemyOf(g.owner, shooter) || !(g.state === 'orbit' || g.mode === 'orbit'))) continue;
+    // rams: a guard ram absorbs an enemy's shot and charges the shooter; other rams let shots through
+    for (const g of rams) {
+      if (g.owner === proj.owner || !enemyOf(g.owner, shooter) || g.state !== 'orbit') continue;
       // (a guard ram catches a little wider than its body: three of them have a whole circle to cover)
-      const catchR = C.GOAT.radius + proj.radius + (g.summoned ? 0.35 : 0);
-      if (Math.hypot(proj.p[0] - g.x, proj.p[1] - ((g.y || 0) + C.GOAT.hitY), proj.p[2] - g.z) < catchR) {
-        if (g.summoned) ramProvoked(g, proj.owner);
-        else angerGoat(g, proj.owner, goatCtx);
-        endProjectile(proj, true, { surface: 'goat', goat: g.id });
+      const catchR = C.RAM.radius + proj.radius + 0.35;
+      if (Math.hypot(proj.p[0] - g.x, proj.p[1] - C.RAM.hitY, proj.p[2] - g.z) < catchR) {
+        ramProvoked(g, proj.owner);
+        endProjectile(proj, true, { surface: 'ram', ram: g.id });
         done = true; break;
       }
     }
@@ -2193,16 +2171,9 @@ function handle(p, msg) {
     case 'pickup': {
       if (kit(p).utility !== 'telekinesis') break;   // round 12: only Telekinesis lifts (Trapped Relic only curses)
       if (!canAct(p) || holding(p) || p.charging || p.cyclone || p.lash || p.blocking || t < p.cd.lift) break;
-      const best = tkTarget(p, msg.aimOrigin, msg.aimDir, goatTK);
+      const best = tkTarget(p, msg.aimOrigin, msg.aimDir);
       if (!best) break;
       castSlow(p);
-      if (best.goat) {
-        // a goat: it floats at our hold point (goats.js places it each tick); lifting doesn't anger it
-        if (Goats.liftGoat(best.goat, p.id, goatCtx) === false) break;
-        p.carryingGoat = best.goat.id;
-        broadcast({ t: 'goatLift', id: p.id, goat: best.goat.id });
-        break;
-      }
       // an enemy's Trapped Relic goes off at our hold point once it's up (a teammate's just lifts)
       if (best.cursedBy && enemyOf(best.cursedBy, p)) best.trap = p.id;
       best.state = 'lifting'; best.carrier = p.id; best.liftUntil = t + C.TK.liftTime;
@@ -2213,19 +2184,6 @@ function handle(p, msg) {
     }
     case 'throw': {
       if (kit(p).utility !== 'telekinesis' || !canAct(p) || t < p.cd.throw) break;
-      if (p.carryingGoat) {
-        // hurled like a prop (same speed and gravity); goats.js flies it, and calls goatHitPlayer on a hit
-        const g = goatById(p.carryingGoat);
-        p.carryingGoat = null;
-        if (!g || g.state !== 'held' || g.holder !== p.id) break;
-        p.cd.throw = t + C.THROW_COOLDOWN;
-        castSlow(p);
-        const origin = C.holdPoint(p.p, p.yaw);
-        const target = validVec(msg.target) && dist2D(msg.target, p.p) < 80 ? msg.target : null;
-        const dir = target ? C.ballisticDir(origin, target, C.GOAT.throwSpeed, C.GOAT.throwGravity) : sanitizeDir(msg.dir, p);
-        if (Goats.throwGoat(g, p.id, origin, dir, goatCtx) !== false) broadcast({ t: 'goatThrow', id: p.id, goat: g.id, p: origin });
-        break;
-      }
       if (!p.carrying) break;
       const prop = props.get(p.carrying);
       if (prop && prop.state !== 'carried') break;   // still rising
@@ -2246,7 +2204,6 @@ function handle(p, msg) {
       break;
     }
     case 'drop': {
-      if (p.carryingGoat) { const g = goatById(p.carryingGoat); p.carryingGoat = null; if (g && g.holder === p.id) Goats.releaseGoat?.(g, goatCtx); break; }
       if (!p.carrying) break;
       if (props.get(p.carrying)?.state === 'lifting') break;
       dropProp(p, false);
@@ -2272,22 +2229,29 @@ function handle(p, msg) {
 // ---------------------------------------------------------------- bots
 // Bots are ordinary players without a socket. Their AI (server/bots.js) acts through handle(),
 // so they obey exactly the same rules and cooldowns as everyone else.
-const BOT_NAMES = ['Zaltar', 'Morgra', 'Ebonyx', 'Vexlith', 'Grimble', 'Oswin', 'Thistle', 'Pipsqueak', 'Quillon', 'Sorrow'];
+// Round 15: bots are KayKit Skeletons (players are the Mage). Each name has its body: the snapshot's `body`.
+const BOT_NAMES = [
+  ['Rattlebones', 'skeleton_mage'], ['Sir Marrow', 'skeleton_warrior'], ['Grimshank', 'skeleton_rogue'], ['Ossia', 'skeleton_mage'],
+  ['Skulldred', 'skeleton_minion'], ['Femurus', 'skeleton_warrior'], ['Lady Tibia', 'skeleton_rogue'], ['Hollowjaw', 'skeleton_mage'],
+  ['Cragrib', 'skeleton_minion'], ['Duke Mandible', 'skeleton_warrior'],
+];
 // `loadout` (optional) pins what it casts: a PRESETS id or a full loadout. Otherwise C.botLoadout: half the time an
 // old hero kit, half the time fully random.
 function addBot(difficulty, loadout = null) {
   const id = nextId++;
   const taken = new Set([...players.values()].map(q => q.name));
-  const name = BOT_NAMES.find(n => !taken.has(n)) || `Bot${id}`;
+  const free = BOT_NAMES.filter(([n]) => !taken.has(n));
+  const [name, body] = free.length ? free[Math.floor(Math.random() * free.length)] : [`Bones ${id}`, 'skeleton_minion'];
   const preset = typeof loadout === 'string' ? C.PRESETS.find(k => k.id === loadout)?.loadout : null;
   const p = newPlayer(id, name, preset || C.sanitizeLoadout(loadout) || C.botLoadout(), Math.random() < 0.5 ? 'male' : 'female');
   const sp = C.SPAWN_POINTS[Math.floor(Math.random() * C.SPAWN_POINTS.length)];
-  p.p = [sp[0], 0, sp[2]];
+  p.p = [sp[0], sp[1] || 0, sp[2]];
   p.bot = createBot(difficulty);
+  p.body = body;
   players.set(id, p);
   match.onJoin(p);
   if (!players.has(id)) return;   // the match had no room for it
-  { const msp = match.spawnPointFor(p); if (msp) p.p = [msp[0], 0, msp[2]]; }
+  { const msp = match.spawnPointFor(p); if (msp) p.p = [msp[0], msp[1] || 0, msp[2]]; }
   broadcast({ t: 'joined', player: playerPublic(p) });
   console.log(`[+] bot ${name} (${difficulty}, ${C.LOADOUT_SLOTS.map(k => p.loadout[k]).join(' ')}) joined. ${players.size} online`);
 }
@@ -2297,53 +2261,29 @@ function removePlayer(id) {
   if (!p) return;
   match.onLeave(p);
   if (p.carrying) dropProp(p, false);
-  if (p.carryingGoat) { const g = goatById(p.carryingGoat); p.carryingGoat = null; if (g && g.holder === p.id) Goats.releaseGoat?.(g, goatCtx); }
   clearCurse(p);
   for (const d of [...decoys.values()]) if (d.owner === id) endDecoy(d, false);
   players.delete(id); sockets.delete(id);
   broadcast({ t: 'leave', id });
 }
 
-// cycloneStopsGoats: the goat module can knock a charging goat dizzy (bots then answer a charge with a cyclone)
-const world = { players, potions, props, projectiles, goats, decoys, walls, frostfalls, smokes, cages, firewalls, rams, stampedes, pools, smokeFlasks, handle, now, cycloneStopsGoats: !!Goats.dizzyGoat };
+// cycloneStopsRams: a cyclone knocks a charging ram dizzy (bots answer a charge with one)
+const world = { players, potions, props, projectiles, decoys, walls, frostfalls, smokes, cages, firewalls, rams, stampedes, pools, smokeFlasks, handle, now, cycloneStopsRams: true };
 // Game modes (server/match.js, modes agent). addUltCharge is the spells agent's to implement.
 const match = createMatch({
   players, props, now, broadcast, send, propPublic,
   addBot: (...a) => addBot(...a), removePlayer: (id) => removePlayer(id), respawn: (p) => respawn(p),
   addUltCharge: (p, pct) => addUltCharge(p, pct),
   resetUlt: (p) => { p.ult = 0; },
-  // goats back in the pen, calm (nobody holds one any more)
-  resetGoats: () => {
-    for (const p of players.values()) p.carryingGoat = null;
-    goats.splice(0, goats.length, ...createGoats());
-  },
+  // between matches: every ram goes
+  resetRams: () => { for (const r of [...rams]) despawnRam(r); },
 });
 world.match = match;
-const goatCtx = {
-  players, props, now, broadcast, goats,
-  isEnemy: (a, b) => enemies(a, b),   // Jeb's rams pass their owner and his team
-  breakProp,
-  // a Tempest Veil survives a ram (goats.js treats the veil as a ward once that request is in; this is the fallback)
-  killPlayer: (p, attacker, cause, g) => {
-    if (cause === 'goat' && isVeiled(p)) return;
-    ramStrike(p, attacker, cause, g || (cause === 'ram' ? strikingRam(p) : null));
-  },
-  // humans apply goat knockback themselves from the goatRam message
-  knockback: (p, dir, kb) => { if (p.bot) botKnockback(p, dir, kb); else { p.kbUntil = now() + 0.8; p.kbSpeed = kb; } },
-  // a hurled goat hits a wizard exactly like a thrown prop (kind 'goat'), credited to the thrower
-  goatHitPlayer: (g, target, throwerId) => {
-    if (target.dead) return;
-    applyHit(target, { kind: 'goat', owner: throwerId, v: [g.vx || 0, g.vy || 0, g.vz || 0] });
-  },
-};
-
 const validVec = (v) => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite);
 
 // The idle prop a telekinesis cast grabs: the one closest to the aim ray within range and cone,
 // else anything at point-blank range. Pillars block the line of sight.
-// Props and (if `withGoats`) liftable goats compete: the one closest to the aim ray wins. A goat comes
-// back as { goat }.
-function tkTarget(p, aimOrigin, aimDir, withGoats = false) {
+function tkTarget(p, aimOrigin, aimDir) {
   const chest = [p.p[0], p.p[1] + 1.3, p.p[2]];
   const o = validVec(aimOrigin) && dist2D(aimOrigin, p.p) < 6 ? aimOrigin : chest;
   const dir = validVec(aimDir) && len3(aimDir) > 0.01 ? norm3(aimDir) : [Math.sin(p.yaw), 0, Math.cos(p.yaw)];
@@ -2363,21 +2303,6 @@ function tkTarget(p, aimOrigin, aimDir, withGoats = false) {
     if (C.pillarBlocks(p.p, [prop.x, 0, prop.z], 0.1)) continue;
     const score = cos - l * 0.002;
     if (score > bestScore) { bestScore = score; best = prop; }
-  }
-  if (withGoats) {
-    for (const g of goats) {
-      if (g.summoned || !Goats.canLift?.(g)) continue;
-      const d2 = Math.hypot(g.x - p.p[0], g.z - p.p[2]);
-      if (d2 < nd) { nd = d2; near = { goat: g }; }
-      if (d2 > C.TK.range) continue;
-      const v = [g.x - o[0], (g.y || 0) + C.GOAT.hitY - o[1], g.z - o[2]];
-      const l = len3(v) || 1;
-      const cos = (v[0] * dir[0] + v[1] * dir[1] + v[2] * dir[2]) / l;
-      if (Math.acos(clamp(cos, -1, 1)) - Math.atan2(C.GOAT.radius, l) > cone) continue;
-      if (C.pillarBlocks(p.p, [g.x, 0, g.z], 0.1)) continue;
-      const score = cos - l * 0.002;
-      if (score > bestScore) { bestScore = score; best = { goat: g }; }
-    }
   }
   return best || near;
 }
@@ -2414,12 +2339,12 @@ wss.on('connection', (ws) => {
       players.set(id, p);
       sockets.set(id, ws);
       match.onJoin(p);
-      { const sp = match.spawnPointFor(p); if (sp) p.p = [sp[0], 0, sp[2]]; }
+      { const sp = match.spawnPointFor(p); if (sp) p.p = [sp[0], sp[1] || 0, sp[2]]; }
       ws.send(JSON.stringify({
         t: 'welcome', id,
         players: [...players.values()].map(playerPublic),
         props: [...props.values()].map(propPublic),
-        goats: [...goats.map(goatPublic), ...rams.map(ramPublic)],
+        rams: rams.map(ramPublic),
         stampedes: [...stampedes.values()].map(st => ({ id: st.id, owner: st.owner, p: st.p, dir: st.dir, left: Math.max(0, st.at - now()), width: STAMP.width, length: STAMP.length })),
         projectiles: [...projectiles.values()].map(pr => ({ id: pr.id, kind: pr.kind, owner: pr.owner, propType: pr.propType, p: pr.p, v: pr.v, g: pr.g, r: pr.radius, life: pr.life - (now() - pr.born) })),
         walls: [...walls.values()].map(wallPublic),
@@ -2481,7 +2406,7 @@ function sendGlyphs() {
 setInterval(() => {
   if (players.size === 0) return;
   sendGlyphs();
-  broadcast({ t: 'snap', time: now(), players: [...players.values()].map(playerPublic), goats: rams.length ? [...goats.map(goatPublic), ...rams.map(ramPublic)] : goats.map(goatPublic), decoys: [...decoys.values()].map(decoyPublic), ...match.snapshotExtras() });
+  broadcast({ t: 'snap', time: now(), players: [...players.values()].map(playerPublic), rams: rams.map(ramPublic), decoys: [...decoys.values()].map(decoyPublic), ...match.snapshotExtras() });
 }, 1000 / C.SNAPSHOT_RATE);
 
 httpServer.listen(PORT, () => console.log(`Wizard Arena listening on http://localhost:${PORT}`));
