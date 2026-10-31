@@ -2,6 +2,34 @@
 
 ## Round 15: the KayKit Mage, the Skeleton bots and the animation remap
 
+### Follow-ups (coordinator)
+- **Commits:**
+  - `574d081`: clips.glb gains Sit_Chair_Idle and Sit_Floor_Idle.
+  - `d62a95e`: the weak reads, and the pinXZ fix.
+  - `910b96a`: the goat copy.
+- **pinXZ bug:** it held the hips 1 m up, so every landing, the jump, Smoke Screen, Skyward, Meteor Rain's landing and the ledge
+  climb floated. They're fixed.
+- **Roll:**
+  - The pose is Jump_Land's crouch, held low.
+  - A procedural tumble turns the body once over 0.36 s: about x forward or back, about z for a side roll.
+  - The pivot is 1.0 m, and the body shrinks to 0.6 mid-turn, so it stays a ball on the ground.
+  - Air side-rolls tumble too.
+- **Other reads:**
+  - **Black Death:** a `shroud` key, Melee_Blocking bent at the spine, chest and head.
+  - **Lash:** a held draw-back (warp holds), cracking at 1.52 s.
+  - **Skim:** a low, leaning Shoot.
+  - **Hex:** Shoot turned 30° each way, then the Raise.
+  - **Blink and Mirror Step:** Spawn_Ground.
+  - **Ram Ride:** Sit_Chair_Idle.
+- **looks.js:** `warpClip` resamples now; two points with the same clip time hold a pose. A new `bend` pick option.
+- **The tip** is in the gem (`tipmark.png`). The idle carries the staff level at hip height.
+- **Verified:**
+  - `acts2a.png`: rolls in three directions, Black Death, Hex 1 and 3, Skim, Blink, Ram Ride.
+  - `acts2b.png`: the Lash.
+  - Releases: shots strike at 0.07–0.08 s, Lash at 1.52 s.
+  - The live game loads with no errors.
+- **Still weak:** Black Death's hunch hides under its opaque shroud. Hex's turned stance is subtle.
+
 ### Commits
 - `a6ca00d`: requests.md, the body API, the scale confirmation and the named phases.
 - `bed8d42`: the models. This adds `public/models/characters/` (1.3 MB) and `tools/build-characters.mjs`.

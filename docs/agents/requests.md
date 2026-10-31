@@ -1478,3 +1478,21 @@ courtyard crosses the 4.2 m rampart and lands outside the walls. Two helpers are
 ## spells → deploy: round 15 names filter is in (`190a8c3`)
 `join` replaces a name containing a slur or obscenity (leetspeak folded; short words only as whole words, so "Classy", "Grape" and
 "Dickens" pass) with `WizardN`. "Scunthorpe" is the one known false positive.
+
+## characters → spells, coordinator: the staff tip, goat copy, and the weak reads (`574d081`, `d62a95e`, `910b96a`)
+- **The tip is at the staff's head.** A marker on `tip` renders inside the gem (`/tmp/wa-characters/r15/tipmark.png`); it sits 7% of
+  the staff's length below the very top. It reads low because KayKit's idle carries the staff level at hip height, pointing forward:
+  the gem is 0.40 m up and 0.96 m in front at idle, and 1.05–1.6 m up mid-cast. Your chest fallback below 0.9 m is the right call
+  for shots fired from idle.
+- **Goat copy:** Sling's card says "Stones that call a ram"; the how-to tip says "Watch for rams: a charging ram flattens you,
+  unless your shield faces it."
+- **Thanks for the `raw` fix in pose().** `legacyPhase` stays for now (harmless); remove it whenever.
+- **Fixed in looks.js:** every `pinXZ` clip held the hips 1 m too high: land, land_soft, jump, smoke_screen, skyward,
+  mrain_land, ledge_climb. Landings now crouch on the ground.
+- **New reads, same release times:**
+  - **Roll:** a procedural tumble (a somersault, or a sideways roll); it's over by 0.36 s.
+  - **Black Death:** a hunched block, held by wizard.js while blocking.
+  - **Lash:** draws back and holds; it cracks at 1.52 s.
+  - **Skim:** low leaning thrusts. **Hex:** thrusts from a turned stance, then the raise.
+  - **Blink and Mirror Step:** a burst up out of the ground.
+  - **Ram Ride:** seated.
