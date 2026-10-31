@@ -41,6 +41,100 @@ recursion fix in wizard.js), `190a8c3` (names filter), `8b4f50a` / `e609576` (re
   - `goat_e2e.py` is replaced by `tools/test/ram_e2e.py` (Ram Guard, Battering Ram, a Sling bot's call, a Skeleton bot).
   - botmatch counts ram events.
 
+### Ty's set: Ram Ride, Black Death, bot accuracy, the wall-walk bug, the Sling nerf, and a balance review
+Commits: `9b62f74` (Ram Ride), `0120e23` (Black Death), `de3a727` (wall-walk heights), `8299f28` (bot accuracy), `765c677` (Sling),
+`430b970` (requests to characters).
+
+- **Ram Ride:**
+  - Mount 0.4 → 0.26 s; speed 7 → 8.75 m/s, so 20 m takes 2.3 s instead of 2.9 s.
+  - **Found:** the ride never knocked anyone down. `ram_shove` dealt 15 base damage with a 0.4 s stun and an 8 m/s shove, but wasn't in
+    `KNOCKDOWN.kinds`. It is now, so riding into an enemy knocks them flat for 20 (knockdown 1.6 s).
+  - The hit test was also an absolute `q.p[1] > 1`, so rides on the wall-walk never hit anyone. It's relative to the rider now.
+  - Unit test: an enemy in the path takes 20 and a 1.6 s knockdown.
+- **Black Death:** heals 60% of each absorbed hit (was 30%), plus 4 HP a second while held. Its heals go out as `heal` with `src: 'bd'`:
+  a crimson +N over the wizard for everyone, and a pulse at the feet. Unit test: the mend while held, and a blocked hit healing 60%.
+- **Wall-walk heights** (Ty: spells cast up on the wall fell to the ground below):
+  - **Wrong before:**
+    - Glacial Skim spawned at y 0.3.
+    - Smoke Flask, Smoke Screen, the toxic pool, Firewall, Bulwark, Frostfall, Night Cage and Meteor Rain's landing were all at y 0.
+    - Their area checks used absolute heights (`q.p[1] > 1` and the like), as did smoke's sight blocking, Cyclone's prop breaking, the
+      Relic trigger, and props set down on a wall-walk.
+  - **Now:**
+    - Each of those carries the floor height `y` it stands on: the caster's floor, or `C.topFloorAt(x, z)` for things falling from
+      the sky.
+    - Checks run from that floor: above it, and not more than 1 m below it.
+    - `C.addWallColliders` takes the wall's floor.
+    - Props have a `y` (reset to 0 between matches).
+    - On the client, effects and aim markers sit on `floorUnder(p)`, and `groundTarget` stops at the first wall or wall-walk the camera
+      ray meets.
+  - **Unchanged (already relative):** projectiles hitting floors (`surfaceSegmentHit`), Eye of the Storm and Blizzard (relative to the
+    caster), potions (relative to the spot), rams and decoys (fixed earlier this round).
+  - **Unit test:** from a wall-walk stretch, Skim at 3.68 m and the rest at 3.33 m.
+  - **Browser:** `/tmp/wa-spells/r15/r16/wallwalk_casts.png` (Frostfall's ring on the walk) and `wallwalk_casts2.png`.
+- **Bot accuracy** (Ty: "laser aim"):
+
+| | easy | normal | hard |
+|---|---|---|---|
+| aim error | 7° → 10° | 3.5° → 7° | 1.2° → 3.5° |
+| error at the aim point (`posErr`) | 0.75 m | 0.75 m | 0.5 m |
+| extra vs airborne or dashing (`airErr`) | +10° | +9° | +6° |
+| lead off by (`leadJitter`) | ±50% | ±50% | ±30% |
+| placement error (`placeErr`) | 1.8 m | 1.4 m | 0.9 m |
+
+  - Airborne or dashing targets also get 1.5× the positional and placement errors.
+  - Placement covers Frostfall, Meteor Rain and Night Cage.
+  - Measured with `/tmp/wa-spells/r15/acc/hitrate.mjs` (each shot's intended target and its state), before vs after, mix-adjusted:
+    - easy −20%
+    - normal −23%, airborne −40% (51% → 30%)
+    - hard −5% (raw 47% → 41%; airborne 47% → 34%; dashing 69% → 22%)
+  - **Pacing cost:** bots against bots, kills per player per minute fell to 1.5 (normal) and 1.33 (hard).
+- **Shepherd's Sling** (Ty: too strong, one-shots across the map):
+  - No ram call on hit (server, client, the Herd Call combo, the card's "+ ram").
+  - The 2nd stone only flinches (0.15 s, was 0.45).
+  - It deals just 9–21 by distance, so at most 42 for both stones before a 1.2 s reload. No long-range one-shot.
+  - Unit test: no ram is summoned and no hit exceeds 21.
+  - Balance below.
+
+#### Balance review (after Ram Ride, Black Death and bot accuracy; before the Sling nerf)
+Normal 24 runs and hard 12 runs, 75 s each, random loadouts. Per minute equipped:
+- **Data:** damage, kill participations (damage on a victim in the 8 s before their death), killing blows, uses and blocks/heals. K/D
+  comes from loadoutbalance, hit rate from the accuracy observer.
+- **Files:** `/tmp/wa-spells/r15/review/` (`agg.mjs` prints the table).
+- **Caveat:** Trapped Relic's uses aren't visible (curses go only to the curser).
+
+Underwhelming per slot, and a proposed buff (current → proposed). Normal and hard figures are given as normal / hard.
+- **Primary:**
+  - **Glacial Skim:** K/D 0.87 / 0.35, hit 31% / 18%, 119 / 92 dmg/min (the lowest). Shard damage 9 → 11 (card 3 × 12 → 3 × 15), and
+    shard life 0.85 → 1.0 s (about 22 → 26 m).
+  - **Hex Shards:** hit 26% / 20% (the curves miss), 124 / 130 dmg/min. Damage 14 → 16 (card 19 → 22), and the sideways pull 0.32 →
+    0.24 (tighter curves).
+- **Power:**
+  - **Sanguine Lash:** 13 / 10 dmg/min, K/D 0.70. Being replaced by Blood Siphon in round 16, so no proposal.
+  - **Meteor:** hit 25% / 33%, K/D 0.97 / 0.67. Projectile radius 0.65 → 0.8.
+  - Frostfall (just trimmed) and Cyclone are fine.
+- **Guard:**
+  - **Firewall:** K/D 0.58 / 1.13, cast only 0.5 times a minute by bots. Life 2.5 → 3.5 s, burn 15 → 20 (card 20 → 27), cooldown
+    10 → 8. Bots should raise it against incoming shots more often.
+  - **Ram Guard:** K/D 0.44 / 1.00 since its rams stopped one-shotting. Ty wants the rams kept as they are, so at most cooldown
+    10 → 8.
+  - Glacial Bulwark is mixed (1.21 / 0.64): leave.
+- **Mobility:**
+  - **Flask Step:** K/D 0.93 / 0.83, rarely used (0.7 a minute). Wind-up 0.6 → 0.4 s, cooldown 8 → 7.
+  - **Ram Ride:** K/D 0.77 / 0.71, even with this round's buff (it's in this data). If Ty wants more, the shove 15 → 20 base.
+- **Utility:**
+  - **Telekinesis:** K/D 0.85 / 0.94, 45 / 56 dmg/min (Relic 72 / 52). Thrown-prop damage 22 → 26 (card 30 → 35), lift time 0.35 →
+    0.25 s.
+  - Roll deals no damage by design (K/D 1.00 / 0.90).
+- **Ultimate** (all but Meteor Rain barely finish anyone):
+  - **Blizzard:** 3 / 7 dmg/min, about 5 damage a cast. Chip 2.5 → 4 a tick (10 → 16/s base), cone 70° → 85°, freeze after 0.8 → 0.5 s.
+  - **Eye of the Storm:** 9 / 7 dmg/min. Tick 8 → 11, final burst 15 → 22, radius 7 → 8 m.
+  - **Stampede:** 0.06 killing blows a minute (its rams flatten, but bots leave the lane). Telegraph 1 → 0.7 s, rams 8 → 10 (Ty likes
+    the rams: these are timing and count only).
+  - **Berserker Brew:** no damage of its own, K/D 0.94 / 0.95. The drink heals 30 HP, and the ×1.5 applies to every spell for its 7 s,
+    not only potions and pools.
+  - **Night Cage:** heals 16–20 HP a minute in total, K/D 0.77 / 0.69. Heal 10 → 15/s, and enemies inside take 5/s base while it lasts.
+  - **Meteor Rain:** still the one that finishes (0.37 / 0.48 blows a minute). Leave it after the kill-ring change.
+
 ### Meteor Rain's kill ring and the Sling's range damage (Ty, via the coordinator: `fea2ad3`, plus the glow fix)
 - **Meteor Rain:**
   - Only `MRAIN.killRadius` (2.4 m, was the whole 4 m) kills. The dive path still kills.
