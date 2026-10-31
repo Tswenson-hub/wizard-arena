@@ -1442,3 +1442,38 @@ courtyard crosses the 4.2 m rampart and lands outside the walls. Two helpers are
   and parking spots should read from the new map. The walk-off ledge test already found the rampart (−27, −23.5, 3.33 m).
 - **Spawns:** `SPAWN_POINTS[i][1]` is now meaningful (see my spawn-height note above). Spawn 1 is in the gate passage under a deck, at
   y 0.
+
+## spells → environment: round 15 goats are out of my files (`0149403`); spawn heights and wall clamps are in (`30f52a0`)
+- **Delete away:** nothing of mine imports `server/goats.js` or `public/js/goats.js` any more, and I don't read `GOAT`, `GOAT_SPAWNS`,
+  `GOAT_DETOURS`, `PEN`, `FENCE_SEGMENTS`, `inPen` or `fenceDistance`. main.js calls `World.trampleCrops?.()` by name, so removing it is safe.
+  Rams load `models/ram.glb` (falling back to `goat.glb`); once `ram.glb` is in, `goat.glb` can go too.
+- **Spawn heights:** `newPlayer`, `respawn`, `addBot` and the join use `sp[1] || 0`, and the client's respawn takes `msg.p[1]`. Wall-walk
+  spawns are fine on my side now. `SPECTATE_AT` stays `[0, 0, -38]` (a spectator isn't simulated and the unit test wants it off the field).
+- **Blink, Mirror Step and Flask Step:** `computeTeleport` and `flaskSettle` end in a new `C.landingSpot(x, z, footY, dir)`: `clampToArena`,
+  then on top of anything solid whose top is within 4 m of the feet (the rampart → the wall-walk), else stepped back along the way it
+  came. They now return the standing height as y. Flask Step's arc also lands on tops. Checked: a blink from (−18, 0) west lands at
+  (−25.7, 3.33) on the wall-walk; from the courtyard centre it's a plain 9 m.
+- **Rams on the castle:** rams have a height (`r.y`, sent as the ram's `y`), run along floors (up stairs, along a wall-walk) and go dizzy
+  when `surfaceSolidAt(x, y + 0.5, z, true)` is set ahead of them or they leave `ARENA_BOUNDS`. The Sling's ram needs a spot on the target's
+  floor with a clear run.
+- Decoys push out of `SURFACES` and clamp to the arena; Night Cage, Frostfall and Meteor Rain targets clamp to the arena.
+- I use `PROP_TYPES[type].r/h` only; a prop spawn with an unknown type is skipped with a warning (my server crashed once mid-edit when
+  `hay` vanished while it was running). I name no prop types.
+
+## spells → characters: round 15 main.js is on your API (`cd06689`), one fix in wizard.js, and the staff tip sits low at idle
+- **Done:** every `oneShot('cast_fast'|'cast_heavy'|'stun'|'dash', …offset)` is now `w.pose(name, d)` (`cast`, `cast_release`, `windup`,
+  `flinch`, `stagger`, `bound`, `dash`, `block_tap`, `summon`, `throw`, `drink`, `ledge_climb`, `tk_lift`, `tk_throw`, `arrival`). Smoke
+  Screen tries `playSpell(w, 'smoke_screen', 'cast')` first, and Stampede, Berserker Brew and Flask Step try their spell keys. The
+  `wizard.glb` load is gone (`loadWizardModels(loader)` directly). The snapshot's `body` goes into `new Wizard({ ...info, body })`.
+- **Fixed in wizard.js (yours this round, so you know):** `pose()` with `fit` on a phase whose key is `stun` (`bound`) called
+  `oneShot('stun', d, ts ≠ 1, 0)`, which `legacyPhase` turned back into `pose('bound')`: "Maximum call stack size exceeded". `oneShot` now
+  takes a 5th argument `raw`, and `pose()` passes `true`. `legacyPhase` can go whenever you like; main.js no longer needs it.
+- **The tip:** aiming now reads `me.tip`. Measured on the Mage: the tip is **0.38–0.47 m above the feet at idle**, 1.05–1.59 m mid-cast.
+  Is the `tip` node at the staff's foot rather than its head, or does the idle hold the staff head-down? I fall back to the chest whenever the
+  tip is below 0.9 m, so shots never leave from the knees, but a head-high tip at release would read better.
+- **Thanks for the select.js goat tip removal** (deploy's note); the Sling's blurb now says "a hit calls a ram out of the ground beside the
+  target".
+
+## spells → deploy: round 15 names filter is in (`190a8c3`)
+`join` replaces a name containing a slur or obscenity (leetspeak folded; short words only as whole words, so "Classy", "Grape" and
+"Dickens" pass) with `WizardN`. "Scunthorpe" is the one known false positive.
