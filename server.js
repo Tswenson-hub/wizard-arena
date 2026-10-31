@@ -131,6 +131,12 @@ const isAirborne = (p) => p.flightUntil > now();
 // Round 9: the floor under a point, for a wizard whose feet are at footY (map.js SURFACES once they exist; else 0)
 const groundAt = (x, z, footY = 0) => (C.surfaceHeight ? C.surfaceHeight(x, z, footY) : 0);
 const isJumping = (p) => !!p.jump;
+// Inside the castle walls (round 15: ARENA_BOUNDS), else the old arena circle.
+const inArena = (x, z, margin = 0.5) => {
+  if (C.clampToArena && Number.isFinite(C.ARENA_BOUNDS?.x0)) return C.clampToArena(x, z, margin);
+  const r = Math.hypot(x, z), R = C.ARENA_RADIUS - margin;
+  return r > R ? [x * R / r, z * R / r] : [x, z];
+};
 const aboveFloor = (q) => q.p[1] - groundAt(q.p[0], q.p[2], q.p[1]);   // height over what's under them (a ledge counts as floor)
 // Round 13: everything casts in the air (a jump, a fall, an air jump). Up there means any of these:
 const inAir = (p) => !!(p.jump || p.fall || p.hover) || isAirborne(p) || aboveFloor(p) > 0.05;
@@ -636,8 +642,9 @@ function updateDecoys(dt, t) {
       const dx = d.p[0] - c.x, dz = d.p[2] - c.z, dd = Math.hypot(dx, dz);
       if (dd < c.r + C.PLAYER_RADIUS && dd > 1e-4) { const k = (c.r + C.PLAYER_RADIUS - dd) / dd; d.p[0] += dx * k; d.p[2] += dz * k; }
     }
-    const r = Math.hypot(d.p[0], d.p[2]);
-    if (r > C.ARENA_RADIUS) { d.p[0] *= C.ARENA_RADIUS / r; d.p[2] *= C.ARENA_RADIUS / r; }
+    if (C.surfacePushOut) [d.p[0], d.p[2]] = C.surfacePushOut(d.p[0], d.p[2], d.p[1], C.PLAYER_RADIUS);   // the castle's walls
+    [d.p[0], d.p[2]] = inArena(d.p[0], d.p[2], C.PLAYER_RADIUS);
+    d.p[1] = groundAt(d.p[0], d.p[2], d.p[1]);
     // a charging ram runs it down
     if (rams.some(g => g.state === 'charge' && Math.hypot(g.x - d.p[0], g.z - d.p[2]) < C.RAM.radius + C.PLAYER_RADIUS + 0.25)) endDecoy(d, true);
   }
@@ -744,7 +751,7 @@ function flaskArrive(proj, surface) {
   // back off a little from whatever stopped it, then out of anything solid, inside the arena
   const v = proj.v, l = Math.hypot(v[0], v[2]) || 1;
   const back = surface && surface !== 'ground' ? 0.8 : 0;
-  const to = C.flaskSettle([proj.p[0] - v[0] / l * back, 0, proj.p[2] - v[2] / l * back]);   // (the preview settles the same way)
+  const to = C.flaskSettle([proj.p[0] - v[0] / l * back, Math.max(0, proj.p[1] - (surface && surface !== 'ground' ? 0.3 : 0)), proj.p[2] - v[2] / l * back], [v[0], v[2]]);   // (the preview settles the same way)
   const from = p.p.slice();
   p.p = to; p.justTeleported = true;
   cageKeep(p);
@@ -910,7 +917,10 @@ let nextRamId = 1000;
 const G_ = C.RAM;
 const SLING = C.SPELLBOOK.sling, BRAM = C.SPELLBOOK.battering_ram, RGUARD = C.SPELLBOOK.ram_guard, RIDE = C.SPELLBOOK.ram_ride, STAMP = C.SPELLBOOK.stampede;
 const ramPublic = (r) => ({ id: r.id, p: [+r.x.toFixed(2), +r.z.toFixed(2)], yaw: +r.yaw.toFixed(2), s: r.state === 'orbit' || r.state === 'mount' ? 'charge' : r.state,
-  tgt: r.target, y: 0, holder: null, summoned: true, owner: r.owner, mode: r.mode });
+  tgt: r.target, y: +(r.y || 0).toFixed(2), owner: r.owner, mode: r.mode });
+// Round 15 (the castle): a ram runs on whatever floor it's on (the courtyard, a wall-walk), and a wall, a pillar or a
+// barrier at its knees stops it dead (dizzy), like the old collider circles. Its feet: r.y.
+const ramBlocked = (x, z, y) => !!C.surfaceSolidAt?.(x, y + 0.5, z, true) || (C.insideArena ? !C.insideArena(x, z, G_.radius * 0.5) : Math.hypot(x, z) > C.ARENA_RADIUS - 1);
 const findRam = (id) => rams.find(r => r.id === id);
 // A spell stirs a ram: one rearing or charging goes dizzy.
 function stirRam(g) { if (g.state === 'charge' || g.state === 'windup') ramDizzy(g); }
@@ -922,20 +932,22 @@ function summonRam(opts) {
     state: opts.mode === 'charge' ? 'charge' : opts.mode === 'call' ? 'windup' : opts.mode,
     until: t + (opts.mode === 'call' ? G_.windup : opts.maxTime ?? G_.chargeTime), speed: opts.speed ?? G_.chargeSpeed,
     target: opts.targetId ?? null, angle: opts.angle ?? 0, hardUntil: t + 10, born: t };
+  const owner = players.get(opts.ownerId);
+  r.y = opts.y ?? groundAt(r.x, r.z, owner ? owner.p[1] : 0);
   rams.push(r);
-  broadcast({ t: 'ramSpawn', id: r.id, p: [r.x, 0, r.z], mode: r.mode });
+  broadcast({ t: 'ramSpawn', id: r.id, p: [r.x, r.y, r.z], mode: r.mode });
   return r;
 }
 function despawnRam(r) {
   const i = rams.indexOf(r);
   if (i < 0) return;
   rams.splice(i, 1);
-  broadcast({ t: 'ramGone', id: r.id, p: [r.x, 0, r.z] });
+  broadcast({ t: 'ramGone', id: r.id, p: [r.x, r.y || 0, r.z] });
 }
 function ramDizzy(r) {
   if (!rams.includes(r)) return;
   r.state = 'dizzy'; r.until = now() + G_.dizzyTime;
-  broadcast({ t: 'ramBonk', id: r.id, p: [r.x, 0.8, r.z] });
+  broadcast({ t: 'ramBonk', id: r.id, p: [r.x, (r.y || 0) + 0.8, r.z] });
 }
 // An orbiting ram took a shot from `shooterId`: it breaks orbit and charges the shooter (homing).
 function ramProvoked(r, shooterId) {
@@ -986,7 +998,7 @@ function updateRams(dt, t) {
       if (!owner || owner.dead || t >= r.until) { despawnRam(r); continue; }
       const a = r.angle + (t - r.born) * Math.PI * 2 / RGUARD.lap;
       r.x = owner.p[0] + Math.sin(a) * RGUARD.radius; r.z = owner.p[2] + Math.cos(a) * RGUARD.radius;
-      r.yaw = a + Math.PI / 2;
+      r.yaw = a + Math.PI / 2; r.y = groundAt(owner.p[0], owner.p[2], owner.p[1]);   // (at his level, up on a wall-walk too)
       continue;
     }
     if (r.state === 'mount') { if (!owner || owner.dead || !owner.ride) despawnRam(r); continue; }   // placed by the ride
@@ -1002,11 +1014,13 @@ function updateRams(dt, t) {
     // a provoked guard ram (or a Sling's) homes; Battering Rams and Stampede rams run dead straight
     const tg = r.target != null && players.get(r.target);
     if (tg && !tg.dead) { const want = Math.atan2(tg.p[0] - r.x, tg.p[2] - r.z); let d = Math.atan2(Math.sin(want - r.yaw), Math.cos(want - r.yaw)); d = clamp(d, -G_.turnRate * dt, G_.turnRate * dt); r.yaw += d; }
-    r.x += Math.sin(r.yaw) * r.speed * dt; r.z += Math.cos(r.yaw) * r.speed * dt;
+    const nx = r.x + Math.sin(r.yaw) * r.speed * dt, nz = r.z + Math.cos(r.yaw) * r.speed * dt;
+    if (ramBlocked(nx + Math.sin(r.yaw) * G_.radius, nz + Math.cos(r.yaw) * G_.radius, r.y)) { ramDizzy(r); continue; }   // a wall, pillar or barrier
+    r.x = nx; r.z = nz; r.y = groundAt(nx, nz, r.y);   // (up a stair, along a wall-walk, off an edge)
     for (const prop of props.values()) if (prop.state === 'idle' && Math.hypot(prop.x - r.x, prop.z - r.z) < C.PROP_TYPES[prop.type].r + G_.radius) breakProp(prop, [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z], r.owner);
     let done = false;
     for (const q of players.values()) {
-      if (q.dead || q.p[1] >= G_.rammableBelow || !enemies(owner, q) || q.id === r.owner) continue;
+      if (q.dead || q.p[1] - r.y >= G_.rammableBelow || q.p[1] < r.y - 1 || !enemies(owner, q) || q.id === r.owner) continue;
       if (Math.hypot(q.p[0] - r.x, q.p[2] - r.z) > G_.radius + C.PLAYER_RADIUS + 0.25) continue;
       ramHits(r, q, t); done = true; break;
     }
@@ -1018,7 +1032,7 @@ function updateRams(dt, t) {
     if (done) continue;
     // a charging ram runs over enemy decoys
     for (const d of [...decoys.values()]) if (enemyOf(r.owner, players.get(d.owner)) && Math.hypot(d.p[0] - r.x, d.p[2] - r.z) < G_.radius + C.PLAYER_RADIUS + 0.25) endDecoy(d, true);
-    if (Math.hypot(r.x, r.z) > C.ARENA_RADIUS - 1 || t >= r.until) { r.state = 'recover'; r.until = t + G_.recoverTime; }
+    if (t >= r.until) { r.state = 'recover'; r.until = t + G_.recoverTime; }
   }
 }
 
@@ -1031,9 +1045,15 @@ function ramCallSpot(target, slinger) {
   for (const off of [90, 120, 60, 150, 30, 180, 0]) for (const sg of [side, -side]) {
     const a = base + sg * off * Math.PI / 180, R = SLING.callDist;
     const x = target.p[0] + Math.sin(a) * R, z = target.p[2] + Math.cos(a) * R;
-    if (Math.hypot(x, z) > C.ARENA_RADIUS - 2) continue;
-    if (C.COLLIDERS.some(o => o.kind !== 'fence' && o.kind !== 'crop' && segCircle(x, z, target.p[0], target.p[2], o, G_.radius))) continue;
-    return { x, z, yaw: Math.atan2(target.p[0] - x, target.p[2] - z) };
+    if (C.insideArena ? !C.insideArena(x, z, 1.5) : Math.hypot(x, z) > C.ARENA_RADIUS - 2) continue;
+    const y = groundAt(x, z, target.p[1]);
+    if (Math.abs(y - target.p[1]) > 0.3 || ramBlocked(x, z, y)) continue;   // on the target's own floor, out of the walls
+    if (C.COLLIDERS.some(o => segCircle(x, z, target.p[0], target.p[2], o, G_.radius))) continue;
+    // a clear run: nothing solid at knee height along the way (and the floor doesn't drop or rise on the way)
+    let clear = true;
+    for (let k = 1; k <= 8 && clear; k++) { const u = k / 8, px = x + (target.p[0] - x) * u, pz = z + (target.p[2] - z) * u; clear = !ramBlocked(px, pz, y) && Math.abs(groundAt(px, pz, y) - y) < 0.3; }
+    if (!clear) continue;
+    return { x, z, y, yaw: Math.atan2(target.p[0] - x, target.p[2] - z) };
   }
   return null;
 }
@@ -1046,7 +1066,7 @@ function segCircle(ax, az, bx, bz, o, pad) {
 function callRamOn(target, slinger) {
   const t = now();
   slinger.slingLock ??= new Map();
-  if (t < (slinger.slingLock.get(target.id) ?? 0) || aboveFloor(target) > 0.5 || target.p[1] >= G_.rammableBelow) return;
+  if (t < (slinger.slingLock.get(target.id) ?? 0) || aboveFloor(target) > 0.5) return;   // (in the air: no call)
   let g = null;
   const at = ramCallSpot(target, slinger);
   if (at) g = summonRam({ ...at, ownerId: slinger.id, mode: 'call', targetId: target.id });
@@ -1078,7 +1098,7 @@ const galloping = (p, t = now()) => !!p.ride && t >= p.ride.rideAt && t < p.ride
 function updateRide(p, t) {
   const R = p.ride;
   const ram = R.ramObj;
-  if (ram) { ram.x = p.p[0]; ram.z = p.p[2]; ram.yaw = p.yaw; }
+  if (ram) { ram.x = p.p[0]; ram.z = p.p[2]; ram.yaw = p.yaw; ram.y = groundAt(p.p[0], p.p[2], p.p[1]); }
   // stunned, bound or frozen: thrown off at once (no dismount)
   if (isStunned(p) || isBound(p)) { broadcast({ t: 'rideThrown', id: p.id }); endRide(p); return; }
   if (t >= R.dismountAt && !R.off) { R.off = true; p.rootUntil = Math.max(p.rootUntil, R.endAt); }   // getting off
@@ -1206,8 +1226,7 @@ function castNightCage(p, at) {
   let [x, z] = at;
   const d = Math.hypot(x - p.p[0], z - p.p[2]);
   if (d > CAGE.range) { x = p.p[0] + (x - p.p[0]) * CAGE.range / d; z = p.p[2] + (z - p.p[2]) * CAGE.range / d; }
-  const r = Math.hypot(x, z);
-  if (r > C.ARENA_RADIUS) { x *= C.ARENA_RADIUS / r; z *= C.ARENA_RADIUS / r; }
+  [x, z] = inArena(x, z, 0);
   const c = { id: nextFxId++, owner: p.id, x, z, until: now() + CAGE.duration, inside: new Set(), foes: new Set() };
   for (const q of players.values()) {
     if (q === p || !enemies(p, q)) continue;
@@ -1345,8 +1364,7 @@ function mrainAim(p, at) {
   let [x, z] = at;
   const d = Math.hypot(x - M.from[0], z - M.from[1]);
   if (d > MRAIN.range) { x = M.from[0] + (x - M.from[0]) * MRAIN.range / d; z = M.from[1] + (z - M.from[1]) * MRAIN.range / d; }
-  const r = Math.hypot(x, z);
-  if (r > C.ARENA_RADIUS - 1) { x *= (C.ARENA_RADIUS - 1) / r; z *= (C.ARENA_RADIUS - 1) / r; }
+  [x, z] = inArena(x, z, 1);
   M.at = [x, z];
   const t = now();
   if (t - M.aimSentAt > 0.15) { M.aimSentAt = t; broadcast({ t: 'mrainAim', id: p.id, at: M.at }); }   // everyone sees where she's aiming
@@ -1940,8 +1958,7 @@ function handle(p, msg) {
       // at most `range` from the caster, inside the arena
       const d = Math.hypot(x - p.p[0], z - p.p[2]);
       if (d > FROST.range) { x = p.p[0] + (x - p.p[0]) * FROST.range / d; z = p.p[2] + (z - p.p[2]) * FROST.range / d; }
-      const r = Math.hypot(x, z);
-      if (r > C.ARENA_RADIUS) { x *= C.ARENA_RADIUS / r; z *= C.ARENA_RADIUS / r; }
+      [x, z] = inArena(x, z, 0);
       p.cd.power = t + FROST.cooldown;
       castSlow(p);
       const f = { id: nextFxId++, owner: p.id, x, z, at: t + FROST.delay };
@@ -1992,8 +2009,8 @@ function handle(p, msg) {
     case 'mirror': {
       if (kit(p).mobility !== 'mirror_step' || !canAct(p) || isRooted(p) || p.charging || p.cyclone || p.lash || t < p.cd.mobility) break;
       const dir = sanitizeDir([msg.dir?.[0] ?? 0, 0, msg.dir?.[2] ?? 1], p);
-      const from = Array.isArray(msg.from) && msg.from.length === 3 && msg.from.every(Number.isFinite) && dist2D(msg.from, p.p) < 3 ? [msg.from[0], 0, msg.from[2]] : p.p.slice();
-      const paths = C.mirrorPaths(from, dir);
+      const from = Array.isArray(msg.from) && msg.from.length === 3 && msg.from.every(Number.isFinite) && dist2D(msg.from, p.p) < 3 ? [msg.from[0], p.p[1], msg.from[2]] : p.p.slice();
+      const paths = C.mirrorPaths(from, dir);   // (round 15: each lands at its standing height, on a wall-walk if it ends in the rampart)
       const mine = Math.floor(Math.random() * paths.length);
       p.cd.mobility = t + MIRROR.cooldown;
       const airY = airDash(p, t, msg.from?.[1]);   // round 13: from the air, out at that height, then a fall

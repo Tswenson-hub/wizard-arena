@@ -240,12 +240,12 @@ export function lobAt(origin, target, speed, gravity, high = false) {
 // stops it (she then arrives just short of it). Returns { path: [[x,y,z]...], at: [x, 0, z], blocked }.
 export function flaskPath(origin, dir) {
   const r = flaskFlight(origin, dir);
-  r.at = flaskSettle(r.at);
+  r.at = flaskSettle(r.at, dir);
   return r;
 }
-// Where she can stand near `at`: out of anything solid (fences and crops included), inside the arena. The server's
-// arrival uses this too.
-export function flaskSettle(at) {
+// Where she can stand near `at` (at[1]: the height it came down at): out of anything solid, inside the arena. The
+// server's arrival uses this too.
+export function flaskSettle(at, dir = null) {
   const to = at.slice();
   for (let k = 0; k < 3; k++) for (const c of COLLIDERS) {
     if (c.h < 0.5) continue;
@@ -254,7 +254,35 @@ export function flaskSettle(at) {
   }
   const r = Math.hypot(to[0], to[2]);
   if (r > ARENA_RADIUS - 0.5) { to[0] *= (ARENA_RADIUS - 0.5) / r; to[2] *= (ARENA_RADIUS - 0.5) / r; }
-  return to;
+  return landingSpot(to[0], to[2], Math.max(0, at[1] || 0), dir);
+}
+// Round 15 (the castle is SURFACES boxes, not collider circles): where a wizard arriving without walking there (a
+// blink, a Mirror Step, a Flask Step) with feet at footY ends up near (x, z). Inside the castle walls; out of
+// anything solid: on top of it when its top is within LAND_REACH above the feet (a blink into the rampart lands on
+// the wall-walk), otherwise stepped back along `dir` ([x, z] or [x, y, z], the way it came) until clear. Returns
+// [x, y, z] with y the standing height there (the same rule as walking: surfaceHeight).
+export const LAND_REACH = 4;
+export function landingSpot(x, z, footY = 0, dir = null) {
+  if (MAPNS.clampToArena && MAPNS.ARENA_BOUNDS && Number.isFinite(MAPNS.ARENA_BOUNDS.x0)) [x, z] = MAPNS.clampToArena(x, z, PLAYER_RADIUS + 0.1);
+  const solid = MAPNS.surfaceSolidAt, top = MAPNS.surfaceTopAt, push = MAPNS.surfacePushOut;
+  if (!solid || !top) return [x, footY, z];
+  const dl = dir ? Math.hypot(dir[0], dir.length === 3 ? dir[2] : dir[1]) || 1 : 1;
+  const bx = dir ? -dir[0] / dl : 0, bz = dir ? -(dir.length === 3 ? dir[2] : dir[1]) / dl : 0;
+  for (let k = 0; k < 30; k++) {
+    if (!solid(x, footY + 0.5, z) && !solid(x, footY + 1.4, z)) {
+      const y = _sh(x, z, footY);
+      if (push) [x, z] = push(x, z, y, PLAYER_RADIUS);   // (not half inside a wall's edge)
+      return [x, _sh(x, z, y), z];
+    }
+    const t = top(x, z);
+    if (t <= footY + LAND_REACH && !solid(x, t + 0.5, z) && !solid(x, t + 1.4, z)) {
+      if (push) [x, z] = push(x, z, t, PLAYER_RADIUS);
+      return [x, _sh(x, z, t), z];
+    }
+    if (!dir) break;
+    x += bx * 0.4; z += bz * 0.4;
+  }
+  return [x, footY, z];
 }
 function flaskFlight(origin, dir) {
   const F = SPELLS.flaskstep, dt = 1 / 60;
@@ -264,6 +292,13 @@ function flaskFlight(origin, dir) {
     p[0] += v[0] * dt; p[1] += v[1] * dt; p[2] += v[2] * dt;
     if (path.length < 400 && Math.round(t / dt) % 3 === 0) path.push(p.slice());
     if (p[1] <= F.radius * 0.5 || Math.hypot(p[0], p[2]) > ARENA_RADIUS + 6) return { path, at: [p[0], 0, p[2]], blocked: false };
+    // round 15: the castle's boxes. Coming down onto a top: she lands there; into a side: she backs off it.
+    const sh = MAPNS.surfaceSolidAt?.(p[0], p[1], p[2], true);
+    if (sh) {
+      const t = MAPNS.surfaceTopAt(p[0], p[2]), l = Math.hypot(v[0], v[2]) || 1;
+      if (v[1] < 0 && p[1] > t - 0.6) return { path, at: [p[0], t, p[2]], blocked: false };
+      return { path, at: [p[0] - v[0] / l * 0.8, p[1], p[2] - v[2] / l * 0.8], blocked: true };
+    }
     for (const c of COLLIDERS) {
       if (c.h < LOS_HEIGHT || p[1] >= c.h || Math.hypot(p[0] - c.x, p[2] - c.z) >= c.r + F.radius) continue;
       const l = Math.hypot(v[0], v[2]) || 1;
@@ -796,6 +831,7 @@ export const MAX_NAME_LEN = 14;
 
 // Where a blink lands. Used by the server (authoritative) and the client (prediction),
 // so the two must agree exactly.
+// Round 15: [x, y, z], y the standing height there (landingSpot: on the castle's walls, never inside one).
 export function computeTeleport(from, dir, distance = TELEPORT.distance) {
   const l = Math.hypot(dir[0], dir[2]) || 1;
   const dx = dir[0] / l, dz = dir[2] / l;
@@ -809,7 +845,7 @@ export function computeTeleport(from, dir, distance = TELEPORT.distance) {
       to = [c.x + (to[0] - c.x) * push, 0, c.z + (to[2] - c.z) * push];
     }
   }
-  return to;
+  return landingSpot(to[0], to[2], Math.max(0, from[1] || 0), [dx, dz]);
 }
 
 // Mirror Step: the three end points (centre, then the two side paths) and their directions.
