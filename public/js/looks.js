@@ -238,9 +238,6 @@ function prepareMeshes(root) {
   });
 }
 
-// Round 15: the bodies come from loadWizardModels; the old base wizard (wizard.glb) is no longer used. Kept so main.js loads.
-export function registerModel() {}
-
 export async function loadWizardModels() {
   const [{ GLTFLoader }, { MeshoptDecoder }] = await Promise.all([
     import('three/addons/loaders/GLTFLoader.js'), import('three/addons/libs/meshopt_decoder.module.js')]);

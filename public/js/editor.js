@@ -374,7 +374,7 @@ const PALETTE = [
   { group: 'Gameplay', label: 'Stone floor', make: () => ({ kind: 'floor', model: 'castle/floor_tile_large', rotY: 0, w: 10, d: 10, seed: 1 }) },
 ];
 const KIT_GROUPS = { castle: 'Castle (KayKit)', village: 'Village (Quaternius)' };
-const SPECIAL_MODELS = new Set(['wizard', 'ram', 'potion', 'grass_tall', 'grass_clover', 'ice_wall', 'acid_puddle', 'pine_far', 'oak_far', 'birch_far']);
+const SPECIAL_MODELS = new Set(['ram', 'potion', 'ice_wall', 'acid_puddle', 'pine_far', 'oak_far', 'birch_far']);
 async function buildPalette() {
   let models = [];
   try { models = await (await fetch('/api/map/models')).json(); } catch {}
