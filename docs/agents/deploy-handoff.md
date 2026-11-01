@@ -8,6 +8,20 @@
 - **Live commit:** `e416f68` (rounds 12b-13: Roll on F, the map editor, Ty's assets, mountains, ground textures,
   jeb2 animations), pushed by the coordinator with Ty's approval. Earlier: `29602cc` (deploy took ~45 s).
 
+## Round 16: GPU tests, the live check, the zip
+- **Tests on the GPU** (round 16): `deploy/smoke.py`, `deploy/subpath_test.py` and `deploy/capture_store.py` launch Chromium with
+  `--use-angle=metal --enable-gpu --ignore-gpu-blocklist` by default; `--swiftshader` brings back software GL. SwiftShader stalled more
+  than 8 s compiling the castle's shaders after the screenshot, which failed smoke's "still connected" check locally and live.
+  (`tools/test/ram_e2e.py`, the coordinator's, still launches SwiftShader.)
+- **Live, `6d08eea`** (2026-11-01, `python3 deploy/smoke.py https://wizard-arena-76od.onrender.com /tmp/wa-deploy/live-r16.png`): PASS.
+  healthz `ok` in 0.2 s, page ready in 1.8 s (9–15 s on SwiftShader), builder 6 rows / 35 cards / 8 presets, joined a 4-wizard FFA
+  with bots Ossia, Cragrib and Grimshank (normal), still connected (first frame 0.5 s after the screenshot), `wss://` traffic, no
+  console errors. Live `shared/constants.js` byte-matches `6d08eea`.
+- **Local, `6d08eea`:** `smoke.py` PASS (ready in 4.6 s); `subpath_test.py --max-mb 20` PASS, **7.7 MB** initial in 355 responses, nothing
+  outside `/game/`, no failures, no console errors, SDK start/stop (`/tmp/wa-deploy/r16-subpath.png`).
+- **Zip:** `dist/crazygames.zip` rebuilt from `6d08eea` (377 files, 9.5 MB unzipped, 6.6 MB zip). The local test build differs from it only
+  in `config.js` (the server URL).
+
 ## Round 15 (castle overhaul): deploy work
 - **Build** (`07206f6`): `npm run build:crazygames` now **fails** on a root-absolute path in the sources and lists each `file:line`
   (`--allow-abs` rewrites them in the copy, for a test build only, never the upload). It also refuses unconverted source formats under
@@ -43,13 +57,13 @@ PORT=4105 node server.js &  node tools/serve-subpath.mjs dist/crazygames-local 4
 python3 deploy/subpath_test.py http://localhost:4199/game/ /tmp/wa-deploy/subpath.png --max-mb 20
 ```
 
-## CrazyGames submission checklist (round 15, final draft)
+## CrazyGames submission checklist (round 16)
 Sources: docs.crazygames.com, "Technical requirements", "Gameplay requirements", "Game covers" and "Multiplayer" (read 2026-10-30).
 
-### What to upload (all ready at `04fd64b`)
+### What to upload (zip rebuilt from `6d08eea`, the commit live on Render)
 | What | Path | Notes |
 |---|---|---|
-| **Game zip** | `dist/crazygames.zip` (gitignored; rebuild with `npm run build:crazygames -- --ref <sha>`) | from `04fd64b`, 377 files, 9.4 MB unzipped, 6.6 MB zip, sha256 `c48d1a4e…5853`; talks to `wss://wizard-arena-76od.onrender.com` |
+| **Game zip** | `dist/crazygames.zip` (gitignored; rebuild with `npm run build:crazygames -- --ref <sha>`) | **rebuilt from `6d08eea`** (round 16, live on Render): 377 files, 9.5 MB unzipped, 6.6 MB zip, sha256 `028e9b92…caeeb`; talks to `wss://wizard-arena-76od.onrender.com` |
 | **Cover, landscape 1920×1080** | `deploy/crazygames/store/covers/cover-hero-landscape-1920x1080.jpg` | recommended: the Mage up close in the courtyard |
 | **Cover, portrait 800×1200** | `deploy/crazygames/store/covers/cover-hero-portrait-800x1200.jpg` | same frame, cropped |
 | **Cover, square 800×800** | `deploy/crazygames/store/covers/cover-hero-square-800x800.jpg` | same frame, cropped |
@@ -59,11 +73,11 @@ Sources: docs.crazygames.com, "Technical requirements", "Gameplay requirements",
 
 Each cover has the title only ("Wizard Arena", Cinzel Decorative) over a clean render, with no HUD, borders, logos or other text (their
 rules). The three covers in each set are crops of one 2400×2400 frame, so they match. Made by `deploy/capture_store.py` (below) and
-picked by eye from four runs; the raw renders are in `dist/store-r3`, `-r4`, `-r5` until `dist/` is cleaned.
+picked by eye from four runs at `04fd64b` (round 16 changed spells and balance, not the castle or the bodies, so they still show the game as it is); the raw renders are in `dist/store-r3`, `-r4`, `-r5` until `dist/` is cleaned.
 
 ### 1. Build and server
-- `npm run build:crazygames -- --ref <approved sha>` (no `--allow-abs`; it must exit 0). `public/` hasn't changed since `04fd64b`, so the
-  zip above stands unless something under `public/` is committed after it (rebuild then).
+- `npm run build:crazygames -- --ref <approved sha>` (no `--allow-abs`; it must exit 0). The zip above is from `6d08eea`, which Render
+  runs now; rebuild it whenever a newer commit is pushed, so the client and the server match.
 - Render must run the **same commit's** server (the protocol changes between rounds): the coordinator pushes it to `main` (Ty's go-ahead)
   before or with the upload. Then `python3 deploy/smoke.py https://wizard-arena-76od.onrender.com`.
 - Upload `dist/crazygames.zip` as HTML5 (index.html at the zip's root).
@@ -80,11 +94,11 @@ Build your own wizard from 35 spells and duel three rivals in a castle courtyard
 
 **Description:**
 ```
-Build your wizard, then prove it in the courtyard. Pick one spell for each of six slots (primary, power, shield, mobility, utility and ultimate) from a spellbook of 35, across fire, ice, wind, earth, blood, alchemy and arcane. Every combination plays differently: lob fireballs from the wall-walk, freeze a rival mid-dash, lift a crate with telekinesis and hurl it, or curse a barrel and wait.
+Build your wizard, then prove it in the courtyard. Pick one spell for each of six slots (primary, power, shield, mobility, utility and ultimate) from a spellbook of 35, across fire, ice, wind, earth, blood, alchemy and arcane. Every combination plays differently: lob fireballs from the wall-walk, freeze a rival mid-dash, drain a rival with Blood Siphon to heal yourself, wrap yourself in Sanguine Aegis, lift a crate with telekinesis and hurl it, or curse a barrel and wait.
 
-Matches are four-wizard free-for-alls, first to 15 kills. Skeleton bots fill any empty seat instantly, so there is always a fight, on easy, normal or hard. Dodge, double-jump, roll, climb the towers for high ground and time your shield to turn the duel.
+Matches are four-wizard free-for-alls, first to 15 kills, after a three-second countdown. Skeleton bots fill any empty seat instantly, so there is always a fight, on easy, normal or hard. Dodge, double-jump, roll, climb the towers for high ground and time your shield to turn the duel.
 
-Change your loadout from the menu at any time; it takes effect on your next respawn.
+Want a different build? Change your spells from the menu and respawn at once.
 ```
 
 **Controls** (matches the in-game how-to-play card, select.js `KEYS`):
