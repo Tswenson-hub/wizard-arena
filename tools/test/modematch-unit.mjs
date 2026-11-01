@@ -284,13 +284,13 @@ async function serverChecks() {
       ok(since(V, n, m => m.t === 'relicBlast' && m.prop === pr.id).length === 1, 'it does when they step out and come back');
       park(V, 2); await wait(600);
     }
-    // two armed traps at most: a third clears the oldest
+    // one armed trap at most (round 16, Ty: was 2): a new curse clears the old one
     {
-      const fresh = open.slice(4, 7);
+      const fresh = open.slice(4, 6);
       const got = [];
       for (const pr of fresh) got.push(await curse(pr));
-      ok(fresh.length === 3 && got[1]?.length === 2 && got[2]?.length === RELIC.traps && !got[2].includes(fresh[0].id) && got[2].includes(fresh[2].id),
-        `${RELIC.traps} traps per caster; a third clears the oldest (${JSON.stringify(got)})`);
+      ok(RELIC.traps === 1 && got[0]?.length === 1 && got[0].includes(fresh[0].id) && got[1]?.length === 1 && got[1].includes(fresh[1].id),
+        `${RELIC.traps} trap per caster; a new curse clears the old one (${JSON.stringify(got)})`);
       park(A, 0);
     }
     // Roll: two charges, then the cooldown; a Spark passes through inside the dodge window, and hits after it
