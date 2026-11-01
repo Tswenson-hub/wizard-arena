@@ -354,8 +354,20 @@ export function mountSpellBuilder(container, { loadout, voice, onChange, onVoice
 
   paint();
   pv.setLoadout(cur);
-  // the how-to-play card greets a first visit on the join screen (not the pause menu's builder)
-  if (container.closest('#join') && !howToSeen()) openHowToPlay();
+  // One-click start (CrazyGames): a first visit isn't stopped by the how-to-play card. Once the player enters the arena from the
+  // join screen, a compact controls card floats over the first match instead (openFirstMatchTips), without taking any input.
+  const form = footer?.querySelector('form');
+  if (container.closest('#join') && form && !howToSeen()) {
+    form.addEventListener('submit', () => {
+      const join = container.closest('#join'), t0 = performance.now();
+      const wait = () => {
+        if (howToSeen()) return;
+        if (!join.offsetParent || getComputedStyle(join).display === 'none') setTimeout(openFirstMatchTips, 600);
+        else if (performance.now() - t0 < 15000) setTimeout(wait, 250);
+      };
+      wait();
+    });
+  }
   const io = new IntersectionObserver((en) => pv.setVisible(en[en.length - 1].isIntersecting));
   io.observe(root);
 
@@ -382,6 +394,9 @@ const KEYS = {
     [['E'], 'Mobility'], [['F'], 'Utility'], [['Q'], 'Ultimate, once charged']],
 };
 const MORE_KEYS = [['T', 'Reload early'], ['M', 'Mute'], ['Esc', 'Menu and your loadout']];
+// Ty's privacy note (round 16), plain text, shown in the how-to-play card; exported for the "?" panel.
+export const PRIVACY = 'Privacy: Wizard Arena keeps your name, spells and settings in this browser only. Your chosen name is sent to the game '
+  + 'server for the match you play and isn\'t stored. No accounts, no ads, no tracking. Questions: tyswenson34@gmail.com';
 let howTo = null;
 export function openHowToPlay() {
   if (howTo) { howTo.querySelector('.htp-close').focus(); return; }
@@ -397,6 +412,7 @@ export function openHowToPlay() {
         `<dt>${ks.map(k => k.startsWith('×') ? `<span>${k}</span>` : `<kbd>${k}</kbd>`).join('')}</dt><dd>${esc(t)}</dd>`).join('')}</dl>`).join('')}</div>
       <div class="htp-more">${MORE_KEYS.map(([k, t]) => `<span><kbd>${k}</kbd> ${esc(t)}</span>`).join('')}</div>
       <p class="htp-tip">Watch for rams: a charging ram flattens you, unless your shield faces it.</p>
+      <p class="htp-privacy">${esc(PRIVACY)}</p>
       <button type="button" class="htp-close">Got it</button>
     </div>`;
   const close = () => {
@@ -413,4 +429,26 @@ export function openHowToPlay() {
   document.body.appendChild(back);
   howTo = back;
   back.querySelector('.htp-close').focus({ preventScroll: true });
+}
+
+// openFirstMatchTips(): the first visit's controls, as a small card over the first match (round 16, one-click start). It takes
+// no input and doesn't move focus, so the game's "Click to play" and the keys work through it; it fades out after 25 s, or at
+// once from its x. Shown once (the same localStorage flag as the full card, which stays on the builder's "How to play" chip).
+let tips = null;
+export function openFirstMatchTips() {
+  if (tips) return;
+  try { localStorage.setItem(HOWTO_KEY, '1'); } catch { /* private mode */ }
+  const el = document.createElement('aside');
+  el.className = 'htp-float';
+  el.setAttribute('aria-label', 'Controls');
+  el.innerHTML = `<button type="button" class="htp-x" title="Hide" aria-label="Hide the controls">×</button>
+    <h2>How to play</h2>
+    <p class="htp-goal"><b>First to 15 kills</b> wins. Your spells are on the keys below; <kbd>Esc</kbd> changes them.</p>
+    <div class="htp-keys">${Object.entries(KEYS).map(([h, list]) => `<dl><h3>${h}</h3>${list.map(([ks, t]) =>
+      `<dt>${ks.map(k => k.startsWith('×') ? `<span>${k}</span>` : `<kbd>${k}</kbd>`).join('')}</dt><dd>${esc(t)}</dd>`).join('')}</dl>`).join('')}</div>`;
+  const close = () => { if (!tips) return; tips = null; el.classList.add('gone'); setTimeout(() => el.remove(), 400); };
+  el.querySelector('.htp-x').addEventListener('click', (e) => { e.stopPropagation(); close(); });
+  document.body.appendChild(el);
+  tips = el;
+  setTimeout(close, 25000);
 }
