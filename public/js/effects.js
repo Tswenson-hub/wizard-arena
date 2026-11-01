@@ -465,7 +465,7 @@ export class Effects {
     this.S('twirl_01', { p: [pos.x, p[1] + 1, pos.z], size: [1.5, radius * 1.6], life: 0.38, spin: 16, color: 0xc890ff, alpha: 0.9, fadeIn: 0.05 });
     this.S('twirl_02', { p: [pos.x, p[1] + 0.2, pos.z], mode: 'flat', size: [1.2, radius * 2.2], life: 0.4, spin: -12, color: 0xe0c8ff, alpha: 0.8, fadeIn: 0.05 });
     for (let i = 0, N = this.n(30); i < N; i++) {
-      const a = Math.random() * Math.PI * 2, sp = 7 + Math.random() * 9;
+      const a = Math.random() * Math.PI * 2, sp = (7 + Math.random() * 9) * radius / 5.5;   // (the debris reaches about the radius; tuned at 5.5 m)
       this.S(i % 3 ? 'trace_01' : 'star_06', { p: [pos.x + Math.sin(a) * 0.8, p[1] + 0.3 + Math.random() * 1.6, pos.z + Math.cos(a) * 0.8],
         v: [Math.sin(a) * sp + Math.cos(a) * sp * 0.6, 1 + Math.random() * 2.5, Math.cos(a) * sp - Math.sin(a) * sp * 0.6], grav: 3, drag: 1,
         life: 0.35 + Math.random() * 0.25, size: [i % 3 ? 1 : 0.5, 0.3], aspect: i % 3 ? 0.6 : 1, mode: i % 3 ? 'streak' : 'face', stretch: 0.06, color: i % 3 ? 0xc890ff : 0xffffff });

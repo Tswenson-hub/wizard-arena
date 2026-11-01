@@ -469,7 +469,7 @@ function think(me, world, t) {
   // ---- cyclone: spin as soon as they're inside the radius (a ward facing us blocks it, so
   // prefer them stunned, busy or turned away)
   const targetAir = airborne(target, t);
-  if (K.power === 'cyclone' && t >= me.cd.power && !me.carrying && !targetAir && d < 4.5 && los) {
+  if (K.power === 'cyclone' && t >= me.cd.power && !me.carrying && !targetAir && d < CYC.radius - 1 && los) {   // (1 m inside: they move during the wind-up)
     const busy = isStunned(target, t) || busyCasting(target) || rooted(target, t);
     const warded = target.blocking && target.st > CYC.staminaCost && facing(target, me.p);
     if ((busy || !warded) && Math.random() < cfg.aggression * 0.3) { act({ t: 'cyclone' }); b.diveUntil = 0; return; }
@@ -550,7 +550,7 @@ function think(me, world, t) {
     // Cyclone ready: rush in to spin range (the check above fires it), behind a Tempest Veil if we have one
     if (d < 14 && !targetWarded && me.hp > 30 && Math.random() < cfg.aggression * 0.6) {
       b.diveUntil = t + 2.5;
-      if (veilReady(me, t) && d > 4.5 && d < 9 && cfg.blinkDodge) { act({ t: 'veil' }); return; }   // the veil lasts 2 s: only from where she can close in
+      if (veilReady(me, t) && d > CYC.radius - 1 && d < 9 && cfg.blinkDodge) { act({ t: 'veil' }); return; }   // the veil lasts 2 s: only from where she can close in
     }
   } else if (K.power === 'sanguine_lash' && powerReady && !me.carrying) {
     // Blood Siphon (round 16): a poke that heals. Always worth it in range; more eager the more hurt we are.
@@ -1333,7 +1333,7 @@ function moveBot(me, dt, world, t) {
         if (cover) { const cx = cover[0] - me.p[0], cz = cover[1] - me.p[2]; const cl = Math.hypot(cx, cz) || 1; wx = cx / cl; wz = cz / cl; }
         else fwd = -1;
       } else if (!los) fwd = d > 4 ? 1 : 0.3;            // round 10: hunt them down (regen undoes a fight that pauses)
-      else if (diving) fwd = d > 3 ? 1 : 0;              // closing in for a cyclone
+      else if (diving) fwd = d > CYC.radius - 1.5 ? 1 : 0;   // closing in for a cyclone
       else if (veiled(target, t)) fwd = d < 12 ? -1 : 0;  // a veiled Gale is coming: keep away until it drops
       else if (target.hp < 40 && d > range[0]) fwd = 1;  // round 10: press a hurt target before regen saves them
       else if (d > range[1]) fwd = 1;

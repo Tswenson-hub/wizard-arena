@@ -476,10 +476,10 @@ export const SPELLBOOK = {
   },
   cyclone: {
     id: 'cyclone', slot: 'power', name: 'Arcane Cyclone', short: 'Cyclone',
-    blurb: 'Short wind-up, then spin: hits everyone within 5.5 m and flings them outward.',
+    blurb: 'Short wind-up, then spin: hits everyone within 4 m and flings them outward.',
     windup: 0.45,        // can't ward, move at CHARGE_MOVE_SPEED; being hit cancels it
     spin: 0.5,           // two full turns; the damage pulse fires at the start
-    radius: 5.5,
+    radius: 4.0,         // round 16 (Ty: 'too big of an area'; was 5.5). The hit, the visuals and the bots all read this
     height: 2.5,         // vertical reach above/below the caster's feet (airborne wizards escape it)
     damage: 28,
     stun: 0.35,
@@ -1001,7 +1001,7 @@ export const SPELL_INFO = {
   potion_toss:   { element: 'acid',   tags: ['Projectile', 'Lob', 'Area', 'Stuns'], damage: `${D(SPELLS.potion.damage)} / ${D(SPELLS.potion.finDamage)}`, cooldown: S_(SPELLS.potion.cooldown), range: M_(SPELLS.potion.range), windup: '' },
   // powers (RMB)
   meteor:        { element: 'fire',   tags: ['Projectile', 'Wind-up'], damage: `${D(SPELLS.heavy.damage)}`, cooldown: S_(SPELLS.heavy.cooldown), range: M_(Math.round(SPELLS.heavy.speed * SPELLS.heavy.life)), windup: S_(SPELLS.heavy.chargeTime) },
-  cyclone:       { element: 'wind',   tags: ['Area', 'Wind-up', 'Stuns'], damage: `${D(28)}`, cooldown: S_(5), range: M_(5.5), windup: S_(0.45) },
+  cyclone:       { element: 'wind',   tags: ['Area', 'Wind-up', 'Stuns'], damage: `${D(28)}`, cooldown: S_(5), range: M_(SPELLBOOK.cyclone.radius), windup: S_(SPELLBOOK.cyclone.windup) },
   frostfall:     { element: 'ice',    tags: ['Area', 'Roots'], damage: `${D(SPELLBOOK.frostfall.damage)}`, cooldown: S_(SPELLBOOK.frostfall.cooldown), range: M_(SPELLBOOK.frostfall.range), windup: S_(1.75), duration: `freeze ${S_(SPELLBOOK.frostfall.bind)}` },
   sanguine_lash: { element: 'dark',   tags: ['Projectile', 'Heal'], damage: `${D(SPELLS.siphon.damage)}, heals ${Math.round(SPELLBOOK.sanguine_lash.heal * 100)}%`, cooldown: S_(SPELLBOOK.sanguine_lash.cooldown), range: M_(26), windup: S_(SPELLBOOK.sanguine_lash.castTime) },
   battering_ram: { element: 'earth',  tags: ['Summon', 'Wind-up', 'Knockdown'], damage: `${D(SPELLBOOK.battering_ram.damage)}`, cooldown: S_(SPELLBOOK.battering_ram.cooldown), range: M_(36), windup: S_(SPELLBOOK.battering_ram.windup) },
