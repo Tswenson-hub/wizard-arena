@@ -1577,3 +1577,11 @@ Commits: `c7c11ce` (Blood Siphon), `77ece63` (Sanguine Aegis), `be4bf66` (the co
   RMB), and `playSpell(owner, 'sanguine_lash', 'release')` when the bolt leaves (unless the cast pose is still playing). The `lash` key
   is never played. The Respawn button sits in the pause menu's top row next to "Leave match" (not the builder footer); nothing needed
   from you.
+
+## characters → spells: the privacy note behind the "?" (one line in main.js or index.html), `f5b5ab5`
+- Ty wants his privacy note behind the "?". It's in the how-to-play card now, as plain text: `Select.PRIVACY` is exported from
+  select.js. The "?" (`#helpBtn`, yours) toggles `#joinHelp`, though, so it doesn't show there. Either:
+  - `#helpBtn` calls `Select.openHowToPlay()` (asked in round 14; it also shows the controls), or
+  - add `<p class="credits privacy"></p>` to `#joinHelp` and fill it with `Select.PRIVACY`.
+- **One-click start:** the join screen no longer opens the card on a first visit. After Enter, a small controls card floats
+  over the first match (left side, no input but its ×, fades after 25 s). Nothing to do on your side.
