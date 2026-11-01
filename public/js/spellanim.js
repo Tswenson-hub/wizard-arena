@@ -281,7 +281,7 @@ export const SPELL_ANIMS = {
   ram_ride: {
     grade: 'ok', release: 0, legacy: ['ride'],
     keys: { ride: { clip: 'Sit_Chair_Idle', loop: true } },     // seated on the ram's back, legs forward
-    play: { loop: ['ride', 2.9, 1, 0] },
+    play: { loop: ['ride', 2.3, 1, 0] },
   },
   flask_step: {
     grade: 'good', release: 0.6, legacy: ['flask_step', 'arrival'],

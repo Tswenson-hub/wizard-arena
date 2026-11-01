@@ -28,7 +28,7 @@ const iconOf = (id) => `./textures/icons/${SPELL_ICON[id] || id}.png`;
 // spells agent's tuning never makes it wrong. The tooltip has the full blurb and every stat.
 const CARD_LINE = {
   spark: 'Fast bolts, long reach', glacial_skim: 'Ground shards that slow', fireball: 'Big, hot bolts', gale_shear: 'A short-range wind blade',
-  potion_toss: 'Arcing potions that splash', sling: 'Stones that call a ram', hex_shards: 'Glyphs that curve in',
+  potion_toss: 'Arcing potions that splash', sling: 'Stones that hit harder far off', hex_shards: 'Glyphs that curve in',
   toxic_flask: 'A pool of poison', meteor: 'A slow, heavy fireball', cyclone: 'Spin and fling them away', sanguine_lash: 'A whip that binds',
   frostfall: 'Drop a block of ice', battering_ram: 'A ram charges ahead',
   smoke_flask: 'Smoke that eats spells', ward: 'Block from the front', firewall: 'A wall of flame', black_death: 'Block all round, heal',
