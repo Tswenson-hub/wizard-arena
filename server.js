@@ -330,7 +330,7 @@ function applyHit(target, proj) {
   target.hp -= dmg;
   if (dmg > 0) {
     target.lastDamagedAt = t;   // round 10: any damage resets the out-of-combat regen timer
-    target.lastHitBy = proj.owner; match.onDamage(target, attacker, dmg);
+    target.lastHitBy = proj.owner; match.onDamage(target, attacker, dmg, proj.born != null ? proj.from : null);   // (from: a projectile's launch point, for the recap's longest hit)
     // damage dealt charges the attacker's ultimate (not an ultimate's own damage)
     if (attacker && attacker !== target && !spec.ult) addUltCharge(attacker, dmg / C.DAMAGE_SCALE * C.ULT_CHARGE.perDamage * (spec.ultCharge ?? 1));   // (charge per hit as before the scale)
   }
@@ -440,6 +440,7 @@ function heal(p, amount, t, shimmer = 0.3, src = null) {
   p.hp = Math.min(C.MAX_HP, p.hp + amount);
   p.healUntil = Math.max(p.healUntil || 0, t + shimmer);
   p.healAcc = (p.healAcc || 0) + (p.hp - before);   // shown as green numbers, batched (healFlush)
+  match.onHeal(p, p.hp - before, src);   // (the recap's healing; natural regen doesn't come through here)
 }
 
 // ---------------------------------------------------------------- casting: slows, and the few roots
@@ -567,7 +568,8 @@ function updatePotions(t) {
     const sp = pt.spot, y = sp.y;
     for (const q of players.values()) {
       if (q.dead || q.hp >= C.MAX_HP || q.mrain || Math.hypot(q.p[0] - sp.x, q.p[2] - sp.z) > C.POTION.radius + C.PLAYER_RADIUS || Math.abs(q.p[1] - y) > C.POTION.height) continue;
-      heal(q, C.POTION.heal, t, 0.6);
+      heal(q, C.POTION.heal, t, 0.6, 'potion');
+      match.onPotion(q);
       pt.readyAt = t + C.POTION.respawn; pt.taken = true;
       broadcast({ t: 'potion', ...potionPublic(pt), by: q.id });
       break;
@@ -888,6 +890,7 @@ function relicBlast(prop, victim = null) {
   const curserId = prop.cursedBy;
   const at = victim ? C.holdPoint(victim.p, victim.yaw) : [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z];
   broadcast({ t: 'relicBlast', p: at, by: curserId, victim: victim?.id ?? null, prop: prop.id });
+  match.onTrap(players.get(curserId));   // (the recap's Trapmaster)
   if (victim && victim.carrying === prop.id) victim.carrying = null;
   disarm(prop);
   breakProp(prop, at);
@@ -1215,7 +1218,7 @@ function updateCages(t) {
     const dt = Math.min(0.1, t - (c.healAt ?? t)); c.healAt = t;
     for (const q of players.values()) {
       if (q.dead || enemyOf(c.owner, q) || q.p[1] - c.y > CAGE.flyOver || q.p[1] < c.y - 1 || Math.hypot(q.p[0] - c.x, q.p[2] - c.z) >= CAGE.radius) continue;
-      heal(q, CAGE.heal * dt, t, 0.25);
+      heal(q, CAGE.heal * dt, t, 0.25, 'cage');
     }
     // round 16 review: the enemies held inside it burn (cage_burn every CAGE.burn s)
     if (t >= (c.burnAt ?? 0)) {
@@ -1271,7 +1274,7 @@ function updateUltWindup(p, t) {
   else if (U === 'night_cage') castNightCage(p, at);
   else if (U === 'berserker_brew') {
     p.brewUntil = t + C.SPELLBOOK.berserker_brew.duration;
-    heal(p, C.SPELLBOOK.berserker_brew.heal, t, 0.6);   // (round 16 review: the drink heals)
+    heal(p, C.SPELLBOOK.berserker_brew.heal, t, 0.6, 'brew');   // (round 16 review: the drink heals)
     broadcast({ t: 'brew', id: p.id, left: C.SPELLBOOK.berserker_brew.duration });
   } else if (U === 'blizzard') {
     p.blizz = { until: t + BLIZ.duration, yaw: p.yaw, next: t, exposure: new Map(), frozen: new Set(), nextPush: t };
@@ -1852,7 +1855,7 @@ function handle(p, msg) {
       p.st -= cost; p.blockReleasedAt = t;   // stamina regen waits, as after a ward
       p.crouch = false;
       p.jumpSpeed = Math.max(air ? p.jumpSpeed || 0 : 0, takeoffSpeed(p, t));
-      if (air) p.airJumped = true;
+      if (air) { p.airJumped = true; match.onAirJump(p); }
       p.fall = null;
       p.jump = p.lastJump = { start: t, y0, n: air ? 2 : 1 };
       broadcast(air ? { t: 'jump', id: p.id, n: 2, y0 } : { t: 'jump', id: p.id });
