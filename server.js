@@ -389,7 +389,7 @@ function killPlayer(target, attacker, cause = null, kind = cause, spell = null) 
 
 function respawn(p) {
   const sp = match.spawnPointFor(p) || C.SPAWN_POINTS[Math.floor(Math.random() * C.SPAWN_POINTS.length)];
-  p.p = [sp[0] + rand(-1, 1), sp[1] || 0, sp[2] + rand(-1, 1)];   // (y: a wall-walk spawn's standing height)
+  const seq = placeAt(p, [sp[0] + rand(-1, 1), sp[1] || 0, sp[2] + rand(-1, 1)]);   // (y: a wall-walk spawn's standing height; placeAt: the menu's instant respawn races reports too)
   p.hp = C.MAX_HP; p.st = C.MAX_STAMINA;
   p.dead = false; p.stunUntil = 0; p.blocking = false; p.charging = false; p.cyclone = null; p.siphon = null; p.flightUntil = 0; p.jump = null; p.crouch = false; p.grab = null; p.knockUntil = 0;
   p.fall = null; p.hover = null; p.airJumped = false; p.jumpSpeed = 0; p.castSlowUntil = 0; p.rideQueued = null;
@@ -401,7 +401,7 @@ function respawn(p) {
   endRide(p);
   flushPendingLoadout(p);   // round 11: a loadout picked during the last life starts now
   p.yaw = Number.isFinite(sp[3]) ? sp[3] : Math.atan2(-p.p[0], -p.p[2]);   // facing the map centre
-  broadcast({ t: 'respawn', id: p.id, p: p.p, yaw: p.yaw });
+  broadcast({ t: 'respawn', id: p.id, p: p.p, yaw: p.yaw, seq });
 }
 
 function dropProp(p, destroy, reason = null) {
@@ -738,6 +738,16 @@ function throwFlaskStep(p) {
   const proj = spawnProjectile(p, 'flaskstep', origin, W.dir);
   proj.from = p.p.slice();
 }
+// Round 16 (Ty: 'I teleport and then get killed by someone attacking where I just was'): the server moves a wizard itself
+// (Flask Step's landing, Mirror Step, Meteor Rain's landing). The client's position reports already in flight still say the
+// old spot, and the first of them used to be taken as the post-teleport report (no speed check), putting her back there;
+// the real reports then looked like overspeed and dragged her across at a run. Now each such move bumps p.tpSeq, the
+// landing message carries it, the client echoes the last one it applied (state.tp), and older reports are ignored.
+function placeAt(p, to) {
+  p.p = to; p.justTeleported = true;
+  p.tpSeq = (p.tpSeq || 0) + 1;
+  return p.tpSeq;
+}
 function flaskArrive(proj, surface) {
   const p = players.get(proj.owner);
   if (!p || p.dead) return;
@@ -746,10 +756,10 @@ function flaskArrive(proj, surface) {
   const back = surface && surface !== 'ground' ? 0.8 : 0;
   const to = C.flaskSettle([proj.p[0] - v[0] / l * back, Math.max(0, proj.p[1] - (surface && surface !== 'ground' ? 0.3 : 0)), proj.p[2] - v[2] / l * back], [v[0], v[2]]);   // (the preview settles the same way)
   const from = p.p.slice();
-  p.p = to; p.justTeleported = true;
+  const seq = placeAt(p, to);
   cageKeep(p);
   if (p.blocking) { p.blocking = false; p.blockReleasedAt = now(); }
-  broadcast({ t: 'flaskArrive', id: p.id, from, to: p.p });
+  broadcast({ t: 'flaskArrive', id: p.id, from, to: p.p, seq });
 }
 
 // ---------------------------------------------------------------- Firewall
@@ -1393,9 +1403,9 @@ function updateMeteorRain(p, t, dt) {
   }
   for (const id of p.mrain.hit) hits.push(id);
   crushArea(p.id, M.diveTo[0], M.diveTo[2], MRAIN.radius);
-  p.p = [M.diveTo[0], M.diveTo[1], M.diveTo[2]]; p.justTeleported = true;
+  const seq = placeAt(p, [M.diveTo[0], M.diveTo[1], M.diveTo[2]]);
   p.mrain = null;
-  broadcast({ t: 'mrainLand', id: p.id, p: p.p, hits });
+  broadcast({ t: 'mrainLand', id: p.id, p: p.p, hits, seq });
 }
 
 // ---------------------------------------------------------------- simulation
@@ -1727,6 +1737,8 @@ function handle(p, msg) {
       if (p.dead) break;
       if (p.mrain || p.mrainFall) { if (Number.isFinite(msg.yaw)) p.yaw = msg.yaw; p.lastStateAt = t; break; }   // Meteor Rain: the server flies her
       if (!Array.isArray(msg.p) || msg.p.length !== 3 || !msg.p.every(Number.isFinite)) break;
+      // sent before the client applied the server's last move of it (placeAt): the old spot, ignored
+      if ((p.tpSeq || 0) > (Number.isInteger(msg.tp) ? msg.tp : 0)) { if (Number.isFinite(msg.yaw)) p.yaw = msg.yaw; break; }
       // loose anti-cheat: clamp to arena and to a plausible speed
       const dt = Math.max(0.016, t - (p.lastStateAt || t));
       // Feet stay on the ground except inside a Skyward Flash, where the height may only fall
@@ -2016,7 +2028,7 @@ function handle(p, msg) {
       p.cd.mobility = t + MIRROR.cooldown;
       const airY = airDash(p, t, msg.from?.[1]);   // round 13: from the air, out at that height, then a fall
       if (airY !== false || isAirborne(p)) { const y = airY !== false ? airY : p.p[1]; paths[mine].to[1] = Math.max(y, groundAt(paths[mine].to[0], paths[mine].to[2], y)); }
-      p.p = paths[mine].to; p.justTeleported = true;
+      const seq = placeAt(p, paths[mine].to);
       cageKeep(p);
       if (p.blocking) { p.blocking = false; p.blockReleasedAt = t; }
       // the caster keeps running along its path; each decoy runs along one of the others
@@ -2027,7 +2039,7 @@ function handle(p, msg) {
         decoys.set(d.id, d);
         out.push({ id: d.id, p: d.p, yaw: d.yaw });
       });
-      broadcast({ t: 'mirror', id: p.id, from, to: p.p, yaw: Math.atan2(paths[mine].dir[0], paths[mine].dir[2]), decoys: out });
+      broadcast({ t: 'mirror', id: p.id, from, to: p.p, yaw: Math.atan2(paths[mine].dir[0], paths[mine].dir[2]), decoys: out, seq });
       break;
     }
     case 'veil': {

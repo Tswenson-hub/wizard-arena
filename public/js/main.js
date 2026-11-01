@@ -68,6 +68,7 @@ let myId = null;
 const local = {
   pos: new THREE.Vector3(), vel: new THREE.Vector3(),
   yaw: 0, pitch: 0.25,
+  tpSeq: 0,   // the server's last move of us we've applied (flaskArrive, mirror, mrainLand seq), echoed in each state
   cd: { fast: 0, power: 0, mobility: 0, guard: 0, throw: 0 },   // per slot, like the server
   charging: false, chargeStart: 0, chargeSent: false,
   cyclone: null,               // { start, pulsed } during our own Arcane Cyclone
@@ -328,7 +329,7 @@ net.onClose = () => {
 const matchUI = mountMatchUI({ scene, camera, net, players, props, myId: () => myId });
 
 function onWelcome(msg) {
-  myId = msg.id;
+  myId = msg.id; local.tpSeq = 0;
   matchUI.onWelcome(msg);
   for (const p of msg.players) addPlayer(p);
   for (const pr of msg.props) setProp(pr, true);
@@ -762,7 +763,7 @@ function handleMessage(msg) {
       w.pose('dash', 0.4);
       // (round 13: from the air it comes out at that height, then falls)
       if (w === me) {
-        local.pos.set(msg.to[0], msg.to[1] || 0, msg.to[2]); local.vel.multiplyScalar(0.5);
+        local.pos.set(msg.to[0], msg.to[1] || 0, msg.to[2]); local.vel.multiplyScalar(0.5); local.tpSeq = msg.seq ?? local.tpSeq;
         if ((msg.to[1] || 0) > groundAt(msg.to[0], msg.to[2], msg.to[1] || 0) + 0.05) { local.jump = null; local.hover = null; local.airDash = null; local.fall = { start: now, y0: msg.to[1], air: true }; }
       }
       else { w.targetPos.set(msg.to[0], msg.to[1] || 0, msg.to[2]); w.group.position.copy(w.targetPos); w.targetYaw = msg.yaw; w.group.rotation.y = msg.yaw; }
@@ -932,7 +933,7 @@ function handleMessage(msg) {
       if (!w) break;
       w.dead = false;
       w.bound = w.slowed = w.frozen = false;
-      if (w === me) { local.pos.set(msg.p[0], msg.p[1] || 0, msg.p[2]); local.vel.set(0, 0, 0); if (Number.isFinite(msg.yaw)) local.yaw = msg.yaw; ui.death.classList.add('hidden'); dmgFrom.clear(); killedBy = null; local.stunUntil = 0; local.slowUntil = local.rootUntil = local.silenceUntil = 0; }
+      if (w === me) { local.pos.set(msg.p[0], msg.p[1] || 0, msg.p[2]); local.vel.set(0, 0, 0); local.tpSeq = msg.seq ?? local.tpSeq; if (Number.isFinite(msg.yaw)) local.yaw = msg.yaw; ui.death.classList.add('hidden'); dmgFrom.clear(); killedBy = null; local.stunUntil = 0; local.slowUntil = local.rootUntil = local.silenceUntil = 0; }
       else { w.targetPos.set(msg.p[0], msg.p[1] || 0, msg.p[2]); w.group.position.copy(w.targetPos); }
       effects.teleport(msg.p, msg.p);
       sfx.respawn([msg.p[0], 1, msg.p[2]]);
@@ -1120,7 +1121,7 @@ function handleMessage(msg) {
       shake(d < MRAIN.radius + 2 ? 1 : 0.6 / (1 + d * 0.15));
       endMrain(w);
       if (w && !w.dead) playSpell(w, 'meteor_rain', 'land');   // up out of the crouch in the blast
-      if (msg.id === myId) { local.mrain = null; local.pos.set(msg.p[0], 0, msg.p[2]); local.vel.set(0, 0, 0); }
+      if (msg.id === myId) { local.mrain = null; local.pos.set(msg.p[0], msg.p[1] || 0, msg.p[2]); local.vel.set(0, 0, 0); local.tpSeq = msg.seq ?? local.tpSeq; }
       break;
     }
     case 'mrainFall': {
@@ -1245,7 +1246,7 @@ function handleMessage(msg) {
       sfx.play('blink', { pos: msg.from, vol: 0.35, rate: 0.8 });
       if (w) {
         if (!w.pose('arrival')) w.pose('dash', 0.4);
-        if (w === me) { local.flaskWind = null; local.pos.set(msg.to[0], msg.to[1] || 0, msg.to[2]); local.vel.set(0, 0, 0); }
+        if (w === me) { local.flaskWind = null; local.pos.set(msg.to[0], msg.to[1] || 0, msg.to[2]); local.vel.set(0, 0, 0); local.tpSeq = msg.seq ?? local.tpSeq; }
         else { w.targetPos.set(msg.to[0], msg.to[1] || 0, msg.to[2]); w.group.position.copy(w.targetPos); }
       }
       break;
@@ -2127,7 +2128,7 @@ function updateLocal(dt) {
     local.vel.set(0, 0, 0);
     me.group.position.copy(local.pos); me.group.rotation.y = local.yaw;
     me.updateAnimation(false, dt);
-    if (now - local.lastSend > 1 / 20) { local.lastSend = now; net.send({ t: 'state', p: [local.pos.x, local.pos.y, local.pos.z], yaw: local.yaw, anim: 'idle' }); }
+    if (now - local.lastSend > 1 / 20) { local.lastSend = now; net.send({ t: 'state', p: [local.pos.x, local.pos.y, local.pos.z], yaw: local.yaw, anim: 'idle', tp: local.tpSeq }); }
     updateCamera(dt);
     return;
   }
@@ -2360,7 +2361,7 @@ function updateLocal(dt) {
   // ---- send state (20 Hz)
   if (now - local.lastSend > 1 / 20) {
     local.lastSend = now;
-    net.send({ t: 'state', p: [local.pos.x, local.pos.y, local.pos.z], yaw: local.yaw, anim: local.anim, sprint: local.sprinting, crouch: local.crouch });
+    net.send({ t: 'state', p: [local.pos.x, local.pos.y, local.pos.z], yaw: local.yaw, anim: local.anim, sprint: local.sprinting, crouch: local.crouch, tp: local.tpSeq });
   }
 
   updateCamera(dt);
