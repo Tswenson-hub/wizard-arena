@@ -618,6 +618,30 @@ async function reviewBuffChecks(join, since) {
     `Night Cage burns an enemy inside it every ${CAGE.burn} s (${burns.length} burns of ${burns[0]?.dmg} in 2 s, credited to the caster)`);
   for (const c of [B, V]) c.ws.close();
   await wait(300);
+  await cycloneRadiusChecks(join, since);
+}
+
+// ---- round 16 (Ty: the Cyclone's area was too big): the spin hits within SPELLBOOK.cyclone.radius (4 m), not at 4.5 m
+async function cycloneRadiusChecks(join, since) {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  const CYC = C.SPELLBOOK.cyclone;
+  const S = await join('Spinner', { power: 'cyclone' }), N = await join('Near', { primary: 'spark' }), F = await join('Far', { primary: 'spark' });
+  S.send({ t: 'matchDebug', size: 3 }); S.send({ t: 'removeBots' }); await wait(600);
+  const line = clearLine(10);
+  ok(!!line && CYC.radius === 4, `a clear line for the Cyclone radius test, radius ${CYC.radius} m`);
+  if (line) {
+    const at = (d) => [line.a[0] + line.dir[0] * d, 0, line.a[2] + line.dir[1] * d];
+    S.send({ t: 'debugPlace', p: at(5), yaw: line.yaw, resetCd: true });
+    N.send({ t: 'debugPlace', p: at(5 - 3.5), yaw: line.yaw }); F.send({ t: 'debugPlace', p: at(5 + 4.5), yaw: line.yaw + Math.PI });
+    await wait(2200);   // (past spawn protection)
+    const n = S.msgs.length;
+    S.send({ t: 'cyclone' }); await wait((CYC.windup + CYC.spin) * 1000 + 300);
+    const hit = (c) => since(S, n, m => m.t === 'hit' && m.target === c.id && m.kind === 'cyclone' && m.dmg > 0).length > 0;
+    ok(hit(N), 'the Cyclone hits an enemy 3.5 m away');
+    ok(!hit(F), 'and not one 4.5 m away');
+  }
+  for (const c of [S, N, F]) c.ws.close();
+  await wait(300);
   await wallWalkChecks(join, since);
 }
 
