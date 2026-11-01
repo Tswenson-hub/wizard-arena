@@ -651,8 +651,9 @@ function tryUltimate(me, world, t, act, target) {
     return me.ult < C.ULT_CHARGE.max;
   }
   if (U === 'berserker_brew') {
-    // drink when there's a fight to win: an enemy in reach and sight, and the health to use it
-    if (!target || target.dead || dist2D(me.p, target.p) > 18 || !hasLOS(me.p, target.p) || me.hp < 40) return false;
+    // drink when there's a fight to win: an enemy in reach and sight (round 16 review: the drink heals 30, so low on
+    // health is a reason to drink, not to wait)
+    if (!target || target.dead || dist2D(me.p, target.p) > 18 || !hasLOS(me.p, target.p)) return false;
     act({ t: 'ult' });
   } else if (U === 'meteor_rain') {
     // leap when someone is reachable: we'll pick the spot from up there

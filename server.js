@@ -276,7 +276,7 @@ function applyHit(target, proj) {
   }
 
   let dmg = Math.round((proj.dmg ?? spec.damage) * C.DAMAGE_SCALE);   // round 10: +30% on every damage source, tuned in one place
-  if (attacker?.brewUntil > t && BREW_KINDS.has(proj.kind)) dmg = Math.round(dmg * C.SPELLBOOK.berserker_brew.damageMul);   // Berserker Brew
+  if (attacker?.brewUntil > t && !spec.ult) dmg = Math.round(dmg * C.SPELLBOOK.berserker_brew.damageMul);   // Berserker Brew (round 16 review: every spell, not only potions and pools)
   let absorbedAmt = 0;   // what a block soaked (the BLOCKED number)
   if (blocked) {
     const cost = spec.staminaCost * (C.SPELLBOOK[kit(target).guard]?.hitCostMul ?? 1);
@@ -664,7 +664,6 @@ function raiseWall(p, yaw) {
 // ---------------------------------------------------------------- Embibe
 const pools = new Map();        // Toxic Flask pools: id -> { id, owner, x, z, until, next }
 const smokeFlasks = new Map();  // Smoke Flask clouds: id -> { id, owner, x, z, until }
-const BREW_KINDS = new Set(['potion', 'potion_splash', 'toxic', 'toxic_pool']);
 // Berserker Brew halves every cooldown of hers (her reload too) while it lasts.
 const cdMul = (p) => p.brewUntil > now() ? C.SPELLBOOK.berserker_brew.cooldownMul : 1;
 // A lob onto `target` (clamped to the spell's range), or along the aim if there's no target.
@@ -1208,6 +1207,16 @@ function updateCages(t) {
       if (q.dead || enemyOf(c.owner, q) || q.p[1] - c.y > CAGE.flyOver || q.p[1] < c.y - 1 || Math.hypot(q.p[0] - c.x, q.p[2] - c.z) >= CAGE.radius) continue;
       heal(q, CAGE.heal * dt, t, 0.25);
     }
+    // round 16 review: the enemies held inside it burn (cage_burn every CAGE.burn s)
+    if (t >= (c.burnAt ?? 0)) {
+      c.burnAt = t + CAGE.burn;
+      const owner = players.get(c.owner);
+      for (const q of players.values()) {
+        if (q.dead || !enemyOf(c.owner, q) || q.p[1] - c.y > CAGE.flyOver || q.p[1] < c.y - 1 || Math.hypot(q.p[0] - c.x, q.p[2] - c.z) >= CAGE.radius) continue;
+        const dx = q.p[0] - c.x, dz = q.p[2] - c.z, l = Math.hypot(dx, dz) || 1;
+        applyHit(q, { kind: 'cage_burn', owner: owner ? owner.id : c.owner, v: [dx / l, 0, dz / l] });
+      }
+    }
     for (const q of players.values()) if (q.bot || q.p[1] - c.y > CAGE.flyOver) cageKeep(q);   // humans: in their state updates
   }
 }
@@ -1252,6 +1261,7 @@ function updateUltWindup(p, t) {
   else if (U === 'night_cage') castNightCage(p, at);
   else if (U === 'berserker_brew') {
     p.brewUntil = t + C.SPELLBOOK.berserker_brew.duration;
+    heal(p, C.SPELLBOOK.berserker_brew.heal, t, 0.6);   // (round 16 review: the drink heals)
     broadcast({ t: 'brew', id: p.id, left: C.SPELLBOOK.berserker_brew.duration });
   } else if (U === 'blizzard') {
     p.blizz = { until: t + BLIZ.duration, yaw: p.yaw, next: t, exposure: new Map(), frozen: new Set(), nextPush: t };

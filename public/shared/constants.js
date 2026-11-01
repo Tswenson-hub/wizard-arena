@@ -108,7 +108,7 @@ export const SPELLS = {
     damage: 44,          // round 6: +15 %
     stun: 0.25,
     speed: 26,           // round 14: 19 (sidestepped at a walk from 25 m)
-    radius: 0.65,
+    radius: 0.8,         // (round 16 review, Ty approved) was 0.65
     life: 57 / 26,       // about 57 m
     cooldown: 4,         // round 14: 1.2
     chargeTime: 1.25,    // wind-up before the bolt leaves the hand
@@ -116,7 +116,7 @@ export const SPELLS = {
     knockback: 6.5,
   },
   prop: {                // an environment object hurled with telekinesis
-    damage: 22,
+    damage: 26,          // (round 16 review, Ty approved) was 22
     stun: 0.4,
     speed: 24,
     radius: 0.55,
@@ -126,11 +126,11 @@ export const SPELLS = {
     knockback: 4,
   },
   skim: {                // Glacial Skim: one of three ice shards skimming along the ground
-    damage: 9,           // round 14: 11 (three shards a volley: it led the primaries)
+    damage: 11,          // (round 16 review, Ty approved) was 9 (round 14: 11)
     stun: 0,
     speed: 26,
     radius: 0.2,
-    life: 0.85,
+    life: 1.0,           // (round 16 review, Ty approved) about 26 m (was 0.85, 22 m)
     staminaCost: 6,
     knockback: 0.6,
     height: 0.35,        // flight height; a wizard in the air is above it
@@ -171,8 +171,8 @@ export const SPELLS = {
   },
   sling: {               // Jeb's primary: a sling stone (round 15, Ty: its hit no longer calls a ram)
     damage: 10,          // round 14: 7 (round 15: the card's mid value; a hit deals slingDamage(flown) instead)
-    near: 6.6,           // round 15 (Ty: no ambient rams to aggro any more): at point blank (×1.36: 9)...
-    far: 15.5,           // ...rising in a straight line to this at `farDist` m flown (×1.36: 21), and staying there
+    near: 8,             // (round 16 review, Ty approved) was 6.6. At point blank (×1.36: 11)...
+    far: 17.5,           // ...rising in a straight line to this at `farDist` m flown (×1.36: 24; was 15.5), and staying there
     farDist: 28,
     longShot: 18,        // flown this far: a "long" hit (the bigger number, the hit message's `long`)
     stun: 0.15,          // round 15 (Ty: too strong at range): a light flinch (was 0.45); no ram call any more
@@ -217,7 +217,7 @@ export const SPELLS = {
     maxElev: 1.3,        // rad: steepest throw (high onto or over cover)
   },
   hex: {                 // Vesper's primary: a crimson glyph flying a curved path to the aim point
-    damage: 14,          // round 14: 11
+    damage: 16,          // (round 16 review, Ty approved) was 14 (round 14: 11)
     stun: 0.55,
     speed: 28,           // along the curve (round 14: 22)
     radius: 0.3,
@@ -226,7 +226,7 @@ export const SPELLS = {
     staminaCost: 12,
     knockback: 1.2,
     range: 28,           // aim points farther than this are pulled in
-    side: 0.32,          // shots 1 and 2: the control point sits this fraction of the distance to the side...
+    side: 0.24,          // (round 16 review, Ty approved) was 0.32. Shots 1 and 2: the control point sits this fraction of the distance to the side...
     lob: 0.4,            // ...shot 3: this fraction above
   },
 };
@@ -446,9 +446,9 @@ export const SPELLBOOK = {
   },
   flask_step: {
     id: 'flask_step', slot: 'mobility', name: 'Flask Step', short: 'Flask Step',
-    blurb: 'A 0.6 s wind-up, then a potion lobbed along your aim (16 m): wherever it lands, you are there. Being hit during the wind-up stops it.',
-    windup: 0.6,
-    cooldown: 8,
+    blurb: 'A 0.4 s wind-up, then a potion lobbed along your aim (16 m): wherever it lands, you are there. Being hit during the wind-up stops it.',
+    windup: 0.4,         // (round 16 review, Ty approved) was 0.6
+    cooldown: 7,         // (round 16 review, Ty approved) was 8
   },
   smoke_flask: {
     id: 'smoke_flask', slot: 'guard', name: 'Smoke Flask', short: 'Smoke Flask',
@@ -459,9 +459,9 @@ export const SPELLBOOK = {
   },
   sling: {
     id: 'sling', slot: 'primary', name: "Shepherd's Sling", short: 'Sling',
-    blurb: `Sling stones, 2 to a pouch: more damage the further it flies (${D(SPELLS.sling.near)} up close, ${D(SPELLS.sling.far)} at ${SPELLS.sling.farDist} m). The 2nd makes them flinch.`,
+    blurb: `Sling stones, 3 to a pouch: more damage the further it flies (${D(SPELLS.sling.near)} up close, ${D(SPELLS.sling.far)} at ${SPELLS.sling.farDist} m). The 3rd makes them flinch.`,
     cooldown: SPELLS.sling.cooldown,
-    magazine: 2, reload: PRIMARY_RELOAD, idleReload: 2,
+    magazine: 3, reload: PRIMARY_RELOAD, idleReload: 2,   // (round 16 review, Ty approved) was 2
   },
   hex_shards: {
     id: 'hex_shards', slot: 'primary', name: 'Hex Shards', short: 'Hex',
@@ -576,12 +576,12 @@ export const SPELLBOOK = {
   },
   firewall: {
     id: 'firewall', slot: 'guard', name: 'Firewall', short: 'Firewall',
-    blurb: 'Tap: a 5 m wall of flame rises ahead for 2.5 s. It burns up every enemy projectile and thrown object that crosses it. Walking through it burns.',
+    blurb: `Tap: a 5 m wall of flame rises ahead for 3.5 s. It burns up every enemy projectile and thrown object that crosses it. Walking through it burns for ${D(20)}.`,
     dist: 2.5,           // in front of her, across her aim
     width: 5, height: 3,
-    life: 2.5,
+    life: 3.5,           // (round 16 review, Ty approved) was 2.5
     thickness: 0.5,      // how close to its plane counts as touching it
-    cooldown: 10,
+    cooldown: 8,         // (round 16 review, Ty approved) was 10
   },
   black_death: {
     id: 'black_death', slot: 'guard', name: 'Sanguine Aegis', short: 'Aegis', ward: true, allSides: true,   // round 16: Black Death renamed (id kept)
@@ -606,7 +606,7 @@ export const SPELLBOOK = {
     id: 'ram_guard', slot: 'guard', name: 'Ram Guard', short: 'Ram Guard',
     blurb: `Tap: 3 rams circle you for 3 s and take shots meant for you. Whoever hits one gets charged by it (${D(30)} and knocked flat).`,
     count: 3, radius: 2.2, lap: 1.5, life: 3,
-    cooldown: 10,
+    cooldown: 8,         // (round 16 review, Ty approved) was 10
   },
   glacial_bulwark: {
     id: 'glacial_bulwark', slot: 'guard', name: 'Glacial Bulwark', short: 'Bulwark',
@@ -675,16 +675,16 @@ export const SPELLBOOK = {
   },
   blizzard: {
     id: 'blizzard', slot: 'ultimate', name: 'Blizzard', short: 'Blizzard', ult: true,
-    blurb: 'A 70° cone of snow, 14 m long, for 2.5 s (turn slowly to steer it): it pushes enemies back, chips 10 a second, and freezes anyone caught in it for 0.8 s. Walls block it; wards don\'t.',
-    cone: 70, range: 14, height: 5,
+    blurb: `An 85° cone of snow, 14 m long, for 2.5 s (turn slowly to steer it): it pushes enemies back, chips ${D(16)} a second, and freezes anyone caught in it for 0.5 s. Walls block it; wards don't.`,
+    cone: 85, range: 14, height: 5,   // (round 16 review, Ty approved) cone was 70°
     duration: 2.5,
     turnRate: 0.9,       // rad/s the cone follows his facing
     push: 3.2,           // m/s away from him
-    freezeAfter: 0.8,    // seconds inside it (in total) before the freeze
+    freezeAfter: 0.5,    // seconds inside it (in total) before the freeze ((round 16 review, Ty approved) was 0.8)
     tick: 0.25,
   },
-  blizzard_chip: {       // a Blizzard tick (a hit kind): 10 damage a second
-    id: 'blizzard_chip', name: 'Blizzard', ult: true, damage: 2.5, stun: 0, knockback: 0, staminaCost: 0, unblockable: true, noInterrupt: true,
+  blizzard_chip: {       // a Blizzard tick (a hit kind): 16 damage a second ((round 16 review, Ty approved) was 10)
+    id: 'blizzard_chip', name: 'Blizzard', ult: true, damage: 4, stun: 0, knockback: 0, staminaCost: 0, unblockable: true, noInterrupt: true,
   },
   blizzard_freeze: {     // a Blizzard's freeze (a hit kind): Frostfall's ice block
     id: 'blizzard_freeze', name: 'Blizzard', ult: true, damage: 0, stun: 0, knockback: 0, staminaCost: 0, unblockable: true,
@@ -692,16 +692,18 @@ export const SPELLBOOK = {
   },
   eye_of_storm: {
     id: 'eye_of_storm', slot: 'ultimate', name: 'Eye of the Storm', short: 'Eye', ult: true,
-    blurb: `Become a tornado for 3 s: 1.3× speed, unstoppable, pulls enemies within 7 m in, ${D(8)} damage every 0.5 s, then flings them out.`,
+    blurb: `Become a tornado for 3 s: 1.3× speed, unstoppable, pulls enemies within 8 m in, ${D(11)} damage every 0.5 s, then flings them out for ${D(22)}.`,
     duration: 3,
     speedMul: 1.3,
-    radius: 7,
+    radius: 8,           // (round 16 review, Ty approved) was 7
     pull: 1.9,           // m/s inward on enemies inside the radius (below the 3 m/s walk, so they can still crawl out)
-    tick: 0.5, damage: 8, stun: 0, knockback: 0, staminaCost: 10,   // a ward facing her soaks a tick for 10
+    tick: 0.5, damage: 11, stun: 0,   // (round 16 review, Ty approved) damage was 8
+    knockback: 0, staminaCost: 10,   // a ward facing her soaks a tick for 10
     height: 3,           // vertical reach
   },
   firewall_burn: {       // walking through a Firewall (a hit kind)
-    id: 'firewall_burn', name: 'Firewall', damage: 15, stun: 0, knockback: 0, staminaCost: 0, unblockable: true, noInterrupt: true,
+    id: 'firewall_burn', name: 'Firewall', damage: 20,   // (round 16 review, Ty approved) was 15
+    stun: 0, knockback: 0, staminaCost: 0, unblockable: true, noInterrupt: true,
   },
   potion_splash: {       // Potion Toss's splash around where it shattered (a hit kind)
     id: 'potion_splash', name: 'Potion Toss', damage: 8, stun: 0, knockback: 1, staminaCost: 6, noInterrupt: true,
@@ -719,37 +721,43 @@ export const SPELLBOOK = {
     id: 'bulwark_frost', name: 'Glacial Bulwark', damage: 4, stun: 0, knockback: 0, staminaCost: 0, unblockable: true,
     bind: 1.5, freeze: true,
   },
+  cage_burn: {           // (round 16 review, Ty approved) an enemy inside a Night Cage (a hit kind): 2.5 every 0.5 s, 5 a second base
+    id: 'cage_burn', name: 'Night Cage', ult: true, damage: 2.5, stun: 0, knockback: 0, staminaCost: 0, unblockable: true, noInterrupt: true,
+  },
   eye_burst: {           // the final fling (a hit kind, not a spell in a kit)
     id: 'eye_burst', name: 'Eye of the Storm', ult: true,
-    damage: 15, stun: 0.6, knockback: 8, staminaCost: 30, launch: 2.2,   // launch: visual hop height (m)
+    damage: 22, stun: 0.6, knockback: 8, staminaCost: 30, launch: 2.2,   // (round 16 review, Ty approved) damage was 15
+      // launch: visual hop height (m)
   },
   stampede: {
     id: 'stampede', slot: 'ultimate', name: 'Stampede', short: 'Stampede', ult: true,
-    blurb: 'Hold Q to aim a lane, release: after a 1 s rumble, 8 rams thunder down it (6 m wide, 28 m long). Each flattens the first enemy it meets.',
+    blurb: 'Hold Q to aim a lane, release: after a 0.7 s rumble, 10 rams thunder down it (6 m wide, 28 m long). Each flattens the first enemy it meets.',
     width: 6, length: 28,
-    telegraph: 1,
-    rams: 8,
+    telegraph: 0.7,      // (round 16 review, Ty approved) was 1
+    rams: 10,            // (round 16 review, Ty approved) was 8
     spread: 2,           // first to last ram
     range: 28,           // the aim point only sets the lane's direction
     castPose: 0.7,
   },
   berserker_brew: {
     id: 'berserker_brew', slot: 'ultimate', name: 'Berserker Brew', short: 'Brew', ult: true,
-    blurb: 'Drink it down: for 7 s your potions and pools hit 50% harder, and every cooldown (your reload too) is halved.',
+    blurb: 'Drink it down: it heals 30 HP, and for 7 s every spell of yours hits 50% harder and every cooldown (your reload too) is halved.',
     duration: 7,
-    damageMul: 1.5,
+    damageMul: 1.5,      // (round 16 review, Ty approved) on every spell's damage (was potions and pools only)
+    heal: 30,            // (round 16 review, Ty approved) the drink heals this
     cooldownMul: 0.5,
     drink: 1.2,          // the drinking pose
   },
   night_cage: {
     id: 'night_cage', slot: 'ultimate', name: 'Night Cage', short: 'Cage', ult: true,
-    blurb: 'Hold Q to aim, release: a 7 m ring of black spikes for 4 s. Enemies inside can\'t get out, enemies outside can\'t get in. It heals you while you are inside, 10 HP a second.',
+    blurb: 'Hold Q to aim, release: a 7 m ring of black spikes for 4 s. Enemies inside can\'t get out, enemies outside can\'t get in. It heals you 15 HP a second while you are inside, and burns the enemies in it.',
     radius: 7,
     range: 24,
     duration: 4,
     flyOver: 3,          // a wizard higher than this (Skyward Flash) passes over the ring
     castPose: 0.6,
-    heal: 10,            // Ty: HP a second for Vesper and her teammates standing inside (to max HP)
+    heal: 15,            // Ty: HP a second for Vesper and her teammates standing inside (to max HP; (round 16 review, Ty approved) was 10)
+    burn: 0.5,           // (round 16 review, Ty approved) enemies inside take a cage_burn hit every this many s (5 base a second)
   },
 };
 
@@ -821,7 +829,7 @@ export const SPARK_STUN_IMMUNITY = 0.6; // after a spark stun ends, further spar
 export const TK = {
   range: 16,
   aimConeDeg: 12,
-  liftTime: 0.35,
+  liftTime: 0.25,      // (round 16 review, Ty approved) was 0.35
   hold: { fwd: 1.25, side: -0.75, up: 1.75 },  // relative to the caster; side < 0 is their right, clear of the crosshair
 };
 
@@ -987,7 +995,7 @@ export const SPELL_INFO = {
   spark:         { element: 'arcane', tags: ['Projectile', 'Hitscan-like', 'Interrupts'], damage: `${D(SPELLS.fast.damage)}`, cooldown: S_(SPELLS.fast.cooldown), range: M_(54), windup: '' },
   fireball:      { element: 'fire',   tags: ['Projectile', 'Interrupts'], damage: `${D(SPELLS.fireball.damage)} / ${D(SPELLS.fireball.finDamage)}`, cooldown: S_(SPELLS.fireball.cooldown), range: M_(Math.round(SPELLS.fireball.speed * SPELLS.fireball.life)), windup: '' },
   gale_shear:    { element: 'wind',   tags: ['Projectile', 'Hitscan-like', 'Interrupts'], damage: `${D(16)}`, cooldown: S_(0.42), range: M_(8), windup: '' },
-  glacial_skim:  { element: 'ice',    tags: ['Projectile', 'Slows', 'Interrupts'], damage: `3 × ${D(SPELLS.skim.damage)}`, cooldown: S_(SPELLBOOK.glacial_skim.cooldown), range: M_(22), windup: '' },
+  glacial_skim:  { element: 'ice',    tags: ['Projectile', 'Slows', 'Interrupts'], damage: `3 × ${D(SPELLS.skim.damage)}`, cooldown: S_(SPELLBOOK.glacial_skim.cooldown), range: M_(Math.round(SPELLS.skim.speed * SPELLS.skim.life)), windup: '' },
   hex_shards:    { element: 'dark',   tags: ['Projectile', 'Interrupts'], damage: `${D(SPELLS.hex.damage)}`, cooldown: S_(SPELLS.hex.cooldown), range: M_(SPELLS.hex.range), windup: '' },
   sling:         { element: 'earth',  tags: ['Projectile', 'Hitscan-like'], damage: `${D(SPELLS.sling.near)}–${D(SPELLS.sling.far)}`, cooldown: S_(SPELLS.sling.cooldown), range: M_(32), windup: '' },
   potion_toss:   { element: 'acid',   tags: ['Projectile', 'Lob', 'Area', 'Stuns'], damage: `${D(SPELLS.potion.damage)} / ${D(SPELLS.potion.finDamage)}`, cooldown: S_(SPELLS.potion.cooldown), range: M_(SPELLS.potion.range), windup: '' },
@@ -1000,11 +1008,11 @@ export const SPELL_INFO = {
   toxic_flask:   { element: 'acid',   tags: ['Lob', 'Area'], damage: `${D(12)} + ${D(12)}/s`, cooldown: S_(8), range: M_(18), windup: '', duration: S_(5) },
   // shields (R)
   ward:          { element: 'arcane', tags: ['Shield'], damage: '', cooldown: 'hold', range: '', windup: '', duration: 'about 3 s' },
-  firewall:      { element: 'fire',   tags: ['Shield', 'Area'], damage: `${D(15)} to walk through`, cooldown: S_(10), range: M_(5), windup: '', duration: S_(2.5) },
+  firewall:      { element: 'fire',   tags: ['Shield', 'Area'], damage: `${D(SPELLBOOK.firewall_burn.damage)} to walk through`, cooldown: S_(SPELLBOOK.firewall.cooldown), range: M_(5), windup: '', duration: S_(SPELLBOOK.firewall.life) },
   tempest_veil:  { element: 'wind',   tags: ['Shield'], damage: '', cooldown: S_(SPELLBOOK.tempest_veil.cooldown), range: '', windup: '', duration: S_(SPELLBOOK.tempest_veil.duration) },
   glacial_bulwark: { element: 'ice',  tags: ['Shield', 'Roots'], damage: '', cooldown: S_(12), range: M_(6), windup: '', duration: S_(5) },
   black_death:   { element: 'dark',   tags: ['Shield', 'Heal'], damage: '', cooldown: 'hold', range: '', windup: '', duration: 'about 3.5 s' },
-  ram_guard:     { element: 'earth',  tags: ['Shield', 'Summon', 'Knockdown'], damage: `${D(SPELLBOOK.ram_charge.damage)}`, cooldown: S_(10), range: '', windup: '', duration: S_(3) },
+  ram_guard:     { element: 'earth',  tags: ['Shield', 'Summon', 'Knockdown'], damage: `${D(SPELLBOOK.ram_charge.damage)}`, cooldown: S_(SPELLBOOK.ram_guard.cooldown), range: '', windup: '', duration: S_(3) },
   smoke_flask:   { element: 'acid',   tags: ['Shield', 'Area'], damage: '', cooldown: S_(10), range: M_(2.4), windup: '', duration: S_(2) },
   // mobility (E)
   smoke_screen:  { element: 'fire',   tags: ['Dash', 'Area'], damage: '', cooldown: S_(8), range: M_(6.5), windup: '', duration: 'cloud 5 s' },
@@ -1012,18 +1020,18 @@ export const SPELL_INFO = {
   skyward:       { element: 'ice',    tags: ['Dash'], damage: '', cooldown: S_(6), range: M_(7), windup: '', duration: 'float 2.8 s' },
   mirror_step:   { element: 'dark',   tags: ['Dash'], damage: '', cooldown: S_(7), range: M_(7), windup: '', duration: 'decoys 2.5 s' },
   ram_ride:      { element: 'earth',  tags: ['Dash', 'Summon', 'Knockdown'], damage: `${D(15)}`, cooldown: S_(8), range: M_(20), windup: S_(SPELLBOOK.ram_ride.mount) },
-  flask_step:    { element: 'acid',   tags: ['Teleport', 'Lob', 'Wind-up'], damage: '', cooldown: S_(8), range: M_(16), windup: S_(0.6) },
+  flask_step:    { element: 'acid',   tags: ['Teleport', 'Lob', 'Wind-up'], damage: '', cooldown: S_(SPELLBOOK.flask_step.cooldown), range: M_(16), windup: S_(SPELLBOOK.flask_step.windup) },
   // utility (F)
-  telekinesis:   { element: 'arcane', tags: ['Knockdown'], damage: `${D(22)}`, cooldown: S_(3), range: M_(16), windup: '' },
+  telekinesis:   { element: 'arcane', tags: ['Knockdown'], damage: `${D(SPELLS.prop.damage)}`, cooldown: S_(3), range: M_(16), windup: '' },
   trapped_relic: { element: 'dark',   tags: ['Area', 'Stuns'], damage: `trap ${D(SPELLBOOK.trapped_relic.damage)}`, cooldown: S_(SPELLBOOK.trapped_relic.cooldown), range: M_(16), windup: '', duration: '2 traps' },
   roll:          { element: 'arcane', tags: ['Dash', 'Dodge'], damage: '', cooldown: '3.5 s × 2', range: M_(4.5), windup: '', duration: 'dodge 0.25 s' },
   // ultimates (Q, charged)
   meteor_rain:   { element: 'fire',   tags: ['Area', 'Wind-up'], damage: `kill ${M_(SPELLBOOK.meteor_rain.killRadius)} · ${D(SPELLBOOK.meteor_rain.splash[0])}–${D(SPELLBOOK.meteor_rain.splash[1])}`, cooldown: 'charge', range: M_(24), windup: S_(1.3) },
-  eye_of_storm:  { element: 'wind',   tags: ['Area', 'Channel', 'Wind-up'], damage: `${D(8)} / 0.5 s`, cooldown: 'charge', range: M_(7), windup: S_(1.3), duration: S_(3) },
-  blizzard:      { element: 'ice',    tags: ['Area', 'Channel', 'Roots', 'Wind-up'], damage: `${D(10)}/s`, cooldown: 'charge', range: M_(14), windup: S_(1.3), duration: S_(2.5) },
-  night_cage:    { element: 'dark',   tags: ['Area', 'Heal', 'Wind-up'], damage: '', cooldown: 'charge', range: M_(24), windup: S_(1.3), duration: S_(4) },
+  eye_of_storm:  { element: 'wind',   tags: ['Area', 'Channel', 'Wind-up'], damage: `${D(SPELLBOOK.eye_of_storm.damage)} / 0.5 s`, cooldown: 'charge', range: M_(SPELLBOOK.eye_of_storm.radius), windup: S_(1.3), duration: S_(3) },
+  blizzard:      { element: 'ice',    tags: ['Area', 'Channel', 'Roots', 'Wind-up'], damage: `${D(SPELLBOOK.blizzard_chip.damage * 4)}/s`, cooldown: 'charge', range: M_(14), windup: S_(1.3), duration: S_(2.5) },
+  night_cage:    { element: 'dark',   tags: ['Area', 'Heal', 'Wind-up'], damage: `${D(SPELLBOOK.cage_burn.damage) / SPELLBOOK.night_cage.burn}/s`, cooldown: 'charge', range: M_(24), windup: S_(1.3), duration: S_(4) },
   stampede:      { element: 'earth',  tags: ['Area', 'Summon', 'Wind-up'], damage: 'kill', cooldown: 'charge', range: M_(28), windup: S_(1.3) },
-  berserker_brew: { element: 'acid',  tags: ['Wind-up'], damage: '×1.5 potions', cooldown: 'charge', range: '', windup: S_(1.3), duration: S_(7) },
+  berserker_brew: { element: 'acid',  tags: ['Wind-up'], damage: '×1.5, heals 30', cooldown: 'charge', range: '', windup: S_(1.3), duration: S_(7) },
 };
 
 // Everything pickable, per slot (SPELLBOOK order).
@@ -1034,10 +1042,6 @@ export const SPELL_POOL = Object.fromEntries(LOADOUT_SLOTS.map(slot =>
 export const COMBOS = [
   { id: 'blood_lash', name: 'Blood Tithe', spells: ['black_death', 'sanguine_lash'],
     text: 'Damage Sanguine Aegis absorbs cuts Blood Siphon\'s cooldown and charges its next bolt (up to +14).' },
-  { id: 'brew_potions', name: 'Hot Brew', spells: ['berserker_brew', 'potion_toss'],
-    text: 'Under Berserker Brew, potions and their splash hit 50% harder.' },
-  { id: 'brew_pools', name: 'Strong Brew', spells: ['berserker_brew', 'toxic_flask'],
-    text: 'Under Berserker Brew, Toxic Flask and its pool hit 50% harder.' },
   { id: 'sky_frost', name: 'Hail from Above', spells: ['skyward', 'frostfall'],
     text: 'Frostfall can be cast mid-air during a Skyward Flash.' },
 ];
