@@ -15,6 +15,7 @@ import { loadLoadout, saveLoadout, loadVoice, saveVoice } from './loadout-store.
 import { spellPlay } from './spellanim.js';
 import * as spellanim from './spellanim.js';   // (rollKey: round 12, may not be there yet)
 import { mountMatchUI } from './match-ui.js';
+import * as Podium from './podium.js';   // round 16: the end-of-match podium (characters agent); importing it preloads the stage
 
 // ---------------------------------------------------------------- setup
 const canvas = document.getElementById('game');
@@ -279,7 +280,7 @@ $('#respawnBtn').addEventListener('click', () => {
   menuOpen = false; play(); updateLockUI();
 });
 document.addEventListener('keydown', (e) => {
-  if (e.code !== 'Escape' || !me || input.locked) return;
+  if (e.code !== 'Escape' || !me || input.locked || Podium.active()) return;   // (Esc skips the podium instead)
   menuOpen = !menuOpen; updateLockUI();
 });
 input.onLockError = () => {
@@ -305,7 +306,7 @@ updateSoundInd();
 input.onLockChange = (locked) => {
   if (locked) { menuOpen = false; updateLockUI(); return; }
   // Esc releases the lock with the page still focused: the menu. Losing it to another window or tab: the prompt.
-  setTimeout(() => { if (input.locked) return; menuOpen = document.hasFocus() && document.visibilityState === 'visible'; updateLockUI(); }, 120);
+  setTimeout(() => { if (input.locked) return; menuOpen = !Podium.active() && document.hasFocus() && document.visibilityState === 'visible'; updateLockUI(); }, 120);   // (the podium lets go of the mouse: not the menu)
 };
 function updateBotTally() {
   const n = [...players.values()].filter(w => w.botLevel).length;
@@ -319,6 +320,7 @@ document.addEventListener('keydown', backFromIdle, true);
 document.addEventListener('mousedown', backFromIdle, true);
 $('#rejoinBtn').addEventListener('click', () => location.reload());
 net.onClose = () => {
+  Podium.stop(true);
   if (!me || kickedNow) return;
   ui.status.textContent = 'Disconnected from server — refresh to rejoin.';
   ui.status.style.color = '#ff5c6a';
@@ -1298,8 +1300,12 @@ function handleMessage(msg) {
       if (f) { effects.endFirewall(f.fx); firewalls.delete(msg.id); sfx.play('firewall_break', { pos: [f.data.x, 1, f.data.z], vol: 0.45, jitter: 0.05 }); }
       break;
     }
-    case 'recap': matchUI.onMessage(msg); break;   // round 16: the end-of-match recap (match-ui.js; window 'wa:recap' for a podium scene)
+    case 'recap':
+      // round 16: the end-of-match recap on podium.js's stage; match-ui.js's 2D podium when that can't play
+      if (!Podium.start(msg, { renderer, scene, onEnd: () => updateLockUI() })) matchUI.onMessage(msg);
+      break;
     default:
+      if (msg.t === 'matchPhase' && msg.match.phase !== 'recap') Podium.stop(true);   // (the rematch's countdown: back to the arena)
       if (msg.t.startsWith('match')) { matchSounds(msg); matchUI.onMessage(msg); }
   }
 }
@@ -2656,6 +2662,10 @@ function frame(t) {
 
   if (me) {
     for (const msg of net.drain()) handleMessage(msg);
+    if (Podium.active()) {   // the podium recap: its own stage and camera; the game waits (no input, nothing else drawn)
+      matchUI.update(dt); updateMusic(); Podium.frame(dt); input.endFrame();
+      return;
+    }
     // round 16: the end's 1.5 s gap plays the others' animations and the effects in slow motion (the last kill sinking in)
     slowMo = matchUI.state()?.phase === 'end' ? 0.3 : 1;
     updateLocal(dt);
