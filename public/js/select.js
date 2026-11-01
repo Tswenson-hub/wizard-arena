@@ -421,6 +421,7 @@ export function openHowToPlay() {
     back.remove(); howTo = null;
   };
   const onKey = (e) => {
+    if (document.body.classList.contains('recap-on')) return;   // hidden under the podium recap: its keys are the recap's
     if (e.key === 'Escape' || e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); close(); }
     else if (e.key === 'Tab') { e.preventDefault(); back.querySelector('.htp-close').focus(); }
   };

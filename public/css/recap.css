@@ -1,7 +1,10 @@
 /* The end-of-match podium recap's overlay (podium.js): a tag over each of the top three, the rest on one line, Skip, a progress bar. */
 /* while it plays (body.recap-on) the game's HUD, the match bar and the click-to-play prompt step aside */
 body.recap-on #hud, body.recap-on #matchUI, body.recap-on #lockPrompt, body.recap-on #deathScreen, body.recap-on #vignette,
-body.recap-on #scoreboard { visibility: hidden !important; }
+body.recap-on #scoreboard,
+/* the how-to-play cards (select.js: the first match's floating card, the full card) wait under it; they return when it ends
+   unless they were dismissed (or the floating one timed out) meanwhile */
+body.recap-on .htp-float, body.recap-on .htp-back { visibility: hidden !important; }
 .recap { position: fixed; inset: 0; z-index: 60; pointer-events: none; color: #f4ecd8; font-family: inherit; }
 .rc-head {
   position: absolute; top: 18px; left: 50%; transform: translateX(-50%); padding: 6px 18px; border-radius: 999px;
