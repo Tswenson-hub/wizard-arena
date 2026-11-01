@@ -1,5 +1,34 @@
 # Spells hand-off
 
+## Round 16, later: Cyclone and Relic nerfs, the Flask Step teleport fix, the end-of-match recap
+- **Arcane Cyclone** `974423c`, `93d8ad9`:
+  - Radius 5.5 → 4 m; damage and cooldown kept.
+  - Everything reads `SPELLBOOK.cyclone.radius`: the hit, the card, the debris speed (scaled from 5.5), and the bots (fire < radius − 1, dive to radius − 1.5, veil beyond radius − 1).
+  - Test: hit at 3.5 m, not at 4.5 m.
+- **Trapped Relic** `a151213`, `cbf1a1f`:
+  - `traps: 1` (a new curse clears the old one); cooldown and liftCooldown 9.
+  - The card shows "1 trap". The server cap, the HUD pips and the bots already read `RELIC.traps`.
+- **Balance** (normal, 2 × 12 runs, /tmp/wa-spells/r16/c7a and c7b):
+  - Cyclone: 7 of 186 kills (3.8%), equipped K/D 0.96 and 0.67.
+  - Trapped Relic: 12 (6.5%); Telekinesis 11 (5.9%).
+  - The two batches disagree about Utility (Telekinesis 80% of Utility kills in one, Relic 77% in the other): noise.
+- **Flask Step fix** `0fc05c8`, `3d5ac1b`:
+  - The cause: a race. A `state` the client sent before it heard of a server-placed move (old spot) was accepted as the post-teleport report (`justTeleported` skips the speed check). Then the real reports looked like overspeed and dragged the server copy at a run.
+  - The fix: `placeAt(p, to)` bumps `p.tpSeq`, used for Flask Step's landing, Mirror Step, Meteor Rain's landing and respawn.
+  - The broadcasts carry `seq`; the client echoes `tp` in each state; the server ignores positions from older reports.
+  - Blink, Smoke Screen and Roll are client-predicted (no race).
+  - The test client echoes `tp` like the browser.
+  - Tests: the old-spot report ignored; a Spark at the old spot misses and at the landing hits; a throw into a wall lands where predicted. Without the fix the test fails (the server ends 1.1 m from the old spot).
+- **Recap** `c2d387c`, `eb6aa87`, `2028cc4`, `f8c9c06`, `1b9dfca`, `292c8cc`, `be87ba4`:
+  - Phases: live → `end` (1.5 s gap; client slow-mo 0.3× on others' animations and effects) → `recap` (10 s) → countdown.
+  - match.js keeps `p.ms` (assists, dmgTaken, healed, potions, longest, airJumps, traps, biggest), plus `mDmg` without overkill.
+  - Hooks: `onHeal` (from `heal()`, so natural regen is excluded), `onPotion`, `onAirJump`, `onTrap`, `onDamage(…, from)`.
+  - `pickAccolades`: the ACCOLADES list; 1–2 per podium place, never repeated, ties to the better placing.
+  - The message has both shapes: `podium` / `everyone` and `top` / `rest`.
+  - The client plays podium.js's 3D stage; match-ui.js's 2D podium is the fallback. Window events `wa:recap` / `wa:recapEnd`.
+  - matchDebug `recapTime`.
+  - Headless swiftshader freezes for seconds on the podium's first frame, so it can miss most of a 10 s recap; a real browser doesn't.
+
 ## Round 16 balance-review buffs (Ty approved all as proposed)
 Commits: `8af3a11` (the buffs), `1769b0d` (unit tests), plus this hand-off.
 
