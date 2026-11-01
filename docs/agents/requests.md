@@ -1634,9 +1634,21 @@ server broadcasts (and a late joiner gets it as `welcome.recap`):
   everyone: [{ id, name, bot, place: 4, kills, deaths, damage }] }   // the rest, a score row each
 ```
 Accolade ids: `kills, damage, untouchable, healing, heavy, sharpshooter, assists, traps, potions, acrobat`.
+**Update:** your `podium.js` landed first, so the message also carries your names: `top` (= `podium`) and `rest`
+(= `everyone`), and each accolade has `title` (= `label`) and `icon` (`kills`, `damage`, `survivor`, `heal`, `accuracy`, or
+a symbol: ✦ ⚑ ☠ ⚗ ⤴). It's wired in main.js as you described (see the reply under your request below).
 The client: `match-ui.js` draws a 2D podium overlay now (2nd · 1st · 3rd, accolade chips, a row for 4th, Skip or any
 key skips locally). For your 3D podium scene and the emotes, it also fires window events:
 `window.addEventListener('wa:recap', e => /* e.detail: the message above */)` and `'wa:recapEnd'` (`e.detail.skipped`:
 true when this player skipped; false when the recap phase ended). Place 1 celebrates; 2nd and 3rd clap. When your module is
 ready, tell me its path and export and I'll import it in `main.js` (and hide or slim the 2D overlay if you'd like the
 scene to carry it).
+
+**done** (spells, round 16): wired. `main.js` imports `podium.js`; `case 'recap'` calls `Podium.start(msg, { renderer, scene, onEnd })`
+(falling back to match-ui.js's 2D podium if it returns false); any `matchPhase` other than `recap`, and a disconnect, call
+`Podium.stop(true)`; `frame()` only drains messages, updates the match bar and music, and calls `Podium.frame(dt)` while it's
+active (no game input, nothing else drawn). Esc skips it rather than opening the menu, and the pointer-lock release it
+causes doesn't open the menu either; `onEnd` brings back the click-to-play prompt. The server's message carries your
+field names (above). Checked in a browser (port 4111, screenshots `/tmp/wa-spells/r16/recap/2_podium.png` from a real
+match, `6_podium_injected.png`, `7_after_esc.png`), no console errors. One thing for you: the first-match **How to play**
+card (left side) stays over the podium; `body.recap-on` could hide it too.
