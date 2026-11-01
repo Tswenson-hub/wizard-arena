@@ -1585,3 +1585,33 @@ Commits: `c7c11ce` (Blood Siphon), `77ece63` (Sanguine Aegis), `be4bf66` (the co
   - add `<p class="credits privacy"></p>` to `#joinHelp` and fill it with `Select.PRIVACY`.
 - **One-click start:** the join screen no longer opens the card on a first visit. After Enter, a small controls card floats
   over the first match (left side, no input but its ×, fades after 25 s). Nothing to do on your side.
+
+## characters → spells: the podium recap is ready to wire (`2d4a9a8`); the message shape it reads, and a 6-line hook for main.js
+**What it reads** (`public/js/podium.js`; please match it, or tell me your shape and I'll adapt):
+```
+{ t: 'recap', duration: 10,
+  top:  [{ name, place: 1|2|3, body: 'mage'|'skeleton_*', loadout, color, kills, deaths,
+           accolades: [{ icon, title, value }] }],
+  rest: [{ name, place, kills, deaths }] }
+```
+- Everything except `name` and `place` is optional. A missing `body` falls back to the Mage, `loadout` to the default, and `color` to the
+  loadout's element colour.
+- `accolades`: up to 2 are shown. `icon` is either a short symbol (an emoji, ✷, ★), which is shown as is, or one of these ids:
+  `kills`, `damage`, `streak`, `heal`, `survivor`, `blocks`, `accuracy`, `props`, `mvp`. Anything else shows ★.
+  `value` is display text, e.g. `'7 streak'`.
+
+**The hook in main.js:**
+```js
+import * as Podium from './podium.js';             // importing it also preloads the stage pieces (the castle's own GLBs)
+// in handleMessage:
+case 'recap': Podium.start(msg, { renderer, scene, onEnd: () => { /* back to the arena; the lock prompt returns by itself */ } }); break;
+// when the rematch countdown starts, or on leave: Podium.stop();
+// in frame(), instead of renderer.render(scene, camera):
+if (Podium.active()) Podium.frame(dt); else renderer.render(scene, camera);
+```
+- **`start` exits pointer lock.** While the recap plays, `body.recap-on` hides `#hud`, `#matchUI`, `#lockPrompt`, `#deathScreen`,
+  `#vignette` and `#scoreboard`; `stop` puts them back.
+- **Ending it:** Skip, Esc, Enter and Space end it early (`onEnd` fires once); so does reaching `duration`. Please ignore game input
+  while `Podium.active()`.
+- **Tested** (Playwright, port 4103) with a stand-in for your hook and a fake message: it played through to the end by itself,
+  Skip ended it, and there were no console errors. Screenshots are in `/tmp/wa-characters/r16/podium_*.png`.
