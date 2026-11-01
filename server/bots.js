@@ -504,7 +504,7 @@ function think(me, world, t) {
 
   if (Math.random() > cfg.aggression) return;
 
-  // ---- Trapped Relic (traps only): with a trap to spare, or both far from the fight, curse a prop where they're likely to walk
+  // ---- Trapped Relic (traps only): with a trap to spare, or ours far from the fight (re-laying it there), curse a prop where they're likely to walk
   if (K.utility === 'trapped_relic' && t >= b.nextCurse && t >= me.cd.lift && !target.decoy) {
     b.nextCurse = t + rand(2, 4);
     const mine = [...world.props.values()].filter(pr => pr.cursedBy === me.id && pr.state === 'idle');

@@ -626,9 +626,9 @@ export const SPELLBOOK = {
   },
   trapped_relic: {
     id: 'trapped_relic', slot: 'utility', name: 'Trapped Relic', short: 'Relic',
-    blurb: 'Curse an object. It explodes when an enemy comes near, lifts it or breaks it.',
+    blurb: 'Curse an object. It explodes when an enemy comes near, lifts it or breaks it. One trap at a time: a new curse clears the old.',
     hold: 0.5,           // F on an object: this long to curse it (no lifting with Relic: only Telekinesis lifts)
-    traps: 2,            // armed at once per caster; a third clears the oldest
+    traps: 1,            // armed at once per caster; a new curse clears the oldest (round 16, Ty: 2 -> 1)
     trigger: 1.8,        // an enemy this close (m, centre to centre) to a resting trap lights it
     fuse: 0.25,          // lit, it flares, then blows this long later
     seen: 6,             // enemies within this see the trap's glyph
@@ -636,8 +636,8 @@ export const SPELLBOOK = {
     stun: 0.4,
     knockback: 7,
     staminaCost: 40,     // a ward facing the blast blocks it
-    cooldown: 6,         // round 14: 3
-    liftCooldown: 6,     // after each curse (p.cd.lift)
+    cooldown: 9,         // round 16 (Ty): 6, round 14: 3
+    liftCooldown: 9,     // after each curse (p.cd.lift)
   },
   roll: {
     id: 'roll', slot: 'utility', name: 'Roll', short: 'Roll',   // round 13 (Ty): a Utility (F), no longer Mobility
@@ -1023,7 +1023,7 @@ export const SPELL_INFO = {
   flask_step:    { element: 'acid',   tags: ['Teleport', 'Lob', 'Wind-up'], damage: '', cooldown: S_(SPELLBOOK.flask_step.cooldown), range: M_(16), windup: S_(SPELLBOOK.flask_step.windup) },
   // utility (F)
   telekinesis:   { element: 'arcane', tags: ['Knockdown'], damage: `${D(SPELLS.prop.damage)}`, cooldown: S_(3), range: M_(16), windup: '' },
-  trapped_relic: { element: 'dark',   tags: ['Area', 'Stuns'], damage: `trap ${D(SPELLBOOK.trapped_relic.damage)}`, cooldown: S_(SPELLBOOK.trapped_relic.cooldown), range: M_(16), windup: '', duration: '2 traps' },
+  trapped_relic: { element: 'dark',   tags: ['Area', 'Stuns'], damage: `trap ${D(SPELLBOOK.trapped_relic.damage)}`, cooldown: S_(SPELLBOOK.trapped_relic.cooldown), range: M_(16), windup: '', duration: `${SPELLBOOK.trapped_relic.traps} trap${SPELLBOOK.trapped_relic.traps > 1 ? 's' : ''}` },
   roll:          { element: 'arcane', tags: ['Dash', 'Dodge'], damage: '', cooldown: '3.5 s × 2', range: M_(4.5), windup: '', duration: 'dodge 0.25 s' },
   // ultimates (Q, charged)
   meteor_rain:   { element: 'fire',   tags: ['Area', 'Wind-up'], damage: `kill ${M_(SPELLBOOK.meteor_rain.killRadius)} · ${D(SPELLBOOK.meteor_rain.splash[0])}–${D(SPELLBOOK.meteor_rain.splash[1])}`, cooldown: 'charge', range: M_(24), windup: S_(1.3) },

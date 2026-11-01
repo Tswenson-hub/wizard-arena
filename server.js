@@ -860,7 +860,7 @@ function frostfallImpact(f) {
 }
 
 // ---------------------------------------------------------------- Trapped Relic
-// Round 12: traps only (only Telekinesis lifts). Up to RELIC.traps cursed props per caster; a third clears the oldest.
+// Round 12: traps only (only Telekinesis lifts). Up to RELIC.traps cursed props per caster (round 16: 1); a new curse clears the oldest.
 // A trap goes off when an enemy comes within RELIC.trigger of it (after a RELIC.fuse flare), lifts it, or breaks it.
 // Its curser always knows where it is ({ t: 'curse', ids }); an enemy sees its glyph only within RELIC.seen ({ t: 'glyphs' }).
 const cursedBy = (p) => [...props.values()].filter(prop => prop.cursedBy === p.id);
