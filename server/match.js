@@ -29,19 +29,20 @@ import * as C from '../public/shared/constants.js';
 export const FFA = { name: 'Free-for-all', size: 4, target: 15, cap: 420 };   // round 14 (pacing): 10 / 480
 const TIMES = { countdown: 3, end: 1.5, recap: 10 };   // round 16 (Ty): a 3 s countdown, then go (was a 10 s warm-up); the end's gap, then the recap
 const ASSIST_WINDOW = 10;   // s: damage this recent to the victim, by someone other than the killer, is an assist
-// Round 16 (Ty): the recap's accolades. stat(p) -> the number; low: fewer is better; min: the least that earns it; text: the value shown.
+// Round 16 (Ty): the recap's accolades. stat(p) -> the number; low: fewer is better; min: the least that earns it; text: the value shown;
+// icon: podium.js's icon id, or a symbol it shows as is.
 const n0 = (v) => Math.round(v).toLocaleString('en-US');
 export const ACCOLADES = [
-  { id: 'kills', label: 'Most Kills', stat: p => p.kills || 0, min: 1, text: v => `${n0(v)} kill${v === 1 ? '' : 's'}` },
-  { id: 'damage', label: 'Most Damage', stat: p => p.mDmg || 0, min: 1, text: v => `${n0(v)} damage` },
-  { id: 'untouchable', label: 'Untouchable', stat: p => p.deaths || 0, low: true, text: v => `${n0(v)} death${v === 1 ? '' : 's'}` },
-  { id: 'healing', label: 'Most Healing', stat: p => p.ms?.healed || 0, min: 1, text: v => `${n0(v)} healed` },
-  { id: 'heavy', label: 'Heavy Hitter', stat: p => p.ms?.biggest || 0, min: 1, text: v => `${n0(v)} in one hit` },
-  { id: 'sharpshooter', label: 'Sharpshooter', stat: p => p.ms?.longest || 0, min: 5, text: v => `a ${n0(v)} m hit` },
-  { id: 'assists', label: 'Assist King', stat: p => p.ms?.assists || 0, min: 1, text: v => `${n0(v)} assist${v === 1 ? '' : 's'}` },
-  { id: 'traps', label: 'Trapmaster', stat: p => p.ms?.traps || 0, min: 1, text: v => `${n0(v)} trap${v === 1 ? '' : 's'} sprung` },
-  { id: 'potions', label: 'Potion Hunter', stat: p => p.ms?.potions || 0, min: 1, text: v => `${n0(v)} potion${v === 1 ? '' : 's'}` },
-  { id: 'acrobat', label: 'Acrobat', stat: p => p.ms?.airJumps || 0, min: 1, text: v => `${n0(v)} double jump${v === 1 ? '' : 's'}` },
+  { id: 'kills', icon: 'kills', label: 'Most Kills', stat: p => p.kills || 0, min: 1, text: v => `${n0(v)} kill${v === 1 ? '' : 's'}` },
+  { id: 'damage', icon: 'damage', label: 'Most Damage', stat: p => p.mDmg || 0, min: 1, text: v => `${n0(v)} damage` },
+  { id: 'untouchable', icon: 'survivor', label: 'Untouchable', stat: p => p.deaths || 0, low: true, text: v => `${n0(v)} death${v === 1 ? '' : 's'}` },
+  { id: 'healing', icon: 'heal', label: 'Most Healing', stat: p => p.ms?.healed || 0, min: 1, text: v => `${n0(v)} healed` },
+  { id: 'heavy', icon: '✦', label: 'Heavy Hitter', stat: p => p.ms?.biggest || 0, min: 1, text: v => `${n0(v)} in one hit` },
+  { id: 'sharpshooter', icon: 'accuracy', label: 'Sharpshooter', stat: p => p.ms?.longest || 0, min: 5, text: v => `a ${n0(v)} m hit` },
+  { id: 'assists', icon: '⚑', label: 'Assist King', stat: p => p.ms?.assists || 0, min: 1, text: v => `${n0(v)} assist${v === 1 ? '' : 's'}` },
+  { id: 'traps', icon: '☠', label: 'Trapmaster', stat: p => p.ms?.traps || 0, min: 1, text: v => `${n0(v)} trap${v === 1 ? '' : 's'} sprung` },
+  { id: 'potions', icon: '⚗', label: 'Potion Hunter', stat: p => p.ms?.potions || 0, min: 1, text: v => `${n0(v)} potion${v === 1 ? '' : 's'}` },
+  { id: 'acrobat', icon: '⤴', label: 'Acrobat', stat: p => p.ms?.airJumps || 0, min: 1, text: v => `${n0(v)} double jump${v === 1 ? '' : 's'}` },
 ];
 const freshStats = () => ({ assists: 0, dmgTaken: 0, healed: 0, potions: 0, longest: 0, airJumps: 0, traps: 0, biggest: 0 });
 // Placing: kills, then fewer deaths, then damage (then who joined first, so it's stable)
@@ -56,7 +57,7 @@ export function pickAccolades(ranked) {
   const better = (A, a, b) => { const x = A.stat(a), y = A.stat(b); return (A.low ? x < y : x > y) || (x === y && place.get(a.id) < place.get(b.id)); };
   const earns = (A, p) => A.low ? (p.kills || 0) > 0 : A.stat(p) >= A.min;   // (Untouchable needs a kill to count)
   const leads = (A, p, among) => earns(A, p) && among.every(q => q === p || better(A, p, q));
-  const give = (p, A) => { taken.add(A.id); out.get(p.id).push({ id: A.id, label: A.label, value: A.text(A.stat(p)) }); };
+  const give = (p, A) => { taken.add(A.id); out.get(p.id).push({ id: A.id, label: A.label, title: A.label, icon: A.icon, value: A.text(A.stat(p)) }); };
   podium.forEach((p, i) => {
     const A = ACCOLADES.find(A => !taken.has(A.id) && leads(A, p, ranked))
       || ACCOLADES.find(A => !taken.has(A.id) && leads(A, p, podium.slice(i)));
@@ -188,13 +189,11 @@ export function createMatch(ctx) {
   function recapOf(list) {
     const ranked = [...list].sort(byPlace), acc = pickAccolades(ranked);
     const row = (p, i) => ({ id: p.id, name: p.name, bot: !!p.bot, place: i + 1, kills: p.kills || 0, deaths: p.deaths || 0, damage: Math.round(p.mDmg || 0) });
-    return {
-      t: 'recap', duration: S.times.recap,
-      podium: ranked.slice(0, 3).map((p, i) => ({ ...row(p, i), body: p.body || 'mage', color: p.color, loadout: p.loadout,
+    const podium = ranked.slice(0, 3).map((p, i) => ({ ...row(p, i), body: p.body || 'mage', color: p.color, loadout: p.loadout,
         colors: Object.fromEntries(C.LOADOUT_SLOTS.map(s => [s, C.spellInfo(p.loadout?.[s])?.color ?? null])), element: C.dominantElement?.(p.loadout) ?? null,
-        accolades: acc.get(p.id) })),
-      everyone: ranked.slice(3).map((p, i) => row(p, i + 3)),
-    };
+        accolades: acc.get(p.id) }));
+    const everyone = ranked.slice(3).map((p, i) => row(p, i + 3));
+    return { t: 'recap', duration: S.times.recap, podium, everyone, top: podium, rest: everyone };   // (top, rest: the names podium.js reads)
   }
   function startRecap() {
     setPhase('recap', S.times.recap);
