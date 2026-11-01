@@ -1298,6 +1298,7 @@ function handleMessage(msg) {
       if (f) { effects.endFirewall(f.fx); firewalls.delete(msg.id); sfx.play('firewall_break', { pos: [f.data.x, 1, f.data.z], vol: 0.45, jitter: 0.05 }); }
       break;
     }
+    case 'recap': matchUI.onMessage(msg); break;   // round 16: the end-of-match recap (match-ui.js; window 'wa:recap' for a podium scene)
     default:
       if (msg.t.startsWith('match')) { matchSounds(msg); matchUI.onMessage(msg); }
   }
@@ -1306,6 +1307,7 @@ function handleMessage(msg) {
 // ---------------------------------------------------------------- game-mode sounds and menu music
 // (match-ui.js draws the mode; its tones live here with the rest of the sound)
 let lastMatch = null;
+let slowMo = 1;   // the time scale for others' animations and the effects (the end's gap)
 let lastGuardBreak = 0, lastGuardBleat = 0;
 // (lastGuardBreak: the guard's rams go together, one break sound)
 function matchSounds(msg) {
@@ -1322,10 +1324,10 @@ function matchSnapSounds(m) {
   // the warm-up's last three seconds tick down
   if (m.phase === 'countdown' && m.left != null && m.left <= 3.05 && Math.ceil(m.left) !== Math.ceil(prev.left ?? 99) && Math.ceil(m.left) > 0) sfx.ui('countdown_tick', 0.6);
 }
-// The menu music plays on the join screen and the results screen; not in the fight.
+// The menu music plays on the join screen, the end's gap and the recap; not in the fight.
 function updateMusic() {
   const phase = lastMatch?.phase;
-  sfx.setMusic(!me || phase === 'end');
+  sfx.setMusic(!me || phase === 'end' || phase === 'recap');
 }
 // Browsers only allow sound after a gesture: the first click or key on the join screen starts the music.
 for (const ev of ['pointerdown', 'keydown']) document.addEventListener(ev, function first() { sfx.init(); sfx.resume(); updateMusic(); document.removeEventListener(ev, first); });
@@ -2654,12 +2656,14 @@ function frame(t) {
 
   if (me) {
     for (const msg of net.drain()) handleMessage(msg);
+    // round 16: the end's 1.5 s gap plays the others' animations and the effects in slow motion (the last kill sinking in)
+    slowMo = matchUI.state()?.phase === 'end' ? 0.3 : 1;
     updateLocal(dt);
     for (const w of players.values()) {
       if (w === me) continue;
       w.interpolate(dt);
       const moving = w.netAnim === 'run';
-      w.updateAnimation(moving, dt);
+      w.updateAnimation(moving, dt * slowMo);
       // a remote wizard touching down after a Skyward Flash
       const air = w.targetPos.y > 0.3;
       if (w.wasAir && !air && !w.dead) { effects.land([w.targetPos.x, 0, w.targetPos.z]); sfx.land([w.targetPos.x, 0.2, w.targetPos.z]); }
@@ -2708,7 +2712,7 @@ function frame(t) {
   }
   for (const s of spinners) { s.rotation.y += dt; s.position.y += Math.sin(t * 0.002) * 0.002; }
 
-  effects.update(dt);
+  effects.update(dt * slowMo);
   renderer.render(scene, camera);
   input.endFrame();
 }
