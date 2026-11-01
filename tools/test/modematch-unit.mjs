@@ -113,14 +113,41 @@ ok(fighters().length === 4 && [h, h2, h3].every(p => players.has(p.id)), 'an ext
 
 // ---- kills, the target, results, rematch
 for (const p of players.values()) { p.kills = 0; p.deaths = 0; }
+// round 16: the match stats behind the recap (live only; overkill doesn't count; assists within 10 s; natural regen never reaches onHeal)
+{
+  const [a, b, c] = [h, h2, h3];
+  a.p = [0, 0, 0]; b.p = [20, 0, 0]; c.p = [0, 0, 5];
+  b.hp = 90; match.onDamage(b, c, 10, null);
+  b.hp = 60; match.onDamage(b, a, 30, [0, 1.3, 0]);   // a projectile from 20 m
+  b.hp = -20; match.onDamage(b, a, 80, null);         // 80, of which 60 was left
+  match.onKill(b, a);
+  match.onHeal(c, 25, 'siphon'); match.onPotion(c); match.onPotion(c);
+  match.onAirJump(b); match.onAirJump(b); match.onAirJump(b); match.onTrap(a);
+  ok(a.mDmg === 90 && c.mDmg === 10 && b.ms.dmgTaken === 100, `damage dealt and taken, without the overkill (${a.mDmg}, ${c.mDmg}; taken ${b.ms.dmgTaken})`);
+  ok(a.ms.biggest === 80 && Math.round(a.ms.longest) === 20, `the biggest hit (${a.ms.biggest}) and the longest (${a.ms.longest.toFixed(1)} m, from the shot's launch point)`);
+  ok(c.ms.assists === 1 && a.ms.assists === 0, 'damage before someone else\'s kill is an assist (not for the killer)');
+  ok(c.ms.healed === 25 && c.ms.potions === 2 && b.ms.airJumps === 3 && a.ms.traps === 1, 'healing, potions, double jumps and traps sprung count');
+  b.hp = 100;
+}
 h.kills = 14; match.onKill(b1, h); ok(S.phase === 'live', '14 kills: still live');
 h.kills = 15; h2.kills = 4; match.onKill(h2, h);
 ok(S.phase === 'end' && S.results.winner === h.id && S.results.reason === 'target', 'the 15th kill ends the match, the leader wins');
 ok(S.results.players[0].id === h.id && S.results.players.length === 4 && S.results.players[0].loadout, 'results list the 4 fighters, best first, with loadouts');
 ok(!match.isEnemy(h, h2), 'no fighting on the results screen');
 ok(sent.some(m => m.t === 'matchEnd'), 'matchEnd broadcast');
-run(8.1);
-ok(S.phase === 'countdown' && !sent.some(m => m.t === 'matchMode' || m.t === 'matchVotes'), 'results (8 s) → an immediate rematch (the 3 s countdown), no vote');
+// round 16: a 1.5 s gap, then the 10 s recap (the podium and accolades), then the rematch
+run(1.4); ok(S.phase === 'end' && !sent.some(m => m.t === 'recap'), 'a 1.5 s gap after the last kill');
+run(0.2);
+const recap = sent.filter(m => m.t === 'recap').pop();
+ok(S.phase === 'recap' && !!recap && recap.duration === 10 && Math.abs(S.phaseEnd - clock - 10) < 0.1, 'then the recap: broadcast, 10 s');
+ok(recap?.podium.length === 3 && recap.podium.map(p => p.id).join() === [h, h2, h3].map(p => p.id).join() && recap.podium.every((p, i) => p.place === i + 1 && p.body && p.loadout && p.colors)
+  && recap.everyone.length === 1 && recap.everyone[0].place === 4, `a podium of 3 by kills, deaths, damage (${recap?.podium.map(p => p.name).join(', ')}), a row for 4th`);
+const accs = recap?.podium.flatMap(p => p.accolades.map(a => a.id)) || [];
+ok(accs.length === new Set(accs).size && recap.podium.every(p => p.accolades.length >= 1 && p.accolades.length <= 2), `each on the podium has 1–2 accolades, none repeated (${recap?.podium.map(p => p.accolades.map(a => `${a.label}: ${a.value}`).join(' + ')).join(' | ')})`);
+ok(recap?.podium[0].accolades[0].id === 'kills' && recap.podium[0].accolades[0].value === '15 kills', 'the winner is Most Kills, with the value');
+ok(!match.isEnemy(h, h2), 'no fighting during the recap');
+run(9.95);   // (to 0.05 s past the recap's 11.5 s, so the 7-minute check below starts on time)
+ok(S.phase === 'countdown' && !sent.some(m => m.t === 'matchMode' || m.t === 'matchVotes'), 'after the recap: an immediate rematch (the 3 s countdown), no vote');
 ok(fighters().every(p => p.kills === 0 && p.deaths === 0), 'the rematch starts from 0');
 ok(fighters().every(p => (ult.get(p.id) || 0) === 0), 'ultimate charge reset');
 run(3.1); ok(S.phase === 'live', 'rematch goes live after the 3 s countdown');
@@ -129,7 +156,7 @@ run(3.1); ok(S.phase === 'live', 'rematch goes live after the 3 s countdown');
 ok(Math.abs(S.phaseEnd - clock - 420) < 0.2, 'the live phase lasts 7 minutes');
 h.kills = 3; h2.kills = 5; clock = S.phaseEnd - 0.01; run(0.1);
 ok(S.phase === 'end' && S.results.reason === 'time' && S.results.winner === h2.id, 'at the cap the most kills wins');
-run(8.1); run(3.1);
+run(1.6); run(10.1); run(3.1);
 h.kills = 2; h2.kills = 2; clock = S.phaseEnd - 0.01; run(0.1);
 ok(S.phase === 'end' && S.results.winner === null, 'a tie at the cap: no winner');
 

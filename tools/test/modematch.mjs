@@ -13,7 +13,7 @@ const [port, secs = '480', diff = 'normal'] = args.filter((a, i) => !a.startsWit
 const wantRematch = args.includes('--rematch');
 const ws = new WebSocket(`ws://localhost:${port}`);
 const names = {}, loadouts = {};
-let phase = null, liveAt = 0, ended = null, rematch = false;
+let phase = null, liveAt = 0, ended = null, rematch = false, recap = null;
 const sizes = { min: 99, max: 0 };
 const bad = { endHits: 0 };
 let deaths = 0;
@@ -22,7 +22,7 @@ ws.on('open', () => ws.send(JSON.stringify({ t: 'join', name: 'Observer', diffic
 ws.on('message', (raw) => {
   const m = JSON.parse(raw);
   if (m.t === 'welcome') {
-    ws.send(JSON.stringify({ t: 'matchDebug', spectate: true, botDiff: diff, countdown: 2, endTime: 3, target: flag('--target'), cap: flag('--cap') }));
+    ws.send(JSON.stringify({ t: 'matchDebug', spectate: true, botDiff: diff, countdown: 2, endTime: 1.5, recapTime: 3, target: flag('--target'), cap: flag('--cap') }));
     return;
   }
   if (m.t === 'joined') names[m.player.id] = `${m.player.name}(${m.player.bot || 'human'})`;
@@ -33,8 +33,9 @@ ws.on('message', (raw) => {
     if (phase === 'countdown' && ended) { rematch = true; finish(); }
   }
   if (m.t === 'matchEnd' && !ended) { ended = m.results; if (!wantRematch) finish(); }
+  if (m.t === 'recap' && ended) recap = m;   // (round 16: after the gap, before the rematch)
   if (m.t === 'death' && phase === 'live') deaths++;
-  if (m.t === 'hit' && phase === 'end' && m.dmg > 0) bad.endHits++;
+  if (m.t === 'hit' && (phase === 'end' || phase === 'recap') && m.dmg > 0) bad.endHits++;   // (round 16: the gap and the recap)
   if (m.t === 'snap') {
     for (const p of m.players) { names[p.id] ??= `${p.name}(${p.bot || 'human'})`; if (p.loadout) loadouts[p.id] = p.loadout; }
     if (phase === 'live' && !ended) {
@@ -60,7 +61,12 @@ function finish() {
   if (bad.endHits) fails.push('damage on the results screen');
   if (!ended) fails.push('no result within the time');
   else if (ended.reason === 'target' && !ended.players.some(p => p.kills >= (flag('--target') ?? 10))) fails.push('ended at the target without anyone reaching it');
-  if (wantRematch) { console.log('rematch warm-up followed', rematch); if (!rematch) fails.push('no rematch'); }
+  if (wantRematch) {
+    console.log('recap', recap ? recap.podium.map(p => `${p.place}. ${p.name} (${p.accolades.map(a => `${a.label}: ${a.value}`).join(', ')})`).join(' | ') : 'none');
+    const accs = recap ? recap.podium.flatMap(p => p.accolades.map(a => a.id)) : [];
+    if (!recap || recap.podium.length !== Math.min(3, ended.players.length) || accs.length !== new Set(accs).size) fails.push('no recap, or a bad podium');
+    console.log('rematch countdown followed', rematch); if (!rematch) fails.push('no rematch');
+  }
   console.log(fails.length ? `FAIL: ${fails.join(', ')}` : 'PASS');
   ws.close();
   setTimeout(() => process.exit(fails.length ? 1 : 0), 200);
