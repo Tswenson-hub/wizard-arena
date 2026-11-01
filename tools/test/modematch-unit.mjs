@@ -178,8 +178,11 @@ async function serverChecks() {
     const RELIC = C.SPELLBOOK.trapped_relic, ROLL = C.SPELLBOOK.roll;
     const join = async (name, lo) => {
       const ws = new WebSocket(`ws://localhost:${port}`);
-      const c = { ws, name, msgs: [], id: null, props: null, send: (m) => ws.send(JSON.stringify(m)) };
-      ws.on('message', raw => { const m = JSON.parse(raw); if (m.t === 'welcome') { c.id = m.id; c.props = m.props; } c.msgs.push(m); });
+      // (round 16: like the game's client, a state report echoes the server's last move of us it has seen, unless the test sets tp)
+      const c = { ws, name, msgs: [], id: null, props: null, tp: 0, send: (m) => ws.send(JSON.stringify(m.t === 'state' && !('tp' in m) ? { ...m, tp: c.tp } : m)) };
+      ws.on('message', raw => { const m = JSON.parse(raw); if (m.t === 'welcome') { c.id = m.id; c.props = m.props; }
+        if (m.id === c.id && typeof m.seq === 'number' && ['respawn', 'flaskArrive', 'mirror', 'mrainLand'].includes(m.t)) c.tp = m.seq;
+        c.msgs.push(m); });
       await new Promise(r => ws.on('open', r));
       c.send({ t: 'join', name, loadout: { ...C.DEFAULT_LOADOUT, primary: 'spark', ...lo } });
       while (c.id == null) await wait(10);
@@ -641,6 +644,70 @@ async function cycloneRadiusChecks(join, since) {
     ok(!hit(F), 'and not one 4.5 m away');
   }
   for (const c of [S, N, F]) c.ws.close();
+  await wait(300);
+  await flaskStepChecks(join, since);
+}
+
+// ---- round 16 (Ty: 'I teleport and then get killed by someone attacking where I just was'): after Flask Step lands, the
+// server has her at the landing spot, even when a position report from before the landing (the old spot) arrives after
+// it; a shot at the old spot misses, one at the new spot hits. A throw into a wall lands short of it, the same on both.
+async function flaskStepChecks(join, since) {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  const A = await join('Flasker', { mobility: 'flask_step' }), S = await join('Shooter', { primary: 'spark' });
+  S.send({ t: 'matchDebug', size: 2 }); S.send({ t: 'removeBots' }); await wait(600);
+  const line = clearLine(26);
+  const at = (d, y = 0) => [line.a[0] + line.dir[0] * d, y, line.a[2] + line.dir[1] * d];
+  const aim = line && C.flaskLaunch([line.dir[0], 0, line.dir[1]]);
+  const pred = line && C.flaskPath(at(8, 1.3), aim);
+  const L = pred ? Math.hypot(pred.at[0] - at(8)[0], pred.at[2] - at(8)[2]) : 0;
+  ok(!!line && !pred.blocked && L > 6 && L < 17, `a clear line for the Flask Step test (a ${L.toFixed(1)} m throw)`);
+  if (!line) { for (const c of [A, S]) c.ws.close(); return wallWalkChecks(join, since); }
+  const posOf = (c) => c.msgs.filter(m => m.t === 'snap').pop()?.players.find(q => q.id === c.id)?.p;
+  const flask = async (from, dir) => {
+    A.send({ t: 'debugPlace', p: from, yaw: Math.atan2(dir[0], dir[2]), resetCd: true }); await wait(150);
+    const n = A.msgs.length; A.send({ t: 'flaskStep', dir });
+    for (let k = 0; k < 40 && !since(A, n, m => m.t === 'flaskArrive' && m.id === A.id).length; k++) await wait(50);
+    return since(A, n, m => m.t === 'flaskArrive' && m.id === A.id)[0];
+  };
+  const shoot = (tg) => { const o = at(0, 1.3), d = tg.map((v, i) => v - o[i]), l = Math.hypot(...d); S.send({ t: 'cast', kind: 'fast', origin: o, dir: d.map(v => v / l) }); };
+  const sparkHits = (n) => since(S, n, m => m.t === 'hit' && m.target === A.id && m.kind === 'fast').length;
+  S.send({ t: 'debugPlace', p: at(0), yaw: line.yaw, resetCd: true });
+  A.send({ t: 'debugPlace', p: at(8), yaw: line.yaw }); await wait(2200);   // (past spawn protection)
+  const old = at(8);
+  const arr = await flask(old, aim);
+  ok(!!arr && typeof arr.seq === 'number' && Math.hypot(arr.to[0] - pred.at[0], arr.to[2] - pred.at[2]) < 0.6,
+    `Flask Step lands where the throw predicted, with a teleport seq (${arr ? arr.to.map(v => v.toFixed(1)).join(', ') : 'none'}; seq ${arr?.seq})`);
+  if (arr) {
+    // the race: a report sent just before the client heard of the landing (the old spot, the old seq) arrives after it
+    A.send({ t: 'state', p: old, yaw: line.yaw, tp: arr.seq - 1 }); await wait(60);
+    A.send({ t: 'state', p: arr.to, yaw: line.yaw, tp: arr.seq }); await wait(200);
+    const p = posOf(A);
+    ok(!!p && Math.hypot(p[0] - arr.to[0], p[2] - arr.to[2]) < 0.2, `a report from before the landing doesn't put her back (server at ${p ? Math.hypot(p[0] - old[0], p[2] - old[2]).toFixed(1) : '?'} m from the old spot)`);
+    let n = S.msgs.length; shoot([old[0], 0.2, old[2]]); await wait(900);   // (low: it ends in the ground there)
+    ok(sparkHits(n) === 0, 'a Spark at her old spot misses');
+    S.send({ t: 'debugPlace', p: at(0), yaw: line.yaw, resetCd: true }); await wait(100);
+    n = S.msgs.length; shoot([arr.to[0], (arr.to[1] || 0) + 1.0, arr.to[2]]); await wait(1200);
+    ok(sparkHits(n) === 1, 'a Spark at where she landed hits');
+  }
+  // into a wall: from open ground, a level throw that a wall stops within 8 m
+  let wall = null;
+  for (let x = -24; x <= 24 && !wall; x += 1) for (let z = -24; z <= 24 && !wall; z += 1) {
+    if (C.topFloorAt(x, z) > 0.05 || C.surfaceSolidAt(x, 0.5, z, true) || !(C.insideArena ? C.insideArena(x, z, 1.5) : true)) continue;
+    for (let a = 0; a < 8 && !wall; a++) {
+      const yaw = a * Math.PI / 4, dir = C.flaskLaunch([Math.sin(yaw), 0, Math.cos(yaw)]), r = C.flaskPath([x, 1.3, z], dir);
+      if (r.blocked && Math.hypot(r.at[0] - x, r.at[2] - z) > 2 && Math.hypot(r.at[0] - x, r.at[2] - z) < 8) wall = { from: [x, 0, z], dir, r };
+    }
+  }
+  ok(!!wall, `a throw into a wall for the clamp test (${wall ? wall.from.join(', ') : 'none'})`);
+  if (wall) {
+    const arr2 = await flask(wall.from, wall.dir);   // (debugPlace's resetCd: no cooldown wait)
+    await wait(250);
+    const p = posOf(A), to = arr2?.to;
+    ok(!!to && Math.hypot(to[0] - wall.r.at[0], to[2] - wall.r.at[2]) < 0.6 && !C.surfaceSolidAt(to[0], (to[1] || 0) + 0.5, to[2], true),
+      `a throw into a wall lands short of it, out of anything solid, where the client predicts (${to ? to.map(v => v.toFixed(1)).join(', ') : 'none'})`);
+    ok(!!p && !!to && Math.hypot(p[0] - to[0], p[2] - to[2]) < 0.2, 'and the server has her there');
+  }
+  for (const c of [A, S]) c.ws.close();
   await wait(300);
   await wallWalkChecks(join, since);
 }
