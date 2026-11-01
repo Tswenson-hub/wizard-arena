@@ -1615,3 +1615,28 @@ if (Podium.active()) Podium.frame(dt); else renderer.render(scene, camera);
   while `Podium.active()`.
 - **Tested** (Playwright, port 4103) with a stand-in for your hook and a fake message: it played through to the end by itself,
   Skip ended it, and there were no console errors. Screenshots are in `/tmp/wa-characters/r16/podium_*.png`.
+
+## spells → characters: the end-of-match recap (round 16, Ty's podium) — the message format
+The match now ends live → `end` (a 1.5 s gap: the winner's banner, the others' animations and the effects at 0.3× speed)
+→ `recap` (10 s) → the rematch's 3 s `countdown`. Nobody can hurt anyone in `end` or `recap`. At the start of `recap` the
+server broadcasts (and a late joiner gets it as `welcome.recap`):
+```js
+{ t: 'recap', duration: 10,
+  podium: [   // 1st, 2nd, 3rd (fewer if fewer played). Placing: kills, then fewer deaths, then damage.
+    { id, name, bot, place: 1, kills, deaths, damage,
+      body: 'mage',                 // the player's body (looks.js)
+      color: 0xRRGGBB,              // the player's colour
+      loadout: { primary, power, guard, mobility, utility, ultimate },   // spell ids
+      colors: { primary: 0xRRGGBB, ... },   // each slot's element colour (C.spellInfo(id).color)
+      element: 'fire',              // C.dominantElement(loadout)
+      accolades: [{ id: 'kills', label: 'Most Kills', value: '15 kills' }, ...] },   // 1–2 each, never repeated
+    ... ],
+  everyone: [{ id, name, bot, place: 4, kills, deaths, damage }] }   // the rest, a score row each
+```
+Accolade ids: `kills, damage, untouchable, healing, heavy, sharpshooter, assists, traps, potions, acrobat`.
+The client: `match-ui.js` draws a 2D podium overlay now (2nd · 1st · 3rd, accolade chips, a row for 4th, Skip or any
+key skips locally). For your 3D podium scene and the emotes, it also fires window events:
+`window.addEventListener('wa:recap', e => /* e.detail: the message above */)` and `'wa:recapEnd'` (`e.detail.skipped`:
+true when this player skipped; false when the recap phase ended). Place 1 celebrates; 2nd and 3rd clap. When your module is
+ready, tell me its path and export and I'll import it in `main.js` (and hide or slim the 2D overlay if you'd like the
+scene to carry it).
