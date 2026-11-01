@@ -1,0 +1,45 @@
+/* The end-of-match podium recap's overlay (podium.js): a tag over each of the top three, the rest on one line, Skip, a progress bar. */
+/* while it plays (body.recap-on) the game's HUD, the match bar and the click-to-play prompt step aside */
+body.recap-on #hud, body.recap-on #matchUI, body.recap-on #lockPrompt, body.recap-on #deathScreen, body.recap-on #vignette,
+body.recap-on #scoreboard { visibility: hidden !important; }
+.recap { position: fixed; inset: 0; z-index: 60; pointer-events: none; color: #f4ecd8; font-family: inherit; }
+.rc-head {
+  position: absolute; top: 18px; left: 50%; transform: translateX(-50%); padding: 6px 18px; border-radius: 999px;
+  background: rgba(18, 12, 26, 0.72); border: 1px solid rgba(255, 200, 87, 0.35); color: #ffc857;
+  font-size: 15px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase;
+}
+.rc-skip {
+  position: absolute; top: 16px; right: 18px; pointer-events: auto; cursor: pointer; padding: 7px 16px; border-radius: 8px;
+  border: 1px solid rgba(255, 200, 87, 0.5); background: rgba(18, 12, 26, 0.75); color: #ffc857; font: 700 14px/1 inherit;
+}
+.rc-skip:hover { background: rgba(255, 200, 87, 0.15); }
+.rc-tag {
+  position: absolute; left: 0; top: 0; min-width: 150px; max-width: 240px; padding: 8px 12px 9px; border-radius: 10px; text-align: center;
+  background: rgba(18, 12, 26, 0.78); border: 1px solid color-mix(in srgb, var(--medal) 60%, transparent);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.35); opacity: 0; transition: opacity 0.4s; font-size: 12px; white-space: nowrap;
+}
+.rc-tag.on { opacity: 1; }
+.rc-place { font-size: 13px; font-weight: 800; letter-spacing: 1px; color: var(--medal); }
+.rc-name { font-size: 16px; font-weight: 700; color: var(--col); overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 2px #000; }
+.rc-kd { margin: 2px 0 4px; color: rgba(244, 236, 216, 0.75); }
+.rc-kd b { color: #f4ecd8; }
+.rc-accs { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 6px; }
+.rc-acc {
+  display: flex; align-items: center; justify-content: center; gap: 6px; padding: 3px 8px; border-radius: 999px;
+  background: rgba(255, 200, 87, 0.1); border: 1px solid rgba(255, 200, 87, 0.25);
+}
+.rc-acc i { font-style: normal; color: #ffc857; }
+.rc-acc span { font-weight: 700; }
+.rc-acc em { font-style: normal; color: rgba(244, 236, 216, 0.75); }
+/* the winner's tag is the big one */
+.rc-p1 { min-width: 200px; max-width: 460px; padding: 10px 16px 12px; font-size: 13.5px; border-width: 2px; }
+.rc-p1 .rc-place { font-size: 20px; }
+.rc-p1 .rc-name { font-size: 22px; }
+.rc-p1 .rc-acc { padding: 4px 10px; }
+.rc-rest {
+  position: absolute; top: 56px; left: 50%; transform: translateX(-50%); display: flex; gap: 22px; padding: 6px 16px;
+  border-radius: 8px; background: rgba(18, 12, 26, 0.65); font-size: 13px; color: rgba(244, 236, 216, 0.8); white-space: nowrap;
+}
+.rc-rest b { color: #f4ecd8; }
+.rc-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 5px; background: rgba(0, 0, 0, 0.35); }
+.rc-bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #ffc857, #ff8a3c); }

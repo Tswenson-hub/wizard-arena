@@ -578,6 +578,65 @@ function genericClips(loadout = {}, kind = 'mage') {
 // The clip set for a loadout (the builder's preview plays a hovered spell from it).
 export const clipsFor = (loadout, kind) => genericClips(loadout || {}, kind);
 
+// ---------------------------------------------------------------- emotes (the end-of-match podium, round 16)
+
+// Lay rotations over a looping base clip: `pose(t)` returns { boneRole: [[axisX, axisY, axisZ], deg], ... } with the axis in the
+// body's frame (x: the body's left, y: up, z: forward), applied to that bone in its bind-pose parent frame on top of the base.
+function poseLayerClip(key, base, dur, pose, fps = 30) {
+  const scene = templates.mage.scene;
+  scene.updateMatrixWorld(true);
+  const sceneQ = scene.getWorldQuaternion(new THREE.Quaternion()).invert();
+  const N = Math.round(dur * fps) + 1, times = Float32Array.from({ length: N }, (_, i) => dur * i / (N - 1));
+  const roles = Object.keys(pose(0));
+  const tracks = base.tracks.filter(t => !roles.some(r => t.name === `${BONES[r]}.quaternion`)).map(t => {
+    const ip = t.createInterpolant(), w = t.getValueSize(), vals = new Float32Array(N * w);
+    for (let i = 0; i < N; i++) vals.set(ip.evaluate(times[i] % base.duration), i * w);
+    return new t.constructor(t.name, times, vals);
+  });
+  const ax = new THREE.Vector3(), R = new THREE.Quaternion(), q = new THREE.Quaternion();
+  for (const role of roles) {
+    const b = scene.getObjectByName(BONES[role]);
+    const P = b.parent.getWorldQuaternion(new THREE.Quaternion()).premultiply(sceneQ), Pi = P.clone().invert();
+    const src = base.tracks.find(t => t.name === `${b.name}.quaternion`), ip = src?.createInterpolant();
+    const vals = new Float32Array(N * 4);
+    for (let i = 0; i < N; i++) {
+      q.fromArray(ip ? ip.evaluate(times[i] % base.duration) : b.quaternion.toArray());
+      for (const [axis, deg] of [].concat(...[pose(times[i])[role]].map(v => Array.isArray(v[0][0]) ? v : [v]))) {
+        R.setFromAxisAngle(ax.fromArray(axis).normalize(), deg * Math.PI / 180);
+        q.premultiply(Pi.clone().multiply(R).multiply(P));
+      }
+      q.toArray(vals, i * 4);
+    }
+    tracks.push(new THREE.QuaternionKeyframeTrack(`${b.name}.quaternion`, times, vals));
+  }
+  return new THREE.AnimationClip(key, dur, tracks);
+}
+
+// A clap: both arms brought forward and bent, the hands swinging together about 3.3 times a second over the idle.
+const CLAP_HZ = 3.3;
+function clapClip() {
+  const dur = 6 / CLAP_HZ;
+  return poseLayerClip('clap', pool.Idle_A, dur, (t) => {
+    const k = 0.5 + 0.5 * Math.cos(t * CLAP_HZ * Math.PI * 2);          // 1: hands together, 0: apart
+    const inward = 34 + 26 * k, fwd = -62;
+    return {
+      armR: [[[1, 0, 0], fwd], [[0, 0, 1], inward]],
+      armL: [[[1, 0, 0], fwd], [[0, 0, 1], -inward]],
+      wrist: [[1, 0, 0], -20], wristL: [[1, 0, 0], -20],
+    };
+  });
+}
+
+// Emote clips for the podium: 'cheer' (Cheering), 'wave' (Waving), 'clap' (procedural), 'taunt' (Skeletons_Taunt), 'idle'.
+let emotes = null;
+export function emoteClips() {
+  if (emotes) return emotes;
+  const named = (c, key) => { const k = c.clone(); k.name = key; return k; };
+  emotes = { idle: named(pool.Idle_A, 'idle'), cheer: named(pool.Cheering, 'cheer'), wave: named(pool.Waving || pool.Cheering, 'wave'),
+    taunt: named(pool.Skeletons_Taunt, 'taunt'), clap: clapClip() };
+  return emotes;
+}
+
 // ---------------------------------------------------------------- bodies
 
 // The walking-staff grip (round 15): KayKit's hand slot holds a staff like a sword, so with the arm hanging (idle, walk, run) its
