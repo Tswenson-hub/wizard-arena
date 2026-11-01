@@ -354,6 +354,8 @@ export function mountSpellBuilder(container, { loadout, voice, onChange, onVoice
 
   paint();
   pv.setLoadout(cur);
+  const sub = container.closest('#join')?.querySelector('.sub');
+  if (sub) sub.textContent = JOIN_SUB(matchTarget);     // (index.html's own line said 10)
   // One-click start (CrazyGames): a first visit isn't stopped by the how-to-play card. Once the player enters the arena from the
   // join screen, a compact controls card floats over the first match instead (openFirstMatchTips), without taking any input.
   const form = footer?.querySelector('form');
@@ -394,6 +396,18 @@ const KEYS = {
     [['E'], 'Mobility'], [['F'], 'Utility'], [['Q'], 'Ultimate, once charged']],
 };
 const MORE_KEYS = [['T', 'Reload early'], ['M', 'Mute'], ['Esc', 'Menu and your loadout']];
+// The kill target for the join header and the how-to-play texts. The server's FFA.target (server/match.js) is the truth; this is its
+// client copy until the match tells us (setMatchTarget(match.target) from main.js on a match state).
+let matchTarget = 15;
+const JOIN_SUB = (n) => `Build your wizard from any spells: one per slot. Four wizards, first to ${n} kills.`;
+export function setMatchTarget(n) {
+  if (!(n > 0) || n === matchTarget) return;
+  matchTarget = n;
+  for (const el of document.querySelectorAll('[data-kill-target]')) el.textContent = n;
+  const sub = document.querySelector('#join .sub');
+  if (sub) sub.textContent = JOIN_SUB(n);
+}
+
 // Ty's privacy note (round 16), plain text, shown in the how-to-play card; exported for the "?" panel.
 export const PRIVACY = 'Privacy: Wizard Arena keeps your name, spells and settings in this browser only. Your chosen name is sent to the game '
   + 'server for the match you play and isn\'t stored. No accounts, no ads, no tracking. Questions: tyswenson34@gmail.com';
@@ -404,7 +418,7 @@ export function openHowToPlay() {
   back.className = 'htp-back';
   back.innerHTML = `<div class="htp" role="dialog" aria-modal="true" aria-labelledby="htpTitle">
       <h2 id="htpTitle">How to play</h2>
-      <div class="htp-goal"><b>Free-for-all, four wizards.</b> The first to <b>15 kills</b> wins.</div>
+      <div class="htp-goal"><b>Free-for-all, four wizards.</b> The first to <b><span data-kill-target>${matchTarget}</span> kills</b> wins.</div>
       <div class="htp-build"><b>Build your wizard: one spell per slot.</b> Each row of cards is a slot with its own key.
         Hover a card for its full stats; cards tagged <i class="combo">Combo</i> work together.
         <div class="sb-legend">${STATS.map(([k, t]) => `<span class="st-${k}">${t}</span>`).join('')}</div></div>
@@ -444,7 +458,7 @@ export function openFirstMatchTips() {
   el.setAttribute('aria-label', 'Controls');
   el.innerHTML = `<button type="button" class="htp-x" title="Hide" aria-label="Hide the controls">×</button>
     <h2>How to play</h2>
-    <p class="htp-goal"><b>First to 15 kills</b> wins. Your spells are on the keys below; <kbd>Esc</kbd> changes them.</p>
+    <p class="htp-goal"><b>First to <span data-kill-target>${matchTarget}</span> kills</b> wins. Your spells are on the keys below; <kbd>Esc</kbd> changes them.</p>
     <div class="htp-keys">${Object.entries(KEYS).map(([h, list]) => `<dl><h3>${h}</h3>${list.map(([ks, t]) =>
       `<dt>${ks.map(k => k.startsWith('×') ? `<span>${k}</span>` : `<kbd>${k}</kbd>`).join('')}</dt><dd>${esc(t)}</dd>`).join('')}</dl>`).join('')}</div>`;
   const close = () => { if (!tips) return; tips = null; el.classList.add('gone'); setTimeout(() => el.remove(), 400); };

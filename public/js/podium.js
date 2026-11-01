@@ -218,6 +218,9 @@ export function stop(silent) {
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 const hex = (n) => '#' + (n >>> 0).toString(16).padStart(6, '0');
+// '1 kill', '2 kills'; and a value from the server reading '1 kills' or '1 blocks' loses its plural s
+const count = (n, word) => `<b>${n ?? 0}</b> ${word}${(n ?? 0) === 1 ? '' : 's'}`;
+const one = (v) => String(v).replace(/(^|\D)1 (\w+?)s\b/g, '$11 $2');
 // Accolade icons: a short symbol from the server, else one by id, else a star.
 const ICONS = { kills: '✷', damage: '✷', streak: '🔥', heal: '✚', healing: '✚', survivor: '⛨', blocks: '⛨', accuracy: '◎', props: '⬢', mvp: '★' };
 const iconOf = (a) => (a.icon && [...a.icon].length <= 2) ? a.icon : ICONS[a.icon || a.id] || '★';
@@ -232,8 +235,8 @@ function overlay(top, rest, dur, onSkip) {
   const tag = (p) => `<div class="rc-tag rc-p${p.place}" style="--medal:${hex(MEDAL[p.place])};--col:${hex(p.color ?? 0xffffff)}">
       <div class="rc-place">${PLACE[p.place]}</div>
       <div class="rc-name">${esc(p.name)}</div>
-      <div class="rc-kd"><b>${p.kills ?? 0}</b> kills · <b>${p.deaths ?? 0}</b> deaths</div>
-      <div class="rc-accs">${(p.accolades || []).slice(0, 2).map(a => `<div class="rc-acc"><i>${esc(iconOf(a))}</i><span>${esc(a.title)}</span>${a.value != null ? `<em>${esc(a.value)}</em>` : ''}</div>`).join('')}</div>
+      <div class="rc-kd">${count(p.kills, 'kill')} · ${count(p.deaths, 'death')}</div>
+      <div class="rc-accs">${(p.accolades || []).slice(0, 2).map(a => `<div class="rc-acc"><i>${esc(iconOf(a))}</i><span>${esc(a.title)}</span>${a.value != null ? `<em>${esc(one(a.value))}</em>` : ''}</div>`).join('')}</div>
     </div>`;
   el.innerHTML = `<div class="rc-head">Match over</div>
     <button type="button" class="rc-skip">Skip ›</button>
