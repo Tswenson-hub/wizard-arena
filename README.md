@@ -47,15 +47,14 @@ Combo...). The preview wizard on the right takes on the colours of your spells' 
 | Slot | Key | Choices |
 |---|---|---|
 | Primary | `LMB` | Spark, Fireball, Glacial Skim, Gale Shear, Hex Shards, Shepherd's Sling, Potion Toss |
-| Power | `RMB` | Meteor, Arcane Cyclone, Frostfall, Sanguine Lash, Battering Ram, Toxic Flask |
-| Shield | `R` | Ward, Firewall, Glacial Bulwark, Tempest Veil, Black Death, Ram Guard, Smoke Flask |
+| Power | `RMB` | Meteor, Arcane Cyclone, Frostfall, Blood Siphon, Battering Ram, Toxic Flask |
+| Shield | `R` | Ward, Firewall, Glacial Bulwark, Tempest Veil, Sanguine Aegis, Ram Guard, Smoke Flask |
 | Mobility | `E` | Blink, Skyward Flash, Smoke Screen, Mirror Step, Ram Ride, Flask Step |
-| Utility | `F` | Telekinesis, Trapped Relic |
+| Utility | `F` | Telekinesis, Trapped Relic, Roll |
 | Ultimate | `Q` | Meteor Rain, Eye of the Storm, Blizzard, Night Cage, Stampede, Berserker Brew |
 
-**Combos** work for anyone who equips both spells: Blood Lash (Black Death + Sanguine Lash), Hot Brew (Berserker
-Brew + Potion Toss), Strong Brew (Berserker Brew + Toxic Flask), Hail from Above (Skyward Flash + Frostfall cast
-mid-air) and Herd Call (Shepherd's Sling + Ram Guard). The builder tags them.
+**Combos** work for anyone who equips both spells: Blood Tithe (Sanguine Aegis + Blood Siphon: absorbed damage charges
+the next bolt) and Hail from Above (Skyward Flash + Frostfall cast mid-air). The builder tags them.
 
 Primaries fire in a rhythm (two or three shots, then a reload); only the last shot of the rhythm stuns and
 interrupts. Most spells cast on the move (a brief slow) and in the air; only the big wind-ups (ultimates, Meteor, Sanguine Lash, Battering Ram, Blizzard) root you, and in mid-air they hold you in place. Ultimates charge from damage and time and have
