@@ -1,5 +1,47 @@
 # Spells hand-off
 
+## Round 16 balance-review buffs (Ty approved all as proposed)
+Commits: `8af3a11` (the buffs), `1769b0d` (unit tests), plus this hand-off.
+
+- **The numbers (constants.js; the cards are computed from the data):**
+  - Glacial Skim: 11 per shard, life 1.0 (about 26 m).
+  - Hex Shards: 16, side pull 0.24.
+  - Meteor: radius 0.8.
+  - Firewall: 3.5 s, burn 20, cooldown 8.
+  - Ram Guard: cooldown 8.
+  - Flask Step: wind-up 0.4 s, cooldown 7.
+  - Telekinesis: prop 26, lift 0.25 s.
+  - Blizzard: 4 per chip (16/s base), 85° cone, freeze after 0.5 s.
+  - Eye of the Storm: tick 11, burst 22, radius 8.
+  - Stampede: telegraph 0.7 s, 10 rams.
+  - Sling: a 3-stone pouch, 8 base near and 17.5 far (11–24).
+- **Berserker Brew:**
+  - The drink heals `heal` (30).
+  - ×1.5 applies to every non-ultimate hit (server.js applyHit: `brewUntil && !spec.ult`).
+  - The Hot Brew / Strong Brew combos are deleted. They only ever showed on the cards; the server never checked them. README 56–57 still lists them (coordinator).
+  - Bots now drink when hurt too (the HP ≥ 40 gate is gone).
+- **Night Cage:**
+  - Heal 15/s.
+  - New hit kind `cage_burn` (ult, unblockable, no interrupt, 2.5 base = 3 a hit) every `CAGE.burn` (0.5 s) on enemies inside: in radius, not flown over, not below. updateCages, credited to the owner.
+  - The card shows 6/s.
+  - The client icon and name are in main.js. loadoutbalance maps `cage_burn` → night_cage.
+- **Unit tests:** Frostfall's Combo tag; Brew has no combo; the drink heals 30 (healed 30); a Fireball under the Brew is ×1.5 (22 → 33); the cage burns 4 × 3 in 2 s, credited to the caster. ALL PASS 3 runs in a row.
+- **Balance runs** (12 × 75 s each, /tmp/wa-spells/r16/c6n and c6h; before is round 16's c5):
+
+  | | normal before → after | hard before → after |
+  |---|---|---|
+  | kills/player/min | 1.65 → 1.58 | 1.22 → 1.28 |
+  | engagements ending in a kill | 47% → 40% | 35% → 38% |
+  | re-engage median | 6.8 → 6.2 s | 6.7 → 6.5 s |
+  | death-chain median | 4.3 → 3.6 s | 2.2 → 2.9 s |
+
+  - Meteor Rain is no longer flagged dominant: 75% of Ultimate kills → 60% on normal (3 of 5), and 33% on hard (2 of 6).
+  - Toxic Flask flagged DOMINANT in Power on hard: 10 of 24 Power kills, K/D 2.00 (5.5% → 13.0% of all kills). Normal 7.4%. Watch it; the sample is small.
+  - Fireball's 41% of Primary on hard is gone (6.5%). Potion Toss tops both (13–14%).
+  - Glacial Skim still low (4.2% / 1.3%, hard K/D 0.38). Sling 6.3% / 2.6%. Hex up (6.3% / 9.1%).
+  - Brew: K/run 2.82 (top of Ultimate) on normal, but 0.50 on hard (4 runs). Night Cage scored its first kill (a burn, hard).
+  - Eye and Stampede: no and 2 kills; Eye's equipped K/D 2.00 on hard.
+
 ## Round 16: Blood Siphon, Sanguine Aegis, no warm-up, the menu Respawn, Meteor Rain's sway; then idle players
 Commits: `c7c11ce` (Blood Siphon), `77ece63` (Sanguine Aegis), `be4bf66` (the countdown), `12606e6` (Respawn), `4d89148` (the sway),
 `9d3d5db` (requests), `42598c5` (idle players), plus this hand-off.
