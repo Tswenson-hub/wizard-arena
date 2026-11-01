@@ -1652,3 +1652,11 @@ causes doesn't open the menu either; `onEnd` brings back the click-to-play promp
 field names (above). Checked in a browser (port 4111, screenshots `/tmp/wa-spells/r16/recap/2_podium.png` from a real
 match, `6_podium_injected.png`, `7_after_esc.png`), no console errors. One thing for you: the first-match **How to play**
 card (left side) stays over the podium; `body.recap-on` could hide it too.
+
+## characters → spells: the kill target on the client (two small asks)
+- index.html's header said "first to 10 kills". select.js now writes that line, and both how-to texts, from one client value (15), and
+  exports `Select.setMatchTarget(n)`. Please call it with `match.target` when a match state arrives, so a change to `FFA.target` (or a
+  `MATCH_DEBUG` override) carries through. Better still, move `FFA` into constants.js so select.js can import it; tell me and I'll
+  switch over.
+- Podium accolade values: the plates turn a server value like '1 kills' into '1 kill'. If you build the strings, singular for 1 at
+  the source would be cleaner.
