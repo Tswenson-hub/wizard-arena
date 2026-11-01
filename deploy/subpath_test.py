@@ -3,7 +3,7 @@
 # gameplayStart / gameplayStop fire, no console errors.
 # It also measures the initial download the way CrazyGames does: bytes from load start to the first gameplayStart
 # (and at "Ready"), against the 20 MB target (CrazyGames: 50 MB desktop, 20 MB for the mobile homepage).
-# usage: python3 deploy/subpath_test.py <page url> [screenshot path] [--block-sdk] [--max-mb 20]
+# usage: python3 deploy/subpath_test.py <page url> [screenshot path] [--block-sdk] [--max-mb 20] [--swiftshader]
 #   --block-sdk: the SDK script fails to load; the game must still play (the shim is guarded)
 #   --max-mb N: FAIL when the initial download is over N MB (default: report only)
 #   node tools/build-crazygames.mjs --server ws://localhost:4105 --out dist/crazygames-local --no-zip
@@ -13,9 +13,11 @@ import asyncio, sys, time
 from urllib.parse import urlparse
 from playwright.async_api import async_playwright
 
+# GPU by default (ANGLE on Metal: macOS); --swiftshader for software GL (slow: it can stall several seconds compiling the castle's shaders)
+GL_ARGS = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] if '--swiftshader' in sys.argv else ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist']
 BLOCK_SDK = '--block-sdk' in sys.argv
 MAX_MB = float(sys.argv[sys.argv.index('--max-mb') + 1]) if '--max-mb' in sys.argv else None
-args = [a for i, a in enumerate(sys.argv[1:], 1) if a != '--block-sdk' and a != '--max-mb' and sys.argv[i - 1] != '--max-mb']
+args = [a for i, a in enumerate(sys.argv[1:], 1) if a not in ('--block-sdk', '--max-mb', '--swiftshader') and sys.argv[i - 1] != '--max-mb']
 PAGE = args[0]
 SHOT = args[1] if len(args) > 1 else None
 page_url = urlparse(PAGE)
@@ -24,7 +26,7 @@ folder = page_url.path if page_url.path.endswith('/') else page_url.path.rsplit(
 async def main():
     ok = True
     async with async_playwright() as p:
-        b = await p.chromium.launch(args=['--use-angle=swiftshader', '--enable-unsafe-swiftshader'])
+        b = await p.chromium.launch(args=GL_ARGS)
         pg = await b.new_page(viewport={'width': 1280, 'height': 720})
         errs, escaped, failed, sockets, cg = [], [], [], [], []
         frames = {'recv': 0}

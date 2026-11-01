@@ -1,13 +1,16 @@
 # Deploy smoke test: health check, page load, the spell builder renders, join the 4-player FFA (bots fill
 # the empty seats), WebSocket traffic, no console errors.
-# usage: python3 deploy/smoke.py <base url> [screenshot path]
+# usage: python3 deploy/smoke.py <base url> [screenshot path] [--swiftshader]
 #   python3 deploy/smoke.py http://localhost:3000
 #   python3 deploy/smoke.py https://wizard-arena.onrender.com /tmp/wa-deploy/live.png
 import asyncio, json, sys, time, urllib.request
 from playwright.async_api import async_playwright
 
-BASE = sys.argv[1].rstrip('/')
-SHOT = sys.argv[2] if len(sys.argv) > 2 else None
+# GPU by default (ANGLE on Metal: macOS); --swiftshader for software GL (slow: it can stall several seconds compiling the castle's shaders)
+GL_ARGS = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] if '--swiftshader' in sys.argv else ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist']
+ARGS = [a for a in sys.argv[1:] if a != '--swiftshader']
+BASE = ARGS[0].rstrip('/')
+SHOT = ARGS[1] if len(ARGS) > 1 else None
 
 def healthz():
     t = time.time()
@@ -19,7 +22,7 @@ async def main():
     print(f'healthz: {body!r} in {dt:.1f}s')
     ok = body == 'ok'
     async with async_playwright() as p:
-        b = await p.chromium.launch(args=['--use-angle=swiftshader', '--enable-unsafe-swiftshader'])
+        b = await p.chromium.launch(args=GL_ARGS)
         pg = await b.new_page(viewport={'width': 1280, 'height': 720})
         errs, sockets, frames = [], [], {'sent': 0, 'recv': 0}
         pg.on('pageerror', lambda e: errs.append(str(e)))

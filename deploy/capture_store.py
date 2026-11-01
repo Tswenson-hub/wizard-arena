@@ -1,6 +1,6 @@
 # Store art for the CrazyGames submission: gameplay screenshots and the three covers, captured from the running game.
 # usage: python3 deploy/capture_store.py <game url> [out dir=dist/store] [--title "Wizard Arena"] [--wait 12] [--stage]
-#                                        [--only hero,vista,overhead,ground,wallwalk,gameplay]
+#                                        [--only hero,vista,overhead,ground,wallwalk,gameplay] [--swiftshader]
 #   WA_DEBUG=1 PORT=4105 node server.js &  python3 deploy/capture_store.py http://localhost:4105 dist/store --stage
 #   --stage: for the gameplay frames, put our wizard about 9 m from a bot (needs a private server with WA_DEBUG=1, never live)
 #   --only: redo just these shots (names are prefixes), keeping the other files
@@ -14,7 +14,7 @@
 # Clear spots are found from the map itself (SURFACES boxes, COLLIDERS, props, wizards), and gameplay frames are kept only
 # while we're alive with a bot within 16 m. Results still vary run to run: look at them, retake with --only, keep the best.
 # Camera shots wrap renderer.render to place the camera, so no game code is involved. Every position comes from the map's
-# exports (C.SPAWN_POINTS, C.HEAL_SPOTS), so it follows the layout. Software rendering is slow: allow a few minutes.
+# exports (C.SPAWN_POINTS, C.HEAL_SPOTS), so it follows the layout. On the GPU it takes about a minute; --swiftshader several.
 # CrazyGames also wants a 15-20 s preview video in 1080p landscape AND portrait (2:3), no cursor, no sound, no UI chrome:
 # record that from a real browser (OBS), not here.
 import asyncio, base64, os, sys, time
@@ -24,6 +24,8 @@ def opt(name, default):
     return sys.argv[sys.argv.index(name) + 1] if name in sys.argv else default
 TITLE = opt('--title', 'Wizard Arena')
 WAIT = float(opt('--wait', '12'))
+# GPU by default (ANGLE on Metal: macOS); --swiftshader for software GL (slow: it can stall several seconds compiling the castle's shaders)
+GL_ARGS = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] if '--swiftshader' in sys.argv else ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist']
 STAGE = '--stage' in sys.argv
 ONLY = opt('--only', '').split(',') if '--only' in sys.argv else None
 want = lambda name: ONLY is None or any(name.startswith(o) for o in ONLY)
@@ -95,7 +97,7 @@ text-shadow:0 0 %(glow)dpx rgba(170,110,255,.9),0 %(drop)dpx 0 #1a0b33}</style><
 async def main():
     t0 = time.time()
     async with async_playwright() as p:
-        b = await p.chromium.launch(args=['--use-angle=swiftshader', '--enable-unsafe-swiftshader'])
+        b = await p.chromium.launch(args=GL_ARGS)
         pg = await b.new_page(viewport={'width': 1920, 'height': 1080})
         errs = []
         pg.on('pageerror', lambda e: errs.append(str(e)))
