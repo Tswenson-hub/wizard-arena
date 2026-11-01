@@ -60,7 +60,8 @@ const bots = () => fighters().filter(p => p.bot);
   const oldFree = C.sanitizeLoadout({ ...L, mobility: 'roll', utility: undefined });
   ok(oldFree && oldFree.utility === 'roll' && oldFree.mobility === L.mobility, 'and keeps Roll in utility when that slot is free');
   ok(C.sanitizeLoadout({ ...L, utility: 'roll' })?.utility === 'roll' && C.sanitizeLoadout({ ...L, mobility: 'blink', utility: 'roll' }) !== null, 'Roll in utility is valid');
-  ok(C.combosWith('berserker_brew').length === 2 && C.spellInfo('berserker_brew').tags.includes('Combo'), 'Brew carries the Combo tag (two partners)');
+  ok(C.combosWith('frostfall').length === 1 && C.spellInfo('frostfall').tags.includes('Combo'), 'Frostfall carries the Combo tag (Skyward)');
+  ok(!C.combosWith('berserker_brew').length && !C.spellInfo('berserker_brew').tags.includes('Combo'), 'Brew has no combo (its ×1.5 is on every spell)');
   ok(C.dominantElement(C.PRESETS[0].loadout) === 'fire' && C.dominantElement({ ...L, primary: 'spark', guard: 'ward', utility: 'telekinesis', power: 'cyclone', mobility: 'blink', ultimate: 'eye_of_storm' }) === 'wind', 'the dominant element follows the mix (arcane only when nothing else)');
 }
 
@@ -575,6 +576,47 @@ async function blackDeathChecks(join, since) {
   ok(!!blocked && healed >= want - 1, `a blocked hit heals ${Math.round(BD.healPerDamage * 100)}% of what it absorbed (absorbed ${blocked?.absorbed}, healed ${healed} incl. the mend)`);
   D.send({ t: 'block', on: false });
   for (const c of [S, D]) c.ws.close();
+  await wait(300);
+  await reviewBuffChecks(join, since);
+}
+
+// ---- round 16 balance review (Ty approved): Berserker Brew's drink heals and its ×1.5 is on every spell (not just
+// potions and pools); Night Cage burns the enemies inside it (cage_burn every CAGE.burn s)
+async function reviewBuffChecks(join, since) {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  const BREW = C.SPELLBOOK.berserker_brew, CAGE = C.SPELLBOOK.night_cage;
+  const B = await join('Brewer', { primary: 'fireball', ultimate: 'berserker_brew' }), V = await join('Victim', { primary: 'fireball', ultimate: 'night_cage' });
+  B.send({ t: 'matchDebug', size: 2 }); B.send({ t: 'removeBots' }); await wait(600);
+  const line = clearLine(10);
+  ok(!!line, `a clear line for the review-buff tests (${line ? `${line.a[0]}, ${line.a[2]}` : 'none'})`);
+  if (!line) { for (const c of [B, V]) c.ws.close(); return wallWalkChecks(join, since); }
+  const at = (d) => [line.a[0] + line.dir[0] * d, 0, line.a[2] + line.dir[1] * d];
+  const placeBoth = () => { B.send({ t: 'debugPlace', p: at(0), yaw: line.yaw, resetCd: true }); V.send({ t: 'debugPlace', p: at(8), yaw: line.yaw + Math.PI, resetCd: true }); };
+  const fire = (c, a, b) => { const o = [at(a)[0], 1.3, at(a)[2]], tg = [at(b)[0], 1.0, at(b)[2]], d = tg.map((v, i) => v - o[i]), l = Math.hypot(...d);
+    c.send({ t: 'cast', kind: 'fireball', origin: o, dir: d.map(v => v / l) }); };
+  const hitsOn = (c, n, kind) => since(c, n, m => m.t === 'hit' && m.target === c.id && m.kind === kind && !m.blocked);
+  placeBoth(); await wait(2200);   // (past spawn protection)
+  let n = V.msgs.length; fire(B, 0, 8); await wait(800);
+  const plain = hitsOn(V, n, 'fireball')[0]?.dmg;
+  n = B.msgs.length; fire(V, 8, 0); await wait(800); placeBoth(); await wait(200); fire(V, 8, 0); await wait(800);   // hurt the brewer more than the drink heals
+  ok(hitsOn(B, n, 'fireball').length === 2, 'the brewer is hurt first (two Fireballs)');
+  placeBoth(); await wait(200);
+  n = B.msgs.length; B.send({ t: 'debugCharge' }); await wait(80); B.send({ t: 'ult' }); await wait((C.ULT_CHARGE.windup + 0.6) * 1000);
+  const drank = since(B, n, m => m.t === 'heal' && m.id === B.id).reduce((a, m) => a + m.amt, 0);
+  ok(since(B, n, m => m.t === 'brew' && m.id === B.id).length === 1 && drank >= BREW.heal - 1, `the Brew's drink heals ${BREW.heal} HP (healed ${drank})`);
+  B.send({ t: 'debugPlace', p: at(0), yaw: line.yaw, resetCd: true }); await wait(100);
+  n = V.msgs.length; fire(B, 0, 8); await wait(800);
+  const brewed = hitsOn(V, n, 'fireball')[0]?.dmg;
+  ok(plain > 0 && brewed === Math.round(plain * BREW.damageMul), `under the Brew a Fireball (not a potion) does ×${BREW.damageMul} (${plain} → ${brewed})`);
+  // Night Cage on the brewer: burns them while they're inside
+  await wait(BREW.duration * 1000);   // (the Brew wears off)
+  placeBoth(); await wait(200);
+  n = B.msgs.length; V.send({ t: 'debugCharge' }); await wait(80); V.send({ t: 'ult', at: [at(0)[0], at(0)[2]] });
+  await wait((C.ULT_CHARGE.windup + 2) * 1000);
+  const burns = hitsOn(B, n, 'cage_burn'), each = C.D(C.hitSpec('cage_burn').damage);
+  ok(since(B, n, m => m.t === 'cage').length === 1 && burns.length >= 3 && burns.every(h => h.attacker === V.id && h.dmg === each),
+    `Night Cage burns an enemy inside it every ${CAGE.burn} s (${burns.length} burns of ${burns[0]?.dmg} in 2 s, credited to the caster)`);
+  for (const c of [B, V]) c.ws.close();
   await wait(300);
   await wallWalkChecks(join, since);
 }
