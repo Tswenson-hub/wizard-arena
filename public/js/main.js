@@ -25,6 +25,8 @@ renderer.setSize(innerWidth, innerHeight);
 const LOW_FX = new URLSearchParams(location.search).has('low');   // ?low for weak GPUs
 // ?clip: recording mode for store videos: no HUD, crosshair, cursor, kill feed, match banner or help cards (style.css body.clip)
 if (new URLSearchParams(location.search).has('clip')) document.body.classList.add('clip');
+// in clip mode, H shows or hides the rest of the HUD (cooldowns, HP) for playing between shots
+if (document.body.classList.contains('clip')) addEventListener('keydown', e => { if (e.code === 'KeyH' && !e.repeat) document.body.classList.toggle('clip-hud'); });
 renderer.shadowMap.enabled = !LOW_FX;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;

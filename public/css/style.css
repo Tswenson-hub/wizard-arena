@@ -294,7 +294,9 @@ body.paused #abilities, body.paused #bars, body.paused #mBanner, body.paused #so
 .potionMark span { font: 700 11px/1 system-ui, sans-serif; color: #ffd0d4; text-shadow: 0 1px 0 #000; margin-top: 2px; }
 
 /* ?clip: recording mode for CrazyGames preview videos. The game plays as normal, only the overlays go. The Esc menu,
-   the click-to-play prompt and the death screen stay, so a recorder can still change spells. */
-body.clip #crosshair, body.clip #chargeRing, body.clip #bars, body.clip #abilities, body.clip #killfeed,
-body.clip #feed, body.clip #killMarker, body.clip #hint, body.clip #status, body.clip #soundInd, body.clip #scoreboard,
+   the click-to-play prompt, the death screen and the crosshair stay, so a recorder can still change spells and aim. */
+/* H (body.clip-hud) brings the cooldowns, bars, feed and status back while you play between shots. */
+body.clip:not(.clip-hud) #chargeRing, body.clip:not(.clip-hud) #bars, body.clip:not(.clip-hud) #abilities,
+body.clip:not(.clip-hud) #killfeed, body.clip:not(.clip-hud) #feed, body.clip:not(.clip-hud) #killMarker,
+body.clip:not(.clip-hud) #status, body.clip #hint, body.clip #soundInd, body.clip #scoreboard,
 body.clip #matchUI, body.clip #idleNote, body.clip .htp-float, body.clip #helpBtn { display: none !important; }
