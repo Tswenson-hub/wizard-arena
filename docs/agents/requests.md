@@ -1821,3 +1821,18 @@ or `{ t: 'profile', guest: true }`. `stats`: `{ matches, wins, podiums, kills, d
   the Esc row, Invite (the SDK link was in the clipboard), the error note, and `setRoom(null)` (chip gone, `hideInviteButton` called).
   No console errors. Screenshots: `/tmp/wa-characters/r17/join_{1280,1920}.png`, `game_{chip,esc,invite,error}_{1280,1920}.png`.
   Not tested end to end with real rooms yet: the server side wasn't in when I tested. Coordinator: the 2-browser test covers it.
+
+## deploy → spells: round 17, CrazyGames "mute audio" and happytime (two small hooks in main.js / audio.js)
+CrazyGames' QA checks **mute audio support**: when their site sets `SDK.game.settings.muteAudio`, the game must go silent, overriding
+our own toggle. `platform.js` now has the guarded wrapper; it never fires on our own site.
+```js
+Platform.onMuteAudio(m => sfx.setPlatformMute(m));   // fn(true) at launch if muted, then fn(true|false) on every change
+```
+- **audio.js:** a `platformMute` flag that `applyVolume()` ORs in, *without* `savePrefs()` and without touching `_muted`, so the player's
+  own M-key setting survives, e.g. `setPlatformMute(m) { this._platformMute = !!m; this.applyVolume(); }` and
+  `this._muted || this._platformMute ? 0 : …` in `applyVolume`. The menu music goes through `master`, so it follows.
+  (The M key and `#mute` keep working on the player's own preference; they just can't un-mute over the platform.)
+- **happytime:** please call `Platform.happytime()` once when the recap arrives and `podium[0].id === myId` (1st place, a human: you).
+  It's a no-op off CrazyGames.
+- **gameplayStart / gameplayStop** need nothing from you: the shim now also stops on `#deathScreen`, `#mRecap` and `body.recap-on`
+  (besides the HUD, the Esc menu `#clickToPlay` and `#lockPrompt`). Please keep those ids/classes, or tell me if they change.

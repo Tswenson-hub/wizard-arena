@@ -3,9 +3,10 @@
 // it does on our own site.
 //
 // gameplayStart / gameplayStop follow the page instead of hooks in main.js, so no game file depends on the SDK:
-//   in gameplay  = the HUD is showing (#hud not .hidden), neither the pause menu (#clickToPlay) nor the
-//                  "Click to play" prompt (#lockPrompt) is up, and the match results aren't (#mEnd)
-//   anything else (join screen, builder, pause, lost pointer lock, results) = stopped
+//   in gameplay  = the HUD is showing (#hud not .hidden), and none of these is up: the Esc menu (#clickToPlay), the
+//                  "Click to play" prompt (#lockPrompt), the death screen (#deathScreen), the end-of-match recap (podium.js's
+//                  body.recap-on, or match-ui.js's 2D #mRecap), the old results panel (#mEnd)
+//   anything else (join screen, builder, Esc menu, lost pointer lock, dead, recap; Leave reloads the page) = stopped
 // main.js may also call window.WA_PLATFORM.gameplay(true|false) directly; the first such call turns the DOM
 // observer off for good.
 // WA_PLATFORM.ready resolves (never rejects) once SDK.init() is done or failed: public/js/platform.js (the multiplayer
@@ -32,7 +33,8 @@
   function fromDom() {
     if (manual) return;
     if (loading && !hidden('#hud')) stopLoading();
-    set(!hidden('#hud') && hidden('#clickToPlay') && hidden('#lockPrompt') && hidden('#mEnd'));
+    set(!hidden('#hud') && hidden('#clickToPlay') && hidden('#lockPrompt') && hidden('#deathScreen') && hidden('#mRecap')
+      && hidden('#mEnd') && !document.body.classList.contains('recap-on'));
   }
   function stopLoading() {
     if (!loading) return;

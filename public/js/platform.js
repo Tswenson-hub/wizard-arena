@@ -118,5 +118,24 @@ export function showInviteButton(code) {
 }
 export function hideInviteButton() { call('hideInviteButton', s => s.game.hideInviteButton?.()); }
 
+// CrazyGames' "mute audio" setting (SDK.game.settings.muteAudio; it overrides the game's own sound toggle): fn(true|false)
+// once the SDK is up and on every change. Never called on our own site. Returns a function that removes the listener.
+// The game mutes its master output while it's true WITHOUT touching the player's saved M-key preference.
+export function onMuteAudio(fn) {
+  let off = false, listener = null;
+  readyP.then(() => {
+    if (off || !sdk) return;
+    const muted = call('settings', s => !!(s.game.settings && s.game.settings.muteAudio), false);
+    log('muteAudio', muted);
+    if (muted) fn(true);
+    listener = (settings) => { const m = !!(settings && settings.muteAudio); log('muteAudio', m); fn(m); };
+    call('addSettingsChangeListener', s => s.game.addSettingsChangeListener?.(listener));
+  });
+  return () => {
+    off = true;
+    if (listener) call('removeSettingsChangeListener', s => s.game.removeSettingsChangeListener?.(listener));
+  };
+}
+
 // a celebration moment (1st on the podium)
 export function happytime() { call('happytime', s => s.game.happytime?.()); }
