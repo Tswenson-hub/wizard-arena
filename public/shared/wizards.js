@@ -23,7 +23,7 @@ export const WIZARDS = {
     kit: { primary: 'glacial_skim', power: 'frostfall', mobility: 'skyward', guard: 'glacial_bulwark', utility: 'telekinesis', ultimate: 'blizzard' },
   },
   vesper: {
-    id: 'vesper', preset: 'Hemomancer', name: 'Vesper', title: 'the Hemomancer', role: 'Trickster · decoys, binds, traps',
+    id: 'vesper', preset: 'Hemomancer', name: 'Vesper', title: 'the Hemomancer', role: 'Trickster · decoys, drains, traps',
     color: 0xd8203c,
     kit: { primary: 'hex_shards', power: 'sanguine_lash', mobility: 'mirror_step', guard: 'black_death', utility: 'trapped_relic', ultimate: 'night_cage' },
   },
