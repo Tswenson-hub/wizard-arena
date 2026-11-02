@@ -306,3 +306,53 @@ body.recap-on .wa-invite { display: none; }
 }
 .wa-room-error b { color: #ffb3bc; }
 .wa-room-error.gone { opacity: 0; }
+
+/* round 19, the Stats card (select.js openStats): two tabs, big numbers, top spells, the last matches, the leaderboard */
+.htp.st { width: min(680px, 100%); display: flex; flex-direction: column; max-height: calc(100vh - 32px); }
+.st-tabs { display: flex; align-items: center; gap: 6px; margin-bottom: 12px; }
+.st-tabs button, .st-retry {
+  font: inherit; font-size: 13px; color: #f4ecd8; cursor: pointer; padding: 6px 14px; border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.15); background: rgba(255,255,255,0.05);
+}
+.st-tabs button:hover { border-color: #ffc857; }
+.st-tabs button.active { border-color: #ffc857; background: rgba(255, 200, 87, 0.2); color: #ffe7b0; font-weight: 700; }
+.st-tabs button:focus-visible, .st-retry:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
+.st-period { margin-left: auto; display: flex; gap: 4px; }
+.st-period[hidden] { display: none; }
+.st-period button { font-size: 12px; padding: 4px 11px; }
+.st-body { flex: 1; min-height: 220px; overflow-y: auto; margin-bottom: 12px; }
+.st-spin { width: 34px; height: 34px; margin: 70px auto; border-radius: 50%; border: 3px solid rgba(255, 200, 87, 0.2); border-top-color: #ffc857; animation: st-spin 0.8s linear infinite; }
+@keyframes st-spin { to { transform: rotate(360deg); } }
+.st-msg { margin: 60px 0; text-align: center; font-size: 16px; color: #f4ecd8; line-height: 1.6; }
+.st-msg span { font-size: 13px; color: rgba(244, 236, 216, 0.6); }
+.st-retry { margin-top: 10px; }
+.st-tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.st-tile { padding: 8px 10px; border-radius: 10px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); text-align: center; }
+.st-tile b { display: block; font-size: 22px; color: #ffc857; line-height: 1.2; }
+.st-tile span { font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: rgba(244, 236, 216, 0.6); }
+.st-time { margin: 8px 0 12px; font-size: 13px; color: rgba(244, 236, 216, 0.7); }
+.st-time b { color: #f4ecd8; }
+.st-cols { display: grid; grid-template-columns: 1fr 1.35fr; gap: 16px; }
+.st h3 { margin: 0 0 6px; font-size: 11px; font-weight: normal; letter-spacing: 1px; text-transform: uppercase; color: rgba(244, 236, 216, 0.55); }
+.st-spells { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.st-spells li { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 8px; border-left: 3px solid var(--el); background: rgba(255,255,255,0.04); }
+.st-spells img { width: 26px; height: 26px; }
+.st-spells span { flex: 1; font-weight: 700; }
+.st-spells em { font-style: normal; font-size: 12px; color: rgba(244, 236, 216, 0.65); }
+.st-none, .st-foot { margin: 4px 0; font-size: 13px; color: rgba(244, 236, 216, 0.6); }
+.st-foot { margin-top: 8px; text-align: center; }
+.st table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.st th { font-weight: normal; font-size: 11px; letter-spacing: 0.5px; text-transform: uppercase; color: rgba(244, 236, 216, 0.55); text-align: left; padding: 3px 6px; }
+.st td { padding: 4px 6px; border-top: 1px solid rgba(255,255,255,0.06); }
+.st-recent tr.won td:first-child { color: #ffc857; font-weight: 700; }
+.st-when { color: rgba(244, 236, 216, 0.5); font-size: 12px; text-align: right; }
+.st-board td:nth-child(n+3), .st-board th:nth-child(n+3) { text-align: right; }
+.st-rank { width: 36px; color: rgba(244, 236, 216, 0.6); }
+.st-board tbody tr:nth-child(1) .st-rank { color: #ffd34d; font-weight: 700; }
+.st-board tbody tr:nth-child(2) .st-rank { color: #d9dfe8; font-weight: 700; }
+.st-board tbody tr:nth-child(3) .st-rank { color: #e0a06a; font-weight: 700; }
+.st-name { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-board tr.me td { background: rgba(255, 200, 87, 0.16); color: #ffe7b0; font-weight: 700; }
+.st-board tfoot tr td { position: sticky; bottom: 0; border-top: 2px dashed rgba(255, 200, 87, 0.5); background: #2a1f34; }
+.st-board tfoot tr.me td { background: #4a3a2a; }
+@media (max-width: 600px) { .st-tiles { grid-template-columns: repeat(2, 1fr); } .st-cols { grid-template-columns: 1fr; } }

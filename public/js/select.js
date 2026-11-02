@@ -58,7 +58,8 @@ function builderHTML() {
       <div class="sb-group sb-presets" role="group" aria-label="Presets"><span class="sb-label">Presets</span>${C.PRESETS.map(p =>
         `<button type="button" class="sb-chip" data-preset="${p.id}" title="${esc(p.name)}: ${esc(C.LOADOUT_SLOTS.map(s => C.SPELLBOOK[p.loadout[s]]?.name).join(', '))}">${esc(p.name)}</button>`).join('')}
         <button type="button" class="sb-chip sb-random" data-random title="A random spell in every slot">🎲 Randomize</button>
-        <button type="button" class="sb-chip sb-howto" data-howto title="Controls and the goal">How to play</button></div>
+        <button type="button" class="sb-chip sb-howto" data-howto title="Controls and the goal">How to play</button>
+        <button type="button" class="sb-chip sb-stats-btn" data-stats title="Your stats and the leaderboard">📊 Stats</button></div>
       <div class="sb-group sb-saved" role="group" aria-label="Saved loadouts"><span class="sb-label">Saved</span>${Array.from({ length: MAX_SAVED }, (_, i) =>
         `<span class="sb-slotbtn" data-saved="${i}"><button type="button" class="sb-chip sb-load"></button><button type="button" class="sb-save" title="Save the current loadout here">Save</button></span>`).join('')}</div>
     </div>
@@ -294,6 +295,7 @@ export function mountSpellBuilder(container, { loadout, voice, onChange, onVoice
     if (b.dataset.preset) setLoadout(C.PRESETS.find(p => p.id === b.dataset.preset).loadout);
     else if ('random' in b.dataset) setLoadout(C.randomLoadout());
     else if ('howto' in b.dataset) openHowToPlay();
+    else if ('stats' in b.dataset) openStats();
     else if (b.dataset.voice) { if (b.dataset.voice !== vox) { vox = b.dataset.voice; paint(); onVoice?.(vox); } }
     else if (b.classList.contains('sb-load')) { const s = saved[+b.parentElement.dataset.saved]; if (s) setLoadout(s.loadout); }
     else if (b.classList.contains('sb-save')) {
@@ -421,7 +423,8 @@ export function setMatchTarget(n) {
 // Ty's privacy note (round 16), plain text, shown in the how-to-play card; exported for the "?" panel.
 export const PRIVACY = 'Privacy: if you play logged in to CrazyGames, we store your CrazyGames username and ID, your saved spells and '
   + 'settings, and your match stats on our server to keep your progress. As a guest, your data stays in this browser and your name is '
-  + 'used only for the match. No ads, no tracking. Questions or deletion requests: tyswenson34@gmail.com';
+  + 'used only for the match. CrazyGames usernames and match stats appear on the in-game leaderboard. No ads, no tracking. '
+  + 'Questions or deletion requests: tyswenson34@gmail.com';
 let howTo = null;
 export function openHowToPlay() {
   if (howTo) { howTo.querySelector('.htp-close').focus(); return; }
@@ -675,4 +678,119 @@ function paintProfile(el) {
     <span><b>${n(st.matches)}</b> ${n(st.matches) === 1 ? 'match' : 'matches'}</span>
     <span><b>${n(st.wins)}</b> ${n(st.wins) === 1 ? 'win' : 'wins'}</span>
     <span>K/D <b>${kd}</b></span>`;
+}
+
+// ================================================================ stats and the leaderboard (round 19)
+// openStats(): a card with two tabs, Your stats and Leaderboard (This week / All time). The data comes from main.js's fetcher
+// (setStatsFetcher), which asks the server ({ t: 'stats' }); a reply is reused for 5 s (the server's rate limit).
+let statsFetch = null, statsCache = null, statsAt = 0, stats = null;
+export function setStatsFetcher(fn) { statsFetch = typeof fn === 'function' ? fn : null; }
+const STATS_TTL = 5000;
+async function loadStats(force) {
+  if (!force && statsCache && performance.now() - statsAt < STATS_TTL) return statsCache;
+  if (!statsFetch) return { offline: true };
+  const r = await Promise.race([statsFetch(), new Promise((_, no) => setTimeout(() => no(new Error('timeout')), 8000))]);
+  if (r && !r.offline && !r.unavailable) { statsCache = r; statsAt = performance.now(); }
+  return r || { unavailable: true };
+}
+const num = (v) => Math.max(0, Math.round(+v || 0));
+const big = (v) => num(v).toLocaleString('en-US');
+const ordinal = (n) => n + (n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th');
+function playtime(sec) {
+  const m = Math.round(num(sec) / 60);
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
+}
+function when(at) {
+  const d = new Date(at);
+  if (isNaN(d)) return '';
+  const days = Math.floor((Date.now() - d) / 86400000);
+  return days <= 0 ? 'today' : days === 1 ? 'yesterday' : days < 7 ? `${days} days ago` : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+function meHTML(r) {
+  if (!r.me) return `<p class="st-msg">Log in to CrazyGames to track your stats.<br><span>Every match you play while logged in counts, against wizards or bots.</span></p>`;
+  const m = r.me, matches = num(m.matches), deaths = num(m.deaths);
+  const wr = m.winRate ?? m.win_rate, winRate = wr != null ? +wr : (matches ? num(m.wins) / matches : 0);
+  const kd = m.kd != null ? +m.kd : num(m.kills) / Math.max(1, deaths);
+  const tiles = [['Matches', big(matches)], ['Wins', big(m.wins)], ['Win rate', `${Math.round(winRate * 100)}%`], ['Podiums', big(m.podiums)],
+    ['Kills', big(m.kills)], ['K/D', kd.toFixed(2)], ['Damage', big(m.damage)], ['Healing', big(m.healing)]];
+  const top = (m.topSpells || m.top_spells || []).slice(0, 3).filter(t => C.SPELLBOOK[t.id || t.spell]);
+  const recent = (r.recent || []).slice(0, 10);
+  return `<div class="st-tiles">${tiles.map(([k, v]) => `<div class="st-tile"><b>${esc(v)}</b><span>${k}</span></div>`).join('')}</div>
+    <p class="st-time">Play time <b>${playtime(m.playtime_s)}</b>${matches ? ` · <b>${big(m.avgDamage ?? num(m.damage) / matches)}</b> damage a match` : ''}</p>
+    <div class="st-cols">
+      <section><h3>Top spells</h3>${top.length ? `<ol class="st-spells">${top.map(t => { const id = t.id || t.spell; return `<li style="--el:${hex(C.spellInfo(id).color)}">
+        <img src="${iconOf(id)}" alt=""><span>${esc(C.SPELLBOOK[id].name)}</span><em>${big(t.kills)} ${num(t.kills) === 1 ? 'kill' : 'kills'}</em></li>`; }).join('')}</ol>`
+        : `<p class="st-none">Your best spells show here after a few kills.</p>`}</section>
+      <section><h3>Last matches</h3>${recent.length ? `<table class="st-recent"><thead><tr><th>Place</th><th>Kills</th><th>Deaths</th><th>Damage</th><th></th></tr></thead><tbody>${
+        recent.map(x => `<tr class="${num(x.place) === 1 ? 'won' : ''}"><td>${x.place ? ordinal(num(x.place)) : '–'}</td><td>${big(x.kills)}</td><td>${big(x.deaths)}</td><td>${big(x.damage)}</td><td class="st-when">${esc(when(x.at || x.created_at || x.date))}</td></tr>`).join('')}</tbody></table>`
+        : `<p class="st-none">No matches yet. Play one!</p>`}</section>
+    </div>`;
+}
+function boardHTML(r, period) {
+  // rows: [{ rank, username, wins, kills, me? }] in order; rank[period]: { rank, wins, kills } or null (not on the board, or a guest)
+  const rows = (r.board?.[period] || []).slice(0, 25), mine = r.me?.username || profile?.username;
+  const isMe = (x) => !!x.me || (!!mine && x.username === mine);
+  const rk = r.rank?.[period], myRank = typeof rk === 'number' ? { rank: rk } : rk;
+  if (!rows.length) return `<p class="st-msg">Be the first on the board!${period === 'week' ? '<br><span>The week started Monday, 00:00 UTC.</span>' : ''}</p>`;
+  const row = (x, i, cls = '') => `<tr class="${cls}${isMe(x) ? ' me' : ''}"><td class="st-rank">${num(x.rank) || i}</td><td class="st-name">${esc(x.username ?? '')}</td><td>${big(x.wins)}</td><td>${big(x.kills)}</td></tr>`;
+  const inTop = rows.some(isMe);
+  const pin = !inTop && myRank?.rank ? row({ username: mine || 'You', wins: myRank.wins, kills: myRank.kills, me: true }, myRank.rank, 'pinned') : '';
+  const note = !r.me ? '<p class="st-foot">Log in to CrazyGames to get on the board.</p>'
+    : !inTop && !pin ? `<p class="st-foot">Play a match${period === 'week' ? ' this week' : ''} to get on the board.</p>` : '';
+  return `<table class="st-board"><thead><tr><th>#</th><th>Wizard</th><th>Wins</th><th>Kills</th></tr></thead>
+    <tbody>${rows.map((x, i) => row(x, i + 1)).join('')}</tbody>${pin ? `<tfoot>${pin}</tfoot>` : ''}</table>${note}`;
+}
+
+let statsEl = null;
+export function openStats(tab = 'me') {
+  if (statsEl) { statsEl.querySelector('.htp-close').focus(); return; }
+  const back = document.createElement('div');
+  back.className = 'htp-back st-back';
+  back.innerHTML = `<div class="htp st" role="dialog" aria-modal="true" aria-labelledby="stTitle">
+      <h2 id="stTitle">Stats</h2>
+      <div class="st-tabs" role="tablist">
+        <button type="button" role="tab" data-tab="me">Your stats</button><button type="button" role="tab" data-tab="board">Leaderboard</button>
+        <span class="st-period" role="group" aria-label="Period"><button type="button" data-period="week">This week</button><button type="button" data-period="all">All time</button></span>
+      </div>
+      <div class="st-body" role="tabpanel" aria-live="polite"></div>
+      <button type="button" class="htp-close">Close</button>
+    </div>`;
+  let period = 'week', state = 'loading', data = null;
+  const body = back.querySelector('.st-body');
+  const paint = () => {
+    for (const b of back.querySelectorAll('[data-tab]')) { const on = b.dataset.tab === tab; b.classList.toggle('active', on); b.setAttribute('aria-selected', on); }
+    for (const b of back.querySelectorAll('[data-period]')) b.classList.toggle('active', b.dataset.period === period);
+    back.querySelector('.st-period').hidden = tab !== 'board' || state !== 'ok';
+    body.innerHTML = state === 'loading' ? '<div class="st-spin" aria-label="Loading"></div>'
+      : state === 'offline' ? `<p class="st-msg">Your stats and the leaderboard load once you're in a match.</p>`
+      : state === 'error' ? `<p class="st-msg">Stats unavailable right now.<br><button type="button" class="st-retry">Retry</button></p>`
+      : tab === 'me' ? meHTML(data) : boardHTML(data, period);
+  };
+  const load = async (force) => {
+    state = 'loading'; paint();
+    let r;
+    try { r = await loadStats(force); } catch { r = { unavailable: true }; }
+    if (statsEl !== back) return;   // closed (or another card opened) meanwhile
+    data = r; state = r.offline ? 'offline' : r.unavailable ? 'error' : 'ok';
+    paint();
+  };
+  const close = () => { removeEventListener('keydown', onKey, true); back.remove(); statsEl = null; };
+  const onKey = (e) => {
+    if (document.body.classList.contains('recap-on')) return;
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); return; }
+    e.stopPropagation();   // the game's keys wait (Tab, Enter and the arrows move through the card as usual)
+  };
+  back.addEventListener('click', (e) => {
+    if (e.target === back || e.target.closest('.htp-close')) return close();
+    const b = e.target.closest('button');
+    if (!b) return;
+    if (b.dataset.tab) { tab = b.dataset.tab; paint(); }
+    else if (b.dataset.period) { period = b.dataset.period; paint(); }
+    else if (b.classList.contains('st-retry')) load(true);
+  });
+  addEventListener('keydown', onKey, true);
+  document.body.appendChild(back);
+  statsEl = back;
+  back.querySelector(`[data-tab="${tab}"]`).focus({ preventScroll: true });
+  load(false);
 }
