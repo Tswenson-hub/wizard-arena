@@ -165,6 +165,7 @@ export function createMatch(ctx) {
     setPhase('countdown', S.times.countdown);
   }
   function startLive() {
+    S.liveAt = t();
     clearStats();
     for (const p of players.values()) resetUlt(p);
     setPhase('live', S.cap ?? FFA.cap);
@@ -183,6 +184,8 @@ export function createMatch(ctx) {
     console.log(`[match] over (${reason}): winner ${players.get(winner)?.name ?? 'none (a tie)'}, mvp ${mvp?.name}`);
     ctx.broadcast({ t: 'matchEnd', results: S.results });
     S.recap = recapOf(list);   // (built now: the gap shouldn't change who placed where)
+    // round 18: every fighter in place order and the live time, once per match (server.js records it to the saves)
+    try { ctx.onMatchEnd?.([...list].sort(byPlace), { seconds: Math.round(t() - (S.liveAt ?? t())) }); } catch (e) { console.warn('[match] onMatchEnd', e); }
     setPhase('end', S.times.end);
   }
   // Round 16 (Ty): after the gap, 10 s of recap: the top three on a podium with their accolades, a row for the rest

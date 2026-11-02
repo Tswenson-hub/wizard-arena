@@ -2319,6 +2319,7 @@ export function createRoom(opts) {
     players, props, now, broadcast, send, propPublic,
     addBot: (...a) => addBot(...a), removePlayer: (id) => removePlayer(id), respawn: (p) => respawn(p),
     addUltCharge: (p, pct) => addUltCharge(p, pct),
+    onMatchEnd: (list, info) => opts.onMatchEnd?.(list, { ...info, roomKind: opts.kind }),   // round 18: the saves
     resetUlt: (p) => { p.ult = 0; },
     // between matches: every ram goes
     resetRams: () => { for (const r of [...rams]) despawnRam(r); },
@@ -2400,6 +2401,7 @@ export function createRoom(opts) {
   // A human arrives: `msg` is their join ({ name, loadout, voice, difficulty }); `extra` is merged into the welcome (roomError).
   function join(ws, msg, extra = {}) {
     const id = allocId();
+    if (ws.account?.username) msg = { ...msg, name: ws.account.username };   // round 18: a verified CrazyGames name
     let name = String(msg.name || 'Wizard').replace(/[^\w \-'!?.]/g, '').trim().slice(0, C.MAX_NAME_LEN) || `Wizard${id}`;
     if (rudeName(name)) name = `Wizard${id}`;   // round 15 (CrazyGames: a profanity filter on names other players see)
     const lo = C.sanitizeLoadout(msg.loadout);
@@ -2407,6 +2409,7 @@ export function createRoom(opts) {
     if (room.kind === 'private' && room.host == null) room.host = id;   // the creator (or the first in after everyone left)
     // fill bots play at this difficulty (a private room: the host's choice only)
     if (['easy', 'normal', 'hard'].includes(msg.difficulty) && (room.kind !== 'private' || room.host === id)) p.botPref = msg.difficulty;
+    if (ws.account) p.account = ws.account;   // round 18: an auth that came before the join
     players.set(id, p);
     sockets.set(id, ws);
     room.emptySince = null;

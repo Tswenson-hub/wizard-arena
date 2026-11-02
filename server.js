@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import * as C from './public/shared/constants.js';
 import { createRoom } from './server/room.js';
+import * as Saves from './server/saves.js';   // round 18: CrazyGames players' saves on Supabase (environment-owned; no-ops without keys)
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -41,6 +42,11 @@ const totalBots = () => { let n = 0; for (const r of rooms.values()) n += r.botC
 const totalHumans = () => { let n = 0; for (const r of rooms.values()) n += r.humanCount(); return n; };
 const canAddBot = () => totalBots() < MAX_BOTS;
 
+// round 18: a finished match goes to the players' saves (guests and bots are skipped there; lab rooms aren't recorded)
+function onMatchEnd(list, { roomKind, seconds }) {
+  if (roomKind !== 'public' && roomKind !== 'private') return;
+  Saves.recordRecap(list, { roomKind, seconds }).catch(e => console.warn('[saves] recordRecap', e));
+}
 function makeRoom(kind) {
   if (rooms.size >= MAX_ROOMS) return null;
   let id, code = null;
@@ -48,7 +54,7 @@ function makeRoom(kind) {
     do { code = Array.from({ length: 4 }, () => CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)]).join(''); } while (rooms.has(code));
     id = code;
   } else id = `${kind}-${nextPublic++}`;
-  const room = createRoom({ id, kind, code, allocId, canAddBot });
+  const room = createRoom({ id, kind, code, allocId, canAddBot, onMatchEnd });
   rooms.set(id, room);
   console.log(`[room] ${id} opened (${rooms.size} rooms)`);
   return room;
@@ -109,6 +115,21 @@ wss.on('connection', (ws) => {
     try { msg = JSON.parse(raw); } catch { return; }
     if (!msg || typeof msg.t !== 'string') return;
 
+    // round 18: a CrazyGames player's token (before or after the join; again on a refresh): their account, save and stats
+    if (msg.t === 'auth') {
+      if (typeof msg.token !== 'string' || !Saves.authAllowed(ws)) return;
+      Saves.verifyCgToken(msg.token).then(cg => cg && Saves.loadPlayer(cg).then(acc => ({ cg, acc }))).then(r => {
+        if (ws.readyState !== 1) return;
+        if (!r?.acc) { ws.send(JSON.stringify({ t: 'profile', guest: true })); return; }
+        ws.account = { playerId: r.acc.playerId, userId: r.cg.userId, username: r.cg.username };
+        const p = id !== null && room?.players.get(id);
+        if (p) p.account = ws.account;
+        ws.send(JSON.stringify({ t: 'profile', username: r.cg.username, save: r.acc.save, stats: r.acc.stats }));
+      }).catch(e => console.warn('[saves] auth', e));
+      return;
+    }
+    if (msg.t === 'save') { if (ws.account) Saves.writeSave(ws.account.playerId, msg.data); return; }
+
     if (id === null) {
       if (msg.t === 'addBot' || msg.t === 'removeBots') {
         if (!watching) { watching = observerRoom(msg.room); watching?.observe(ws); }
@@ -129,6 +150,7 @@ wss.on('connection', (ws) => {
 
   ws.on('close', () => {
     watching?.unobserve(ws);
+    if (ws.account) Saves.flushSave(ws.account.playerId).catch(() => {});
     if (id === null) return;
     room.leave(id);
   });
@@ -151,5 +173,13 @@ setInterval(() => {
 }, 1000 / C.TICK_RATE);
 setInterval(() => { for (const r of rooms.values()) r.snapshot(); }, 1000 / C.SNAPSHOT_RATE);
 setInterval(cleanupRooms, 1000);
+
+// round 18: a deploy or restart writes the saves still waiting on their 10 s
+let stopping = false;
+for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => {
+  if (stopping) process.exit(0);
+  stopping = true;
+  Promise.race([Saves.flushAllSaves(), new Promise(r => setTimeout(r, 3000))]).finally(() => process.exit(0));
+});
 
 httpServer.listen(PORT, () => console.log(`Wizard Arena listening on http://localhost:${PORT}`));
