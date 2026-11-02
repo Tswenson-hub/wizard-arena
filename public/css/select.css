@@ -157,6 +157,13 @@
 }
 /* narrow (a panel under about 1000 px, e.g. a small window): the preview and summary go above the rows, each row
    scrolls sideways, and the builder takes its natural height (the page or panel scrolls) */
+/* round 18, the CrazyGames profile chip (select.js paintProfile), in the top bar */
+.sb-profile { display: flex; align-items: center; gap: 10px; padding: 4px 12px; border-radius: 999px; font-size: 12px; color: var(--dim); white-space: nowrap;
+  background: rgba(255,255,255,0.05); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); }
+.sb-profile[hidden] { display: none; }
+.sb-profile b { color: var(--ink); }
+.sb-profile .sp-user { font-weight: 700; color: var(--accent); max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+
 /* round 17, the join screen's "Play with friends" box (select.js mountJoinRooms), under the loadout summary */
 .sb-rooms { display: grid; grid-template-columns: 1fr; gap: 6px; padding: 8px 10px; border-radius: 12px; background: rgba(255,255,255,0.04); border: 1px solid var(--line); }
 .sb-rooms h4 { margin: 0; font-size: 10.5px; font-weight: normal; letter-spacing: 1px; text-transform: uppercase; color: var(--dim); }

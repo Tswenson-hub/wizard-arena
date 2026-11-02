@@ -374,13 +374,22 @@ export function mountSpellBuilder(container, { loadout, voice, onChange, onVoice
   const io = new IntersectionObserver((en) => pv.setVisible(en[en.length - 1].isIntersecting));
   io.observe(root);
 
+  // round 18: the CrazyGames profile chip in the top bar, and the saved list redrawn when the profile's customs arrive
+  const profileEl = document.createElement('div');
+  profileEl.className = 'sb-profile';
+  profileEl.hidden = true;
+  $('.sb-top').appendChild(profileEl);
+  const hook = { profile: () => paintProfile(profileEl), saved: () => { saved = loadSaved(); paint(); } };
+  builders.add(hook);
+  hook.profile();
+
   return {
     set(lo) { setLoadout(lo, { silent: true }); },
     setVoice(v) { vox = C.sanitizeVoice(v); paint(); },
     footer: $('.sb-foot'),
     get loadout() { return { ...cur }; },
     get voice() { return vox; },
-    destroy() { io.disconnect(); ro.disconnect(); pv.destroy(); root.remove(); },
+    destroy() { builders.delete(hook); io.disconnect(); ro.disconnect(); pv.destroy(); root.remove(); },
   };
 }
 
@@ -410,8 +419,9 @@ export function setMatchTarget(n) {
 }
 
 // Ty's privacy note (round 16), plain text, shown in the how-to-play card; exported for the "?" panel.
-export const PRIVACY = 'Privacy: Wizard Arena keeps your name, spells and settings in this browser only. Your chosen name is sent to the game '
-  + 'server for the match you play and isn\'t stored. No accounts, no ads, no tracking. Questions: tyswenson34@gmail.com';
+export const PRIVACY = 'Privacy: if you play logged in to CrazyGames, we store your CrazyGames username and ID, your saved spells and '
+  + 'settings, and your match stats on our server to keep your progress. As a guest, your data stays in this browser and your name is '
+  + 'used only for the match. No ads, no tracking. Questions or deletion requests: tyswenson34@gmail.com';
 let howTo = null;
 export function openHowToPlay() {
   if (howTo) { howTo.querySelector('.htp-close').focus(); return; }
@@ -538,6 +548,7 @@ function mountJoinRooms(side, form) {
     fill(P.inviteRoom?.());
     const user = await P.getUsername?.();
     if (user && nameIn && !typed) { nameIn.value = user; nameIn.title = 'Your CrazyGames username'; }
+    if (user && !profile) { const last = cachedProfile(); if (last?.username === user) { profile = last; for (const b of builders) b.profile(); } }
   }).catch(() => {});
 }
 
@@ -634,4 +645,34 @@ export function roomError({ code, reason } = {}) {
   document.body.appendChild(el);
   setTimeout(() => el.classList.add('gone'), 6000);
   setTimeout(() => el.remove(), 6500);
+}
+
+// ================================================================ the CrazyGames profile (round 18)
+// main.js calls setProfile(msg) with the server's { t: 'profile', username, save, stats } for a logged-in CrazyGames player (never
+// for guests), and refreshSaved() after writing the profile's saved customs into loadout-store. Every builder shows a small chip
+// (the username, matches, wins, K/D); the podium says "Saved to your profile" (hasProfile). There's no login or logout here.
+const PROFILE_KEY = 'waProfile';
+const builders = new Set();
+let profile = null;
+function cachedProfile() { try { return JSON.parse(localStorage.getItem(PROFILE_KEY) || 'null'); } catch { return null; } }
+export function setProfile(msg) {
+  if (!msg || msg.guest || !msg.username) { profile = null; try { localStorage.removeItem(PROFILE_KEY); } catch { /* private mode */ } }
+  else {
+    profile = { username: String(msg.username), stats: msg.stats || {} };
+    try { localStorage.setItem(PROFILE_KEY, JSON.stringify(profile)); } catch { /* private mode */ }
+  }
+  for (const b of builders) b.profile();
+}
+export function hasProfile() { return !!profile; }
+export function refreshSaved() { for (const b of builders) b.saved(); }
+function paintProfile(el) {
+  el.hidden = !profile;
+  if (!profile) { el.innerHTML = ''; return; }
+  const st = profile.stats || {}, n = (v) => Math.max(0, Math.round(+v || 0));
+  const kd = (n(st.kills) / Math.max(1, n(st.deaths))).toFixed(2);
+  el.title = 'Your CrazyGames profile: your spells, settings and match stats are saved';
+  el.innerHTML = `<span class="sp-user">${esc(profile.username)}</span>
+    <span><b>${n(st.matches)}</b> ${n(st.matches) === 1 ? 'match' : 'matches'}</span>
+    <span><b>${n(st.wins)}</b> ${n(st.wins) === 1 ? 'win' : 'wins'}</span>
+    <span>K/D <b>${kd}</b></span>`;
 }
