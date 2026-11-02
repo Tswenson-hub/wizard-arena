@@ -1725,7 +1725,7 @@ function handle(p, msg) {
       if (!process.env.WA_DEBUG || !validVec(msg.p)) break;
       p.p = msg.p.slice(); p.justTeleported = true; p.fall = null;
       if (Number.isFinite(msg.yaw)) p.yaw = msg.yaw;
-      if (msg.resetCd) { for (const k in p.cd) p.cd[k] = 0; p.rollCharges = null; }
+      if (msg.resetCd) { for (const k in p.cd) p.cd[k] = 0; p.rollCharges = null; p.ammo = C.primaryMag(kit(p).primary).magazine; p.reloadUntil = 0; }   // (round 16: a full magazine too)
       break;
     }
     case 'debugProp': {

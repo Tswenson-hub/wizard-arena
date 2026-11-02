@@ -261,6 +261,15 @@ async function serverChecks() {
       const k = B.msgs.length; B.send({ t: 'pickup', ...aimAt(B, from, p1) }); await wait(600);
       ok(since(B, k, m => m.t === 'prop' && m.prop.id === p1.id && m.prop.carrier === B.id).length > 0, 'Telekinesis lifts');
       B.send({ t: 'drop' }); await wait(100);
+      // round 16 (Ty): 4.5 s after letting go before the next lift (was 3)
+      const lifted = (n) => since(B, n, m => m.t === 'prop' && m.prop.id === p1.id && m.prop.carrier === B.id).length > 0;
+      const now1 = () => B.msgs.filter(m => m.t === 'prop' && m.prop.id === p1.id).pop()?.prop || p1;
+      await wait(3400); let k2 = B.msgs.length; place(B, at(now1(), 4, 0), yawTo(at(now1(), 4, 0), now1())); await wait(80);
+      B.send({ t: 'pickup', ...aimAt(B, at(now1(), 4, 0), now1()) }); await wait(400);
+      const early = lifted(k2);
+      await wait(1000); k2 = B.msgs.length; B.send({ t: 'pickup', ...aimAt(B, at(now1(), 4, 0), now1()) }); await wait(600);
+      ok(!early && lifted(k2), `Telekinesis waits ${C.SPELLBOOK.telekinesis.liftCooldown} s after letting go: no lift at 3.5 s, a lift at 4.9 s`);
+      B.send({ t: 'drop' }); await wait(100);
       park(B, 1); await wait(80);
     }
     // the curse, then the curser walking past it, then an enemy walking in
@@ -671,6 +680,43 @@ async function cycloneRadiusChecks(join, since) {
     ok(!hit(F), 'and not one 4.5 m away');
   }
   for (const c of [S, N, F]) c.ws.close();
+  await wait(300);
+  await shearRangeChecks(join, since);
+}
+
+// ---- round 16 (Ty: Gale Shear 'needs much more reduced range and damage'): 5.5 m blades. A blade reaches a wizard whose centre
+// is within its 5.5 m plus the blade's and the body's radii (6.5-6.9 m). The 3rd, the wider crescent, about 0.35 m further (to 7.25 m).
+async function shearRangeChecks(join, since) {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  const SH = C.SPELLS.shear;
+  const G = await join('Gale', { primary: 'gale_shear' }), T = await join('Target', { primary: 'spark' });
+  G.send({ t: 'matchDebug', size: 2 }); G.send({ t: 'removeBots' }); await wait(600);
+  const line = clearLine(10);
+  ok(!!line, 'a clear line for the Gale Shear range test');
+  if (line) {
+    const at = (d) => [line.a[0] + line.dir[0] * d, 0, line.a[2] + line.dir[1] * d];
+    G.send({ t: 'debugPlace', p: at(0), yaw: line.yaw, resetCd: true });
+    T.send({ t: 'debugPlace', p: at(4), yaw: line.yaw + Math.PI }); await wait(2200);   // (past spawn protection)
+    // one shot (a full magazine each time, so shot 1 is a plain blade and shot 3 the crescent) at a target d m away
+    const shot = async (d, fin) => {
+      G.send({ t: 'debugPlace', p: at(0), yaw: line.yaw, resetCd: true }); T.send({ t: 'debugPlace', p: at(d), yaw: line.yaw + Math.PI }); await wait(150);
+      const o = [at(0)[0], 1.3, at(0)[2]], dir = [line.dir[0], 0, line.dir[1]];
+      let n = G.msgs.length;
+      if (fin) { const away = [-dir[0], 0, -dir[2]]; for (let k = 0; k < 2; k++) { G.send({ t: 'cast', kind: 'shear', origin: o, dir: away }); await wait(500); } n = G.msgs.length; }
+      G.send({ t: 'cast', kind: 'shear', origin: o, dir }); await wait(500);
+      const h = since(G, n, m => m.t === 'hit' && m.target === T.id && m.kind === 'shear')[0] || null;
+      return h && !!h.fin === fin ? h : null;
+    };
+    const near = await shot(4.5, false);
+    ok(!!near && near.dmg === C.D(SH.damage), `Gale Shear hits at 4.5 m for ${C.D(SH.damage)} (${near?.dmg})`);
+    // (6.5 m is the blade's edge: it moves 0.5 m a tick, so it hits there some runs and not others; logged, not checked)
+    const reach = {};
+    for (const [d, fin] of [[6, false], [6.5, false], [7, false], [6, true], [7, true], [7.5, true]]) reach[`${fin ? 'fin' : 'blade'} ${d}`] = (await shot(d, fin)) ? 'hit' : '-';
+    console.log('  (Gale Shear reach)', JSON.stringify(reach));
+    ok(reach['blade 6'] === 'hit' && reach['blade 7'] === '-', 'a blade reaches 6 m, not 7 m (was about 9.4 m)');
+    ok(reach['fin 6'] === 'hit' && reach['fin 7.5'] === '-', 'the crescent (the 3rd, 0.35 m wider) reaches 6 m, not 7.5 m');
+  }
+  for (const c of [G, T]) c.ws.close();
   await wait(300);
   await flaskStepChecks(join, since);
 }
