@@ -23,6 +23,8 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPrefere
 renderer.setPixelRatio(new URLSearchParams(location.search).has('low') ? 1 : Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 const LOW_FX = new URLSearchParams(location.search).has('low');   // ?low for weak GPUs
+// ?clip: recording mode for store videos: no HUD, crosshair, cursor, kill feed, match banner or help cards (style.css body.clip)
+if (new URLSearchParams(location.search).has('clip')) document.body.classList.add('clip');
 renderer.shadowMap.enabled = !LOW_FX;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;

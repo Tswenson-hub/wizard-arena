@@ -292,3 +292,9 @@ body.paused #abilities, body.paused #bars, body.paused #mBanner, body.paused #so
 .potionMark { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; align-items: center; pointer-events: none; filter: drop-shadow(0 0 6px rgba(255,40,60,0.8)); }
 .potionMark img { width: 26px; height: 26px; image-rendering: pixelated; }
 .potionMark span { font: 700 11px/1 system-ui, sans-serif; color: #ffd0d4; text-shadow: 0 1px 0 #000; margin-top: 2px; }
+
+/* ?clip: recording mode for CrazyGames preview videos. The game plays as normal, only the overlays go. */
+body.clip #hud, body.clip #crosshair, body.clip #chargeRing, body.clip #bars, body.clip #abilities, body.clip #killfeed,
+body.clip #feed, body.clip #killMarker, body.clip #hint, body.clip #status, body.clip #soundInd, body.clip #scoreboard,
+body.clip #matchUI, body.clip #idleNote, body.clip .htp-float, body.clip #helpBtn { display: none !important; }
+body.clip, body.clip * { cursor: none !important; }

@@ -3,6 +3,8 @@ import * as THREE from 'three';
 import { makeWizardBody, botBody, BONES, BODY_TOP } from './looks.js';
 import { FLIPS, PHASES } from './spellanim.js';
 import * as C from '../shared/constants.js';
+// ?clip: recording mode for store videos (no nameplates or health bars over wizards; see main.js)
+const CLIP = (() => { try { return new URLSearchParams(location.search).has('clip'); } catch { return false; } })();
 
 // Shared telekinesis visuals: glowing motes along the beam and a shell around the held prop.
 const TK_COLOR = 0xb48cff;
@@ -293,7 +295,7 @@ export class Wizard {
 
     this.nameplate = makeNameplate(this.bot ? `${info.name} · ${this.bot}` : info.name, info.color);
     this.nameplate.position.y = BODY_TOP + 0.4;
-    this.nameplate.visible = !isLocal;
+    this.nameplate.visible = !isLocal && !CLIP;
     this.group.add(this.nameplate);
 
     // remote health bar
@@ -303,7 +305,7 @@ export class Wizard {
     this.hpBar.add(bg, this.hpFill);
     this.hpBar.position.y = BODY_TOP + 0.17;
     this.hpBar.renderOrder = 11; bg.renderOrder = 11; this.hpFill.renderOrder = 12;
-    this.hpBar.visible = !isLocal;
+    this.hpBar.visible = !isLocal && !CLIP;
     this.group.add(this.hpBar);
 
     // state mirrored from the server
