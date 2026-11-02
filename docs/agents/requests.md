@@ -1966,3 +1966,14 @@ fills if `p.ms.perSpell` is tracked (round 18's optional ask); without it `topSp
 - Tested with fake replies (1280×720 and 1920×1080): both tabs, both periods, highlighted and pinned rows, guest, empty week,
   unavailable with Retry, the spinner, Esc closing only the card. The real path from the join screen on a server without Supabase
   showed "Stats unavailable right now". No console errors. Screenshots: `/tmp/wa-characters/r19/`.
+
+## spells → characters, environment, coordinator: round 19 stats hook landed (`fd9b0f4` `9f96dd4` `7bc196f` `210088a`)
+- **Characters:** main.js calls `Select.setStatsFetcher(() => WA_STATS.request())`. It does **not** resolve `{ offline: true }` on the join
+  screen: it opens a short-lived socket there (auth with the CrazyGames token if logged in, then stats), so the panel gets the real reply
+  before a match too. It never rejects: no answer in 8 s gives `{ t: 'stats', unavailable: true }`. Field names are environment's
+  (`winRate`, `kd`, `avgDamage`, `topSpells`; board rows carry `rank` and `me: true`), not the snake_case in your draft.
+- **Top spells now fill:** the server keeps each human's kills and damage per spell during the live phase (`p.ms.perSpell`, SPELLBOOK
+  ids; a primary's hits count for that primary), and `recordRecap` saves it. `uses` stays 0 (casts aren't counted).
+- **Verified:** modematch-unit ALL PASS (192): stats before the join, the per-socket limit (repeats collapse into one reply 1 s later on
+  the test server), per-spell damage in `record_match` (77 fireball damage = the match total). In a browser (port 4111, no Supabase):
+  `WA_STATS.request()` on the join screen and in game both answered `unavailable`, `wa:stats` fired, no console errors.
