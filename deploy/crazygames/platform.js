@@ -8,9 +8,13 @@
 //   anything else (join screen, builder, pause, lost pointer lock, results) = stopped
 // main.js may also call window.WA_PLATFORM.gameplay(true|false) directly; the first such call turns the DOM
 // observer off for good.
+// WA_PLATFORM.ready resolves (never rejects) once SDK.init() is done or failed: public/js/platform.js (the multiplayer
+// wrappers the game imports, on both builds) waits on it before touching SDK.game / SDK.user.
 (function () {
   const log = (...a) => { if (/[?&]cgdebug\b/.test(location.search)) console.info('[crazygames]', ...a); };
   let sdk = null, ready = false, playing = false, manual = false, loading = true;
+  let settle;
+  const readyP = new Promise(r => { settle = r; });
 
   function call(fn) {
     if (!ready) return;
@@ -40,11 +44,12 @@
     gameplay(on) { manual = true; set(on); },
     loadingDone: stopLoading,
     get sdk() { return ready ? sdk : null; },
+    ready: readyP,
   };
 
   async function init() {
     const SDK = window.CrazyGames && window.CrazyGames.SDK;
-    if (!SDK) { log('no SDK on the page'); return; }
+    if (!SDK) { log('no SDK on the page'); settle(null); return; }
     try {
       await SDK.init();
       sdk = SDK; ready = true;
@@ -61,6 +66,7 @@
       }
       fromDom();
     } catch (e) { log('init failed, running without the SDK', e); }
+    settle(ready ? sdk : null);
   }
 
   function observe() {
