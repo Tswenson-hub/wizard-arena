@@ -29,9 +29,9 @@ const iconOf = (id) => `./textures/icons/${SPELL_ICON[id] || id}.png`;
 const CARD_LINE = {
   spark: 'Fast bolts, long reach', glacial_skim: 'Ground shards that slow', fireball: 'Big, hot bolts', gale_shear: 'A short-range wind blade',
   potion_toss: 'Arcing potions that splash', sling: 'Stones that hit harder far off', hex_shards: 'Glyphs that curve in',
-  toxic_flask: 'A pool of poison', meteor: 'A slow, heavy fireball', cyclone: 'Spin and fling them away', sanguine_lash: 'A whip that binds',
+  toxic_flask: 'A pool of poison', meteor: 'A slow, heavy fireball', cyclone: 'Spin and fling them away', sanguine_lash: 'A blood bolt that heals you',
   frostfall: 'Drop a block of ice', battering_ram: 'A ram charges ahead',
-  smoke_flask: 'Smoke that eats spells', ward: 'Block from the front', firewall: 'A wall of flame', black_death: 'Block all round, heal',
+  smoke_flask: 'Smoke that eats spells', ward: 'Block from the front', firewall: 'A wall of flame', black_death: 'A blood shroud that heals',
   tempest_veil: 'Swallow spells, keep casting', ram_guard: 'Rams take your hits', glacial_bulwark: 'A freezing ice wall',
   flask_step: 'Teleport where it lands', ram_ride: 'Gallop on a ram', blink: 'Teleport forward', skyward: 'Shoot up, float down',
   mirror_step: 'Dash and leave decoys', smoke_screen: 'Leap back into smoke',
