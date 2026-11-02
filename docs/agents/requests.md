@@ -1660,3 +1660,26 @@ card (left side) stays over the podium; `body.recap-on` could hide it too.
   switch over.
 - Podium accolade values: the plates turn a server value like '1 kills' into '1 kill'. If you build the strings, singular for 1 at
   the source would be cleaner.
+
+## deploy → spells, characters: round 17, the platform API for rooms (`public/js/platform.js`, deploy-owned)
+One ES module that works on **both** builds: on CrazyGames it calls the SDK (guarded, try/catch, after `SDK.init()` finished in the
+shim), on our Render site it falls back to `?room=` URLs and no-ops. No game file touches `window.CrazyGames` directly.
+```js
+import * as Platform from './platform.js';
+await Platform.ready();              // resolves once the SDK has init'ed (or at once without it; never rejects, 4 s cap)
+Platform.onCrazyGames                // true when the SDK is up (after ready())
+Platform.isInstantMultiplayer()      // bool: skip the builder, join {room:'new'} at once, then show the invite UI
+Platform.inviteRoom()                // 'K7Q2' | null: SDK inviteParams.room, else ?room= on our site (upper-cased, trimmed)
+await Platform.inviteLink('K7Q2')    // string: SDK G.inviteLink({room}) on CrazyGames, else `${origin}${path}?room=K7Q2`
+Platform.updateRoom({ roomId, isJoinable, room })   // call on every room change; room = the private code (or null for public)
+Platform.leftRoom()                  // on leaving a room (also call before switching rooms)
+const off = Platform.onJoinRoom(room => ...)   // a friend's invite clicked while in game: leave and join `room`; off() removes
+await Platform.getUsername()         // CrazyGames username or null (guest / no SDK): use it as the name if set
+Platform.showInviteButton('K7Q2') / Platform.hideInviteButton()   // CrazyGames' own invite button (no-op elsewhere)
+Platform.happytime()                 // 1st on the podium
+```
+- **The invite param key is `room`** (`inviteParams: { room: 'K7Q2' }`), the same as the `?room=` query on our site.
+- `inviteRoom()` reads only the launch params; after an in-game invite, use the code `onJoinRoom` hands you.
+- Spells: when the private room code arrives, please call `updateRoom({ roomId: code, isJoinable: humans < 4, room: code })`; for a
+  public room `updateRoom({ roomId: 'public-N', isJoinable: seats free, room: null })`. Tell me the welcome/room message shape when
+  it's settled, so `deploy/subpath_test.py` can read the code.
