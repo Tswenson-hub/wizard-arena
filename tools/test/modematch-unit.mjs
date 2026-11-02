@@ -193,6 +193,7 @@ ok(!('vote' in match.matchPublic()) && !('zone' in match.matchPublic()) && !('sc
 // ---- round 12, against the real server (WA_DEBUG + MATCH_DEBUG, on a private port): only Telekinesis lifts, Trapped Relic
 // is traps only (2 per caster; an enemy close by, lifting it or breaking it sets it off), and Roll's charges and dodge window
 await serverChecks();
+await roomChecks();
 
 async function serverChecks() {
   const { spawn } = await import('node:child_process');
@@ -937,6 +938,125 @@ async function idleChecks(join, since) {
   n = H.msgs.length;
   await wait(5600);   // past the 5 s kick
   ok(since(H, n, m => m.t === 'kicked' && m.reason === 'inactivity').length === 1 && closed, `idle long enough: disconnected for inactivity (closed ${closed})`);
+}
+
+
+// ---- round 17: rooms. Public matchmaking fills one room before opening a second; private rooms by code ('new', a code, an
+// unknown or full code falls back to a public room); two rooms are isolated (no snapshots, hits, projectiles or kill feed
+// crossing); bots are per room; the host's bot difficulty; empty rooms are deleted (ROOM_EMPTY_TTL=2 on this test server).
+async function roomChecks() {
+  const { spawn } = await import('node:child_process');
+  const { default: WebSocket } = await import('ws');
+  const port = 4192, root = new URL('../../', import.meta.url).pathname;
+  const srv = spawn(process.execPath, ['server.js'], { cwd: root, env: { ...process.env, PORT: String(port), MATCH_DEBUG: '1', ROOM_EMPTY_TTL: '2' }, stdio: ['ignore', 'pipe', 'inherit'] });
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  const health = async () => (await (await fetch(`http://localhost:${port}/healthz`)).text());
+  const roomsNow = async () => +(/rooms=(\d+)/.exec(await health())?.[1] ?? -1);
+  try {
+    await new Promise((res, rej) => { srv.stdout.on('data', d => { if (/listening/.test(d)) res(); }); srv.on('exit', () => rej(new Error('server exited'))); });
+    const join = async (name, room) => {
+      const ws = new WebSocket(`ws://localhost:${port}`);
+      const c = { ws, name, msgs: [], id: null, welcome: null, room: null, send: (m) => ws.send(JSON.stringify(m)) };
+      ws.on('message', raw => { const m = JSON.parse(raw); if (m.t === 'welcome') { c.id = m.id; c.welcome = m; c.room = m.room; } if (m.t === 'room') c.room = m.room; c.msgs.push(m); });
+      await new Promise(r => ws.on('open', r));
+      c.send({ t: 'join', name, room, difficulty: 'easy' });
+      while (c.id == null) await wait(10);
+      return c;
+    };
+    const close = async (...cs) => { for (const c of cs) c.ws.close(); await wait(300); };
+    ok(/^ok rooms=0\b/.test(await health()), `/healthz reports the room count (${await health()})`);
+
+    // public matchmaking
+    const P = [];
+    for (let i = 0; i < 4; i++) P.push(await join('Pub' + i));
+    ok(P.every(c => c.room.id === P[0].room.id && !c.room.private && c.room.code === null), `four plain joins share one public room (${P.map(c => c.room.id).join(' ')})`);
+    ok(P[0].room.humans === 4 && P[0].room.joinable === false, `the room message counts them (${P[0].room.humans}/4, joinable ${P[0].room.joinable})`);
+    const P5 = await join('Pub4');
+    ok(P5.room.id !== P[0].room.id && !P5.room.private, `a 5th opens a second public room (${P5.room.id})`);
+    await close(P[3]);
+    const P6 = await join('Pub5');
+    ok(P6.room.id === P[0].room.id, `a free seat in the fuller room is taken before the emptier one (${P6.room.id})`);
+    await close(...P.slice(0, 3), P5, P6);
+
+    // private rooms
+    const A1 = await join('Ann', 'new');
+    const code = A1.room.code;
+    ok(A1.room.private && /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4}$/.test(code) && A1.room.id === code && A1.room.host === A1.id,
+      `'new' makes a private room with a 4-character code, its creator the host (${code})`);
+    const A2 = await join('Ben', code.toLowerCase());
+    ok(A2.room.id === code && A2.welcome.players.some(q => q.id === A1.id) && !A2.welcome.roomError, 'joining by code (any case) lands in that room with its creator');
+    const B1 = await join('Cat', 'new');
+    ok(B1.room.code && B1.room.code !== code, `a second private room has its own code (${B1.room.code})`);
+    const U = await join('Dan', 'QQQQ');
+    ok(U.welcome.roomError?.reason === 'unknown' && U.msgs.some(m => m.t === 'roomError' && m.code === 'QQQQ') && !U.room.private,
+      `an unknown code: a clear error, then a public room (${U.welcome.roomError?.text})`);
+    await close(U);
+
+    // bots per room, and isolation: let both rooms fight a while (a short countdown; the bots fight each other)
+    A1.send({ t: 'matchDebug', countdown: 1 }); B1.send({ t: 'matchDebug', countdown: 1 });
+    await wait(14000);
+    const lastSnap = (c) => c.msgs.filter(m => m.t === 'snap').pop();
+    const idsA = new Set(lastSnap(A1)?.players.map(q => q.id)), idsB = new Set(lastSnap(B1)?.players.map(q => q.id));
+    const botsA = lastSnap(A1)?.players.filter(q => q.bot) || [], botsB = lastSnap(B1)?.players.filter(q => q.bot) || [];
+    ok(botsA.length === 2 && botsB.length === 3 && botsA.every(q => !idsB.has(q.id)) && botsB.every(q => !idsA.has(q.id)),
+      `bots fill each room's empty seats, each room its own (${botsA.length} with 2 humans, ${botsB.length} with 1)`);
+    // the player ids each message is about (a projectile's owner, a hit's two, a death's two, a join, a respawn)
+    const PLAYER_MSGS = { proj: ['owner'], hit: ['attacker', 'target'], death: ['id', 'killer'], respawn: ['id'], leave: ['id'], tp: ['id'] };
+    const about = (m) => [...(PLAYER_MSGS[m.t] || []).map(k => m[k]), m.t === 'joined' ? m.player.id : null, ...(m.t === 'snap' ? m.players.map(q => q.id) : [])].filter(v => v != null);
+    const seenA = new Set(A1.msgs.flatMap(m => m.t === 'snap' || m.t === 'joined' || m.t === 'welcome' ? (m.t === 'welcome' ? m.players.map(q => q.id) : about(m)) : []));
+    const seenB = new Set(B1.msgs.flatMap(m => m.t === 'snap' || m.t === 'joined' || m.t === 'welcome' ? (m.t === 'welcome' ? m.players.map(q => q.id) : about(m)) : []));
+    const fights = (c) => c.msgs.filter(m => ['proj', 'hit', 'death', 'grab', 'frostfall', 'veil', 'jump'].includes(m.t)).length;
+    const fightA = fights(A1), fightB = fights(B1);
+    const foreign = (c, own, other) => c.msgs.filter(m => about(m).some(id => !own.has(id) || other.has(id)));
+    const crossA = foreign(A1, seenA, seenB), crossB = foreign(B1, seenB, seenA);
+    ok(fightA >= 2 && fightB >= 2, `both rooms are fighting (${fightA} and ${fightB} casts, hits and the like seen)`);
+    ok([...seenA].every(id => !seenB.has(id)), `no player of one room is ever in the other's snapshots (${seenA.size} and ${seenB.size} ids)`);
+    ok(crossA.length === 0 && crossB.length === 0 && A1.msgs.filter(m => m.t === 'hit' || m.t === 'proj' || m.t === 'death').length + B1.msgs.filter(m => m.t === 'hit' || m.t === 'proj' || m.t === 'death').length > 0,
+      `no projectile, hit, death (the kill feed) or respawn crosses between them (${crossA.length + crossB.length} ${JSON.stringify([...crossA, ...crossB].map(m => m.t))})`);
+
+    // the host's bot difficulty (a guest's request does nothing)
+    let n = A1.msgs.length;
+    A2.send({ t: 'roomBots', difficulty: 'hard' }); await wait(300);
+    ok(A1.room.bots === 'easy', `a guest can't change the bots (${A1.room.bots})`);
+    A1.send({ t: 'roomBots', difficulty: 'hard' }); await wait(1300);
+    ok(A2.room.bots === 'hard' && (lastSnap(A2)?.players.filter(q => q.bot) || []).every(q => q.bot === 'hard'), `the host can: every fill bot plays hard now (${A2.room.bots})`);
+
+    // full: 4 humans, then a 5th by code
+    const A3 = await join('Eve', code), A4 = await join('Fay', code);
+    const A5 = await join('Gus', code);
+    ok(A5.welcome.roomError?.reason === 'full' && A5.room.id !== code && !A5.room.private, `a full room: the 5th gets an error and a public room (${A5.welcome.roomError?.text})`);
+    ok((lastSnap(A1)?.players.filter(q => q.bot) || []).length === 0, 'four humans in a private room: no bots left');
+    await close(A5);
+    // the host leaves: the earliest human left takes over
+    await close(A1);
+    ok(A2.room.host === A2.id, `the host left: the next human is host (${A2.room.host} = ${A2.id})`);
+
+    // cleanup: everyone out; after ROOM_EMPTY_TTL the rooms go, and the code no longer works
+    const before = await roomsNow();
+    await close(A2, A3, A4, B1);
+    await wait(1000);
+    ok(await roomsNow() === before, `an empty room stays a moment (${before} rooms; a friend can still come back)`);
+    await wait(3000);
+    const after = await roomsNow();
+    ok(after === 0, `rooms with nobody in them for 2 s are deleted (${before} -> ${after})`);
+    const late = await join('Hal', code);
+    ok(late.welcome.roomError?.reason === 'unknown', `a deleted room's code is unknown (${late.welcome.roomError?.reason})`);
+    await close(late);
+
+    // a socket that only adds bots (botmatch.mjs, bot.js) watches a lab room of its own; nobody can join it
+    {
+      const ws = new WebSocket(`ws://localhost:${port}`), got = [];
+      ws.on('message', raw => got.push(JSON.parse(raw)));
+      await new Promise(r => ws.on('open', r));
+      ws.send(JSON.stringify({ t: 'addBot', difficulty: 'easy' })); ws.send(JSON.stringify({ t: 'addBot', difficulty: 'easy' }));
+      await wait(800);
+      const H = await join('Ivy');
+      ok(got.some(m => m.t === 'snap' && m.players.filter(q => q.bot).length === 2) && H.welcome.players.every(q => !q.bot || !got.some(m => m.t === 'joined' && m.player.id === q.id)),
+        'an add-bots-only socket gets its own lab room and sees its bots; a plain join does not land there');
+      ws.close(); await close(H);
+    }
+  } catch (e) { ok(false, `room checks: ${e.message}`); }
+  finally { if (srv.exitCode === null) { srv.kill(); await new Promise(r => srv.once('exit', r)); } }
 }
 
 console.log(fails ? `${fails} FAILED` : 'ALL PASS');
