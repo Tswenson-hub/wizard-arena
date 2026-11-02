@@ -1745,3 +1745,61 @@ or the CrazyGames username) and then `Select.openInvite()`; `inviteRoom()` → j
 - `Platform.isInstantMultiplayer()` is **false whenever the URL has `?room=`**, so a room switch after an instant-multiplayer launch doesn't
   open a fresh private room again. Still, please check `inviteRoom()` **before** `isInstantMultiplayer()` at launch.
 - Codes are checked against your alphabet (4–5 chars of `ABCDEFGHJKMNPQRSTUVWXYZ23456789`, case-insensitive); anything else is null.
+
+## environment → spells: round 18, the server hooks for saves (`server/saves.js`, environment-owned; land them after round 17)
+`server/saves.js` is committed and isolated (unit tests: `NODE_ENV=test node tools/test/saves-unit.mjs`). With no `SUPABASE_URL` /
+`SUPABASE_SECRET_KEY` every call is a no-op (null / false), so the hooks are safe to land before Ty sets the keys. Nothing throws and
+nothing should be awaited on the join path. `import * as Saves from './server/saves.js';`
+- **Hook 1, the `auth` message** (`ws.on('message')`, next to `join`; it may arrive before or after `join`):
+  ```js
+  if (msg.t === 'auth') {
+    if (!Saves.authAllowed(ws)) return;                       // a burst of 2, then 1 per 30 s per socket
+    Saves.verifyCgToken(msg.token).then(cg => cg && Saves.loadPlayer(cg).then(acc => ({ cg, acc }))).then(r => {
+      if (ws.readyState !== 1) return;
+      if (!r?.acc) return send(ws, { t: 'profile', guest: true });
+      ws.account = { playerId: r.acc.playerId, userId: r.cg.userId, username: r.cg.username };
+      const p = players.get(ws.playerId); if (p) p.account = ws.account;     // and copy ws.account onto p at join if it came first
+      send(ws, { t: 'profile', username: r.cg.username, save: r.acc.save, stats: r.acc.stats });
+    });
+  }
+  ```
+  Use your own names for the socket's player and `send`. A token refresh re-sends `auth`; just run the same path (same playerId).
+  Optional: if `ws.account` is set, use `ws.account.username` as the player's name at join (it's verified; the client sends it too).
+- **Hook 2, the `save` message:** `if (msg.t === 'save' && ws.account) Saves.writeSave(ws.account.playerId, msg.data);`
+  (validated and debounced inside: at most one write per 10 s per player, the latest wins; no reply needed).
+- **Hook 3, disconnect** (`ws.on('close')`): `if (ws.account) Saves.flushSave(ws.account.playerId);` and on SIGTERM, if you
+  handle it, `await Saves.flushAllSaves()`.
+- **Hook 4, the recap** (`server/match.js` `endMatch`, where `recapOf(list)` is built from the place-ordered list):
+  `Saves.recordRecap(list, { roomKind: <'private' | 'public'>, seconds: <the match's live seconds> });` (fire and forget). It records
+  every fighter with `p.account.playerId` (bots are counted in `bots_in_match`, never recorded; guests are skipped), reading
+  `p.kills`, `p.deaths`, `p.mDmg`, `p.ms.assists`, `p.ms.healed`, `p.ms.potions`. If match.js shouldn't import saves.js, pass a
+  `ctx.onMatchEnd(list, info)` instead and call it from server.js; either works. Once per match only (not again on the recap broadcast).
+  - **Optional, per spell:** if you fill `p.ms.perSpell = { [spellId]: { kills, damage, uses } }` during the match, it's stored too
+    (unknown ids dropped). Skip it for now if it's work.
+- **The integration test's server:** with `NODE_ENV=test` and `CG_TEST_JWKS='{"keys":[…]}'` in the environment, `verifyCgToken`
+  accepts tokens signed with that test key instead of CrazyGames' (never in production: the override is ignored unless NODE_ENV=test).
+
+## environment → spells (client), characters, deploy: round 18, the client side of saves
+**Protocol** (server side above): client → `{ t: 'auth', token }`, `{ t: 'save', data }`; server → `{ t: 'profile', username, save, stats }`
+or `{ t: 'profile', guest: true }`. `stats`: `{ matches, wins, podiums, kills, deaths, assists, damage, healing, potions, playtime_s }`.
+**The save object** (anything else is dropped; a save replaces the whole stored object, so always send all of it):
+```js
+{ loadout,                              // the last loadout (C.sanitizeLoadout)
+  loadouts: [{ name, loadout }],        // the saved customs, ≤ 3, names ≤ 24 chars (loadout-store.js loadSaved())
+  voice: 'male' | 'female',
+  settings: { volume: 0..1, muted: bool, bots: 'easy' | 'normal' | 'hard', howto: bool } }   // audio prefs, #botDiff, the how-to flag
+```
+`save` in the profile is null for a new account (never saved). The server returns it sanitized (`v: 1` added).
+- **deploy (platform.js shim):** please expose `Platform.getUserToken()` → the `IN_GAME_AUTH` token string or null (guest, no SDK,
+  error), using `isUserAccountAvailable` + `getUser()` first, and `Platform.onAuthChange(cb)` wrapping `user.addAuthListener` (cb gets
+  the user or null). Off CrazyGames both are null/no-op. Also: `.gitignore` has `.env.*`, which would ignore `.env.example`; add
+  `!.env.example`. The build's key scan: secret keys start `sb_secret_`; scan for that and `SUPABASE_SECRET`. Add `jose` (^6) to
+  package.json `dependencies` (saves.js imports it lazily; without it every token is rejected, i.e. everyone is a guest). saves.js
+  uses plain fetch for PostgREST, so supabase-js isn't needed. Test script: `NODE_ENV=test node tools/test/saves-unit.mjs`.
+- **spells (main.js / net.js):** after `connect`, `const tok = await Platform.getUserToken(); if (tok) net.send({ t: 'auth', token: tok })`
+  (and again from `onAuthChange` and roughly every 50 min, the token lives 1 h). On `profile` with a `save`: apply it through
+  loadout-store.js (`saveLoadout`, `saveSaved`, `saveVoice`) and the audio/bots prefs; with `save: null` and local loadouts present,
+  send the local state once as `{ t: 'save', data }` (the guest-progress merge). After that, send `save` whenever the loadout, saved
+  loadouts, voice or settings change (the server debounces; no need to throttle). Nothing waits on `profile`: join as now.
+- **characters (select.js):** the profile chip (username, matches, wins, K/D = kills / max(1, deaths)) from the `profile` message,
+  shown only when it isn't `guest`; "Saved to your profile" on the podium for those players; the privacy note behind the "?".
