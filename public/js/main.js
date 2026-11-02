@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as C from '../shared/constants.js';
-import { Net } from './net.js';
+import { Net, fetchStats } from './net.js';
 import { Input } from './input.js';
 import { Sfx } from './audio.js';
 import { buildWorld, makePropMesh, spinners, loadModels } from './world.js';
@@ -441,6 +441,24 @@ async function sendAuth() {
 setInterval(() => { if (account) sendAuth(); }, 50 * 60 * 1000);   // the token lives an hour
 // a guest logging in mid-session: auth (and the merge above); logging out: a reload, back to a guest
 withPlatform(P => P.onAuthChange?.(user => { if (user) { if (me) sendAuth(); } else if (account) location.reload(); }));
+
+// ---------------------------------------------------------------- stats (round 19)
+// The stats panel (select.js) asks with `await window.WA_STATS.request()`: over the game's socket in game, else a short-lived
+// one (with the CrazyGames token when logged in). Every reply also goes out as the window event 'wa:stats'.
+window.WA_STATS = {
+  async request() {
+    let msg;
+    if (net.connected) msg = await net.requestStats();
+    else {
+      let token = null;
+      try { token = await (await platform())?.getUserToken?.(); } catch {}
+      msg = await fetchStats(typeof token === 'string' && token ? token : null);
+    }
+    window.dispatchEvent(new CustomEvent('wa:stats', { detail: msg }));
+    return msg;
+  },
+};
+if (typeof Select.setStatsFetcher === 'function') Select.setStatsFetcher(() => window.WA_STATS.request());   // (select.js's Stats panel)
 
 // ---------------------------------------------------------------- network handlers
 // Game modes UI (public/js/match-ui.js, modes agent)
