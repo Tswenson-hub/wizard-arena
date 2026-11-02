@@ -3,6 +3,7 @@
 // (RS256 against CrazyGames' JWKS, kid ingame-auth, exp), loadPlayer upserts the `players` row and returns the save and
 // stats, writeSave keeps their loadouts and settings (validated, at most one write per 10 s per player, flushSave on
 // disconnect) and recordRecap / recordMatch add a finished match through the record_match RPC. Guests and bots never get here.
+// Round 19: getStats answers the stats panel's { t: 'stats' } (your stats, recent matches, the weekly and all-time boards).
 // Secrets come only from the environment (SUPABASE_URL, SUPABASE_SECRET_KEY; optional CG_GAME_ID). With none set every
 // call is a no-op that resolves to null, so local dev, the tests and the guest path behave exactly as before.
 // Nothing here throws or blocks: a slow or down Supabase means a guest-like session (each request times out after 5 s).
@@ -213,6 +214,81 @@ export function recordRecap(list, { roomKind = 'public', seconds = 0 } = {}) {
   }) : false));
 }
 
+// ---------------------------------------------------------------- stats and leaderboard (round 19)
+// The stats panel's { t: 'stats' } → getStats(ws.account?.playerId ?? null): { me, recent, board: { week, all }, rank: { week, all } },
+// or null when disabled or on any error (server.js sends { t: 'stats', unavailable: true } then, and owns the 5 s rate limit).
+// Every match counts (bots, private rooms: Ty, round 19).
+// The boards (top 25 by wins, then kills; the week from Monday 00:00 UTC) come from the SQL functions leaderboard(period, lim)
+// and player_rank(p_player, period) (docs/agents/requests.md, round 19) and are cached for 60 s; the player's own data is
+// fetched on each ask. No ids go to the client: board rows are { rank, username, wins, kills, matches } (+ me: true on theirs).
+export const BOARD_SIZE = 25;
+export const BOARD_TTL_MS = 60_000;
+const PERIODS = ['week', 'all'];
+const num = (v) => Math.max(0, Number(v) || 0);
+
+const boards = new Map();   // period → { at, rows } (rows keep player_id, server side only) | { pending }
+function board(period, now = Date.now()) {
+  const b = boards.get(period);
+  if (b?.rows && now - b.at < BOARD_TTL_MS) return Promise.resolve(b.rows);
+  if (b?.pending) return b.pending;
+  const pending = rest('rpc/leaderboard', { method: 'POST', body: { period, lim: BOARD_SIZE } }).then(rows => {
+    const clean = (Array.isArray(rows) ? rows : []).map(r => ({ rank: num(r.rank), playerId: r.player_id, username: cleanName(r.username) || 'Wizard',
+      wins: num(r.wins), kills: num(r.kills), matches: num(r.matches) }));
+    boards.set(period, { at: Date.now(), rows: clean });
+    return clean;
+  }, e => { boards.delete(period); throw e; });   // (an error isn't cached: the next ask tries again)
+  boards.set(period, { ...b, pending });
+  return pending;
+}
+// Both boards → { week, all } with the player ids (server side). Rejects on an error.
+export const getBoards = () => Promise.all(PERIODS.map(p => board(p))).then(([week, all]) => ({ week, all }));
+
+// The player's stats row → `me`: the totals plus winRate (0..1), kd, avgDamage (per match), playtime_s and topSpells
+// (the 3 with the most kills, then damage: [{ id, kills, damage, uses }], known SPELLBOOK ids only).
+export function derivedStats(row) {
+  const s = publicStats(row);
+  const topSpells = Object.entries(row?.per_spell && typeof row.per_spell === 'object' ? row.per_spell : {})
+    .filter(([id, v]) => C.SPELLBOOK[id] && v && typeof v === 'object')
+    .map(([id, v]) => ({ id, kills: num(v.kills), damage: num(v.damage), uses: num(v.uses) }))
+    .filter(e => e.kills || e.damage || e.uses)
+    .sort((a, b) => b.kills - a.kills || b.damage - a.damage || b.uses - a.uses || (a.id < b.id ? -1 : 1)).slice(0, 3);
+  return { ...s, winRate: s.matches ? Math.round(s.wins / s.matches * 1000) / 1000 : 0,
+    kd: Math.round(s.kills / Math.max(1, s.deaths) * 100) / 100, avgDamage: s.matches ? Math.round(s.damage / s.matches) : 0, topSpells };
+}
+
+// One player's own data → { me, recent, rank: { week, all } } (rank: { rank, wins, kills } or null when not on that board).
+// Rejects on an error.
+export async function playerStats(playerId) {
+  const [stats, recent, week, all] = await Promise.all([
+    rest(`player_stats?player_id=eq.${playerId}&select=${STAT_KEYS.join(',')},per_spell`),
+    rest(`match_results?player_id=eq.${playerId}&select=place,kills,deaths,damage,room_kind,bots_in_match,created_at&order=created_at.desc&limit=10`),
+    ...PERIODS.map(period => rest('rpc/player_rank', { method: 'POST', body: { p_player: playerId, period } })),
+  ]);
+  const rankOf = (rows) => { const r = Array.isArray(rows) ? rows[0] : rows; return r && num(r.rank) ? { rank: num(r.rank), wins: num(r.wins), kills: num(r.kills) } : null; };
+  return {
+    me: derivedStats(stats?.[0]),
+    recent: (Array.isArray(recent) ? recent : []).map(r => ({ place: num(r.place), kills: num(r.kills), deaths: num(r.deaths), damage: num(r.damage),
+      room: r.room_kind === 'private' ? 'private' : 'public', bots: num(r.bots_in_match), at: r.created_at })),
+    rank: { week: rankOf(week), all: rankOf(all) },
+  };
+}
+
+// The panel's whole answer. playerId: the asker's account (null for a guest: me null, recent [], rank nulls; the boards still
+// shown). Resolves null when disabled or on any error; never rejects.
+export async function getStats(playerId = null) {
+  if (!savesEnabled()) return null;
+  try {
+    const [b, mine] = await Promise.all([getBoards(), playerId ? playerStats(playerId) : null]);
+    const pub = (rows) => rows.map(r => ({ rank: r.rank, username: r.username, wins: r.wins, kills: r.kills, matches: r.matches,
+      ...(playerId && r.playerId === playerId ? { me: true } : {}) }));
+    return { me: mine?.me || null, recent: mine?.recent || [], board: { week: pub(b.week), all: pub(b.all) },
+      rank: mine?.rank || { week: null, all: null } };
+  } catch (e) {
+    log('stats', e.message);
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------- rate limit
 // Per socket (or any object): a burst of 2 auths, then one per 30 s. authAllowed(ws) → true to go ahead.
 const authBuckets = new WeakMap();
@@ -229,6 +305,6 @@ export function authAllowed(key, now = Date.now()) {
 export const _test = TEST ? {
   async useJwks(set) { jose ??= await import('jose'); testJwks = set ? jose.createLocalJWKSet(set) : null; },
   useFetch(fn) { fetchFn = fn || ((...a) => fetch(...a)); },
-  reset() { for (const q of queue.values()) if (q.timer) clearTimeout(q.timer); queue.clear(); },
+  reset() { for (const q of queue.values()) if (q.timer) clearTimeout(q.timer); queue.clear(); boards.clear(); },
   queued: (id) => queue.get(id),
 } : null;

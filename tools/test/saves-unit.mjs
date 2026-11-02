@@ -21,13 +21,19 @@ S._test.useFetch(async (url, init) => {
   if (path.endsWith('/players')) return Response.json([{ id: '00000000-0000-4000-8000-000000000001' }]);
   if (path.endsWith('/player_saves') && init.method === 'GET') return Response.json([{ data: { loadout: C.DEFAULT_LOADOUT, junk: 1 } }]);
   if (path.endsWith('/player_stats')) return Response.json([{ matches: 3, wins: 1, kills: 12, deaths: 5 }]);
+  if (path.endsWith('/rpc/leaderboard')) return Response.json(stub.board(JSON.parse(init.body)));
+  if (path.endsWith('/rpc/player_rank')) return Response.json(stub.rank(JSON.parse(init.body)));
+  if (path.endsWith('/match_results')) return Response.json(stub.recent);
   return new Response(null, { status: 204 });
 });
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
+// round 19's endpoints (the stats tests set these)
+const stub = { board: () => [], rank: () => [], recent: [] };
 
 // ---------------------------------------------------------------- no environment: everything is a no-op
 {
   ok(!S.savesEnabled(), 'disabled with no SUPABASE_*');
+  ok(await S.getStats('p1') === null && await S.getStats(null) === null, 'getStats → null (unavailable)');
   ok(await S.loadPlayer({ userId: 'u1', username: 'A' }) === null, 'loadPlayer → null');
   ok(S.writeSave('p1', { loadout: C.DEFAULT_LOADOUT }) === null, 'writeSave → null');
   ok(await S.recordMatch('p1', { place: 1 }) === false, 'recordMatch → false');
@@ -177,6 +183,97 @@ process.env.SUPABASE_SECRET_KEY = 'sb_secret_TEST';
   const a = calls.find(c => c.body.p_player === 'pid-A'), b = calls.find(c => c.body.p_player === 'pid-B');
   ok(calls.length === 2 && a.body.p_place === 2 && a.body.p_damage === 341 && a.body.p_assists === 3 && a.body.p_healing === 20
     && a.body.p_bots === 1 && a.body.p_seconds === 312 && a.body.p_room_kind === 'private' && b.body.p_place === 4, 'places, stats, bots and room kind');
+}
+
+// ---------------------------------------------------------------- round 19: stats and the leaderboard
+{
+  S._test.reset();
+  const ME = 'pid-me';
+  const rows = (period) => Array.from({ length: 25 }, (_, i) => ({ rank: i + 1, player_id: i === 2 ? ME : `pid-other-${i}`,
+    username: i === 0 ? 'Top\u0000Wizard' : `W${i}`, wins: 30 - i, kills: 100 - i, matches: 40 + (period === 'all' ? 10 : 0) }));
+  let boardCalls = 0;
+  stub.board = ({ period, lim }) => { boardCalls++; return lim === 25 && ['week', 'all'].includes(period) ? rows(period) : 'bad'; };
+  stub.rank = ({ p_player, period }) => p_player === ME ? [{ rank: period === 'week' ? 3 : 41, wins: 9, kills: 33 }] : [];
+  stub.recent = [{ place: 1, kills: 6, deaths: 2, damage: 512, room_kind: 'private', bots_in_match: 2, created_at: '2026-11-01T10:00:00Z' }];
+  const statsRow = { matches: 8, wins: 3, podiums: 5, kills: 25, deaths: 10, assists: 4, damage: 4001, healing: 90, potions: 3, playtime_s: 2400,
+    per_spell: { fireball: { kills: 10, damage: 900, uses: 200 }, spark: { kills: 10, damage: 1200, uses: 300 }, meteor: { kills: 2, damage: 50, uses: 9 },
+      blink: { uses: 40 }, not_a_spell: { kills: 99 }, frostfall: 'x' } };
+  S._test.useFetch(async (url, init) => {
+    calls.push({ url, method: init.method, body: init.body ? JSON.parse(init.body) : undefined });
+    if (failNext > 0) { failNext--; return new Response('boom', { status: 500 }); }
+    const path = new URL(url).pathname;
+    if (path.endsWith('/player_stats')) return Response.json([statsRow]);
+    if (path.endsWith('/rpc/leaderboard')) return Response.json(stub.board(JSON.parse(init.body)));
+    if (path.endsWith('/rpc/player_rank')) return Response.json(stub.rank(JSON.parse(init.body)));
+    if (path.endsWith('/match_results')) return Response.json(stub.recent);
+    return new Response(null, { status: 204 });
+  });
+
+  calls.length = 0;
+  const r = await S.getStats(ME);
+  ok(r && !r.unavailable && Object.keys(r).sort().join() === 'board,me,rank,recent', 'a logged-in player: { me, recent, board, rank }');
+  ok(r.board.week.length === 25 && r.board.all.length === 25 && r.board.all[0].matches === 50, 'both boards, 25 rows each');
+  ok(r.board.week.every(e => Object.keys(e).every(k => ['rank', 'username', 'wins', 'kills', 'matches', 'me'].includes(k))), 'board rows: no ids');
+  ok(!JSON.stringify(r).includes('pid-'), 'no player id anywhere in the reply');
+  ok(r.board.week[0].username === 'TopWizard', 'usernames cleaned');
+  ok(r.board.week[2].me === true && r.board.week.filter(e => e.me).length === 1, 'the player\'s own row is marked');
+  ok(JSON.stringify(r.rank) === JSON.stringify({ week: { rank: 3, wins: 9, kills: 33 }, all: { rank: 41, wins: 9, kills: 33 } }), 'rank on both boards, also outside the top 25');
+  ok(r.me.matches === 8 && r.me.winRate === 0.375 && r.me.kd === 2.5 && r.me.avgDamage === 500 && r.me.playtime_s === 2400 && r.me.podiums === 5, 'me: totals and derived values');
+  ok(JSON.stringify(r.me.topSpells.map(e => e.id)) === '["spark","fireball","meteor"]', 'top 3 spells by kills, then damage (unknown ids dropped)');
+  ok(!('per_spell' in r.me), 'per_spell itself is not sent');
+  ok(r.recent.length === 1 && JSON.stringify(r.recent[0]) === JSON.stringify({ place: 1, kills: 6, deaths: 2, damage: 512, room: 'private', bots: 2, at: '2026-11-01T10:00:00Z' }), 'recent matches');
+  const recentCall = calls.find(c => c.url.includes('/match_results'));
+  ok(recentCall.url.includes(`player_id=eq.${ME}`) && recentCall.url.includes('order=created_at.desc') && recentCall.url.includes('limit=10'), 'recent: the player\'s last 10, newest first');
+  ok(calls.filter(c => c.url.endsWith('/rpc/player_rank')).map(c => c.body.period).sort().join() === 'all,week', 'player_rank asked for both periods');
+  ok(calls.filter(c => c.url.endsWith('/rpc/leaderboard')).every(c => c.body.lim === 25), 'leaderboard asked for 25');
+
+  // the board cache (60 s): shared by every asker; per-player data is fetched on each ask
+  const n = calls.length;
+  boardCalls = 0;
+  const g = await S.getStats(null);
+  ok(boardCalls === 0, 'the boards are cached');
+  ok(g.me === null && g.recent.length === 0 && g.rank.week === null && g.rank.all === null && g.board.week.length === 25, 'a guest: boards only');
+  ok(!g.board.week.some(e => e.me), 'a guest has no marked row');
+  ok(!calls.slice(n).some(c => c.url.includes('/player_stats') || c.url.includes('player_rank') || c.url.includes('match_results')), 'nothing per-player fetched for a guest');
+  await S.getStats(ME);
+  ok(boardCalls === 0 && calls.filter(c => c.url.includes('/player_stats')).length === 2, 'the player\'s own data is fetched again, the boards aren\'t');
+  S._test.reset();
+  await S.getStats(null);
+  ok(boardCalls === 2, 'an expired cache asks again for both boards');
+  S._test.reset(); boardCalls = 0;
+  await Promise.all([S.getStats(null), S.getStats(ME), S.getStats(null)]);
+  ok(boardCalls === 2, 'concurrent asks: one request per board');
+  {
+    const realNow = Date.now; let fake = realNow();
+    Date.now = () => fake;
+    S._test.reset(); boardCalls = 0;
+    await S.getStats(null); fake += 59_000; await S.getStats(null);
+    ok(boardCalls === 2, 'still cached after 59 s');
+    fake += 2_000; await S.getStats(null);
+    ok(boardCalls === 4, 'fetched again after 60 s');
+    Date.now = realNow;
+  }
+
+  // a new account: no stats row, no matches, not on a board
+  stub.rank = () => []; stub.recent = [];
+  const fresh = S.derivedStats(undefined);
+  ok(fresh.matches === 0 && fresh.winRate === 0 && fresh.kd === 0 && fresh.avgDamage === 0 && fresh.topSpells.length === 0, 'no stats: zeros');
+  const nr = await S.getStats('pid-new');
+  ok(nr.rank.week === null && nr.rank.all === null && !nr.board.week.some(e => e.me), 'not on a board: rank null');
+  S._test.reset(); stub.board = () => [];
+  const e = await S.getStats(null);
+  ok(e && e.board.week.length === 0 && e.board.all.length === 0, 'an empty board: empty lists');
+
+  // errors: null (unavailable), never a rejection, and not cached
+  S._test.reset(); stub.board = ({ period }) => rows(period);
+  failNext = 1;
+  ok(await S.getStats(ME) === null, 'a Supabase error → null');
+  ok((await S.getStats(ME))?.board.week.length === 25, 'the next ask works: errors aren\'t cached');
+
+  // disabled again: null, nothing fetched
+  delete process.env.SUPABASE_URL;
+  calls.length = 0;
+  ok(await S.getStats(ME) === null && calls.length === 0, 'no environment: null, nothing fetched');
 }
 
 console.log(fails ? `\n${fails} FAILED` : '\nall saves checks passed');

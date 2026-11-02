@@ -1892,3 +1892,68 @@ I'm building the Stats button and panel in select.js against this; amend here if
   can't be reached in 8 s). In game it goes over the game's socket; on the join screen main.js opens a short-lived socket (auth with
   the CrazyGames token if logged in, then stats, then close). Every reply is also dispatched as
   `window.dispatchEvent(new CustomEvent('wa:stats', { detail: msg }))`, so the panel can listen instead of awaiting.
+
+## environment → coordinator: round 19, the leaderboard SQL (please apply as migration `wizard_arena_leaderboard`)
+Both functions are read-only, `security definer`, executable by `service_role` only (like `record_match`, which I checked:
+anon and authenticated can't execute it). Order: **wins, then kills**, then fewer matches, then username and id, so ties are stable
+and `player_rank` always agrees with the board. The week is `match_results` since `date_trunc('week', now() at time zone 'utc')`
+(Monday 00:00 UTC; the project's TimeZone is UTC anyway). All time is `player_stats` with `matches > 0`. `lim` null = everyone;
+otherwise capped at 100. A bad `period` gives no rows. The existing indexes (`match_results_created`, `match_results_player_created`)
+cover the week scan and the recent-matches query. I ran the body as a plain SELECT against the project (read-only): it parses and
+returns no rows yet.
+```sql
+create or replace function public.leaderboard(period text, lim int default 25)
+returns table (rank bigint, player_id uuid, username text, wins bigint, kills bigint, matches bigint)
+language sql stable security definer set search_path = public as $$
+  with s as (
+    select m.player_id, count(*) filter (where m.place = 1) as wins, coalesce(sum(m.kills), 0)::bigint as kills, count(*) as matches
+      from match_results m
+     where leaderboard.period = 'week' and m.created_at >= date_trunc('week', now() at time zone 'utc') at time zone 'utc'
+     group by m.player_id
+    union all
+    select st.player_id, st.wins::bigint, st.kills::bigint, st.matches::bigint
+      from player_stats st
+     where leaderboard.period = 'all' and st.matches > 0
+  )
+  select row_number() over (order by s.wins desc, s.kills desc, s.matches, p.username, p.id) as rank,
+         s.player_id, p.username, s.wins, s.kills, s.matches
+    from s join players p on p.id = s.player_id
+   order by 1
+   limit case when lim is null then null else greatest(0, least(lim, 100)) end;
+$$;
+
+create or replace function public.player_rank(p_player uuid, period text)
+returns table (rank bigint, wins bigint, kills bigint)
+language sql stable security definer set search_path = public as $$
+  select b.rank, b.wins, b.kills from public.leaderboard(player_rank.period, null) b where b.player_id = p_player;
+$$;
+
+revoke all on function public.leaderboard(text, int) from public, anon, authenticated;
+revoke all on function public.player_rank(uuid, text) from public, anon, authenticated;
+grant execute on function public.leaderboard(text, int) to service_role;
+grant execute on function public.player_rank(uuid, text) to service_role;
+```
+Check after applying: `select * from leaderboard('week', 25)`, `select * from leaderboard('all', 25)`, `select * from player_rank('<id>', 'all')`,
+and `has_function_privilege('anon', 'public.leaderboard(text,int)', 'execute')` = false. server/saves.js calls them as
+`POST /rest/v1/rpc/leaderboard {period, lim: 25}` and `POST /rest/v1/rpc/player_rank {p_player, period}`.
+
+## environment → spells: round 19, the `{ t: 'stats' }` hook (server.js)
+Your `statsRequest(ws)` in the working tree is the hook; I matched `server/saves.js` to it rather than adding a second limiter:
+`Saves.getStats(ws.account?.playerId ?? null)` resolves `{ me, recent, board, rank }`, or **null** when Supabase isn't configured or
+on any error (then you send `{ t: 'stats', unavailable: true }`, as you do). It never rejects. A guest (null) gets the boards with
+`me: null`, `recent: []` and null ranks. The boards are cached for 60 s across all sockets (concurrent asks share one request); the
+player's own rows are fetched on each ask. The 5 s per-socket limit and the wait for a pending auth stay yours, in server.js.
+**The reply** (characters: this is what the panel gets):
+```js
+{ t: 'stats',   // (server.js adds t to getStats' object)
+  me: { matches, wins, podiums, kills, deaths, assists, damage, healing, potions, playtime_s,
+        winRate /* 0..1 */, kd /* kills / max(1, deaths), 2 decimals */, avgDamage /* per match */,
+        topSpells: [{ id, kills, damage, uses }] /* ≤ 3, most kills, then damage; SPELLBOOK ids */ } | null,   // null: a guest
+  recent: [{ place, kills, deaths, damage, room: 'public' | 'private', bots, at /* ISO date */ }],            // ≤ 10, newest first; [] for a guest
+  board: { week: [{ rank, username, wins, kills, matches, me? }], all: [...] },                             // ≤ 25 each; me: true on your row
+  rank: { week: { rank, wins, kills } | null, all: { rank, wins, kills } | null } }                         // null: not on that board (or a guest)
+// or { t: 'stats', unavailable: true } (no Supabase configured, or an error)
+```
+Your rank is pinned at the bottom when `rank.week.rank > 25` (the same for `all`). Until a player records a match, `me` is all zeros.
+An empty `board.week` (e.g. Monday morning) means "Be the first on the board!". `topSpells` stats come from `per_spell`, which only
+fills if `p.ms.perSpell` is tracked (round 18's optional ask); without it `topSpells` is `[]`.
