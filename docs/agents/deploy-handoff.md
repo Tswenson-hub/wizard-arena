@@ -8,6 +8,21 @@
 - **Live commit:** `e416f68` (rounds 12b-13: Roll on F, the map editor, Ty's assets, mountains, ground textures,
   jeb2 animations), pushed by the coordinator with Ty's approval. Earlier: `29602cc` (deploy took ~45 s).
 
+## Round 18: saves (deploy's part)
+- `8b425e8` **platform.js:** `getUserToken()` → the `IN_GAME_AUTH` JWT, or null (guest: `getUser()` null; no SDK; any error, e.g.
+  `userNotAuthenticated`); `onAuthChange(fn)` wraps `user.addAuthListener` (CrazyGames reloads on logout). Spells' main.js already
+  calls both (`?.`).
+- `5086a1c` **`jose` ^6 in dependencies** (it was only in node_modules, so Render's `npm ci --omit=dev` would have left it out and
+  every token would have been rejected). Checked: a clean `npm ci --omit=dev` from the lockfile installs it and `import('jose')` works
+  on Node 22.
+- `ff8a877` **config:** `.env.example` (with `!.env.example` in .gitignore), `render.yaml` `SUPABASE_URL` / `SUPABASE_SECRET_KEY`
+  with `sync: false`, and the build's secret scan (fails before the zip; checked with a planted value: exit 1, no zip).
+- **Verified at `ff8a877`:** `NODE_ENV=test node tools/test/saves-unit.mjs` all pass; `subpath_test.py --max-mb 20 --site
+  http://localhost:4105/` PASS (the build from `--ref HEAD`; rooms as in round 17, 7.8 MB initial, no errors,
+  `/tmp/wa-deploy/r18-subpath.png`); under the local SDK, `getUserToken()` gave a 3-part RS256 JWT and the game sent `{t:'auth'}`
+  after the welcome (my server had no Supabase env, so it stayed a guest, as designed).
+- **Not checked here:** a real login against Supabase (needs the keys; the coordinator / Ty on Render).
+
 ## Round 17: rooms and CrazyGames multiplayer (deploy's part)
 - **`public/js/platform.js`** (`8a38c05`, `7d8200a`, `f129e88`): the game's one door to the SDK, on both builds. `ready`, `onCrazyGames`,
   `isInstantMultiplayer`, `inviteRoom`, `inviteLink`, `updateRoom`, `leftRoom`, `onJoinRoom`, `getUsername`, `show/hideInviteButton`,
@@ -81,10 +96,10 @@ python3 deploy/subpath_test.py http://localhost:4199/game/ /tmp/wa-deploy/subpat
 ## CrazyGames submission checklist (round 17)
 Sources: docs.crazygames.com, "Technical requirements", "Gameplay requirements", "Game covers" and "Multiplayer" (read 2026-10-30).
 
-### What to upload (zip from `038f34e`, round 17 rooms; rebuild from the commit that's pushed to Render)
+### What to upload (zip from `ff8a877`, rounds 17–18; rebuild from the commit that's pushed to Render)
 | What | Path | Notes |
 |---|---|---|
-| **Game zip** | `dist/crazygames.zip` (gitignored; rebuild with `npm run build:crazygames -- --ref <sha>`) | **built from `038f34e`** (round 17: rooms, invites, usernames, mute): 380 files, 9.5 MB unzipped, 6.6 MB zip, sha256 `e10e7006…56965`; talks to `wss://wizard-arena-76od.onrender.com`. Rooms change the protocol: **Render must run the same commit**, so rebuild from whatever sha is pushed |
+| **Game zip** | `dist/crazygames.zip` (gitignored; rebuild with `npm run build:crazygames -- --ref <sha>`) | **built from `ff8a877`** (round 17 rooms, invites, usernames, mute; round 18 auth and saves): 380 files, 9.5 MB unzipped, 6.6 MB zip, sha256 `a64f533f…927a22`, no secrets (the build checks); talks to `wss://wizard-arena-76od.onrender.com`. The protocol changed: **Render must run the same commit**, so rebuild from whatever sha is pushed |
 | **Cover, landscape 1920×1080** | `deploy/crazygames/store/covers/cover-hero-landscape-1920x1080.jpg` | recommended: the Mage up close in the courtyard |
 | **Cover, portrait 800×1200** | `deploy/crazygames/store/covers/cover-hero-portrait-800x1200.jpg` | same frame, cropped |
 | **Cover, square 800×800** | `deploy/crazygames/store/covers/cover-hero-square-800x800.jpg` | same frame, cropped |
@@ -151,8 +166,11 @@ Esc: menu and loadout
   so our Render site runs without the SDK (there, invites are `?room=CODE` links).
 - **Devices:** **desktop only** (keyboard and mouse; the builder shows a desktop notice under ~900 px). Mobile and tablet off.
 - **Orientation:** **landscape**.
-- **SDK:** v3: `gameplayStart` / `gameplayStop`, `loadingStart` / `loadingStop`, the game module's multiplayer calls (above) and the
-  User module's `getUser()` for the username. No ads.
+- **SDK:** v3: `gameplayStart` / `gameplayStop`, `loadingStart` / `loadingStop`, `settings.muteAudio`, the game module's multiplayer
+  calls (above), and the User module: `getUser()` (the username), `getUserToken({ signingKeyType: 'IN_GAME_AUTH' })` and
+  `addAuthListener` (round 18 saves). No ads.
+- **Progress save:** [x] **"linked to a game account on the game's backend, associated with the CrazyGames User"** (round 18: Supabase,
+  through our server only; guests keep local saves in the browser).
 - **Age:** PEGI 12-friendly (fantasy magic, no blood; skeletons collapse). CrazyGames' audience is 13+.
 
 ### 3. Re-making the art
@@ -170,8 +188,9 @@ look at them and keep the best of each.
 - **Done:** names go through a profanity filter on the server (`rudeName` in `join`, spells). The goat tip in the how-to-play card is now
   the ram tip. No Pixabay files left (`public/sounds/CREDITS.md`, round 15 "Flasks and potions"); everything is CC0 or CC BY 4.0
   (Leonardo Calvo, credited in-game and in the README).
-- **Privacy note:** we keep the name, loadout and settings in localStorage and send the typed name to our server for the match only.
-  A short note behind the "?" with a contact address covers it; Ty decides.
+- **Privacy note** (round 18, characters, behind the "?"): for logged-in CrazyGames users we store the CrazyGames username and ID,
+  saved spells and settings, and match stats, to keep their progress; guests' data stays in the browser; deletion requests to Ty's
+  address. Check it's in the build before submitting.
 - **Done (round 17): "online with friends"** is required for an online multiplayer game, not optional: rooms, invite links and room
   data through the SDK, CrazyGames usernames. See the QA note below.
 
@@ -188,6 +207,16 @@ Wizard Arena is a 4-player free-for-all; skeleton bots fill every empty seat, so
 - An invite clicked while already playing moves you to that room.
 - Logged-in CrazyGames players play under their CrazyGames username; guests get a random wizard name.
 ```
+
+### 6. How saves work (paste into the form's notes for QA)
+```
+CrazyGames users are logged in automatically via getUserToken, verified server-side against CrazyGames' JWKS; guests play with
+local saves; there are no other logins.
+```
+Before the upload: Render needs `SUPABASE_URL` and `SUPABASE_SECRET_KEY` (Ty set both in the dashboard; `render.yaml` lists them with
+`sync: false`, so a Blueprint sync keeps them). Without them the server runs, and everyone is a guest. Optional: `CG_GAME_ID`
+(saves.js then also checks the token's `gameId`). The build fails if a secret ends up in it (`sb_secret_`, `SUPABASE_SECRET`,
+`service_role`, the key's value when the shell has it, `.env` or server files).
 
 ## Round 14: the CrazyGames build
 **Build:** `npm run build:crazygames -- --ref HEAD` (use `--ref` for the upload, so only committed files ship; without it the
