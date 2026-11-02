@@ -369,6 +369,8 @@ export function createMatch(ctx) {
       }
       return false;
     },
+    // round 17: a private room's host picks the fill bots' difficulty (room.js swaps the bots' brains)
+    setBotDiff(d) { if (DIFFS.includes(d)) S.botDiff = d; },
     playerExtras(p) {
       return { dmg: Math.round(p.mDmg || 0), spectator: p.spectator || undefined };
     },

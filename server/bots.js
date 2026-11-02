@@ -128,7 +128,7 @@ export function botNoteRelic(p, propId, t) {
 }
 
 // Smoothed velocity estimates for every wizard, used to lead shots.
-const tracks = new Map();   // id -> { p, v, t }
+let tracks = new Map();   // id -> { p, v, t } (round 17: each room's own, world.tracks: set in updateBots like `players`)
 function trackVelocities(players, t) {
   for (const q of players.values()) {
     let tr = tracks.get(q.id);
@@ -151,7 +151,7 @@ function trackVelocities(players, t) {
 export function updateBots(dt, world) {
   const t = world.now();
   clouds = [...(world.smokes?.values() || [])].filter(c => t < c.until);
-  match = world.match || null; players = world.players;
+  match = world.match || null; players = world.players; tracks = (world.tracks ??= new Map());
   let any = false;
   for (const p of world.players.values()) {
     if (!p.bot) continue;
