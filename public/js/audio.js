@@ -66,9 +66,11 @@ export class Sfx {
   set volume(v) { this._volume = Math.max(0, Math.min(1, v)); this.applyVolume(); this.savePrefs(); }
   get muted() { return this._muted; }
   set muted(m) { this._muted = !!m; this.applyVolume(); this.savePrefs(); }
+  // round 17: CrazyGames' "mute audio" setting (platform.js onMuteAudio) silences us over the player's own setting, unsaved
+  setPlatformMute(m) { this._platformMute = !!m; this.applyVolume(); }
   applyVolume() {
     if (!this.master) return;
-    this.master.gain.setTargetAtTime(this._muted ? 0 : this._volume * this._volume * 0.9, this.ctx.currentTime, 0.03);
+    this.master.gain.setTargetAtTime(this._muted || this._platformMute ? 0 : this._volume * this._volume * 0.9, this.ctx.currentTime, 0.03);
   }
   savePrefs() { try { localStorage.setItem(PREFS_KEY, JSON.stringify({ volume: this._volume, muted: this._muted })); } catch {} }
 

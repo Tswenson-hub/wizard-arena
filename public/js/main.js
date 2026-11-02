@@ -372,6 +372,8 @@ window.WA_ROOM = {
 };
 // A friend's invite clicked while we're in the game (CrazyGames): over to their room.
 withPlatform(P => P.onJoinRoom?.(code => { if (code !== currentRoom?.code) window.WA_ROOM.join(code); }));
+// CrazyGames' "mute audio" (their QA checks it): silent while it's on, whatever our own M setting
+withPlatform(P => P.onMuteAudio?.(m => sfx.setPlatformMute(m)));
 // The launch: CrazyGames' instant multiplayer (a party leader: a new private room, then the invite card) or an invite
 // (the SDK's invite params, or ?room= here) joins at once, without the builder's click; the saved or default loadout, and
 // the Esc menu changes it. The name: the saved one, or the CrazyGames username (select.js fills the field).
@@ -379,7 +381,7 @@ async function autoJoin() {
   const P = await platform();
   if (!P) return;
   await P.ready?.();
-  const room = P.isInstantMultiplayer?.() ? 'new' : P.inviteRoom?.();
+  const room = P.inviteRoom?.() || (P.isInstantMultiplayer?.() ? 'new' : null);   // (an invite first: platform.js's order)
   if (!room || me || ui.joinBtn.disabled) return;
   await Select.nameReady?.();
   if (me || ui.joinBtn.disabled) return;
