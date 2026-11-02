@@ -1705,3 +1705,36 @@ First draft; amend here if your shapes differ and I'll adapt. Everything is in `
 - **Hook 4, nothing to do:** the CrazyGames name. `mountSpellBuilder` asks `Platform.getUsername()` and, if there's one, writes it into
   `#nameInput` (unless the player has typed there), so your submit handler sends it as usual. Guests keep `Wizard123`.
 - I import `platform.js` dynamically (`import('./platform.js')`), so select.js loads before it exists.
+
+## spells → characters, deploy: round 17 the room protocol and main.js's side (your shapes adopted)
+**Join** (net.js): `{ t: 'join', name, loadout, voice, difficulty, room }`. `room`: missing or `''` = public matchmaking (the fullest
+public room with a free human seat, else a new one), `'new'` = a new private room, `'K7Q2'` = that room (case-insensitive).
+- **Codes:** 4 characters from `ABCDEFGHJKMNPQRSTUVWXYZ23456789` (no 0 O 1 I L). Characters: please let the box accept exactly these.
+- **A bad code** (unknown, full with 4 humans, or the server at its room cap for `'new'`): the server puts you in a public room and sends
+  `{ t: 'roomError', code, reason: 'unknown' | 'full' | 'busy', text }` just before the welcome; the welcome also carries
+  `roomError: { code, reason, text }`. main.js calls `Select.roomError({ code, reason })` from the welcome (hook 3 as you wrote it).
+**Room state:** `welcome.room` and a broadcast `{ t: 'room', room }` on every change (a human joins or leaves, the host changes, the
+bot difficulty changes):
+```js
+room: { id: 'K7Q2' | 'public-3',   // updateRoom's roomId
+        code: 'K7Q2' | null,       // null in a public room
+        private: true | false,
+        humans: 2, max: 4,         // humans seated or watching; max humans (4 in both kinds)
+        joinable: true,            // humans < max
+        host: 17,                  // the host's player id (private rooms: the creator, then the earliest human left); null in public
+        bots: 'normal' }           // the fill bots' difficulty
+```
+main.js calls `Select.setRoom({ ...room, isHost: room.host === myId })` (or `Select.setRoom(null)` in a public room),
+`Platform.updateRoom({ roomId: room.id, isJoinable: room.joinable, room: room.code })` on each, and `Platform.leftRoom()` on leaving.
+`deploy/subpath_test.py` can read it in the page as `window.__wa.room` (the latest room object) or wait for `#roomChip`.
+- **The host's bot difficulty:** `{ t: 'roomBots', difficulty: 'easy' | 'normal' | 'hard' }` (only the host's counts in a private room;
+  the fill bots switch at once). The join screen's `#botDiff` is still sent at join, so the creator picks it there. For the Esc menu
+  row, call **`window.WA_ROOM.setBots(diff)`** (host only; a no-op otherwise). `window.WA_ROOM.state` is the current room object.
+- **Switching rooms in game** (an invite clicked while playing, `Platform.onJoinRoom`): **`window.WA_ROOM.join(code)`** reloads the
+  page with `?room=CODE` (also inside the CrazyGames iframe), which auto-joins that room. A reload is how Leave already works; it
+  resets every client state cleanly. `WA_ROOM.join('new')` makes a new private room the same way.
+**Launch (main.js):** after `Platform.ready()` and the models: `isInstantMultiplayer()` → join `'new'` at once (saved loadout and name,
+or the CrazyGames username) and then `Select.openInvite()`; `inviteRoom()` → join that code at once. Neither waits for a click; the
+"Click to play" prompt takes the pointer lock as usual. The loadout can be changed in the Esc menu.
+**Hook 1** (`form.dataset.room`) is wired as you described. Characters: `Select.setRoom` / `openInvite` / `roomError` are called only
+`if (typeof Select.x === 'function')`, so either of us can land first.
