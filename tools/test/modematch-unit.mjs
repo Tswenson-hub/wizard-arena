@@ -209,7 +209,9 @@ async function serverChecks() {
       const ws = new WebSocket(`ws://localhost:${port}`);
       // (round 16: like the game's client, a state report echoes the server's last move of us it has seen, unless the test sets tp)
       const c = { ws, name, msgs: [], id: null, props: null, tp: 0, send: (m) => ws.send(JSON.stringify(m.t === 'state' && !('tp' in m) ? { ...m, tp: c.tp } : m)) };
-      ws.on('message', raw => { const m = JSON.parse(raw); if (m.t === 'welcome') { c.id = m.id; c.props = m.props; }
+      ws.on('message', raw => { const m = JSON.parse(raw); if (m.t === 'welcome') { c.id = m.id; c.props = m.props; c.room = m.room; c.propState = new Map(m.props.map(q => [q.id, q])); }
+        if (m.t === 'prop' && c.propState) c.propState.set(m.prop.id, m.prop);
+        if (m.t === 'propBreak' && c.propState?.has(m.id)) c.propState.set(m.id, { ...c.propState.get(m.id), state: 'broken' });
         if (m.id === c.id && typeof m.seq === 'number' && ['respawn', 'flaskArrive', 'mirror', 'mrainLand'].includes(m.t)) c.tp = m.seq;
         c.msgs.push(m); });
       await new Promise(r => ws.on('open', r));
@@ -230,19 +232,37 @@ async function serverChecks() {
     // (the trap tests also stand and shoot along the prop's x axis, out to 4.6 m: that strip must be clear too)
     const strip = (x, z) => { for (let dx = -4.6; dx <= 4.6; dx += 0.4) for (const dz of [-0.6, 0, 0.6]) if (C.surfaceTopAt(x + dx, z + dz) >= 0.05) return false; return true; };
     const clear = (x, z, r) => inside(x, z, r) && C.COLLIDERS.every(c => Math.hypot(c.x - x, c.z - z) > c.r + r)
-      && A.props.every(p => Math.hypot(p.x - x, p.z - z) > r) && flat(x, z, r) && strip(x, z);
+      && [...A.propState.values()].every(p => Math.hypot(p.x - x, p.z - z) > r) && flat(x, z, r) && strip(x, z);
+    // every prop at rest (nothing carried or in flight from a fill bot) before choosing open ground around them
+    for (let i = 0; i < 60 && ![...A.propState.values()].every(q => q.state === 'idle'); i++) await wait(150);
     const spots = [];
     for (let x = -34; x <= 34; x++) for (let z = -34; z <= 34; z++) if (clear(x, z, 3.5) && spots.every(q => Math.hypot(q[0] - x, q[1] - z) > 9.5)) spots.push([x, z]);
     // parking: open ground (no strip needed), 9.5 m from every test spot and from each other
     const parks = [];
-    for (let x = -34; x <= 34; x++) for (let z = -34; z <= 34; z++) if (inside(x, z, 2) && flat(x, z, 2) && A.props.every(p => Math.hypot(p.x - x, p.z - z) > 2)
+    for (let x = -34; x <= 34; x++) for (let z = -34; z <= 34; z++) if (inside(x, z, 2) && flat(x, z, 2) && [...A.propState.values()].every(p => Math.hypot(p.x - x, p.z - z) > 2)
       && spots.slice(0, 9).every(q => Math.hypot(q[0] - x, q[1] - z) > 9.5) && parks.every(q => Math.hypot(q[0] - x, q[1] - z) > 4)) parks.push([x, z]);
     ok(spots.length >= 9 && parks.length >= 4, `nine open spots for the trap and roll tests (${spots.length}) and four to park on (${parks.length})`);
     const park = (c, i) => place(c, parks[i] || [0, 0]);   // out of the way, on open ground of its own
     [A, B, V, R].forEach(park);
-    const open = A.props.filter(p => p.state === 'idle').slice(0, 8);   // (spots[7] is the roll test's)
-    open.forEach((p, i) => { const sp = spots[i < 7 ? i : 8]; p.x = sp[0]; p.z = sp[1]; A.send({ t: 'debugProp', id: p.id, x: p.x, z: p.z }); });
-    await wait(100);
+    // round 17 (deterministic): all four testers share one room, and each test prop is put on its spot and confirmed there by
+    // the room's own broadcast (debugProp only moves a resting prop: a fill bot from before the testers arrived may have
+    // lifted or thrown one, so wait until it's idle again, and retry)
+    ok([B, V, R].every(c => c.room?.id === A.room?.id), `the four testers share one room (${[A, B, V, R].map(c => c.room?.id).join(' ')})`);
+    const putProp = async (p, x, z) => {
+      for (let i = 0; i < 40; i++) {
+        const cur = A.propState.get(p.id);
+        if (cur?.state === 'idle') {
+          A.send({ t: 'debugProp', id: p.id, x, z }); await wait(120);
+          const now = A.propState.get(p.id);
+          if (now?.state === 'idle' && now.x === x && now.z === z) { p.x = x; p.z = z; return true; }
+        } else await wait(150);
+      }
+      return false;
+    };
+    const open = [...A.propState.values()].sort((a, b) => (a.state !== 'idle') - (b.state !== 'idle') || a.id - b.id).slice(0, 8).map(q => ({ ...q }));   // (resting ones first; spots[7] is the roll test's)
+    const placed = [];
+    for (const [i, p] of open.entries()) { const sp = spots[i < 7 ? i : 8]; placed.push(await putProp(p, sp[0], sp[1])); }
+    ok(placed.every(Boolean), `the test props are resting on their spots (${placed.filter(Boolean).length}/${open.length})`);
     const [p1, p2, p3, p4] = open;
     const at = (prop, dx, dz) => [prop.x + dx, prop.z + dz];
     const aimAt = (c, from, prop) => { const o = [from[0], 1.3, from[1]], t = [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z]; return { aimOrigin: o, aimDir: [t[0] - o[0], t[1] - o[1], t[2] - o[2]] }; };
@@ -1034,14 +1054,15 @@ async function roomChecks() {
     ok(A2.room.host === A2.id, `the host left: the next human is host (${A2.room.host} = ${A2.id})`);
 
     // cleanup: everyone out; after ROOM_EMPTY_TTL the rooms go, and the code no longer works
-    const before = await roomsNow();
     await close(A2, A3, A4, B1);
     await wait(1000);
-    ok(await roomsNow() === before, `an empty room stays a moment (${before} rooms; a friend can still come back)`);
-    await wait(3000);
+    const back = await join('Hal', code);
+    ok(back.room?.id === code && !back.welcome.roomError, `an empty private room stays a moment: a friend can still come back by its code (${back.room?.id})`);
+    await close(back);
+    await wait(3500);
     const after = await roomsNow();
-    ok(after === 0, `rooms with nobody in them for 2 s are deleted (${before} -> ${after})`);
-    const late = await join('Hal', code);
+    ok(after === 0, `rooms with nobody in them for 2 s are deleted (${after} left)`);
+    const late = await join('Ida', code);
     ok(late.welcome.roomError?.reason === 'unknown', `a deleted room's code is unknown (${late.welcome.roomError?.reason})`);
     await close(late);
 
