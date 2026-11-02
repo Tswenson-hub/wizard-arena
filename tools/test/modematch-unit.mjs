@@ -194,6 +194,7 @@ ok(!('vote' in match.matchPublic()) && !('zone' in match.matchPublic()) && !('sc
 // is traps only (2 per caster; an enemy close by, lifting it or breaking it sets it off), and Roll's charges and dodge window
 await serverChecks();
 await roomChecks();
+await savesChecks();
 
 async function serverChecks() {
   const { spawn } = await import('node:child_process');
@@ -1025,7 +1026,8 @@ async function roomChecks() {
     const A3 = await join('Eve', code), A4 = await join('Fay', code);
     const A5 = await join('Gus', code);
     ok(A5.welcome.roomError?.reason === 'full' && A5.room.id !== code && !A5.room.private, `a full room: the 5th gets an error and a public room (${A5.welcome.roomError?.text})`);
-    ok((lastSnap(A1)?.players.filter(q => q.bot) || []).length === 0, 'four humans in a private room: no bots left');
+    await wait(300);   // (a fresh snapshot)
+    ok((lastSnap(A1)?.players.filter(q => q.bot) || []).length === 0, `four humans in a private room: no bots left (${(lastSnap(A1)?.players.filter(q => q.bot) || []).map(q => q.name)})`);
     await close(A5);
     // the host leaves: the earliest human left takes over
     await close(A1);
@@ -1057,6 +1059,77 @@ async function roomChecks() {
     }
   } catch (e) { ok(false, `room checks: ${e.message}`); }
   finally { if (srv.exitCode === null) { srv.kill(); await new Promise(r => srv.once('exit', r)); } }
+}
+
+
+// ---- round 18: server.js's save hooks against a real server (NODE_ENV=test, a test JWKS, a stub PostgREST on port 4195):
+// auth → profile (the account on the player), save → a write, the verified username at join, a finished match → record_match
+// for the logged-in player only, a disconnect flushes; a bad token → guest.
+async function savesChecks() {
+  const { spawn } = await import('node:child_process');
+  const { default: WebSocket } = await import('ws');
+  const http = await import('node:http');
+  const { generateKeyPair, exportJWK, SignJWT } = await import('jose');
+  const port = 4193, restPort = 4195, root = new URL('../../', import.meta.url).pathname;
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  const calls = [];
+  const rest = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', d => { body += d; });
+    req.on('end', () => {
+      const path = req.url.split('?')[0];
+      calls.push({ method: req.method, path, body: body ? JSON.parse(body) : null });
+      res.setHeader('Content-Type', 'application/json');
+      if (path.endsWith('/players')) return res.end(JSON.stringify([{ id: '00000000-0000-4000-8000-000000000007' }]));
+      if (path.endsWith('/player_saves') && req.method === 'GET') return res.end(JSON.stringify([{ data: { loadout: C.DEFAULT_LOADOUT, voice: 'female' } }]));
+      if (path.endsWith('/player_stats')) return res.end(JSON.stringify([{ matches: 3, wins: 1, kills: 12, deaths: 5 }]));
+      res.statusCode = 204; res.end();
+    });
+  });
+  await new Promise(r => rest.listen(restPort, r));
+  const { publicKey, privateKey } = await generateKeyPair('RS256');
+  const jwk = { ...(await exportJWK(publicKey)), kid: 'ingame-auth', alg: 'RS256', use: 'sig' };
+  const t0 = Math.floor(Date.now() / 1000);
+  const token = await new SignJWT({ userId: 'cg-77', username: 'CloudMage' }).setProtectedHeader({ alg: 'RS256', kid: 'ingame-auth' }).setIssuedAt(t0).setExpirationTime(t0 + 3600).sign(privateKey);
+  const srv = spawn(process.execPath, ['server.js'], { cwd: root, stdio: ['ignore', 'pipe', 'inherit'], env: { ...process.env, PORT: String(port), MATCH_DEBUG: '1',
+    NODE_ENV: 'test', CG_TEST_JWKS: JSON.stringify({ keys: [jwk] }), SUPABASE_URL: `http://localhost:${restPort}`, SUPABASE_SECRET_KEY: 'sb_secret_test' } });
+  try {
+    await new Promise((res, rej) => { srv.stdout.on('data', d => { if (/listening/.test(d)) res(); }); srv.on('exit', () => rej(new Error('server exited'))); });
+    const client = async () => {
+      const ws = new WebSocket(`ws://localhost:${port}`);
+      const c = { ws, msgs: [], id: null, send: (m) => ws.send(JSON.stringify(m)) };
+      ws.on('message', raw => { const m = JSON.parse(raw); if (m.t === 'welcome') c.id = m.id; c.msgs.push(m); });
+      await new Promise(r => ws.on('open', r));
+      return c;
+    };
+    const A = await client();
+    A.send({ t: 'auth', token }); await wait(600);
+    const prof = A.msgs.find(m => m.t === 'profile');
+    ok(prof && prof.username === 'CloudMage' && prof.save?.voice === 'female' && prof.stats?.matches === 3, `auth → the profile with the save and stats (${prof?.username}, ${prof?.stats?.matches} matches)`);
+    A.send({ t: 'join', name: 'Typed', room: 'new' });
+    while (A.id == null) await wait(10);
+    ok(A.msgs.find(m => m.t === 'welcome').players.find(q => q.id === A.id)?.name === 'CloudMage', 'joining after the auth: the verified CrazyGames name');
+    const G = await client();
+    G.send({ t: 'auth', token: token.slice(0, -4) + 'AAAA' }); await wait(400);
+    ok(G.msgs.some(m => m.t === 'profile' && m.guest), 'a bad token: profile guest');
+    G.send({ t: 'join', name: 'Guesty', room: A.msgs.find(m => m.t === 'welcome').room.code });
+    while (G.id == null) await wait(10);
+    G.send({ t: 'save', data: { voice: 'male' } });
+    A.send({ t: 'save', data: { loadout: C.DEFAULT_LOADOUT, voice: 'male', settings: { volume: 0.5, muted: false, bots: 'hard', howto: true } } });
+    await wait(500);
+    const saves = calls.filter(c => c.path.endsWith('/player_saves') && c.method !== 'GET');
+    ok(saves.length === 1 && saves[0].body?.data?.settings?.bots === 'hard', `a save from the logged-in player is written; a guest's is ignored (${saves.length} writes)`);
+    A.send({ t: 'matchDebug', skip: true }); await wait(400);   // the countdown → live
+    A.send({ t: 'matchDebug', skip: true }); await wait(800);   // live → the end
+    const rec = calls.filter(c => c.path.endsWith('/rpc/record_match'));
+    ok(rec.length === 1 && rec[0].body?.p_player === '00000000-0000-4000-8000-000000000007' && rec[0].body?.p_room_kind === 'private', `the match end records the logged-in player only (${rec.length} record_match, ${rec[0]?.body?.p_room_kind} room)`);
+    A.send({ t: 'save', data: { voice: 'female' } }); await wait(200);
+    const n = calls.filter(c => c.path.endsWith('/player_saves') && c.method !== 'GET').length;
+    A.ws.close(); await wait(600);
+    ok(calls.filter(c => c.path.endsWith('/player_saves') && c.method !== 'GET').length === n + 1, 'a save waiting on the 10 s is flushed when they disconnect');
+    G.ws.close();
+  } catch (e) { ok(false, `saves checks: ${e.message}`); }
+  finally { if (srv.exitCode === null) { srv.kill(); await new Promise(r => srv.once('exit', r)); } rest.close(); }
 }
 
 console.log(fails ? `${fails} FAILED` : 'ALL PASS');
