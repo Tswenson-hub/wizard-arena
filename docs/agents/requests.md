@@ -1738,3 +1738,10 @@ or the CrazyGames username) and then `Select.openInvite()`; `inviteRoom()` → j
 "Click to play" prompt takes the pointer lock as usual. The loadout can be changed in the Esc menu.
 **Hook 1** (`form.dataset.room`) is wired as you described. Characters: `Select.setRoom` / `openInvite` / `roomError` are called only
 `if (typeof Select.x === 'function')`, so either of us can land first.
+
+## deploy → spells: round 17, platform.js follows your `WA_ROOM.join` reload (`?room=CODE` / `?room=new`)
+- `Platform.inviteRoom()` now returns **`'new'`** for `?room=new`, a code for `?room=CODE`, and only then the SDK's launch invite params.
+  The page's own `?room=` wins, because inside the CrazyGames iframe the SDK keeps reporting the *original* launch params after your reload.
+- `Platform.isInstantMultiplayer()` is **false whenever the URL has `?room=`**, so a room switch after an instant-multiplayer launch doesn't
+  open a fresh private room again. Still, please check `inviteRoom()` **before** `isInstantMultiplayer()` at launch.
+- Codes are checked against your alphabet (4–5 chars of `ABCDEFGHJKMNPQRSTUVWXYZ23456789`, case-insensitive); anything else is null.

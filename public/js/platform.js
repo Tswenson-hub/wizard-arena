@@ -26,21 +26,32 @@ function call(what, fn, fallback) {
   catch (e) { log(what, 'failed', e); return fallback; }
 }
 
+// room codes: 4-5 characters of the server's alphabet (no 0 O 1 I L), case-insensitive
 const clean = (v) => {
   const s = String(v ?? '').trim().toUpperCase();
-  return /^[A-Z0-9]{3,8}$/.test(s) ? s : null;
+  return /^[A-HJKMNP-Z2-9]{4,5}$/.test(s) ? s : null;
 };
 
-// CrazyGames: launch straight into a fresh private room (a party leader's "play with friends")
+// ?room= on this page's own URL: our site's invite links, and window.WA_ROOM.join() (main.js), which reloads the page with
+// ?room=CODE or ?room=new to switch rooms, inside the CrazyGames iframe too. It's newer than the SDK's launch params, so it wins.
+function urlRoom() {
+  let v = null;
+  try { v = new URLSearchParams(location.search).get('room'); } catch { return null; }
+  if (v && v.trim().toLowerCase() === 'new') return 'new';
+  return clean(v);
+}
+
+// CrazyGames: launch straight into a fresh private room (a party leader's "play with friends"); false after a room switch
 export function isInstantMultiplayer() {
+  if (urlRoom()) return false;
   return !!call('isInstantMultiplayer', s => s.game.isInstantMultiplayer, false);
 }
 
-// the room code this page was launched with: the SDK's invite params, else ?room= on our site
+// the room to join on launch: ?room= on the URL (a code, or 'new'), else the SDK's invite params, else null
 export function inviteRoom() {
-  const fromSdk = call('inviteParams', s => (s.game.inviteParams && s.game.inviteParams.room) || s.game.getInviteParam?.('room'), null);
-  if (clean(fromSdk)) return clean(fromSdk);
-  try { return clean(new URLSearchParams(location.search).get('room')); } catch { return null; }
+  const own = urlRoom();
+  if (own) return own;
+  return clean(call('inviteParams', s => (s.game.inviteParams && s.game.inviteParams.room) || s.game.getInviteParam?.('room'), null));
 }
 
 function siteLink(code) {
