@@ -158,13 +158,13 @@ export const SPELLS = {
     staminaCost: 16,
     knockback: 2,
   },
-  shear: {               // Gale's primary: a short wind blade, gone after about 8 m
-    damage: 16,          // balance match at walking speed: 14 left Gale last (closing to 8 m takes a while now)
-    stun: 0.45,
+  shear: {               // Gale's primary: a short wind blade, gone after 5.5 m (round 16, Ty: 'much more reduced range and damage')
+    damage: 11,          // round 16: 16 (×1.36: 15, was 22)
+    stun: 0.3,           // (only the 3rd, the crescent, interrupts and stuns) round 16: 0.45
     speed: 30,
-    radius: 0.85,        // wide: it's an arc of wind, not a bolt
-    finRadius: 1.35,     // the 3rd shot: a wider crescent
-    life: 8 / 30,
+    radius: 0.65,        // wide: it's an arc of wind, not a bolt (round 16: 0.85)
+    finRadius: 1.0,      // the 3rd shot: a wider crescent (round 16: 1.35)
+    life: 5.5 / 30,      // round 16: 8 m
     cooldown: 0.42,
     staminaCost: 12,
     knockback: 3,
@@ -427,7 +427,7 @@ export const SPELLBOOK = {
   },
   gale_shear: {
     id: 'gale_shear', slot: 'primary', name: 'Gale Shear', short: 'Shear',
-    blurb: `A blade of wind out to 8 m (${D(16)} damage), 3 to a charge. The 3rd is a wide crescent that breaks a wind-up.`,
+    blurb: `A blade of wind out to ${+(SPELLS.shear.speed * SPELLS.shear.life).toFixed(1)} m (${D(SPELLS.shear.damage)} damage), 3 to a charge. The 3rd is a wide crescent that breaks a wind-up.`,
     cooldown: SPELLS.shear.cooldown,
     magazine: 3, reload: PRIMARY_RELOAD, idleReload: 2,
   },
@@ -622,7 +622,7 @@ export const SPELLBOOK = {
     id: 'telekinesis', slot: 'utility', name: 'Telekinesis', short: 'Lift',
     blurb: 'Lift an object, then hurl it. It shields you while held.',
     cooldown: 0.6,       // lift to throw (THROW_COOLDOWN)
-    liftCooldown: 3,     // after letting go of something (thrown, set down, knocked away), before the next lift
+    liftCooldown: 4.5,   // after letting go of something (thrown, set down, knocked away), before the next lift (round 16, Ty: 3)
   },
   trapped_relic: {
     id: 'trapped_relic', slot: 'utility', name: 'Trapped Relic', short: 'Relic',
@@ -994,7 +994,7 @@ export const SPELL_INFO = {
   // primaries (magazine; the last shot of a magazine is the finisher)
   spark:         { element: 'arcane', tags: ['Projectile', 'Hitscan-like', 'Interrupts'], damage: `${D(SPELLS.fast.damage)}`, cooldown: S_(SPELLS.fast.cooldown), range: M_(54), windup: '' },
   fireball:      { element: 'fire',   tags: ['Projectile', 'Interrupts'], damage: `${D(SPELLS.fireball.damage)} / ${D(SPELLS.fireball.finDamage)}`, cooldown: S_(SPELLS.fireball.cooldown), range: M_(Math.round(SPELLS.fireball.speed * SPELLS.fireball.life)), windup: '' },
-  gale_shear:    { element: 'wind',   tags: ['Projectile', 'Hitscan-like', 'Interrupts'], damage: `${D(16)}`, cooldown: S_(0.42), range: M_(8), windup: '' },
+  gale_shear:    { element: 'wind',   tags: ['Projectile', 'Hitscan-like', 'Interrupts'], damage: `${D(SPELLS.shear.damage)}`, cooldown: S_(SPELLS.shear.cooldown), range: M_(+(SPELLS.shear.speed * SPELLS.shear.life).toFixed(1)), windup: '' },
   glacial_skim:  { element: 'ice',    tags: ['Projectile', 'Slows', 'Interrupts'], damage: `3 × ${D(SPELLS.skim.damage)}`, cooldown: S_(SPELLBOOK.glacial_skim.cooldown), range: M_(Math.round(SPELLS.skim.speed * SPELLS.skim.life)), windup: '' },
   hex_shards:    { element: 'dark',   tags: ['Projectile', 'Interrupts'], damage: `${D(SPELLS.hex.damage)}`, cooldown: S_(SPELLS.hex.cooldown), range: M_(SPELLS.hex.range), windup: '' },
   sling:         { element: 'earth',  tags: ['Projectile', 'Hitscan-like'], damage: `${D(SPELLS.sling.near)}–${D(SPELLS.sling.far)}`, cooldown: S_(SPELLS.sling.cooldown), range: M_(32), windup: '' },
@@ -1022,7 +1022,7 @@ export const SPELL_INFO = {
   ram_ride:      { element: 'earth',  tags: ['Dash', 'Summon', 'Knockdown'], damage: `${D(15)}`, cooldown: S_(8), range: M_(20), windup: S_(SPELLBOOK.ram_ride.mount) },
   flask_step:    { element: 'acid',   tags: ['Teleport', 'Lob', 'Wind-up'], damage: '', cooldown: S_(SPELLBOOK.flask_step.cooldown), range: M_(16), windup: S_(SPELLBOOK.flask_step.windup) },
   // utility (F)
-  telekinesis:   { element: 'arcane', tags: ['Knockdown'], damage: `${D(SPELLS.prop.damage)}`, cooldown: S_(3), range: M_(16), windup: '' },
+  telekinesis:   { element: 'arcane', tags: ['Knockdown'], damage: `${D(SPELLS.prop.damage)}`, cooldown: S_(SPELLBOOK.telekinesis.liftCooldown), range: M_(16), windup: '' },
   trapped_relic: { element: 'dark',   tags: ['Area', 'Stuns'], damage: `trap ${D(SPELLBOOK.trapped_relic.damage)}`, cooldown: S_(SPELLBOOK.trapped_relic.cooldown), range: M_(16), windup: '', duration: `${SPELLBOOK.trapped_relic.traps} trap${SPELLBOOK.trapped_relic.traps > 1 ? 's' : ''}` },
   roll:          { element: 'arcane', tags: ['Dash', 'Dodge'], damage: '', cooldown: '3.5 s × 2', range: M_(4.5), windup: '', duration: 'dodge 0.25 s' },
   // ultimates (Q, charged)

@@ -53,7 +53,8 @@ const EYE = C.SPELLBOOK.eye_of_storm, CAGE = C.SPELLBOOK.night_cage, BLIZ = C.SP
 const SHEAR = C.SPELLS.shear, HEX = C.SPELLS.hex, FIRE = C.SPELLS.fireball;
 const SHEAR_RANGE = SHEAR.speed * SHEAR.life;
 // Round 15: where a bot likes to fight from: Gale Shear up close; the Sling far out, where its stones hit hardest
-const prefRange = (me, cfg) => kit(me).primary === 'gale_shear' ? [2.5, 6] : kit(me).primary === 'sling' ? [Math.max(cfg.range[0], 16), Math.max(cfg.range[1], 24)] : cfg.range;
+// (round 16: Gale Shear's blades go 5.5 m; its range was [2.5, 6] at 8 m)
+const prefRange = (me, cfg) => kit(me).primary === 'gale_shear' ? [2, SHEAR_RANGE - 1] : kit(me).primary === 'sling' ? [Math.max(cfg.range[0], 16), Math.max(cfg.range[1], 24)] : cfg.range;
 const SLING_S = C.SPELLS.sling, BRAM = C.SPELLBOOK.battering_ram, RGUARD = C.SPELLBOOK.ram_guard, RIDE = C.SPELLBOOK.ram_ride, STAMP = C.SPELLBOOK.stampede;
 const guarded = (q, t) => q.ramGuardUntil > t;
 const POTION = C.SPELLS.potion, TOXIC = C.SPELLS.toxic, TFLASK = C.SPELLBOOK.toxic_flask, SFLASK = C.SPELLBOOK.smoke_flask;
@@ -1409,7 +1410,7 @@ function moveBot(me, dt, world, t) {
   // stamina for the ward. A sprinting bot faces where it runs (the server only grants a forward sprint).
   {
     const tg = target && !target.dead ? target : null, dT = tg ? dist2D(me.p, tg.p) : 0;
-    const far = goal ? Math.hypot(goal[0] - me.p[0], goal[1] - me.p[2]) > 6 : !!tg && (dT > (kit(me).primary === 'gale_shear' ? 7 : prefRange(me, cfg)[1] + 5) || (dT > 8 && !hasLOS(me.p, tg.p)));   // (sprint is free: close in on one we can't see)
+    const far = goal ? Math.hypot(goal[0] - me.p[0], goal[1] - me.p[2]) > 6 : !!tg && (dT > (kit(me).primary === 'gale_shear' ? SHEAR_RANGE + 1.5 : prefRange(me, cfg)[1] + 5) || (dT > 8 && !hasLOS(me.p, tg.p)));   // (sprint is free: close in on one we can't see)
     const fleeing = me.hp < 35 && !!tg && dT < 14;
     const threatened = [...b.threats.values()].some(r => !r.handled && !r.ignore) || t < (b.ramDanger || 0);
     const keep = false;   // round 10: sprint is free, nothing to save stamina for
