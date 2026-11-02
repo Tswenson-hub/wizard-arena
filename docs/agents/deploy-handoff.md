@@ -8,6 +8,27 @@
 - **Live commit:** `e416f68` (rounds 12b-13: Roll on F, the map editor, Ty's assets, mountains, ground textures,
   jeb2 animations), pushed by the coordinator with Ty's approval. Earlier: `29602cc` (deploy took ~45 s).
 
+## Round 17: rooms and CrazyGames multiplayer (deploy's part)
+- **`public/js/platform.js`** (`8a38c05`, `7d8200a`, `f129e88`): the game's one door to the SDK, on both builds. `ready`, `onCrazyGames`,
+  `isInstantMultiplayer`, `inviteRoom`, `inviteLink`, `updateRoom`, `leftRoom`, `onJoinRoom`, `getUsername`, `show/hideInviteButton`,
+  `happytime`, `onMuteAudio`. Every SDK call is guarded and in try/catch; with no SDK (our Render site) invites are `?room=CODE` links and
+  the rest are no-ops. A `?room=` on the page (our links, and spells' `WA_ROOM.join` reload) wins over the SDK's launch params and turns
+  `isInstantMultiplayer` off, so switching rooms inside the CrazyGames iframe doesn't bounce back. The shim (`deploy/crazygames/platform.js`)
+  exposes `WA_PLATFORM.ready` and now stops gameplay on `#deathScreen`, `#mRecap` and `body.recap-on` too.
+- **Mute audio:** `SDK.game.settings.muteAudio` + `addSettingsChangeListener` → `Platform.onMuteAudio` → spells' `sfx.setPlatformMute`
+  (silent over the player's own M setting, never saved). Checked: the local SDK with `?muteAudio=true` fires `onMuteAudio(true)`.
+- **Verified at `038f34e`** (build from the tree with `--server ws://localhost:4105`, served under `/game/` on 4199):
+  - `subpath_test.py --max-mb 20 --site http://localhost:4105/`: **PASS**. A created room `BF8J`; the invite card's link came from the real SDK
+    (`…czy_invite_params=room%3DBF8J`); B joined by the code box; C opened `localhost:4105/?room=BF8J` and was in the room with no click;
+    every chip read 3/4; each saw the others' names in the server frames; D (Play) landed in a public room and saw neither; `ZZZZ` showed
+    "Room ZZZZ doesn't exist…" in a public match; 7.8 MB initial, nothing outside `/game/`, no failures, no console errors.
+    Screenshots `/tmp/wa-deploy/r17-subpath-roomA.png`, `-roomB.png`.
+  - `--block-sdk`: PASS (the invite link falls back to `…/game/?room=G5SJ`). `smoke.py http://localhost:4105`: PASS (healthz now reads
+    `ok rooms=N humans=N bots=N`; smoke accepts it).
+  - The local SDK's fake user `User1` filled the name field: `getUsername` works end to end.
+  - The shim's events in a real browser: entering the match → `gameplayStart`; death screen, recap (both kinds), Esc menu → `gameplayStop`.
+- **Cosmetic, characters:** the invite card opens over the "Click to play" prompt (`r17-subpath-roomA.png`).
+
 ## Round 16: GPU tests, the live check, the zip
 - **Tests on the GPU** (round 16): `deploy/smoke.py`, `deploy/subpath_test.py` and `deploy/capture_store.py` launch Chromium with
   `--use-angle=metal --enable-gpu --ignore-gpu-blocklist` by default; `--swiftshader` brings back software GL. SwiftShader stalled more
@@ -57,13 +78,13 @@ PORT=4105 node server.js &  node tools/serve-subpath.mjs dist/crazygames-local 4
 python3 deploy/subpath_test.py http://localhost:4199/game/ /tmp/wa-deploy/subpath.png --max-mb 20
 ```
 
-## CrazyGames submission checklist (round 16)
+## CrazyGames submission checklist (round 17)
 Sources: docs.crazygames.com, "Technical requirements", "Gameplay requirements", "Game covers" and "Multiplayer" (read 2026-10-30).
 
-### What to upload (zip rebuilt from `6d08eea`, the commit live on Render)
+### What to upload (zip from `038f34e`, round 17 rooms; rebuild from the commit that's pushed to Render)
 | What | Path | Notes |
 |---|---|---|
-| **Game zip** | `dist/crazygames.zip` (gitignored; rebuild with `npm run build:crazygames -- --ref <sha>`) | **rebuilt from `6d08eea`** (round 16, live on Render): 377 files, 9.5 MB unzipped, 6.6 MB zip, sha256 `028e9b92…caeeb`; talks to `wss://wizard-arena-76od.onrender.com` |
+| **Game zip** | `dist/crazygames.zip` (gitignored; rebuild with `npm run build:crazygames -- --ref <sha>`) | **built from `038f34e`** (round 17: rooms, invites, usernames, mute): 380 files, 9.5 MB unzipped, 6.6 MB zip, sha256 `e10e7006…56965`; talks to `wss://wizard-arena-76od.onrender.com`. Rooms change the protocol: **Render must run the same commit**, so rebuild from whatever sha is pushed |
 | **Cover, landscape 1920×1080** | `deploy/crazygames/store/covers/cover-hero-landscape-1920x1080.jpg` | recommended: the Mage up close in the courtyard |
 | **Cover, portrait 800×1200** | `deploy/crazygames/store/covers/cover-hero-portrait-800x1200.jpg` | same frame, cropped |
 | **Cover, square 800×800** | `deploy/crazygames/store/covers/cover-hero-square-800x800.jpg` | same frame, cropped |
@@ -123,10 +144,15 @@ Esc: menu and loadout
 `Shooter`, `Arena`, `Battle`. **Category:** Action (or Shooter).
 
 **Settings:**
-- **Multiplayer:** yes, real-time online. **Lobby size: 4** (free-for-all; bots fill empty seats, so nobody waits).
+- **Multiplayer:** [x] yes, real-time online, **"Online with Friends"**. **Lobby size: Min 1 / Max 4** (free-for-all; bots fill the
+  empty seats, so one player can start alone and nobody waits).
+- **Multiplayer SDK features** [x] invite link and button, [x] `isInstantMultiplayer`, [x] `updateRoom` / `leftRoom` on every room change,
+  [x] the join-room listener, [x] CrazyGames usernames in game (nameplates and scoreboard). All in `public/js/platform.js`, guarded,
+  so our Render site runs without the SDK (there, invites are `?room=CODE` links).
 - **Devices:** **desktop only** (keyboard and mouse; the builder shows a desktop notice under ~900 px). Mobile and tablet off.
 - **Orientation:** **landscape**.
-- **SDK:** v3, Basic Launch: `gameplayStart` / `gameplayStop`, `loadingStart` / `loadingStop`. No ads, no Data or User module.
+- **SDK:** v3: `gameplayStart` / `gameplayStop`, `loadingStart` / `loadingStop`, the game module's multiplayer calls (above) and the
+  User module's `getUser()` for the username. No ads.
 - **Age:** PEGI 12-friendly (fantasy magic, no blood; skeletons collapse). CrazyGames' audience is 13+.
 
 ### 3. Re-making the art
@@ -146,8 +172,22 @@ look at them and keep the best of each.
   (Leonardo Calvo, credited in-game and in the README).
 - **Privacy note:** we keep the name, loadout and settings in localStorage and send the typed name to our server for the match only.
   A short note behind the "?" with a contact address covers it; Ty decides.
-- **Optional, more traffic:** CrazyGames' "online with friends" (invite links and room data through the SDK, CrazyGames usernames)
-  earns a place on their multiplayer landing page; not needed to submit.
+- **Done (round 17): "online with friends"** is required for an online multiplayer game, not optional: rooms, invite links and room
+  data through the SDK, CrazyGames usernames. See the QA note below.
+
+### 5. How invites work (paste into the form's notes for QA)
+```
+Wizard Arena is a 4-player free-for-all; skeleton bots fill every empty seat, so a match starts at once with 1 player.
+- Play: joins a public match (the fullest public room with a free seat).
+- Create private match: makes a private room with a short code (shown in the corner and in the Esc menu). "Invite friends"
+  copies the CrazyGames invite link; friends who open it land straight in that room, with no extra click. Up to 4 friends
+  per room; bots fill the rest.
+- Join with code: type a friend's code on the start screen.
+- Instant multiplayer: launched as a party leader, the game skips the start screen, opens a new private room and shows
+  the invite options.
+- An invite clicked while already playing moves you to that room.
+- Logged-in CrazyGames players play under their CrazyGames username; guests get a random wizard name.
+```
 
 ## Round 14: the CrazyGames build
 **Build:** `npm run build:crazygames -- --ref HEAD` (use `--ref` for the upload, so only committed files ship; without it the
