@@ -7,14 +7,15 @@ export class Net {
     this.onClose = null;
   }
 
-  // round 11: `pick` is { loadout, voice } from the builder
-  connect(name, pick, difficulty) {
+  // round 11: `pick` is { loadout, voice } from the builder. Round 17: `room` is '' or undefined (a public match), 'new'
+  // (a new private room) or a room's code.
+  connect(name, pick, difficulty, room) {
     return new Promise((resolve, reject) => {
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
       // round 14: the CrazyGames build sets window.WA_SERVER (config.js) to the Render server; our own site leaves it unset
       const ws = new WebSocket(window.WA_SERVER || `${proto}://${location.host}`);
       this.ws = ws;
-      ws.onopen = () => { this.connected = true; this.send({ t: 'join', name, loadout: pick?.loadout, voice: pick?.voice, difficulty }); };
+      ws.onopen = () => { this.connected = true; this.send({ t: 'join', name, loadout: pick?.loadout, voice: pick?.voice, difficulty, room: room || undefined }); };
       ws.onmessage = (e) => {
         let msg; try { msg = JSON.parse(e.data); } catch { return; }
         if (msg.t === 'welcome') resolve(msg);

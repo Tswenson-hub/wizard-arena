@@ -215,6 +215,7 @@ Promise.all([loadWizardModels(loader), loadModels(loader, scene)]).then(() => {
   ui.joinBtn.disabled = false;
   if (!ui.name.value) ui.name.value = 'Wizard' + Math.floor(Math.random() * 900 + 100);
   ui.name.focus();
+  autoJoin();   // round 17: an invite or CrazyGames' instant multiplayer goes straight in
 }, (err) => {
   ui.loadStatus.textContent = 'Failed to load the models: ' + (err?.message || err);
 });
@@ -230,7 +231,8 @@ ui.form.addEventListener('submit', async (e) => {
   ui.joinBtn.disabled = true; ui.loadStatus.textContent = 'Connecting…';
   sfx.init(); sfx.resume();
   try {
-    const welcome = await net.connect(name, { loadout: wantLoadout, voice: wantVoice }, ui.botDiff.value);   // fill bots play at this difficulty
+    const room = ui.form.dataset.room || undefined;   // round 17: select.js's buttons ('' public, 'new', a code); the launch's auto-join
+    const welcome = await net.connect(name, { loadout: wantLoadout, voice: wantVoice }, ui.botDiff.value, room);   // fill bots play at this difficulty
     onWelcome(welcome);
   } catch (err) {
     ui.loadStatus.textContent = err.message || 'Connection failed';
@@ -259,11 +261,11 @@ function lockNote(text) { $('#lockNote').innerHTML = text; }
 const LOCK_NOTE = 'The mouse aims while the game has it. <kbd>Esc</kbd> opens the menu.';
 function play() { lockNote(LOCK_NOTE); input.requestLock(); }
 ui.clickToPlay.addEventListener('click', (e) => { if (e.target === ui.clickToPlay) play(); });
-ui.lockPrompt.addEventListener('click', () => { sfx.click(); play(); });
+ui.lockPrompt.addEventListener('click', () => { sfx.init(); sfx.resume(); sfx.click(); play(); });   // (round 17: after an auto-join this is the first click)
 $('#resumeBtn').addEventListener('click', () => { sfx.click(); menuOpen = false; play(); updateLockUI(); });
 // Leave: back to the spell builder (the join screen). A reload is the clean way out of a live match; the loadout,
 // name and sound settings are saved in localStorage, and the models come back from the cache.
-$('#leaveBtn').addEventListener('click', () => { sfx.click(); net.close(); location.reload(); });
+$('#leaveBtn').addEventListener('click', () => { sfx.click(); leaveRoom(); location.href = pageWithRoom(null); });   // (out of the room for good: no ?room=)
 // Round 16: Respawn with these spells. Free when we haven't been hurt for RESPAWN_NOW.safeAfter s (the server decides; this
 // mirrors it for the label), otherwise a death credited to whoever hurt us last. While dead it just sets the next loadout.
 let respawnNowAt = 0;
@@ -325,10 +327,66 @@ document.addEventListener('mousedown', backFromIdle, true);
 $('#rejoinBtn').addEventListener('click', () => location.reload());
 net.onClose = () => {
   Podium.stop(true);
+  if (currentRoom) { currentRoom = null; withPlatform(P => P.leftRoom?.()); }   // round 17
   if (!me || kickedNow) return;
   ui.status.textContent = 'Disconnected from server — refresh to rejoin.';
   ui.status.style.color = '#ff5c6a';
 };
+
+// ---------------------------------------------------------------- rooms (round 17)
+// The server puts us in a public room, a new private one or one by its code (form.dataset.room, set by select.js's
+// buttons or the launch below). Every room change goes to select.js (the private room's chip and Esc-menu row) and to
+// CrazyGames (platform.js updateRoom; leftRoom on leaving). Switching rooms in game reloads the page with ?room=: the
+// clean way to drop every client state, as Leave already does.
+let platformP = null;
+const platform = () => (platformP ||= import('./platform.js').catch(() => null));
+const withPlatform = (fn) => platform().then(P => { if (P) try { fn(P); } catch {} });
+let currentRoom = null, inviteOnWelcome = false;
+function applyRoom(r) {
+  if (!r) return;
+  currentRoom = r;
+  window.WA_ROOM.state = r;
+  if (window.__wa) window.__wa.room = r;
+  if (typeof Select.setRoom === 'function') Select.setRoom(r.private ? { ...r, isHost: r.host === myId } : null);
+  withPlatform(P => P.updateRoom?.({ roomId: r.id, isJoinable: !!r.joinable, room: r.code }));
+  // the address bar follows: ?room=CODE in a private room (a refresh comes back here; ?room=new would make another), none in public
+  try { const want = r.private ? r.code : null; if (new URLSearchParams(location.search).get('room') !== want) history.replaceState(history.state, '', pageWithRoom(want)); } catch {}
+}
+function leaveRoom() {
+  net.close();
+  if (currentRoom) withPlatform(P => P.leftRoom?.());
+  currentRoom = null;
+}
+// this page's URL with ?room=CODE (or 'new'), or without it
+function pageWithRoom(code) {
+  const u = new URL(location.href);
+  if (code) u.searchParams.set('room', code); else u.searchParams.delete('room');
+  return u.toString();
+}
+window.WA_ROOM = {
+  state: null,
+  // the host's bot difficulty (the server ignores anyone else)
+  setBots(d) { if (currentRoom?.private && currentRoom.host === myId) net.send({ t: 'roomBots', difficulty: d }); },
+  // another room: a code, or 'new'
+  join(code) { leaveRoom(); location.href = pageWithRoom(code); },
+};
+// A friend's invite clicked while we're in the game (CrazyGames): over to their room.
+withPlatform(P => P.onJoinRoom?.(code => { if (code !== currentRoom?.code) window.WA_ROOM.join(code); }));
+// The launch: CrazyGames' instant multiplayer (a party leader: a new private room, then the invite card) or an invite
+// (the SDK's invite params, or ?room= here) joins at once, without the builder's click; the saved or default loadout, and
+// the Esc menu changes it. The name: the saved one, or the CrazyGames username (select.js fills the field).
+async function autoJoin() {
+  const P = await platform();
+  if (!P) return;
+  await P.ready?.();
+  const room = P.isInstantMultiplayer?.() ? 'new' : P.inviteRoom?.();
+  if (!room || me || ui.joinBtn.disabled) return;
+  await Select.nameReady?.();
+  if (me || ui.joinBtn.disabled) return;
+  inviteOnWelcome = room === 'new';
+  ui.form.dataset.room = room;
+  ui.form.requestSubmit();
+}
 
 // ---------------------------------------------------------------- network handlers
 // Game modes UI (public/js/match-ui.js, modes agent)
@@ -360,6 +418,10 @@ function onWelcome(msg) {
   input.requestLock();
   setTimeout(updateLockUI, 400);   // round 14: not captured (refused, or no click behind the join): "Click to play"
   feed(`Welcome, <b>${esc(me.name)}</b>. Free-for-all: first to ${msg.match?.target ?? 10} kills.`);
+  applyRoom(msg.room);
+  if (msg.roomError && typeof Select.roomError === 'function') Select.roomError(msg.roomError);
+  if (inviteOnWelcome && msg.room?.private && typeof Select.openInvite === 'function') Select.openInvite();
+  inviteOnWelcome = false;
   if (sfx.muted) feed('<span class="warn">Sound is muted (press M)</span>');   // round 11: a saved mute is easy to forget
   if (me.spectator) feed('The match is full: you are watching until a place opens.');
   updateSoundInd();
@@ -1304,7 +1366,10 @@ function handleMessage(msg) {
       if (f) { effects.endFirewall(f.fx); firewalls.delete(msg.id); sfx.play('firewall_break', { pos: [f.data.x, 1, f.data.z], vol: 0.45, jitter: 0.05 }); }
       break;
     }
+    case 'room': applyRoom(msg.room); break;   // round 17: who's in our room, its host, the bots
+    case 'roomError': break;   // (the welcome carries it too: shown from there)
     case 'recap':
+      if (msg.podium?.[0]?.id === myId && !msg.podium[0].bot) withPlatform(P => P.happytime?.());   // round 17: 1st place
       // round 16: the end-of-match recap on podium.js's stage; match-ui.js's 2D podium when that can't play
       if (!Podium.start(msg, { renderer, scene, onEnd: () => updateLockUI() })) matchUI.onMessage(msg);
       break;
