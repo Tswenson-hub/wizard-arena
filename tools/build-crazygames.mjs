@@ -11,7 +11,8 @@
 //   - three.js vendored: only the files the client imports (followed through the addons' own imports)
 //   - config.js setting window.WA_SERVER (default wss://wizard-arena-76od.onrender.com), read by net.js
 //   - the CrazyGames SDK v3 and deploy/crazygames/platform.js (guarded gameplayStart / gameplayStop)
-// Then it checks CrazyGames' limits (file count, sizes) and prints a summary.
+// Then it checks CrazyGames' limits (file count, sizes), that no server secret got in (sb_secret_, SUPABASE_SECRET, service_role,
+// the key's value if set, .env or server files), and prints a summary.
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -158,6 +159,21 @@ for (const f of files.filter(f => TEXT.test(f))) {
 }
 for (const f of files.filter(f => EDITOR.test(f))) left.push(`map editor file in the build: ${f}`);
 if (left.length) { console.error('absolute paths left in the build:\n  ' + left.join('\n  ')); process.exit(1); }
+
+// round 18: no server secret in the client. Every file (binaries too, read as latin1) is scanned for Supabase's secret-key
+// prefix, the env var's name, a service_role key, and the key's own value when this shell has it; no .env or server code
+// either. The zip isn't written when this fails.
+const SECRET = /sb_secret_|SUPABASE_SECRET|service_role/;
+const secretValue = (process.env.SUPABASE_SECRET_KEY || '').trim();
+const leaks = [];
+for (const f of files) {
+  if (/(^|\/)\.env(\.|$)|(^|\/)server(\/|\.js$)/.test(f)) { leaks.push(`${f}: server-side file`); continue; }
+  const src = fs.readFileSync(path.join(OUT, f), 'latin1');
+  const m = src.match(SECRET);
+  if (m) leaks.push(`${f}: '${m[0]}'`);
+  if (secretValue.length >= 8 && src.includes(secretValue)) leaks.push(`${f}: the SUPABASE_SECRET_KEY value`);
+}
+if (leaks.length) { console.error('server secrets in the CrazyGames build (nothing written to the zip):\n  ' + leaks.join('\n  ')); process.exit(1); }
 
 const size = (f) => fs.statSync(path.join(OUT, f)).size;
 const total = files.reduce((s, f) => s + size(f), 0);

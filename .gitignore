@@ -4,6 +4,7 @@ node_modules/
 # secrets and local config
 .env
 .env.*
+!.env.example
 *.pem
 *.p8
 *.key

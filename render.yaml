@@ -11,3 +11,8 @@ services:
     envVars:
       - key: NODE_VERSION       # pin the runtime; package.json only says ">=18"
         value: "22"
+      # round 18 saves (server/saves.js): set in the dashboard, never in the repo. sync: false keeps the dashboard's values.
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
