@@ -359,6 +359,7 @@ export function mountSpellBuilder(container, { loadout, voice, onChange, onVoice
   // One-click start (CrazyGames): a first visit isn't stopped by the how-to-play card. Once the player enters the arena from the
   // join screen, a compact controls card floats over the first match instead (openFirstMatchTips), without taking any input.
   const form = footer?.querySelector('form');
+  if (container.closest('#join') && form) mountJoinRooms($('.sb-side'), form);
   if (container.closest('#join') && form && !howToSeen()) {
     form.addEventListener('submit', () => {
       const join = container.closest('#join'), t0 = performance.now();
@@ -466,4 +467,171 @@ export function openFirstMatchTips() {
   document.body.appendChild(el);
   tips = el;
   setTimeout(close, 25000);
+}
+
+// ================================================================ rooms (round 17)
+// The join screen: Play (public matchmaking, the default and Enter in the name field), Create private match, and Join with
+// a code. Every button submits main.js's #joinForm with form.dataset.room set: '' public, 'new' a new private room, 'K7Q2'
+// that room. In game: setRoom(room) shows the private room's code chip and a row in the Esc menu, both with Invite friends;
+// openInvite() the invite card; roomError() the "room full or unknown" note. Platform calls go through platform.js (deploy).
+const ROOM_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';   // the server's code alphabet (no 0 O 1 I L)
+const ROOM_LEN = 4;
+const cleanCode = (v) => [...String(v ?? '').toUpperCase()].filter(ch => ROOM_ALPHABET.includes(ch)).join('').slice(0, 5);
+let platformP = null;
+const platform = () => (platformP ||= import('./platform.js').catch(() => null));
+// the CrazyGames username fills the name field (unless the player types first); main.js may await nameReady() before reading it
+let nameReadyP = Promise.resolve();
+export function nameReady() { return nameReadyP; }
+
+function mountJoinRooms(side, form) {
+  const playBtn = form.querySelector('button[type="submit"]'), nameIn = form.querySelector('input');
+  if (playBtn) { playBtn.textContent = 'Play'; playBtn.title = 'Join a public match now (Enter)'; }
+  const box = document.createElement('section');
+  box.className = 'sb-rooms';
+  box.setAttribute('aria-label', 'Play with friends');
+  box.innerHTML = `<h4>Play with friends</h4>
+    <button type="button" class="sb-room-new" title="A match only friends with the code can join; bots fill the empty seats">Create private match</button>
+    <div class="sb-room-join">
+      <input class="sb-room-code" maxlength="5" placeholder="Code" aria-label="Room code" autocomplete="off" spellcheck="false" autocapitalize="characters">
+      <button type="button" class="sb-room-go">Join</button>
+    </div>
+    <p class="sb-room-msg" aria-live="polite"></p>`;
+  side.appendChild(box);
+  const code = box.querySelector('.sb-room-code'), msg = box.querySelector('.sb-room-msg');
+  const newBtn = box.querySelector('.sb-room-new'), goBtn = box.querySelector('.sb-room-go');
+  let pending = null;   // the room the next submit asks for; Play and Enter in the name field leave it null (public)
+  const go = (room) => { if (playBtn?.disabled) return; pending = room; form.requestSubmit(); };
+  // registered before main.js's submit handler, so the room is set by the time it reads it. A submit of main.js's own (the
+  // launch's auto-join, no submitter) keeps whatever room it set.
+  form.addEventListener('submit', (e) => {
+    if (pending) form.dataset.room = pending;
+    else if (e.submitter && e.submitter === playBtn) form.dataset.room = '';
+    pending = null;
+  });
+  newBtn.addEventListener('click', () => go('new'));
+  const joinCode = () => {
+    const c = cleanCode(code.value);
+    if (c.length < ROOM_LEN) { msg.textContent = `A code is ${ROOM_LEN} letters or digits.`; code.focus(); return; }
+    msg.textContent = '';
+    go(c);
+  };
+  goBtn.addEventListener('click', joinCode);
+  code.addEventListener('input', () => {
+    const c = cleanCode(code.value);
+    if (c !== code.value) code.value = c;
+    msg.textContent = '';
+    goBtn.classList.toggle('ready', c.length >= ROOM_LEN);
+  });
+  code.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); joinCode(); } });
+  // main.js disables Play while loading and connecting: the room buttons follow it
+  const sync = () => { newBtn.disabled = goBtn.disabled = !!playBtn?.disabled; };
+  if (playBtn) new MutationObserver(sync).observe(playBtn, { attributes: true, attributeFilter: ['disabled'] });
+  sync();
+  // an invite's code (?room= here, the SDK's invite params on CrazyGames) shows in the box, in case the auto-join didn't happen
+  const fill = (c) => { c = cleanCode(c); if (c.length >= ROOM_LEN && !code.value) { code.value = c; goBtn.classList.add('ready'); } };
+  try { fill(new URLSearchParams(location.search).get('room')); } catch { /* no URL */ }
+  let typed = false;
+  nameIn?.addEventListener('input', () => { typed = true; }, { once: true });
+  nameReadyP = platform().then(async (P) => {
+    if (!P) return;
+    await P.ready?.();
+    fill(P.inviteRoom?.());
+    const user = await P.getUsername?.();
+    if (user && nameIn && !typed) { nameIn.value = user; nameIn.title = 'Your CrazyGames username'; }
+  }).catch(() => {});
+}
+
+// ---------------------------------------------------------------- in game: the room chip and the Esc menu row
+let room = null, chip = null, row = null;
+const roomLabel = (r) => `${r.humans ?? 1}/${r.max ?? 4} players`;
+export function setRoom(r) {
+  const was = room?.code;
+  room = r && r.private && r.code ? r : null;
+  if (!room) {
+    chip?.remove(); row?.remove(); chip = row = null;
+    if (was) platform().then(P => P?.hideInviteButton?.());
+    return;
+  }
+  if (!chip) {
+    chip = document.createElement('div');
+    chip.id = 'roomChip';
+    chip.className = 'wa-room-chip';
+    chip.innerHTML = `<span class="wr-label">Private room</span> <b class="wr-code"></b> <span class="wr-n"></span>
+      <button type="button" class="wr-invite">Invite friends</button>`;
+    chip.querySelector('.wr-invite').addEventListener('click', (e) => { e.stopPropagation(); openInvite(); });
+    document.body.appendChild(chip);
+  }
+  const top = document.querySelector('#clickToPlay .pause-top');
+  if (!row && top) {
+    row = document.createElement('div');
+    row.className = 'pause-group wa-room-row';
+    row.innerHTML = `<span class="pause-label">Room</span> <b class="wr-code"></b> <span class="wr-n"></span>
+      <button type="button" class="wr-invite">Invite friends</button>
+      <label class="wr-bots" title="The bots that fill the empty seats (you're the host)">Bots
+        <select><option value="easy">Easy</option><option value="normal">Normal</option><option value="hard">Hard</option></select></label>`;
+    row.querySelector('.wr-invite').addEventListener('click', () => openInvite());
+    const sel = row.querySelector('select');
+    sel.addEventListener('change', () => window.WA_ROOM?.setBots?.(sel.value));
+    sel.addEventListener('keydown', (e) => e.stopPropagation());
+    top.appendChild(row);
+  }
+  for (const el of [chip, row].filter(Boolean)) {
+    el.querySelector('.wr-code').textContent = room.code;
+    el.querySelector('.wr-n').textContent = roomLabel(room);
+  }
+  if (row) {
+    const bots = row.querySelector('.wr-bots');
+    bots.hidden = !room.isHost;
+    if (room.bots) bots.querySelector('select').value = room.bots;
+  }
+  if (room.code !== was) platform().then(P => P?.showInviteButton?.(room.code));
+}
+
+// The invite card: the code, the link (copied at once) and a Copy button. Not modal: the game's own prompts work around it.
+let invite = null;
+export async function openInvite() {
+  if (!room) return;
+  const code = room.code;
+  if (!invite) {
+    invite = document.createElement('aside');
+    invite.className = 'wa-invite';
+    invite.setAttribute('aria-label', 'Invite friends');
+    invite.innerHTML = `<button type="button" class="htp-x" title="Close" aria-label="Close">×</button>
+      <h2>Invite friends</h2>
+      <p>Send this link to up to 3 friends. Or they press <b>Join with code</b> and type:</p>
+      <div class="wi-code"></div>
+      <div class="wi-link"><input readonly aria-label="Invite link"><button type="button" class="wi-copy">Copy link</button></div>
+      <p class="wi-note" aria-live="polite"></p>`;
+    for (const t of ['click', 'mousedown', 'keydown']) invite.addEventListener(t, (e) => e.stopPropagation());
+    invite.querySelector('.htp-x').addEventListener('click', () => { invite.remove(); invite = null; });
+    invite.querySelector('.wi-copy').addEventListener('click', () => copyLink());
+    document.body.appendChild(invite);
+  }
+  invite.querySelector('.wi-code').textContent = code;
+  const input = invite.querySelector('input');
+  const P = await platform();
+  const link = (await P?.inviteLink?.(code)) || `${location.origin}${location.pathname}?room=${code}`;
+  if (!invite) return;
+  input.value = link;
+  copyLink();
+}
+async function copyLink() {
+  if (!invite) return;
+  const input = invite.querySelector('input'), note = invite.querySelector('.wi-note');
+  try { await navigator.clipboard.writeText(input.value); note.textContent = 'Link copied. Paste it to your friends.'; }
+  catch { input.focus(); input.select(); note.textContent = 'Copy the link above (Ctrl+C).'; }
+}
+
+// The server couldn't seat us in the room we asked for and put us in a public match instead.
+export function roomError({ code, reason } = {}) {
+  const what = code ? `Room ${cleanCode(code) || code}` : 'That room';
+  const text = reason === 'full' ? `${what} is full.` : reason === 'unknown' ? `${what} doesn't exist (check the code).`
+    : reason === 'busy' ? 'No private rooms are free right now.' : `${what} isn't available.`;
+  const el = document.createElement('div');
+  el.className = 'wa-room-error';
+  el.setAttribute('role', 'status');
+  el.innerHTML = `<b>${esc(text)}</b> You're in a public match instead.`;
+  document.body.appendChild(el);
+  setTimeout(() => el.classList.add('gone'), 6000);
+  setTimeout(() => el.remove(), 6500);
 }
