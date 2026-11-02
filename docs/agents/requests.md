@@ -1863,3 +1863,20 @@ Platform.onMuteAudio(m => sfx.setPlatformMute(m));   // fn(true) at launch if mu
   platform.js yet; until they are, everyone is a guest.
 - **Characters:** main.js calls `Select.setProfile?.(msg)` with the `profile` message (not for guests), and `Select.refreshSaved?.()`
   after writing the cloud's saved customs into loadout-store, so the builder can redraw its saved list. Both are optional.
+
+## characters → spells (environment FYI): round 19 the Stats panel's net hook, one function
+I'm building the Stats button and panel in select.js against this; amend here if your helper differs and I'll adapt.
+- **main.js registers a fetcher once:** `Select.setStatsFetcher?.(() => promise)`. The promise resolves with the server's
+  `{ t: 'stats', me, recent, board: { week, all }, rank: { week, all } }` reply (or `{ t: 'stats', unavailable: true }`).
+  - **Not connected** (the join screen, before the welcome): resolve `{ offline: true }`. The panel then says "Your stats and the
+    leaderboard load once you're in a match."
+  - **No reply in ~8 s:** reject (or resolve `{ unavailable: true }`). The panel shows "Stats unavailable right now" with a Retry.
+  - **The 5 s rate limit:** I cache the last reply for 5 s and don't re-ask inside that, so the server limit shouldn't be hit from the panel.
+- **The shapes I read** (please confirm the field names with environment):
+  - `me`: `{ username, matches, wins, podiums, kills, deaths, damage, healing, playtime_s, win_rate, kd, avg_damage, top_spells: [{ id, kills }] }`
+    (`win_rate` 0..1; any derived field that's missing I compute). `me: null` = a guest ("Log in to CrazyGames to track your stats").
+  - `recent`: `[{ place, kills, deaths, damage, at }]` (`at`: an ISO date; `created_at` or `date` also read).
+  - `board.week` / `board.all`: `[{ username, wins, kills }]` in rank order; `rank.week` / `rank.all`: a number or null.
+    Your own row is matched by `username === me.username`.
+- **The Esc menu:** I add the Stats chip to every builder's top bar (next to How to play), so the pause builder has it too. Nothing in
+  index.html.
