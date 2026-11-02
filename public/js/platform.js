@@ -111,6 +111,35 @@ export async function getUsername() {
   } catch (e) { log('getUser failed', e); return null; }
 }
 
+// round 18: the logged-in CrazyGames player's token (a JWT, about 1 h, IN_GAME_AUTH: the server verifies it against
+// CrazyGames' JWKS), or null for a guest, with no SDK, or on any error (userNotAuthenticated, unexpectedError)
+export async function getUserToken() {
+  await readyP;
+  if (!sdk || !sdk.user || typeof sdk.user.getUserToken !== 'function') return null;
+  try {
+    if (sdk.user.isUserAccountAvailable === false) return null;
+    if (!(await sdk.user.getUser())) return null;   // a guest: getUserToken would only throw
+    const t = await sdk.user.getUserToken({ signingKeyType: 'IN_GAME_AUTH' });
+    const tok = typeof t === 'string' ? t : t && typeof t.token === 'string' ? t.token : null;
+    return tok && tok.split('.').length === 3 ? tok : null;
+  } catch (e) { log('getUserToken failed', e); return null; }
+}
+
+// a guest logging in mid-session: fn(user). CrazyGames reloads the page on logout, so fn(null) isn't expected from them.
+// Never called on our own site. Returns a function that removes the listener.
+export function onAuthChange(fn) {
+  let off = false, listener = null;
+  readyP.then(() => {
+    if (off || !sdk || !sdk.user) return;
+    listener = (user) => { log('auth change', user && user.username); fn(user || null); };
+    call('addAuthListener', s => s.user.addAuthListener?.(listener));
+  });
+  return () => {
+    off = true;
+    if (listener) call('removeAuthListener', s => s.user.removeAuthListener?.(listener));
+  };
+}
+
 // CrazyGames' own invite button (deprecated in their docs, still listed); no-ops elsewhere
 export function showInviteButton(code) {
   code = clean(code);
