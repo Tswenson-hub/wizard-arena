@@ -317,6 +317,7 @@ export function createRoom(opts) {
     if (dmg > 0) {
       target.lastDamagedAt = t;   // round 10: any damage resets the out-of-combat regen timer
       target.lastHitBy = proj.owner; match.onDamage(target, attacker, dmg, proj.born != null ? proj.from : null);   // (from: a projectile's launch point, for the recap's longest hit)
+      if (attacker !== target) notePerSpell(attacker, spellOf(proj.kind, attacker, proj.spell), 'damage', Math.min(dmg, Math.max(0, target.hp + dmg)));
       // damage dealt charges the attacker's ultimate (not an ultimate's own damage)
       if (attacker && attacker !== target && !spec.ult) addUltCharge(attacker, dmg / C.DAMAGE_SCALE * C.ULT_CHARGE.perDamage * (spec.ultCharge ?? 1));   // (charge per hit as before the scale)
     }
@@ -348,7 +349,26 @@ export function createRoom(opts) {
     return { dmg, blocked };
   }
 
-  function killPlayer(target, attacker, cause = null, kind = cause, spell = null) {   // spell: which spell's ram it was (the balance tools)   // kind: the spell or thing that did it (the kill feed's icon)
+  // Round 19: each human's kills and damage per spell this match (p.ms.perSpell, saved by the recap: the stats panel's top
+  // spells). A hit's kind is the projectile's or effect's name; SPELL_OF_KIND turns the ones that aren't SPELLBOOK ids into the
+  // spell that made them ('fast' is whatever primary they carry).
+  const SPELL_OF_KIND = { heavy: 'meteor', prop: 'telekinesis', skim: 'glacial_skim', siphon: 'sanguine_lash', shear: 'gale_shear',
+    potion: 'potion_toss', potion_splash: 'potion_toss', toxic: 'toxic_flask', toxic_pool: 'toxic_flask', flaskstep: 'flask_step',
+    hex: 'hex_shards', meteor_rain_hit: 'meteor_rain', meteor_rain_splash: 'meteor_rain', blizzard_chip: 'blizzard', blizzard_freeze: 'blizzard',
+    firewall_burn: 'firewall', bulwark_frost: 'glacial_bulwark', cage_burn: 'night_cage', eye_burst: 'eye_of_storm' };
+  function spellOf(kind, attacker, spell = null) {
+    if (spell && C.SPELLBOOK[spell]) return spell;
+    if (kind === 'fast') return attacker?.loadout?.primary || null;
+    const id = SPELL_OF_KIND[kind] || kind;
+    return id && C.SPELLBOOK[id] ? id : null;
+  }
+  function notePerSpell(p, id, key, v) {
+    if (!p || p.bot || !id || !(v > 0) || match.state().phase !== 'live') return;
+    const e = ((p.ms ??= {}).perSpell ??= {})[id] ??= { kills: 0, damage: 0, uses: 0 };
+    e[key] += v;
+  }
+  function killPlayer(target, attacker, cause = null, kind = cause, spell = null) {
+    if (attacker && attacker !== target) notePerSpell(attacker, spellOf(kind, attacker, spell), 'kills', 1);   // round 19   // spell: which spell's ram it was (the balance tools)   // kind: the spell or thing that did it (the kill feed's icon)
     target.dead = true;
     target.hp = 0;
     target.charging = false;
