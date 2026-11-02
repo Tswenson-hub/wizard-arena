@@ -11,7 +11,7 @@ import { Wizard } from './wizard.js';
 import { loadWizardModels } from './looks.js';
 import { Effects } from './effects.js';
 import * as Select from './select.js';
-import { loadLoadout, saveLoadout, loadVoice, saveVoice } from './loadout-store.js';
+import { loadLoadout, saveLoadout, loadVoice, saveVoice, loadSaved, saveSaved } from './loadout-store.js';
 import { spellPlay } from './spellanim.js';
 import * as spellanim from './spellanim.js';   // (rollKey: round 12, may not be there yet)
 import { mountMatchUI } from './match-ui.js';
@@ -390,6 +390,58 @@ async function autoJoin() {
   ui.form.requestSubmit();
 }
 
+// ---------------------------------------------------------------- saves (round 18)
+// A logged-in CrazyGames player: after the welcome we send their token (platform.js getUserToken); the server answers with
+// a `profile`: the cloud save is applied over the local one, or, for a new account, the local state goes up once (the
+// guest's progress). From then on any change to the loadout, the saved customs, the voice or the settings is sent (checked
+// every few seconds; the server keeps one write per 10 s). Guests and our own site never get a profile: local saves only.
+let account = null, lastSaved = '';
+const HOWTO_KEY = 'waHowToPlaySeen';   // (select.js's "how to play seen" flag)
+function localSave() {
+  let howto = false;
+  try { howto = !!localStorage.getItem(HOWTO_KEY); } catch {}
+  return { loadout: wantLoadout, loadouts: loadSaved(), voice: wantVoice,
+    settings: { volume: Math.round(sfx.volume * 100) / 100, muted: !!sfx.muted, bots: ui.botDiff.value, howto } };
+}
+function saveNow() {
+  if (!account || !net.connected) return;
+  const data = localSave(), key = JSON.stringify(data);
+  if (key === lastSaved) return;
+  lastSaved = key;
+  net.send({ t: 'save', data });
+}
+setInterval(saveNow, 3000);
+function applySave(s) {
+  if (s.loadout) chooseLoadout(s.loadout);
+  if (Array.isArray(s.loadouts)) { saveSaved(s.loadouts); Select.refreshSaved?.(); }
+  if (s.voice) chooseVoice(s.voice);
+  const st = s.settings || {};
+  if (Number.isFinite(st.volume)) { sfx.volume = st.volume; ui.volume.value = Math.round(st.volume * 100); }
+  if (typeof st.muted === 'boolean') { sfx.muted = st.muted; ui.mute.checked = st.muted; }
+  updateSoundInd();
+  if (['easy', 'normal', 'hard'].includes(st.bots)) {
+    ui.botDiff.value = st.bots;
+    try { localStorage.setItem('wizardBots', JSON.stringify({ difficulty: st.bots })); } catch {}
+  }
+  if (st.howto) try { localStorage.setItem(HOWTO_KEY, '1'); } catch {}
+}
+function onProfile(msg) {
+  if (msg.guest) return;
+  account = { username: msg.username };
+  if (msg.save) { applySave(msg.save); lastSaved = JSON.stringify(localSave()); }
+  else { lastSaved = ''; saveNow(); }   // a new account: this browser's loadouts and settings become the profile (always sent once)
+  if (typeof Select.setProfile === 'function') Select.setProfile(msg);
+}
+async function sendAuth() {
+  const P = await platform();
+  let token = null;
+  try { token = await P?.getUserToken?.(); } catch {}
+  if (typeof token === 'string' && token && net.connected) net.send({ t: 'auth', token });
+}
+setInterval(() => { if (account) sendAuth(); }, 50 * 60 * 1000);   // the token lives an hour
+// a guest logging in mid-session: auth (and the merge above); logging out: a reload, back to a guest
+withPlatform(P => P.onAuthChange?.(user => { if (user) { if (me) sendAuth(); } else if (account) location.reload(); }));
+
 // ---------------------------------------------------------------- network handlers
 // Game modes UI (public/js/match-ui.js, modes agent)
 const matchUI = mountMatchUI({ scene, camera, net, players, props, myId: () => myId });
@@ -424,6 +476,7 @@ function onWelcome(msg) {
   if (msg.roomError && typeof Select.roomError === 'function') Select.roomError(msg.roomError);
   if (inviteOnWelcome && msg.room?.private && typeof Select.openInvite === 'function') Select.openInvite();
   inviteOnWelcome = false;
+  sendAuth();   // round 18: a logged-in CrazyGames player's saves (nothing waits on it)
   if (sfx.muted) feed('<span class="warn">Sound is muted (press M)</span>');   // round 11: a saved mute is easy to forget
   if (me.spectator) feed('The match is full: you are watching until a place opens.');
   updateSoundInd();
@@ -1368,7 +1421,8 @@ function handleMessage(msg) {
       if (f) { effects.endFirewall(f.fx); firewalls.delete(msg.id); sfx.play('firewall_break', { pos: [f.data.x, 1, f.data.z], vol: 0.45, jitter: 0.05 }); }
       break;
     }
-    case 'room': applyRoom(msg.room); break;   // round 17: who's in our room, its host, the bots
+    case 'room': applyRoom(msg.room); break;
+    case 'profile': onProfile(msg); break;   // round 18: our CrazyGames account's save and stats   // round 17: who's in our room, its host, the bots
     case 'roomError': break;   // (the welcome carries it too: shown from there)
     case 'recap':
       if (msg.podium?.[0]?.id === myId && !msg.podium[0].bot) withPlatform(P => P.happytime?.());   // round 17: 1st place
