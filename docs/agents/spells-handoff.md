@@ -1,5 +1,26 @@
 # Spells hand-off
 
+## Round 16, last: Gale Shear and Telekinesis nerfs; the overpowered report (proposals only)
+- **Gale Shear** `037d991`, `0103af4`:
+  - 5.5 m travel, 15 damage, radius 0.65, crescent 1.0, crescent stun 0.3.
+  - The real reach is travel + blade + body radius: about 6.5–6.9 m (crescent 7.25). The 6.5 m mark is the edge.
+- **Telekinesis:** liftCooldown 4.5.
+- **Report data:** 24 normal + 12 hard runs, /tmp/wa-spells/r16/c8a, c8b, c8h; merge with /tmp/wa-spells/r16/merge.mjs. Pace:
+
+  | | Kills per player per minute | Fights ending in a kill | Median time between deaths |
+  |---|---|---|---|
+  | Normal | 1.57 / 1.47 | 43% / 40% | 3.6 s |
+  | Hard | 1.52 | 43% | 3.4 s |
+
+- **Over the line or close:**
+  - Fireball: top Primary 4 runs running (22% normal / 30% hard; K/D 1.46 / 1.45).
+  - Toxic Flask on hard: K/D 1.74, 26% of Power.
+- **Kill chains:**
+  - Frostfall's 60 + 1.2 s unblockable bind into any primary.
+  - Eye of the Storm: 120 within 8 m while it chases at 1.3× speed.
+  - Battering Ram: 73 in one hit.
+  - The Meteor Rain kill ring is by design.
+
 ## Round 16, later: Cyclone and Relic nerfs, the Flask Step teleport fix, the end-of-match recap
 - **Arcane Cyclone** `974423c`, `93d8ad9`:
   - Radius 5.5 → 4 m; damage and cooldown kept.
