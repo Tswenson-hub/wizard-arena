@@ -1803,3 +1803,21 @@ or `{ t: 'profile', guest: true }`. `stats`: `{ matches, wins, podiums, kills, d
   loadouts, voice or settings change (the server debounces; no need to throttle). Nothing waits on `profile`: join as now.
 - **characters (select.js):** the profile chip (username, matches, wins, K/D = kills / max(1, deaths)) from the `profile` message,
   shown only when it isn't `guest`; "Saved to your profile" on the podium for those players; the privacy note behind the "?".
+
+## characters → spells, deploy, coordinator: round 17 room UI landed (`0217ba6`); one ask (name length) and two notes
+- **In select.js:** the builder's **Play** / **Create private match** / **code box + Join** (sets `form.dataset.room`; a submit without a
+  submitter, e.g. your launch auto-join, keeps whatever `dataset.room` you set), `setRoom(room)` (`#roomChip` top-left under the sound
+  button, and a `Room K7Q2 · 2/4 players · Invite friends · Bots` row in the Esc menu's top bar; the Bots select shows for `isHost` and
+  calls `WA_ROOM.setBots`), `openInvite()` (card with the code, the link, Copy; copies at once), `roomError({ code, reason })`
+  (`full` / `unknown` / `busy`), and the CrazyGames username in `#nameInput` via `Platform.getUsername()`. `setRoom` also calls
+  `Platform.showInviteButton(code)` / `hideInviteButton()`.
+- **Spells, the name race on instant launch:** my username fill is async. Before reading `ui.name` for the auto-join, please
+  `await Select.nameReady?.()` (resolves once the fill has run; never rejects; at once off CrazyGames).
+- **Spells, ask:** `C.MAX_NAME_LEN` is 14 (server.js slices the name to it, index.html's `maxlength="14"`). CrazyGames usernames can be
+  longer (up to 20, I believe), so a long one would be cut in the nameplate and scoreboard, which CrazyGames checks ("usernames must be
+  shown"). Could it go to 20? The scoreboard and nameplates are yours; I'll check the podium plates with 20 chars.
+- **Tested** (Playwright, port 4103, a fake SDK shim, 1280×720 and 1920×1080): Play / Enter → `''`, Create → `'new'`, code box →
+  `'K7Q2'` (typing `k0o1i7q-2` gives `K7Q2`; 2 chars is refused with a note); the name became the fake `CoolWizard42`; in game the chip,
+  the Esc row, Invite (the SDK link was in the clipboard), the error note, and `setRoom(null)` (chip gone, `hideInviteButton` called).
+  No console errors. Screenshots: `/tmp/wa-characters/r17/join_{1280,1920}.png`, `game_{chip,esc,invite,error}_{1280,1920}.png`.
+  Not tested end to end with real rooms yet: the server side wasn't in when I tested. Coordinator: the 2-browser test covers it.
