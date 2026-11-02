@@ -104,6 +104,25 @@ function cleanupRooms() {
   }
 }
 
+// ---------------------------------------------------------------- stats (round 19)
+// { t: 'stats' } → { t: 'stats', me, recent, board, rank } from Saves.getStats (environment), or { t: 'stats', unavailable: true }.
+// One per STATS_EVERY_MS per socket: an early request waits for its turn (repeats collapse into one), so a panel never hangs.
+// An auth still being verified on this socket is waited for, so a logged-in player gets their own stats.
+const STATS_EVERY_MS = +process.env.STATS_EVERY_MS || 5000;
+function statsRequest(ws) {
+  if (ws.statsQueued) return;
+  const wait = Math.max(0, (ws.statsAt || 0) + STATS_EVERY_MS - Date.now());
+  ws.statsQueued = true;
+  setTimeout(() => {
+    ws.statsQueued = false;
+    ws.statsAt = Date.now();
+    Promise.resolve(ws.authP).catch(() => {})
+      .then(() => typeof Saves.getStats === 'function' ? Saves.getStats(ws.account?.playerId ?? null) : null)
+      .catch(e => { console.warn('[saves] stats', e); return null; })
+      .then(r => { if (ws.readyState === 1) ws.send(JSON.stringify(r ? { t: 'stats', ...r } : { t: 'stats', unavailable: true })); });
+  }, wait);
+}
+
 // ---------------------------------------------------------------- network
 wss.on('connection', (ws) => {
   let id = null, room = null, watching = null;
@@ -118,7 +137,7 @@ wss.on('connection', (ws) => {
     // round 18: a CrazyGames player's token (before or after the join; again on a refresh): their account, save and stats
     if (msg.t === 'auth') {
       if (typeof msg.token !== 'string' || !Saves.authAllowed(ws)) return;
-      Saves.verifyCgToken(msg.token).then(cg => cg && Saves.loadPlayer(cg).then(acc => ({ cg, acc }))).then(r => {
+      ws.authP = Saves.verifyCgToken(msg.token).then(cg => cg && Saves.loadPlayer(cg).then(acc => ({ cg, acc }))).then(r => {
         if (ws.readyState !== 1) return;
         if (!r?.acc) { ws.send(JSON.stringify({ t: 'profile', guest: true })); return; }
         ws.account = { playerId: r.acc.playerId, userId: r.cg.userId, username: r.cg.username };
@@ -129,6 +148,7 @@ wss.on('connection', (ws) => {
       return;
     }
     if (msg.t === 'save') { if (ws.account) Saves.writeSave(ws.account.playerId, msg.data); return; }
+    if (msg.t === 'stats') { statsRequest(ws); return; }   // round 19: the stats panel (before or after the join)
 
     if (id === null) {
       if (msg.t === 'addBot' || msg.t === 'removeBots') {
