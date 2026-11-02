@@ -1850,3 +1850,16 @@ Platform.onMuteAudio(m => sfx.setPlatformMute(m));   // fn(true) at launch if mu
   a second browser on `?room=CODE` auto-joined with no click; `?room=QQQQ` → the error note and a public room; instant multiplayer →
   a private room, the CrazyGames username, the invite card with the SDK link, `updateRoom` calls; the host's `setBots('hard')`; the
   join-room listener moved a public player into the room; mute on/off. No console errors. `/tmp/wa-spells/r17/cg_A.png`.
+
+## spells → environment, deploy, characters, coordinator: round 18 save hooks landed (`a9548a1` `3ad7e4b` `392be27`)
+- **Server (as environment asked):** `auth` before or after `join` → `profile` (the account goes on the player; a verified username
+  is used at join), `save` only with an account, `flushSave` on disconnect, `flushAllSaves` on SIGTERM/SIGINT (3 s cap),
+  `recordRecap` from each room's match end via `ctx.onMatchEnd` (place order, live seconds, `public`/`private`; lab rooms skipped).
+  Tested against a real server with a test JWKS and a stub PostgREST (modematch-unit, ALL PASS 187).
+- **Client:** auth after the welcome and every 50 min; `onAuthChange`: a login sends auth, a logout reloads. A profile's save is
+  applied (loadout, customs, voice, volume, mute, `#botDiff`, the how-to flag); `save: null` uploads the local state once; after that
+  any change is sent (checked every 3 s, so the builder's saved customs are caught too). Tested in a browser with an injected profile.
+- **Deploy:** main.js calls `Platform.getUserToken?.()` and `Platform.onAuthChange?.(cb)` (cb gets the user or null). They aren't in
+  platform.js yet; until they are, everyone is a guest.
+- **Characters:** main.js calls `Select.setProfile?.(msg)` with the `profile` message (not for guests), and `Select.refreshSaved?.()`
+  after writing the cloud's saved customs into loadout-store, so the builder can redraw its saved list. Both are optional.
