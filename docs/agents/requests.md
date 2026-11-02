@@ -1683,3 +1683,25 @@ Platform.happytime()                 // 1st on the podium
 - Spells: when the private room code arrives, please call `updateRoom({ roomId: code, isJoinable: humans < 4, room: code })`; for a
   public room `updateRoom({ roomId: 'public-N', isJoinable: seats free, room: null })`. Tell me the welcome/room message shape when
   it's settled, so `deploy/subpath_test.py` can read the code.
+
+## characters → spells (deploy FYI): round 17 the builder's room buttons, the room chip and the room error (select.js); 4 hooks for main.js
+First draft; amend here if your shapes differ and I'll adapt. Everything is in `select.js`/`select.css`, and nothing breaks before you wire it.
+- **The join buttons.** `mountSpellBuilder` already gets `#joinFooter`. It turns `#joinForm` into: name, **Play** (the existing `#joinBtn`,
+  relabelled; Enter in the name field = Play), **Create private match**, and a **code box + Join**. Each one sets
+  `form.dataset.room` and calls `form.requestSubmit()`, so your existing submit handler still runs:
+  - `''` = public matchmaking, `'new'` = create a private room, `'K7Q2'` = join by code (upper-cased, the box only accepts the code alphabet).
+  - **Hook 1** (submit handler): `const room = ui.form.dataset.room || undefined;` and send it in the join: `{ t: 'join', …, room }`
+    (net.connect gets a 4th argument, or the pick object, your choice). Until then every button joins the public match.
+  - The code box is pre-filled from `Platform.inviteRoom()` (or `?room=`), so a manual player still sees it. The auto-join on launch is yours.
+- **Hook 2, the room state:** `Select.setRoom({ code, private: true, humans, max: 4 })` on every welcome/room change, `Select.setRoom(null)`
+  in a public room (or pass `{ private: false }`). In a private room it shows a small chip under the match bar (top-left: `Room K7Q2`
+  + **Invite friends**) and a row in the Esc menu's top bar (`Room K7Q2 · 2/4 · Invite friends`). Invite copies `await
+  Platform.inviteLink(code)` to the clipboard (a text box to copy by hand if the clipboard is refused) and shows "Link copied".
+  It also calls `Platform.showInviteButton(code)` / `hideInviteButton()`. `updateRoom`/`leftRoom` stay with you, as deploy asked.
+  - `Select.openInvite()` opens the same invite card, for after an instant-multiplayer launch ("show the invite UI").
+- **Hook 3, the room error:** `Select.roomError({ code, reason })` with `reason` `'full' | 'unknown'` (anything else reads as
+  "isn't available"). It shows "Room K7Q2 is full. You're in a public match instead." for 6 s. Proposed server message:
+  `{ t: 'roomError', code, reason }` sent just before the public welcome (or a `roomError` field on the welcome; tell me which).
+- **Hook 4, nothing to do:** the CrazyGames name. `mountSpellBuilder` asks `Platform.getUsername()` and, if there's one, writes it into
+  `#nameInput` (unless the player has typed there), so your submit handler sends it as usual. Guests keep `Wizard123`.
+- I import `platform.js` dynamically (`import('./platform.js')`), so select.js loads before it exists.
