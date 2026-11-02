@@ -1113,7 +1113,7 @@ async function savesChecks() {
   const t0 = Math.floor(Date.now() / 1000);
   const token = await new SignJWT({ userId: 'cg-77', username: 'CloudMage' }).setProtectedHeader({ alg: 'RS256', kid: 'ingame-auth' }).setIssuedAt(t0).setExpirationTime(t0 + 3600).sign(privateKey);
   const srv = spawn(process.execPath, ['server.js'], { cwd: root, stdio: ['ignore', 'pipe', 'inherit'], env: { ...process.env, PORT: String(port), MATCH_DEBUG: '1',
-    NODE_ENV: 'test', CG_TEST_JWKS: JSON.stringify({ keys: [jwk] }), SUPABASE_URL: `http://localhost:${restPort}`, SUPABASE_SECRET_KEY: 'sb_secret_test' } });
+    NODE_ENV: 'test', CG_TEST_JWKS: JSON.stringify({ keys: [jwk] }), SUPABASE_URL: `http://localhost:${restPort}`, SUPABASE_SECRET_KEY: 'sb_secret_test', STATS_EVERY_MS: '1000', WA_DEBUG: '1' } });
   try {
     await new Promise((res, rej) => { srv.stdout.on('data', d => { if (/listening/.test(d)) res(); }); srv.on('exit', () => rej(new Error('server exited'))); });
     const client = async () => {
@@ -1133,6 +1133,20 @@ async function savesChecks() {
     const G = await client();
     G.send({ t: 'auth', token: token.slice(0, -4) + 'AAAA' }); await wait(400);
     ok(G.msgs.some(m => m.t === 'profile' && m.guest), 'a bad token: profile guest');
+    // round 19: { t: 'stats' } before any join (the join screen's panel); three at once: one answer now, one when the limit allows
+    {
+      const S = await client(), at = [];
+      S.ws.on('message', raw => { if (JSON.parse(raw).t === 'stats') at.push(Date.now()); });
+      const t0 = Date.now();
+      S.send({ t: 'stats' }); await wait(200);
+      S.send({ t: 'stats' }); S.send({ t: 'stats' });   // (inside the 1 s: answered together when it's up)
+      await wait(1800);
+      const replies = S.msgs.filter(m => m.t === 'stats');
+      ok(replies.length === 2 && replies.every(m => m.unavailable === true || (m.board && 'me' in m)),
+        `stats before joining: answered (${replies.map(m => m.unavailable ? 'unavailable' : 'board').join(', ')}); repeats collapse into one`);
+      ok(at[0] - t0 < 500 && at[1] - at[0] >= 900, `one stats reply per interval per socket (${at[0] - t0} ms, then ${at[1] - at[0]} ms later)`);
+      S.ws.close();
+    }
     G.send({ t: 'join', name: 'Guesty', room: A.msgs.find(m => m.t === 'welcome').room.code });
     while (G.id == null) await wait(10);
     G.send({ t: 'save', data: { voice: 'male' } });
@@ -1141,9 +1155,21 @@ async function savesChecks() {
     const saves = calls.filter(c => c.path.endsWith('/player_saves') && c.method !== 'GET');
     ok(saves.length === 1 && saves[0].body?.data?.settings?.bots === 'hard', `a save from the logged-in player is written; a guest's is ignored (${saves.length} writes)`);
     A.send({ t: 'matchDebug', skip: true }); await wait(400);   // the countdown → live
+    // round 19: the logged-in player hits the guest with their primary: that spell's damage goes into the record (per_spell)
+    const primary = A.msgs.find(m => m.t === 'welcome').players.find(q => q.id === A.id).loadout.primary;
+    const line = clearLine(10);
+    if (line) {
+      const at = (d) => [line.a[0] + line.dir[0] * d, 0, line.a[2] + line.dir[1] * d];
+      A.send({ t: 'matchDebug', pinBots: true });
+      A.send({ t: 'debugPlace', p: at(0), yaw: line.yaw, resetCd: true }); G.send({ t: 'debugPlace', p: at(4), yaw: line.yaw + Math.PI });
+      await wait(1800);   // (past spawn protection)
+      for (let k = 0; k < 3; k++) { A.send({ t: 'cast', kind: C.PRIMARY_KIND[primary], origin: [at(0)[0], 1.3, at(0)[2]], dir: [line.dir[0], (C.HIT_CENTER_Y - 1.3) / 4, line.dir[1]] }); await wait(600); }
+    }
     A.send({ t: 'matchDebug', skip: true }); await wait(800);   // live → the end
     const rec = calls.filter(c => c.path.endsWith('/rpc/record_match'));
     ok(rec.length === 1 && rec[0].body?.p_player === '00000000-0000-4000-8000-000000000007' && rec[0].body?.p_room_kind === 'private', `the match end records the logged-in player only (${rec.length} record_match, ${rec[0]?.body?.p_room_kind} room)`);
+    const ps = rec[0]?.body?.p_per_spell || {};
+    ok(line && ps[primary]?.damage > 0, `the record carries damage per spell (${primary}: ${JSON.stringify(ps[primary])})`);
     A.send({ t: 'save', data: { voice: 'female' } }); await wait(200);
     const n = calls.filter(c => c.path.endsWith('/player_saves') && c.method !== 'GET').length;
     A.ws.close(); await wait(600);
