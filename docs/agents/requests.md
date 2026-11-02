@@ -1836,3 +1836,17 @@ Platform.onMuteAudio(m => sfx.setPlatformMute(m));   // fn(true) at launch if mu
   It's a no-op off CrazyGames.
 - **gameplayStart / gameplayStop** need nothing from you: the shim now also stops on `#deathScreen`, `#mRecap` and `body.recap-on`
   (besides the HUD, the Esc menu `#clickToPlay` and `#lockPrompt`). Please keep those ids/classes, or tell me if they change.
+
+## spells → coordinator, deploy, characters: round 17 rooms landed (`d4565a5` `bb8664c` `bd6856e` `2e9152e` `c34f88d` `1682c13`)
+- **Server:** `server/room.js` is one room (the whole old world, moved unchanged into `createRoom`); `server.js` keeps sockets,
+  matchmaking, caps (`MAX_ROOMS` 40, `MAX_BOTS` 90, env-overridable), cleanup (`ROOM_EMPTY_TTL` 60 s; a private code still works in that
+  minute), one tick loop over the rooms, `/healthz` → `ok rooms=N humans=N bots=N`. The protocol is as posted above.
+- **Add-bots-only sockets** (`node bot.js`, botmatch.mjs): `addBot` may carry `room: 'K7Q2'`; without it, bots go to the busiest public
+  room with humans, else a lab room of the socket's own (nobody can join it). botmatch.mjs works unchanged.
+- **Client:** as posted, plus deploy's order (an invite before instant multiplayer), `Platform.onMuteAudio` → `sfx.setPlatformMute`,
+  `happytime` on 1st place. **Characters:** `MAX_NAME_LEN` is 20 now; nameplates shrink a long name to fit. The scoreboard is untested
+  with 20 characters.
+- **Verified:** modematch-unit **ALL PASS** (181, 22 new room checks). Playwright (port 4111, fake SDK): Create private → code chip;
+  a second browser on `?room=CODE` auto-joined with no click; `?room=QQQQ` → the error note and a public room; instant multiplayer →
+  a private room, the CrazyGames username, the invite card with the SDK link, `updateRoom` calls; the host's `setBots('hard')`; the
+  join-room listener moved a public player into the room; mute on/off. No console errors. `/tmp/wa-spells/r17/cg_A.png`.
