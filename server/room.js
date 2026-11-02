@@ -1538,15 +1538,20 @@ export function createRoom(opts) {
     // projectiles
     for (const proj of [...projectiles.values()]) {
       const age = t - proj.born;
-      if (age > proj.life) { endProjectile(proj, false); continue; }
+      // (a straight shot flies exactly its life: the last step is cut to what's left of it, so a late tick can't carry it
+      // past its range, e.g. a 0.1 s step took Gale Shear 3 m on; the client draws it for its life the same way)
+      const flown = proj.flownT || 0;
+      if (proj.curve ? age > proj.life : flown >= proj.life) { endProjectile(proj, false); continue; }
       const before = proj.p.slice();
       if (proj.curve) {
         // Hex Shards: along the Bézier the client draws too
         const at = C.hexAt(proj.curve, age);
         proj.p = at.p; proj.v = at.v;
       } else {
-        proj.v[1] -= proj.g * dt;
-        proj.p[0] += proj.v[0] * dt; proj.p[1] += proj.v[1] * dt; proj.p[2] += proj.v[2] * dt;
+        const step = Math.min(dt, proj.life - flown);
+        proj.flownT = flown + step;
+        proj.v[1] -= proj.g * step;
+        proj.p[0] += proj.v[0] * step; proj.p[1] += proj.v[1] * step; proj.p[2] += proj.v[2] * step;
       }
 
       // an enemy Firewall burns it up
