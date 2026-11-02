@@ -872,7 +872,7 @@ export const PLAYER_COLORS = [
   0xff5c5c, 0x5cb8ff, 0x6ef08a, 0xffd25c, 0xd98cff, 0xff9d5c, 0x5cf0e0, 0xff7ad9,
 ];
 
-export const MAX_NAME_LEN = 14;
+export const MAX_NAME_LEN = 20;   // round 17: CrazyGames usernames (was 14)
 
 // Where a blink lands. Used by the server (authoritative) and the client (prediction),
 // so the two must agree exactly.

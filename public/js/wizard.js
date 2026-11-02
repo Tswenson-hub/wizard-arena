@@ -120,7 +120,9 @@ function makeNameplate(name, color) {
   const canvas = document.createElement('canvas');
   canvas.width = 512; canvas.height = 128;
   const ctx = canvas.getContext('2d');
-  ctx.font = 'bold 56px "Trebuchet MS", sans-serif';
+  // round 17: CrazyGames usernames run to 20 characters: a long name shrinks to fit the plate
+  let px = 56;
+  do ctx.font = `bold ${px}px "Trebuchet MS", sans-serif`; while (ctx.measureText(name).width > 490 && (px -= 2) > 22);
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.lineWidth = 10; ctx.strokeStyle = 'rgba(0,0,0,0.8)';
   ctx.strokeText(name, 256, 64);
