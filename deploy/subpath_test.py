@@ -3,25 +3,138 @@
 # gameplayStart / gameplayStop fire, no console errors.
 # It also measures the initial download the way CrazyGames does: bytes from load start to the first gameplayStart
 # (and at "Ready"), against the 20 MB target (CrazyGames: 50 MB desktop, 20 MB for the mobile homepage).
+# Rooms (round 17): browser A creates a private match, browser B joins it with the code box, and browser C opens the
+# invite link (`?room=CODE`, from A's "Invite friends" card) on --site, our own server's page; all three must land in the
+# same room, see each other in the server's snapshots, and the public join must not see them.
 # usage: python3 deploy/subpath_test.py <page url> [screenshot path] [--block-sdk] [--max-mb 20] [--swiftshader]
+#                                       [--no-rooms] [--site http://localhost:4105/]
+#   --no-rooms: only the single-player checks
+#   --site URL: our own site (the same game server as the build's config.js) for the ?room= check; default: skipped
 #   --block-sdk: the SDK script fails to load; the game must still play (the shim is guarded)
 #   --max-mb N: FAIL when the initial download is over N MB (default: report only)
 #   node tools/build-crazygames.mjs --server ws://localhost:4105 --out dist/crazygames-local --no-zip
 #   PORT=4105 node server.js &  node tools/serve-subpath.mjs dist/crazygames-local 4199 /game &
 #   python3 deploy/subpath_test.py http://localhost:4199/game/ /tmp/wa-deploy/subpath.png
-import asyncio, sys, time
+import asyncio, re, sys, time
 from urllib.parse import urlparse
 from playwright.async_api import async_playwright
 
 # GPU by default (ANGLE on Metal: macOS); --swiftshader for software GL (slow: it can stall several seconds compiling the castle's shaders)
 GL_ARGS = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] if '--swiftshader' in sys.argv else ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist']
 BLOCK_SDK = '--block-sdk' in sys.argv
+ROOMS = '--no-rooms' not in sys.argv
 MAX_MB = float(sys.argv[sys.argv.index('--max-mb') + 1]) if '--max-mb' in sys.argv else None
-args = [a for i, a in enumerate(sys.argv[1:], 1) if a not in ('--block-sdk', '--max-mb', '--swiftshader') and sys.argv[i - 1] != '--max-mb']
+SITE = sys.argv[sys.argv.index('--site') + 1] if '--site' in sys.argv else None
+VALUED = ('--max-mb', '--site')
+args = [a for i, a in enumerate(sys.argv[1:], 1) if a not in ('--block-sdk', '--swiftshader', '--no-rooms') + VALUED and sys.argv[i - 1] not in VALUED]
 PAGE = args[0]
 SHOT = args[1] if len(args) > 1 else None
 page_url = urlparse(PAGE)
 folder = page_url.path if page_url.path.endswith('/') else page_url.path.rsplit('/', 1)[0] + '/'
+
+# ---- rooms: one browser per player (separate contexts = separate localStorage, like separate people)
+async def player(b, url, name, errs):
+    ctx = await b.new_context(viewport={'width': 1280, 'height': 720})
+    await ctx.grant_permissions(['clipboard-read', 'clipboard-write'], origin=f'{urlparse(url).scheme}://{urlparse(url).netloc}')
+    pg = await ctx.new_page()
+    seen = {'names': set(), 'frames': 0}
+    def on_ws(ws):
+        def on_frame(f):
+            seen['frames'] += 1
+            if isinstance(f, str) and '"name"' in f:
+                for m in re.finditer(r'"name":"([^"]{1,24})"', f): seen['names'].add(m.group(1))
+        ws.on('framereceived', on_frame)
+    pg.on('websocket', on_ws)
+    pg.on('pageerror', lambda e: errs.append(f'{name}: {e}'))
+    pg.on('console', lambda m: errs.append(f'{name}: {m.text}') if m.type == 'error' and not (BLOCK_SDK and 'crazygames-sdk' in m.text + str(m.location)) else None)
+    if BLOCK_SDK: await pg.route('**/crazygames-sdk-v3.js', lambda r: r.abort())
+    await pg.goto(url, timeout=120000)
+    # Ready, or already in game: an invite (?room=) auto-joins without waiting at the builder
+    await pg.wait_for_function("(document.querySelector('#loadStatus')?.textContent || '').startsWith('Ready')"
+                               " || !document.querySelector('#hud').classList.contains('hidden')", timeout=120000)
+    if await pg.locator('.htp-close').count(): await pg.click('.htp-close')
+    return ctx, pg, seen
+
+async def in_game(pg):
+    await pg.wait_for_function("!document.querySelector('#hud').classList.contains('hidden')", timeout=30000)
+
+async def chip(pg, timeout=15000):
+    try:
+        await pg.wait_for_selector('#roomChip .wr-code', timeout=timeout)
+    except Exception:
+        return None
+    return await pg.evaluate("({ code: document.querySelector('#roomChip .wr-code').textContent.trim(), n: document.querySelector('#roomChip .wr-n').textContent.trim() })")
+
+async def rooms(b):
+    ok, errs = True, []
+    def check(cond, label):
+        nonlocal ok
+        print(('  ok  ' if cond else '  FAIL ') + label)
+        ok = ok and bool(cond)
+    print('rooms:')
+    sep = '&' if '?' in PAGE else '?'
+    # A: Create private match
+    ca, a, sa = await player(b, PAGE + sep + 'cgdebug', 'A', errs)
+    await a.fill('#nameInput', 'hostA')
+    await a.click('.sb-room-new'); await in_game(a)
+    ra = await chip(a)
+    check(ra and re.fullmatch(r'[A-HJKMNP-Z2-9]{4,5}', ra['code']), f'A created a private room: {ra}')
+    if not ra: return False, errs
+    code = ra['code']
+    # the invite card: the link A would send (our ?room= link here; SDK.game.inviteLink on CrazyGames)
+    await a.click('#roomChip .wr-invite')
+    await a.wait_for_function("(document.querySelector('.wa-invite input')?.value || '').length > 0", timeout=10000)
+    link = await a.evaluate("document.querySelector('.wa-invite input').value")
+    # ours: ?room=CODE; the SDK's: ...&czy_invite_params=room%3DCODE
+    check(f'room={code}' in link or f'room%3D{code}' in link, f'invite link: {link}')
+    # B: the code box
+    cb, bp, sb = await player(b, PAGE + sep + 'cgdebug', 'B', errs)
+    await bp.fill('#nameInput', 'friendB')
+    await bp.fill('.sb-room-code', code.lower())
+    await bp.click('.sb-room-go'); await in_game(bp)
+    rb = await chip(bp)
+    check(rb and rb['code'] == code, f'B joined by code: {rb}')
+    pages = [('A', a, sa), ('B', bp, sb)]
+    # C: our own site with ?room=CODE joins at once, no click
+    if SITE:
+        cc, c, sc = await player(b, SITE.rstrip('/') + '/?room=' + code, 'C', errs)
+        try:
+            await in_game(c); rc = await chip(c)
+        except Exception as e:
+            rc = None; print('  C:', e)
+        check(rc and rc['code'] == code, f'C joined from {SITE} ?room={code} without a click: {rc}')
+        pages.append(('C', c, sc))
+    await a.wait_for_timeout(3000)
+    want = len(pages)
+    counts = [await chip(p, 1000) for _, p, _ in pages]
+    check(all(r and r['n'].startswith(f'{want}/4') for r in counts), f'every chip shows {want}/4: {[r and r["n"] for r in counts]}')
+    names = {'A': 'hostA', 'B': 'friendB', 'C': None}
+    for k, _, s in pages:
+        others = [names[o] for o, _, _ in pages if o != k and names[o]]
+        check(all(n in s['names'] for n in others), f'{k} sees {others} in the server frames ({s["frames"]} frames)')
+    # a public join must not land in the private room
+    cd, d, sd = await player(b, PAGE + sep + 'cgdebug', 'D', errs)
+    await d.fill('#nameInput', 'publicD')
+    await d.click('#joinBtn'); await in_game(d)
+    await d.wait_for_timeout(3000)
+    rd = await chip(d, 1000)
+    check(rd is None, 'D (Play) is in a public room: no room chip')
+    check('hostA' not in sd['names'] and 'friendB' not in sd['names'], 'D sees neither A nor B')
+    if SHOT: await a.screenshot(path=SHOT.replace('.png', '-roomA.png')); await bp.screenshot(path=SHOT.replace('.png', '-roomB.png'))
+    # a wrong code falls back to a public match with an error
+    ce, e, se = await player(b, PAGE + sep + 'cgdebug', 'E', errs)
+    bad = 'ZZZZ' if code != 'ZZZZ' else 'YYYY'
+    await e.fill('.sb-room-code', bad); await e.click('.sb-room-go'); await in_game(e)
+    try:
+        await e.wait_for_selector('.wa-room-error', state='attached', timeout=8000)
+        err = await e.evaluate("document.querySelector('.wa-room-error').textContent")
+    except Exception:
+        err = None
+    check(err and bad in err, f'unknown code {bad}: {err!r}')
+    for c in (ca, cb, cd, ce) + ((cc,) if SITE else ()): await c.close()
+    errs = [x for x in errs if 'WebSocket' not in x]   # closing a context mid-socket logs one
+    check(not errs, f'no console errors in the room browsers: {errs or "none"}')
+    return ok, errs
 
 async def main():
     ok = True
@@ -97,6 +210,8 @@ async def main():
         await pg.wait_for_timeout(500)
         st = await pg.evaluate("document.querySelector('#status')?.textContent || ''")
         print('status line:', repr(st))
+        rooms_ok = True
+        if ROOMS: rooms_ok, _ = await rooms(b)
         await b.close()
     print(f'requests to the page host: {own}, outside {folder}: {escaped or "none"}')
     print('failed requests:', failed or 'none')
@@ -113,7 +228,7 @@ async def main():
         print(f'initial download {MB(initial)} is over the {MAX_MB:g} MB target'); ok = False
     ws_ok = bool(sockets) and frames['recv'] > 20
     starts = sum('gameplayStart' in c for c in cg)
-    ok = ok and not escaped and not failed and ws_ok and not errs
+    ok = ok and not escaped and not failed and ws_ok and not errs and rooms_ok
     if cfg['sdk']: ok = ok and starts >= 1
     print('RESULT:', 'PASS' if ok else 'FAIL')
     sys.exit(0 if ok else 1)

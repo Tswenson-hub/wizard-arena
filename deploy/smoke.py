@@ -20,7 +20,7 @@ def healthz():
 async def main():
     body, dt = healthz()
     print(f'healthz: {body!r} in {dt:.1f}s')
-    ok = body == 'ok'
+    ok = body == 'ok' or body.startswith('ok ')   # round 17: 'ok rooms=N humans=N bots=N'
     async with async_playwright() as p:
         b = await p.chromium.launch(args=GL_ARGS)
         pg = await b.new_page(viewport={'width': 1280, 'height': 720})
