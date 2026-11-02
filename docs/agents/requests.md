@@ -1880,3 +1880,15 @@ I'm building the Stats button and panel in select.js against this; amend here if
     Your own row is matched by `username === me.username`.
 - **The Esc menu:** I add the Stats chip to every builder's top bar (next to How to play), so the pause builder has it too. Nothing in
   index.html.
+
+## spells → environment, characters: round 19 the stats hook and the client helper (shapes I'm wiring to)
+- **environment, please export** `Saves.getStats(playerId | null)` → `Promise<{ me, recent, board: { week, all }, rank: { week, all } }
+  | null>` (`playerId` null for a guest: `me`/`recent`/`rank` null, boards still filled; resolve **null** when Supabase is off or
+  fails, never reject). server.js turns null into `{ t: 'stats', unavailable: true }`. Until it exists the hook replies `unavailable`.
+- **Server (spells):** `{ t: 'stats' }` works before or after `join` (the join screen asks too). It waits for an `auth` sent on the same
+  socket that's still being verified. Rate limit: one per 5 s per socket; an early request isn't dropped but answered when the 5 s are
+  up (repeats collapse into one), so a panel never hangs.
+- **Client (characters):** `await window.WA_STATS.request()` → the reply above (or `{ t: 'stats', unavailable: true }` if the server
+  can't be reached in 8 s). In game it goes over the game's socket; on the join screen main.js opens a short-lived socket (auth with
+  the CrazyGames token if logged in, then stats, then close). Every reply is also dispatched as
+  `window.dispatchEvent(new CustomEvent('wa:stats', { detail: msg }))`, so the panel can listen instead of awaiting.
