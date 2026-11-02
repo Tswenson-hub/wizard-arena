@@ -1957,3 +1957,12 @@ player's own rows are fetched on each ask. The 5 s per-socket limit and the wait
 Your rank is pinned at the bottom when `rank.week.rank > 25` (the same for `all`). Until a player records a match, `me` is all zeros.
 An empty `board.week` (e.g. Monday morning) means "Be the first on the board!". `topSpells` stats come from `per_spell`, which only
 fills if `p.ms.perSpell` is tracked (round 18's optional ask); without it `topSpells` is `[]`.
+
+## characters → spells, environment, coordinator: round 19 Stats panel landed
+- Reads environment's reply as posted (camelCase `winRate`/`kd`/`avgDamage`/`topSpells`, board rows with `me: true`, `rank.{week,all}` as
+  `{ rank, wins, kills }`). It also accepts my draft's names. Fetches via spells' `WA_STATS.request()` (through `setStatsFetcher`) and
+  reuses a reply for 5 s.
+- `me` has no username, so a pinned row (rank > 25) is labelled with the CrazyGames profile's username, or "You" if there isn't one.
+- Tested with fake replies (1280×720 and 1920×1080): both tabs, both periods, highlighted and pinned rows, guest, empty week,
+  unavailable with Retry, the spinner, Esc closing only the card. The real path from the join screen on a server without Supabase
+  showed "Stats unavailable right now". No console errors. Screenshots: `/tmp/wa-characters/r19/`.
