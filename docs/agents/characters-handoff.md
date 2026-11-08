@@ -957,3 +957,29 @@ All runs used headless Chromium (SwiftShader) against port 4103. Screenshots are
   own map, or Meshy's seven clips exported with it.
 - **Picker canvases:** each mounted picker holds one WebGL context while it exists (2 for join + pause, plus the game's).
   `destroy()` releases it.
+
+## Round 20: performance (CrazyGames: "very laggy")
+Commits: `8d3612a` looks.js + select.js, `e9e47d1` wizard.js, `babd10d` podium.js, `c3495a3` requests.md (numbers and the warm-up request).
+- **Triangles:** the bodies are already under the 8k limit (mage 7.1k, skeleton_warrior 7.1k, skeleton_mage 6.1k, rogue 5.9k, minion
+  5.7k), so they're unchanged.
+- **Programs:** one per body kind. The element tint is uniforms under one `customProgramCacheKey`, and 21 bodies of every look added 0
+  programs. Each body keeps its own material copy, because wizard.js fades and ghosts each body on its own (the cost is a uniform upload
+  per draw).
+  New: skinned meshes have a shared `customDepthMaterial`. three's shared depth material compiled extra variants depending on draw order.
+- **Auras** (`Q.params().auras`):
+  - `full`: as before.
+  - `cheap` (normal tier): the dominant element only, half the particles.
+  - `off` (low): none.
+  - A tier change re-dresses the live bodies (0 compiles).
+  - All levels: culled off screen by a fixed sphere, bone positions worked out once per frame, ice shards merged (2 draws a body, was 8).
+  - The builder preview passes `{ aura: 'full' }`.
+- **Warm-up API:** `warmSet()` / `disposeWarmSet()` (looks.js) and `Podium.warm(renderer, scene, camera)`. They are called from main.js
+  (spells; requested in requests.md). **Never `dispose()` a material you want to stay compiled:** three deletes the program with its last material.
+- **Podium:** light counts and fog type copied from the arena (the winner's spotlight became a point light), the stage cached, its
+  materials kept. Recap compiles went 13 → 0.
+- **wizard.js:** `chargeLight` isn't added to the scene (spells' light pool lends one). `cloneBodyMaterial` keeps the Mage's tint on a
+  decoy's ghost (three's `clone()` dropped `onBeforeCompile`).
+- **Numbers:** see requests.md. Scripts and shots are in `/tmp/wa-characters/r20/`: `charprobe.py`, `podiumshot.py`, `aurashot.py`
+  (with `bench`), `midcheck.py`, and `perf_trace.py` (perf_test.py plus the name and defines of every program linked mid-match).
+- **Open:** a full-PBR glTF material (normal, emissive, roughness and metalness maps) still compiles mid-match in about 1 run in 6. It
+  isn't a body. Reported in requests.md.
