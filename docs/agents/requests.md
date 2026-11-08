@@ -2191,8 +2191,8 @@ Normal is at the 120k target (two runs of three under it) and low straddles 80k.
   program or their shadows.
 - Banners, barrels and single props: too few of each to pay for two draw calls.
 - KayKit's bricks can't be simplified (every brick is its own piece with its own UV island).
-- I didn't cull the wall-walk's outer faces. The far LOD covers both sides of every wall, and the camera can hang outside the
-  parapet when you stand on the wall-walk.
+- I didn't cull the wall-walk's outer faces. The far LOD covers both sides of every wall anyway, and I didn't verify that the
+  camera can never end up outside the parapet, where culled faces would show as holes.
 
 **map.js broad-phase (spells' request):**
 - Each piece keeps its rotation until its yaw changes. Spells' snippet would never have computed it for a piece without a
