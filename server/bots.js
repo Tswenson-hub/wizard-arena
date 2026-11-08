@@ -152,6 +152,7 @@ export function updateBots(dt, world) {
   const t = world.now();
   clouds = [...(world.smokes?.values() || [])].filter(c => t < c.until);
   match = world.match || null; players = world.players; tracks = (world.tracks ??= new Map());
+  losMemo.clear(); floorMemo.clear(); spotMemo.clear();   // (round 20: the per-tick answers, for this room's tick)
   let any = false;
   for (const p of world.players.values()) {
     if (!p.bot) continue;
@@ -168,7 +169,19 @@ const chest = (q) => [q.p[0], q.p[1] + C.hitCenterOf(q), q.p[2]];   // (lower wh
 const isStunned = (q, t) => q.stunUntil > t;
 const canAct = (q, t) => !q.dead && !isStunned(q, t) && !(q.silenceUntil > t);
 const rooted = (q, t) => q.rootUntil > t;
-const airborne = (q, t) => q.flightUntil > t || !!q.jump || !!q.hover || q.p[1] > C.surfaceHeight(q.p[0], q.p[2], q.p[1]) + 0.05;   // (standing on a platform isn't)
+const airborne = (q, t) => q.flightUntil > t || !!q.jump || !!q.hover || q.p[1] > floorUnder(q.p) + 0.05;   // (standing on a platform isn't)
+// Round 20 (server tick profiling, 4 rooms of 4 bots): moveBot runs every tick for every bot and asked the map the same
+// questions several times a tick (line of sight 23% of the tick, the floor under someone 9%, the potion spots 10%). The
+// answers are kept for the rest of this room's tick (updateBots clears them), keyed by the exact positions: the same
+// answers as before, just not worked out twice.
+const losMemo = new Map(), floorMemo = new Map(), spotMemo = new Map();
+const posKey = (p) => p[0] + ',' + p[1] + ',' + p[2];
+function floorUnder(p) {
+  const k = posKey(p);
+  let v = floorMemo.get(k);
+  if (v === undefined) floorMemo.set(k, v = C.surfaceHeight(p[0], p[2], p[1]));
+  return v;
+}
 // Round 9: a jump the server will take (it checks the same and more)
 const canJump = (q, t) => !q.jump && !q.grab && !airborne(q, t) && q.st >= C.JUMP.stamina + 15 && !q.blocking && !q.charging && !q.siphon && !q.ramWind && !q.ultWind && !q.flaskWind
   && !q.ride && !q.eye && !q.mrain && !(q.rootUntil > t) && !(q.stunUntil > t);
@@ -303,7 +316,12 @@ function threatOf(me, proj) {
 
 function yawTo(from, to) { return Math.atan2(to[0] - from[0], to[2] - from[2]); }
 
-function hasLOS(a, b) { return !C.pillarBlocks(a, b, 0.25) && !C.smokeBlocks(a, b, clouds); }
+function hasLOS(a, b) {
+  const k = posKey(a) + '>' + posKey(b);
+  let v = losMemo.get(k);
+  if (v === undefined) losMemo.set(k, v = !C.pillarBlocks(a, b, 0.25) && !C.smokeBlocks(a, b, clouds));
+  return v;
+}
 const smokeHides = (a, b) => C.smokeBlocks(a, b, clouds);
 
 // ---------------------------------------------------------------- decisions (20 Hz)
@@ -1501,8 +1519,11 @@ function potionGoal(me, world, t, target) {
   let best = null, bd = 22;
   for (const pt of world.potions) {
     if (t < pt.readyAt) continue;
-    const sp = pt.spot, y = sp.y;
-    if (y > C.surfaceTopAt(sp.x, sp.z) + 0.3) continue;   // nothing to stand on there yet
+    const sp = pt.spot;
+    let m = spotMemo.get(sp);   // (the same for every bot this tick; sp.y is worked out from the map too)
+    if (!m) { const y = sp.y; spotMemo.set(sp, m = { y, ok: !(y > C.surfaceTopAt(sp.x, sp.z) + 0.3) }); }
+    if (!m.ok) continue;   // nothing to stand on there yet
+    const y = m.y;
     const d = Math.hypot(sp.x - me.p[0], sp.z - me.p[2]) + Math.max(0, y - me.p[1]) * 2;
     if (d < bd) { bd = d; best = [sp.x, sp.z]; }
   }
