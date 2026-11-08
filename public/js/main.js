@@ -239,6 +239,9 @@ async function warmUp() {
       scene.add(m, f); temp.push(m, f);
     }
     effects.warmUp(at, dummies[0]);
+    await Promise.race([ramModelP, new Promise(r => setTimeout(r, 3000))]).catch(() => {});
+    const rv = [new RamView({ id: -1, p: [at.x, at.z], y: at.y, yaw: 0, s: 'run' }, scene), ghostRam(new RamView({ id: -2, p: [at.x + 1, at.z], y: at.y, yaw: 0, s: 'windup' }, scene))];
+    temp.push(...rv);
     await Promise.all([effects.iceWallModel, effects.acidModel]);   // (their models go onto the warm-up's wall and pool)
     await new Promise(r => setTimeout(r, 0));
     // every hidden part too (a wizard's ice, chains and ward; aim marks; the low tier's trees), shown for this frame only
@@ -253,7 +256,7 @@ async function warmUp() {
   } catch (e) { console.warn('[warm-up]', e); }
   effects.clearAll();
   for (const w of dummies) w.dispose(scene);
-  for (const m of temp) scene.remove(m);
+  for (const m of temp) if (m.dispose) m.dispose(scene); else scene.remove(m);
   warming = false;
   console.log(`[warm-up] ${info.programs?.length ?? '?'} shader programs in ${Math.round(performance.now() - t0)} ms`);
 }
@@ -265,7 +268,7 @@ try {
 ui.joinBtn.disabled = true;
 
 const loader = new GLTFLoader();
-loadRamModel(loader);   // (not waited on: a ram is a box until it arrives)
+const ramModelP = loadRamModel(loader);   // (not waited on: a ram is a box until it arrives; the warm-up waits a moment for it)
 // round 15: the KayKit bodies and clips (looks.js loads models/characters/*)
 Promise.all([loadWizardModels(loader), loadModels(loader, scene)]).then(async () => {
   ui.loadStatus.textContent = 'Preparing the spells…';
@@ -1370,8 +1373,7 @@ function handleMessage(msg) {
       if (!playSpell(w, 'battering_ram', 'windup')) w.pose('summon', msg.left, { fit: true });   // the stomp lands on the release
       const B = SPELL.battering_ram, d = [Math.sin(msg.yaw), Math.cos(msg.yaw)], gp = w.group.position;
       ghostRams.get(msg.id)?.dispose(scene);
-      const ghost = new RamView({ id: -msg.id, p: [gp.x + d[0] * B.spawnDist, gp.z + d[1] * B.spawnDist], y: gp.y, yaw: msg.yaw, s: 'windup' }, scene);
-      ghost.group.traverse(o => { if (o.material) { o.material = o.material.clone(); o.material.transparent = true; o.material.opacity = 0.45; o.material.depthWrite = false; } });
+      const ghost = ghostRam(new RamView({ id: -msg.id, p: [gp.x + d[0] * B.spawnDist, gp.z + d[1] * B.spawnDist], y: gp.y, yaw: msg.yaw, s: 'windup' }, scene));
       ghost.until = performance.now() / 1000 + msg.left + 0.3;
       ghostRams.set(msg.id, ghost);
       effects.dust(gp, 6); sfx.play('impact_big', { pos: wpos(w), vol: 0.7, rate: 0.55 });
@@ -2678,6 +2680,11 @@ function fadeMaterial(base, level) {
 }
 const fadeLevel = (f) => { let best = 0; for (let i = 1; i < FADE_LEVELS.length; i++) if (Math.abs(FADE_LEVELS[i] - f) < Math.abs(FADE_LEVELS[best] - f)) best = i; return best; };
 // the warm-up: a copy of a prop in its faded look (shares its geometry; the variants are the ones the match will use)
+// Battering Ram's wind-up: a see-through ghost of the ram (its own materials; the warm-up shows one)
+function ghostRam(v) {
+  v.group.traverse(o => { if (o.material) { o.material = o.material.clone(); o.material.transparent = true; o.material.opacity = 0.45; o.material.depthWrite = false; } });
+  return v;
+}
 function fadeWarm(m) {
   const c = m.clone();
   c.traverse(o => { if (o.isMesh) o.material = Array.isArray(o.material) ? o.material.map(x => fadeMaterial(x, 3)) : fadeMaterial(o.material, 3); });

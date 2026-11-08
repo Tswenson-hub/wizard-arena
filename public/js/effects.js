@@ -260,6 +260,54 @@ export class Effects {
     ];
   }
 
+  // Round 20: pooling. Effects used to build their geometries and materials on every cast and hit (and never freed them):
+  // GC churn, GPU uploads mid-fight and a growing pile of buffers.
+  //  - G(site, make, ...key): a geometry built once per call site (and size, `key`), shared by every use after.
+  //  - M(Material class, params): a material from a free list of ones built with the same params, reset to them;
+  //    Mc(base): a private copy of a shared material (a particle fading on its own), from a free list too.
+  //  - mesh(geo, mat): a Mesh from a free list, its transform and flags reset.
+  // drop(obj) (every removal goes through it) gives back the meshes, materials and lights under obj.
+  G(site, make, ...key) {
+    const k = key.length ? site + ':' + key.join(',') : site;
+    return (this.geos ??= new Map()).get(k) ?? this.geos.set(k, make()).get(k);
+  }
+  M(Cls, params = {}) {
+    const k = Cls.name + Object.entries(params).map(([n, v]) => `${n}=${v?.isTexture ? v.uuid : v?.isColor ? v.getHex() : v}`).join(';');
+    return this.takeMat(k, () => new Cls(params));
+  }
+  Mc(base) { return this.takeMat('copy:' + base.uuid, () => base); }
+  takeMat(k, proto) {
+    let e = (this.matPool ??= new Map()).get(k);
+    if (!e) this.matPool.set(k, e = { proto: null, free: [] });
+    e.proto ??= proto();
+    const m = e.free.pop();
+    if (m) { m.copy(e.proto); m.needsUpdate = true; m.userData = { poolKey: k }; return m; }
+    const n = e.proto.clone(); n.userData = { poolKey: k };
+    return n;
+  }
+  mesh(geo, mat) {
+    const m = (this.meshFree ??= []).pop() ?? new THREE.Mesh();
+    if (m.children.length) m.clear();
+    m.geometry = geo; m.material = mat;
+    m.position.set(0, 0, 0); m.rotation.set(0, 0, 0); m.scale.set(1, 1, 1);
+    m.visible = true; m.renderOrder = 0; m.castShadow = m.receiveShadow = false; m.frustumCulled = true;
+    m.userData = { pooled: true };
+    return m;
+  }
+  // give back what's under obj (once each: a material is often shared by several meshes of one effect)
+  recycle(obj) {
+    const mats = new Set();
+    obj.traverse(o => {
+      for (const m of Array.isArray(o.material) ? o.material : o.material ? [o.material] : []) if (m.userData?.poolKey) mats.add(m);
+      for (const l of o.userData.lights || []) this.lights.release(l);
+      o.userData.lights = null;
+    });
+    for (const m of mats) { this.matPool.get(m.userData.poolKey)?.free.push(m); m.userData = {}; }
+    const meshes = [];
+    obj.traverse(o => { if (o.userData.pooled) meshes.push(o); });
+    for (const o of meshes) { o.removeFromParent(); o.userData = {}; this.meshFree.push(o); }
+  }
+
   mat(color, extra = {}) {
     const key = color + JSON.stringify(extra);
     return this.mats[key] ??= new THREE.MeshBasicMaterial({ color, transparent: true, ...extra });
@@ -269,8 +317,7 @@ export class Effects {
   drop(obj) {
     if (!obj) return;
     this.scene.remove(obj);
-    for (const l of obj.userData.lights || []) this.lights.release(l);
-    obj.userData.lights = null;
+    this.recycle(obj);
   }
 
   // ---------------------------------------------------------------- warm-up (round 20)
@@ -327,94 +374,94 @@ export class Effects {
       // in the caster's colour (msg.color) around a hot near-white core; the finisher (last shot of the
       // magazine) is bigger, brighter and ringed, so it reads at a glance
       const tint = new THREE.Color(color), hot = tint.clone().lerp(new THREE.Color(0xffffff), 0.5);
-      const core = new THREE.Mesh(this.sphereGeo, this.mat(0xfff6ee));
+      const core = this.mesh(this.sphereGeo, this.mat(0xfff6ee));
       core.scale.setScalar(msg.fin ? 0.24 : 0.16);
-      const glow = new THREE.Mesh(this.sphereGeo, this.mat(color, { opacity: msg.fin ? 0.75 : 0.55, blending: THREE.AdditiveBlending, depthWrite: false }));
+      const glow = this.mesh(this.sphereGeo, this.mat(color, { opacity: msg.fin ? 0.75 : 0.55, blending: THREE.AdditiveBlending, depthWrite: false }));
       glow.scale.setScalar(msg.fin ? 0.52 : 0.3);
       g.add(core, glow);
-      if (msg.fin) { const ring = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.04, 6, 20), this.mat(hot.getHex(), { opacity: 0.85 })); g.add(ring); g.userData.shell = ring; }
+      if (msg.fin) { const ring = this.mesh(this.G(2, () => new THREE.TorusGeometry(0.4, 0.04, 6, 20)), this.mat(hot.getHex(), { opacity: 0.85 })); g.add(ring); g.userData.shell = ring; }
       light = [color, msg.fin ? 7 : 3, msg.fin ? 9 : 6];
     } else if (msg.kind === 'potion' || msg.kind === 'toxic' || msg.kind === 'flaskstep') {
       // Embibe's potions: a little bottle (purple swirl, green crystal, or a pale vial) with a glowing brew inside
       const liquid = msg.kind === 'toxic' ? 0x7fd34a : msg.kind === 'potion' ? 0xa050e0 : 0xd0a0ff;
       const s = msg.kind === 'flaskstep' ? 0.8 : msg.fin ? 1.3 : 1;
-      const glass = new THREE.Mesh(new THREE.SphereGeometry(0.17 * s, 10, 8), new THREE.MeshStandardMaterial({ color: liquid, emissive: liquid, emissiveIntensity: 0.6, roughness: 0.2, transparent: true, opacity: 0.9 }));
-      const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.05 * s, 0.07 * s, 0.16 * s, 8), new THREE.MeshStandardMaterial({ color: msg.kind === 'toxic' ? 0x2a4a20 : 0x3a2050, roughness: 0.4 }));
+      const glass = this.mesh(this.G(3, () => new THREE.SphereGeometry(0.17 * s, 10, 8), s), this.M(THREE.MeshStandardMaterial, { color: liquid, emissive: liquid, emissiveIntensity: 0.6, roughness: 0.2, transparent: true, opacity: 0.9 }));
+      const neck = this.mesh(this.G(4, () => new THREE.CylinderGeometry(0.05 * s, 0.07 * s, 0.16 * s, 8), s), this.M(THREE.MeshStandardMaterial, { color: msg.kind === 'toxic' ? 0x2a4a20 : 0x3a2050, roughness: 0.4 }));
       neck.position.y = 0.2 * s;
-      const glow = new THREE.Mesh(this.sphereGeo, this.mat(liquid, { opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false }));
+      const glow = this.mesh(this.sphereGeo, this.mat(liquid, { opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false }));
       glow.scale.setScalar(0.32 * s);
       g.add(glass, neck, glow);
       g.userData.spin = new THREE.Vector3(7, 2, 5);
       light = [liquid, msg.fin ? 4 : 2.5, 6];
     } else if (msg.kind === 'sling') {
       // Shepherd's Sling: a tumbling river stone with a pale streak; the 2nd shot is bigger, with a ring
-      const stone = new THREE.Mesh(new THREE.DodecahedronGeometry(msg.fin ? 0.17 : 0.12, 0), new THREE.MeshStandardMaterial({ color: 0x8a8070, roughness: 0.9, flatShading: true }));
+      const stone = this.mesh(this.G(5, () => new THREE.DodecahedronGeometry(msg.fin ? 0.17 : 0.12, 0), msg.fin), this.M(THREE.MeshStandardMaterial, { color: 0x8a8070, roughness: 0.9, flatShading: true }));
       g.add(stone);
       g.userData.spin = new THREE.Vector3(9, 6, 4);
       // round 15: it hits harder the further it flies, and shows it: a warm glow that grows and brightens over the flight
       // (its own material: the opacity is per stone)
-      const glow = new THREE.Mesh(this.sphereGeo, new THREE.MeshBasicMaterial({ color: 0xffb050, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+      const glow = this.mesh(this.sphereGeo, this.M(THREE.MeshBasicMaterial, { color: 0xffb050, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
       glow.scale.setScalar(0.12); g.add(glow); g.userData.slingGlow = glow;
-      if (msg.fin) { const ring = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.03, 6, 20), this.mat(0xffe0a0, { opacity: 0.8 })); g.add(ring); }
+      if (msg.fin) { const ring = this.mesh(this.G(6, () => new THREE.TorusGeometry(0.32, 0.03, 6, 20)), this.mat(0xffe0a0, { opacity: 0.8 })); g.add(ring); }
     } else if (msg.kind === 'fireball') {
       // Cinder's Fireball: a white-hot core in a fat flame shell, bigger again for the 3rd shot
       const k = msg.fin ? 1.45 : 1;
-      const core = new THREE.Mesh(this.sphereGeo, this.mat(0xfff2c8));
+      const core = this.mesh(this.sphereGeo, this.mat(0xfff2c8));
       core.scale.setScalar(0.2 * k);
-      const flame = new THREE.Mesh(this.sphereGeo, this.mat(0xff7a1e, { opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false }));
+      const flame = this.mesh(this.sphereGeo, this.mat(0xff7a1e, { opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false }));
       flame.scale.setScalar(0.42 * k);
-      const outer = new THREE.Mesh(new THREE.IcosahedronGeometry(0.6 * k, 0), this.mat(0xff3a0a, { opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false }));
+      const outer = this.mesh(this.G(7, () => new THREE.IcosahedronGeometry(0.6 * k, 0), k), this.mat(0xff3a0a, { opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false }));
       g.add(core, flame, outer);
       g.userData.shell = outer;
-      if (msg.fin) { const ring = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.05, 6, 24), this.mat(0xffd080, { opacity: 0.85 })); g.add(ring); g.userData.ring = ring; }
+      if (msg.fin) { const ring = this.mesh(this.G(8, () => new THREE.TorusGeometry(0.55, 0.05, 6, 24)), this.mat(0xffd080, { opacity: 0.85 })); g.add(ring); g.userData.ring = ring; }
       light = [0xff6a1e, msg.fin ? 9 : 5, msg.fin ? 11 : 8];
     } else if (msg.kind === 'shear') {
       // Gale Shear: a thin crescent blade of wind, flat, swept along its flight; the 3rd is wider
       const R = msg.r || C.SPELLS.shear.radius;
-      const blade = new THREE.Mesh(new THREE.RingGeometry(R * 0.78, R, 24, 1, Math.PI * 0.15, Math.PI * 0.7).rotateX(-Math.PI / 2).rotateY(-Math.PI / 2 - Math.PI * 0.5),
+      const blade = this.mesh(this.G(9, () => new THREE.RingGeometry(R * 0.78, R, 24, 1, Math.PI * 0.15, Math.PI * 0.7).rotateX(-Math.PI / 2).rotateY(-Math.PI / 2 - Math.PI * 0.5), R),
         this.mat(0xe8dcff, { opacity: msg.fin ? 0.9 : 0.7, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
-      const inner = new THREE.Mesh(new THREE.RingGeometry(R * 0.55, R * 0.8, 24, 1, Math.PI * 0.2, Math.PI * 0.6).rotateX(-Math.PI / 2).rotateY(-Math.PI),
+      const inner = this.mesh(this.G(10, () => new THREE.RingGeometry(R * 0.55, R * 0.8, 24, 1, Math.PI * 0.2, Math.PI * 0.6).rotateX(-Math.PI / 2).rotateY(-Math.PI), R),
         this.mat(0xa070ff, { opacity: 0.45, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
       g.add(blade, inner);
       g.userData.aimV = new THREE.Vector3(msg.v[0], msg.v[1], msg.v[2]);
     } else if (msg.kind === 'hex') {
       // Vesper's Hex Shards: a spinning crimson glyph (triangle, diamond, crescent) with a dark core
       const shape = HEX_SHAPES[msg.curve?.shot ?? 0];
-      const geo = shape ? new THREE.RingGeometry(0.2, 0.32, shape, 1) : new THREE.RingGeometry(0.22, 0.34, 16, 1, 0, Math.PI * 1.25);
-      const glyph = new THREE.Mesh(geo, this.mat(0xff2a48, { side: THREE.DoubleSide, opacity: 0.95 }));
-      const glow = new THREE.Mesh(this.sphereGeo, this.mat(0xff1f3d, { opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false }));
+      const geo = shape ? this.G(11, () => new THREE.RingGeometry(0.2, 0.32, shape, 1), shape) : this.G(12, () => new THREE.RingGeometry(0.22, 0.34, 16, 1, 0, Math.PI * 1.25));
+      const glyph = this.mesh(geo, this.mat(0xff2a48, { side: THREE.DoubleSide, opacity: 0.95 }));
+      const glow = this.mesh(this.sphereGeo, this.mat(0xff1f3d, { opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false }));
       glow.scale.setScalar(msg.fin ? 0.38 : 0.26);
-      const dark = new THREE.Mesh(this.sphereGeo, this.mat(0x2a0008));
+      const dark = this.mesh(this.sphereGeo, this.mat(0x2a0008));
       dark.scale.setScalar(0.08);
       if (msg.fin) glyph.scale.setScalar(1.4);
       g.add(glyph, glow, dark);
       g.userData.glyph = glyph;
       light = [0xff1f3d, msg.fin ? 4 : 2.2, 6];
     } else if (msg.kind === 'heavy') {
-      const core = new THREE.Mesh(this.sphereGeo, this.mat(0xfff0c0));
+      const core = this.mesh(this.sphereGeo, this.mat(0xfff0c0));
       core.scale.setScalar(0.35);
-      const glow = new THREE.Mesh(this.sphereGeo, this.mat(color, { opacity: 0.5 }));
+      const glow = this.mesh(this.sphereGeo, this.mat(color, { opacity: 0.5 }));
       glow.scale.setScalar(0.7);
-      const shell = new THREE.Mesh(new THREE.IcosahedronGeometry(0.9, 0), this.mat(0xffb060, { wireframe: true, opacity: 0.7 }));
+      const shell = this.mesh(this.G(13, () => new THREE.IcosahedronGeometry(0.9, 0)), this.mat(0xffb060, { wireframe: true, opacity: 0.7 }));
       g.add(core, glow, shell);
       g.userData.shell = shell;
       light = [color, 8, 12];
     } else if (msg.kind === 'skim') {
       // an ice shard: a stretched crystal pointing along its flight
-      const shard = new THREE.Mesh(new THREE.OctahedronGeometry(0.16, 0), this.mat(msg.fin ? 0xffffff : 0xe8f8ff));
+      const shard = this.mesh(this.G(14, () => new THREE.OctahedronGeometry(0.16, 0)), this.mat(msg.fin ? 0xffffff : 0xe8f8ff));
       shard.scale.set(0.8, 0.8, 2.4).multiplyScalar(msg.fin ? 1.5 : 1);
-      const glow = new THREE.Mesh(this.sphereGeo, this.mat(msg.fin ? 0x5cc8ff : 0x9adfff, { opacity: msg.fin ? 0.6 : 0.35 }));
+      const glow = this.mesh(this.sphereGeo, this.mat(msg.fin ? 0x5cc8ff : 0x9adfff, { opacity: msg.fin ? 0.6 : 0.35 }));
       glow.scale.setScalar(msg.fin ? 0.42 : 0.24);
       g.add(shard, glow);
       g.lookAt(msg.v[0], 0, msg.v[2]);
       g.userData.aim = true;
     } else if (msg.kind === 'siphon') {
       // round 16, Blood Siphon: a crimson core in a dark blood glow, stretched a little along its flight
-      const core = new THREE.Mesh(this.sphereGeo, this.mat(0xffc0c8));
+      const core = this.mesh(this.sphereGeo, this.mat(0xffc0c8));
       core.scale.setScalar(0.13);
-      const glow = new THREE.Mesh(this.sphereGeo, this.mat(0xd8102c, { opacity: 0.75, blending: THREE.AdditiveBlending, depthWrite: false }));
+      const glow = this.mesh(this.sphereGeo, this.mat(0xd8102c, { opacity: 0.75, blending: THREE.AdditiveBlending, depthWrite: false }));
       glow.scale.set(0.3, 0.3, 0.55);
-      const shadow = new THREE.Mesh(this.sphereGeo, this.mat(0x30000a, { opacity: 0.55, depthWrite: false }));
+      const shadow = this.mesh(this.sphereGeo, this.mat(0x30000a, { opacity: 0.55, depthWrite: false }));
       shadow.scale.set(0.36, 0.36, 0.7);
       g.add(shadow, glow, core);
       light = [0xff2a3c, 3.5, 6];
@@ -423,7 +470,7 @@ export class Effects {
       const mesh = makePropMesh(msg.propType);
       mesh.position.y = -C.PROP_TYPES[msg.propType].h * 0.5;
       g.add(mesh);
-      const shell = new THREE.Mesh(new THREE.IcosahedronGeometry(C.PROP_TYPES[msg.propType].r + 0.3, 0), this.mat(0xb48cff, { wireframe: true, opacity: 0.45 }));
+      const shell = this.mesh(this.G(15, () => new THREE.IcosahedronGeometry(C.PROP_TYPES[msg.propType].r + 0.3, 0), C.PROP_TYPES[msg.propType].r), this.mat(0xb48cff, { wireframe: true, opacity: 0.45 }));
       g.add(shell);
       g.userData.spin = new THREE.Vector3(Math.random() * 6 - 3, Math.random() * 6 - 3, Math.random() * 6 - 3);
     }
@@ -522,7 +569,7 @@ export class Effects {
   }
 
   blockFlash(pos, color = 0x9ae4ff) {
-    const flash = new THREE.Mesh(new THREE.IcosahedronGeometry(1.3, 1), this.mat(color, { opacity: 0.6, wireframe: true }));
+    const flash = this.mesh(this.G(16, () => new THREE.IcosahedronGeometry(1.3, 1)), this.mat(color, { opacity: 0.6, wireframe: true }));
     flash.position.copy(pos);
     this.scene.add(flash);
     this.particles.push({ mesh: flash, vel: new THREE.Vector3(), life: 0, maxLife: 0.3, grav: 0, grow: 0.9 });
@@ -533,7 +580,7 @@ export class Effects {
     for (const p of [from, to]) {
       const pos = new THREE.Vector3(p[0], p[1] + 1, p[2]);
       this.burst(pos, 0xb48cff, 20, 3.5, 0.45, -2);
-      const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.7, 2.4, 10, 1, true), this.mat(0xc8a8ff, { opacity: 0.6, side: THREE.DoubleSide }));
+      const pillar = this.mesh(this.G(17, () => new THREE.CylinderGeometry(0.5, 0.7, 2.4, 10, 1, true)), this.mat(0xc8a8ff, { opacity: 0.6, side: THREE.DoubleSide }));
       pillar.position.copy(pos);
       this.scene.add(pillar);
       this.particles.push({ mesh: pillar, vel: new THREE.Vector3(0, 3, 0), life: 0, maxLife: 0.35, grav: 0, grow: 1.5 });
@@ -545,13 +592,13 @@ export class Effects {
   // motes flung outward.
   cyclonePulse(p, radius) {
     const pos = new THREE.Vector3(p[0], p[1], p[2]);
-    const ring = new THREE.Mesh(new THREE.RingGeometry(0.82, 1, 64).rotateX(-Math.PI / 2),
+    const ring = this.mesh(this.G(18, () => new THREE.RingGeometry(0.82, 1, 64).rotateX(-Math.PI / 2)),
       this.mat(0xc890ff, { opacity: 0.9, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
     ring.position.copy(pos).setY(p[1] + 0.12); ring.scale.setScalar(0.6);
     this.scene.add(ring);
     const life = 0.32;
     this.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0, maxLife: life, grav: 0, grow: (radius - 0.6) / life, still: true });
-    const wall = new THREE.Mesh(new THREE.CylinderGeometry(1, 0.9, 0.8, 40, 1, true),
+    const wall = this.mesh(this.G(19, () => new THREE.CylinderGeometry(1, 0.9, 0.8, 40, 1, true)),
       this.mat(0x7a3cdf, { opacity: 0.3, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
     wall.position.copy(pos).setY(p[1] + 0.4); wall.scale.setScalar(0.6);
     this.scene.add(wall);
@@ -571,16 +618,16 @@ export class Effects {
   // Skyward Flash launch: a light streak from the ground up to the wizard, a ring on the ground.
   skyward(p, top) {
     const base = new THREE.Vector3(p[0], 0, p[2]);
-    const streak = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.45, top + 1.5, 10, 1, true),
+    const streak = this.mesh(this.G(20, () => new THREE.CylinderGeometry(0.18, 0.45, 1, 10, 1, true)),   // (1 m tall, stretched: one shared geometry)
       this.mat(0xd8b8ff, { opacity: 0.85, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
-    streak.position.copy(base).setY((top + 1.5) / 2);
+    streak.position.copy(base).setY((top + 1.5) / 2); streak.scale.y = top + 1.5;
     this.scene.add(streak);
     this.particles.push({ mesh: streak, vel: new THREE.Vector3(), life: 0, maxLife: 0.45, grav: 0, growXZ: -0.8, still: true });
-    const core = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.12, top + 1.5, 6, 1, true), this.mat(0xffffff, { opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false }));
-    core.position.copy(streak.position);
+    const core = this.mesh(this.G(21, () => new THREE.CylinderGeometry(0.06, 0.12, 1, 6, 1, true)), this.mat(0xffffff, { opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false }));
+    core.position.copy(streak.position); core.scale.y = top + 1.5;
     this.scene.add(core);
     this.particles.push({ mesh: core, vel: new THREE.Vector3(), life: 0, maxLife: 0.3, grav: 0, still: true });
-    const ring = new THREE.Mesh(new THREE.RingGeometry(0.7, 1, 40).rotateX(-Math.PI / 2),
+    const ring = this.mesh(this.G(22, () => new THREE.RingGeometry(0.7, 1, 40).rotateX(-Math.PI / 2)),
       this.mat(0xc890ff, { opacity: 0.9, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
     ring.position.copy(base).setY(0.12); ring.scale.setScalar(0.5);
     this.scene.add(ring);
@@ -595,7 +642,7 @@ export class Effects {
     const pos = new THREE.Vector3(p[0], 0, p[2]);
     for (let i = 0; i < 6; i++) this.dust(pos, 2);
     this.groundRing(pos, 1.6, 0x9a8a70, 0.5, 0.7);
-    const ring = new THREE.Mesh(new THREE.RingGeometry(0.8, 1, 32).rotateX(-Math.PI / 2), this.mat(0xb59a72, { opacity: 0.6, depthWrite: false }));
+    const ring = this.mesh(this.G(23, () => new THREE.RingGeometry(0.8, 1, 32).rotateX(-Math.PI / 2)), this.mat(0xb59a72, { opacity: 0.6, depthWrite: false }));
     ring.position.copy(pos).setY(0.12); ring.scale.setScalar(0.4);
     this.scene.add(ring);
     this.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0, maxLife: 0.35, grav: 0, grow: 4, still: true });
@@ -609,7 +656,12 @@ export class Effects {
 
   propBreak(type, p) {
     const pos = new THREE.Vector3(p[0], p[1], p[2]);
-    for (const frag of makeFragments(type, 9)) {
+    // round 20: world.js's pieces (a tetrahedron and a box) built once per type, then pooled copies sized by scale
+    const tpl = (this.fragTpl ??= {})[type] ??= makeFragments(type, 2).map(m => ({ m, s: m.geometry.parameters.radius ?? m.geometry.parameters.width ?? 0.2 }));
+    for (let i = 0; i < 9; i++) {
+      const t = tpl[i % 2], frag = this.mesh(t.m.geometry, t.m.material);
+      frag.scale.setScalar((0.12 + Math.random() * 0.22) / t.s);   // (the size makeFragments picks)
+      frag.castShadow = t.m.castShadow;
       frag.position.copy(pos);
       this.scene.add(frag);
       this.debris.push({
@@ -652,7 +704,7 @@ export class Effects {
     const pos = new THREE.Vector3(p[0], 1, p[2]);
     this.burst(pos, 0xd8c8e8, popped ? 22 : 12, popped ? 3.5 : 2, 0.55, -1.5);
     this.burst(pos, color, popped ? 12 : 6, 3, 0.3, 0);
-    const shell = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.6, 1.9, 12, 1, true), this.mat(0xe8dcff, { opacity: 0.5, side: THREE.DoubleSide, depthWrite: false }));
+    const shell = this.mesh(this.G(24, () => new THREE.CylinderGeometry(0.55, 0.6, 1.9, 12, 1, true)), this.mat(0xe8dcff, { opacity: 0.5, side: THREE.DoubleSide, depthWrite: false }));
     shell.position.copy(pos);
     this.scene.add(shell);
     this.particles.push({ mesh: shell, vel: new THREE.Vector3(0, 1.5, 0), life: 0, maxLife: popped ? 0.3 : 0.5, grav: 0, grow: 1.2, still: true });
@@ -663,7 +715,7 @@ export class Effects {
     this.burst(new THREE.Vector3(from[0], 1, from[2]), 0xff6a80, 18, 3.5, 0.4, -2);
     for (const e of ends) {
       const pos = new THREE.Vector3(e[0], 1, e[2]);
-      const pane = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 2.2), this.mat(0xffc8d8, { opacity: 0.55, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
+      const pane = this.mesh(this.G(25, () => new THREE.PlaneGeometry(1.2, 2.2)), this.mat(0xffc8d8, { opacity: 0.55, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
       pane.position.copy(pos);
       pane.rotation.y = Math.atan2(e[0] - from[0], e[2] - from[2]) + Math.PI / 2;
       this.scene.add(pane);
@@ -678,9 +730,9 @@ export class Effects {
     const g = new THREE.Group();
     g.position.set(w.x, w.y || 0, w.z);
     g.rotation.y = w.yaw;
-    const iceMat = new THREE.MeshStandardMaterial({ color: 0xaee6ff, emissive: 0x3a8fc8, emissiveIntensity: 0.35, roughness: 0.15, metalness: 0.1, transparent: true, opacity: 0.72 });
+    const iceMat = this.M(THREE.MeshStandardMaterial, { color: 0xaee6ff, emissive: 0x3a8fc8, emissiveIntensity: 0.35, roughness: 0.15, metalness: 0.1, transparent: true, opacity: 0.72 });
     const standIn = new THREE.Group();
-    const slab = new THREE.Mesh(new THREE.BoxGeometry(BULWARK.width, BULWARK.height, 0.5), iceMat);
+    const slab = this.mesh(this.G(26, () => new THREE.BoxGeometry(BULWARK.width, BULWARK.height, 0.5), BULWARK.width, BULWARK.height), iceMat);
     slab.position.y = BULWARK.height / 2;
     slab.castShadow = true;
     standIn.add(slab);
@@ -705,7 +757,7 @@ export class Effects {
       const s = unit.userData.size, ice = unit.clone();
       ice.scale.set(BULWARK.width * 1.04 / s.x, BULWARK.height / s.y, 0.7 / s.z);
       modelMats = [];
-      ice.traverse(o => { if (o.isMesh) { o.material = o.material.clone(); modelMats.push(o.material); } });
+      ice.traverse(o => { if (o.isMesh) { o.material = this.Mc(o.material); modelMats.push(o.material); } });
       g.remove(standIn); g.add(ice);
       for (const c of cracks) c.scale.z = 0.4 / 0.26;   // onto the thicker model's faces
       entry.setHp(entry.hp);
@@ -714,18 +766,19 @@ export class Effects {
     let seed = w.id * 977 + 3;
     const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
     for (let i = 0; i < 9; i++) {
-      const c = new THREE.Mesh(new THREE.ConeGeometry(0.16 + rnd() * 0.12, 0.5 + rnd() * 0.7, 5), iceMat);
+      const cr = 0.16 + rnd() * 0.12, ch = 0.5 + rnd() * 0.7;
+      const c = this.mesh(this.G(27, () => new THREE.ConeGeometry(1, 1, 5)), iceMat); c.scale.set(cr, ch, cr);   // (one shared geometry, sized by scale)
       c.position.set((i / 8 - 0.5) * BULWARK.width, BULWARK.height + 0.15, (rnd() - 0.5) * 0.3);
       c.rotation.z = (rnd() - 0.5) * 0.6;
       standIn.add(c);
     }
     for (const side of [-1, 1]) {
-      const c = new THREE.Mesh(new THREE.ConeGeometry(0.22, 1.2, 5), iceMat);
+      const c = this.mesh(this.G(28, () => new THREE.ConeGeometry(0.22, 1.2, 5)), iceMat);
       c.position.set(side * (BULWARK.width / 2 + 0.05), 0.5, 0); c.rotation.z = -side * 0.35;
       standIn.add(c);
     }
     // cracks on both faces, revealed as the wall takes damage
-    const crackMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 });
+    const crackMat = this.M(THREE.LineBasicMaterial, { color: 0xffffff, transparent: true, opacity: 0.9 });
     const cracks = CRACKS.map(pts => {
       const geo = new THREE.BufferGeometry();
       // each segment twice: on the front face and on the back face
@@ -769,7 +822,7 @@ export class Effects {
     const shardMat = this.mat(0xc8eeff, { opacity: 0.9 });
     for (let i = 0; i < 34; i++) {
       const k = (Math.random() - 0.5) * BULWARK.width;
-      const m = new THREE.Mesh(new THREE.TetrahedronGeometry(0.12 + Math.random() * 0.16, 0), shardMat);
+      const m = this.mesh(this.G(29, () => new THREE.TetrahedronGeometry(1, 0)), shardMat); m.scale.setScalar(0.12 + Math.random() * 0.16);
       m.position.set(w.x + rx * k, (w.y || 0) + 0.2 + Math.random() * BULWARK.height, w.z + rz * k);
       this.scene.add(m);
       this.debris.push({
@@ -787,11 +840,11 @@ export class Effects {
     this.burst(pos, 0xff2a3c, 40, 8, 0.7);
     this.burst(pos, 0x2a0008, 22, 4, 0.8);
     this.burst(pos, 0xffd0a0, 16, 6, 0.4, 2);
-    const orb = new THREE.Mesh(this.sphereGeo, this.mat(0xff3048, { opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false }));
+    const orb = this.mesh(this.sphereGeo, this.mat(0xff3048, { opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false }));
     orb.position.copy(pos); orb.scale.setScalar(0.5);
     this.scene.add(orb);
     this.particles.push({ mesh: orb, vel: new THREE.Vector3(), life: 0, maxLife: 0.3, grav: 0, grow: (radius - 0.5) / 0.3, still: true });
-    const ring = new THREE.Mesh(new THREE.RingGeometry(0.85, 1, 48).rotateX(-Math.PI / 2),
+    const ring = this.mesh(this.G(30, () => new THREE.RingGeometry(0.85, 1, 48).rotateX(-Math.PI / 2)),
       this.mat(0xff3048, { opacity: 0.9, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
     ring.position.set(p[0], floorUnder(p) + 0.13, p[2]); ring.scale.setScalar(0.5);
     this.scene.add(ring);
@@ -802,11 +855,11 @@ export class Effects {
   relicFuse(p, fuse) {
     const pos = new THREE.Vector3(p[0], p[1], p[2]);
     this.burst(pos, 0xff2a3c, 18, 3, 0.35, 1.5);
-    const orb = new THREE.Mesh(this.sphereGeo, this.mat(0xff5060, { opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }));
+    const orb = this.mesh(this.sphereGeo, this.mat(0xff5060, { opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }));
     orb.position.copy(pos); orb.scale.setScalar(1.1);
     this.scene.add(orb);
     this.particles.push({ mesh: orb, vel: new THREE.Vector3(), life: 0, maxLife: fuse, grav: 0, grow: -0.8 / fuse, still: true });
-    const ring = new THREE.Mesh(new THREE.RingGeometry(0.85, 1, 40).rotateX(-Math.PI / 2),
+    const ring = this.mesh(this.G(31, () => new THREE.RingGeometry(0.85, 1, 40).rotateX(-Math.PI / 2)),
       this.mat(0xff3048, { opacity: 0.9, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
     ring.position.set(p[0], floorUnder(p) + 0.12, p[2]); ring.scale.setScalar(1.8);
     this.scene.add(ring);
@@ -822,7 +875,7 @@ export class Effects {
     g.beginPath(); g.arc(0, 0, 50, 0, Math.PI * 2); g.stroke();
     g.beginPath(); g.moveTo(0, -36); g.lineTo(0, 36); g.moveTo(-26, -14); g.lineTo(0, 8); g.lineTo(26, -14); g.moveTo(-18, 26); g.lineTo(18, 26); g.stroke();
     const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
-    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.55, depthWrite: false }));
+    const sp = new THREE.Sprite(this.M(THREE.SpriteMaterial, { map: tex, transparent: true, opacity: 0.55, depthWrite: false }));
     sp.scale.setScalar(0.7);
     sp.visible = false;
     this.scene.add(sp);
@@ -833,7 +886,7 @@ export class Effects {
   // A gust bursting outward when the veil goes up; a soft pop when it ends.
   veilGust(p) {
     const pos = new THREE.Vector3(p[0], 1, p[2]);
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(1, 0.05, 6, 40).rotateX(Math.PI / 2),
+    const ring = this.mesh(this.G(32, () => new THREE.TorusGeometry(1, 0.05, 6, 40).rotateX(Math.PI / 2)),
       this.mat(0xe8dcff, { opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }));
     ring.position.copy(pos); ring.scale.setScalar(0.4);
     this.scene.add(ring);
@@ -848,7 +901,7 @@ export class Effects {
   veilPop(p) {
     const pos = new THREE.Vector3(p[0], 1, p[2]);
     this.burst(pos, 0xe8dcff, 16, 4, 0.3, 0);
-    const shell = new THREE.Mesh(this.sphereGeo, this.mat(0xd8c8ff, { opacity: 0.5, depthWrite: false }));
+    const shell = this.mesh(this.sphereGeo, this.mat(0xd8c8ff, { opacity: 0.5, depthWrite: false }));
     shell.position.copy(pos); shell.scale.setScalar(1.35);
     this.scene.add(shell);
     this.particles.push({ mesh: shell, vel: new THREE.Vector3(), life: 0, maxLife: 0.2, grav: 0, grow: 4, still: true });
@@ -865,7 +918,7 @@ export class Effects {
     for (let i = 0; i < N; i++) {
       const ember = i < 6;
       const shade = ember ? new THREE.Color(0xc0643a) : new THREE.Color().setHSL(0.07, 0.12 + Math.random() * 0.1, 0.32 + Math.random() * 0.16);
-      const mat = new THREE.SpriteMaterial({ map: puffTexture(), color: shade, transparent: true, opacity: 0, depthWrite: false, rotation: Math.random() * Math.PI * 2 });
+      const mat = this.M(THREE.SpriteMaterial, { map: puffTexture(), color: shade, transparent: true, opacity: 0, depthWrite: false, rotation: Math.random() * Math.PI * 2 });
       const sp = new THREE.Sprite(mat);
       const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * SMOKE.radius * 0.8;
       const y = ember ? 0.4 + Math.random() * 0.5 : 0.5 + Math.random() * (SMOKE.height - 0.6);
@@ -893,19 +946,19 @@ export class Effects {
   frostfall(p, left) {
     const g = new THREE.Group();
     g.position.set(p[0], p[1] || 0, p[2]);
-    const shadow = new THREE.Mesh(new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2),
-      new THREE.MeshBasicMaterial({ map: frostShadowTexture(), transparent: true, depthWrite: false }));
+    const shadow = this.mesh(this.G(33, () => new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2)),
+      this.M(THREE.MeshBasicMaterial, { map: frostShadowTexture(), transparent: true, depthWrite: false }));
     shadow.position.y = 0.14; shadow.renderOrder = 2;
-    const ring = new THREE.Mesh(new THREE.RingGeometry(0.96, 1, 64).rotateX(-Math.PI / 2),
-      new THREE.MeshBasicMaterial({ color: 0xbfeaff, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }));
+    const ring = this.mesh(this.G(34, () => new THREE.RingGeometry(0.96, 1, 64).rotateX(-Math.PI / 2)),
+      this.M(THREE.MeshBasicMaterial, { color: 0xbfeaff, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }));
     ring.position.y = 0.15; ring.scale.setScalar(FROST.radius);
-    const iceMat = new THREE.MeshStandardMaterial({ color: 0xcdefff, emissive: 0x3a8fc8, emissiveIntensity: 0.4, roughness: 0.15, flatShading: true, transparent: true, opacity: 0.9 });
+    const iceMat = this.M(THREE.MeshStandardMaterial, { color: 0xcdefff, emissive: 0x3a8fc8, emissiveIntensity: 0.4, roughness: 0.15, flatShading: true, transparent: true, opacity: 0.9 });
     const ice = new THREE.Group();
-    const core = new THREE.Mesh(new THREE.IcosahedronGeometry(1.5, 0), iceMat);
+    const core = this.mesh(this.G(35, () => new THREE.IcosahedronGeometry(1.5, 0)), iceMat);
     core.scale.set(1, 1.3, 1);
     ice.add(core);
     for (let i = 0; i < 7; i++) {
-      const sp = new THREE.Mesh(new THREE.ConeGeometry(0.35, 1.6, 5), iceMat);
+      const sp = this.mesh(this.G(36, () => new THREE.ConeGeometry(0.35, 1.6, 5)), iceMat);
       const a = i / 7 * Math.PI * 2;
       sp.position.set(Math.sin(a) * 1.1, (i % 3 - 1) * 0.7, Math.cos(a) * 1.1);
       sp.rotation.set(Math.cos(a) * 1.3, 0, -Math.sin(a) * 1.3);
@@ -925,7 +978,7 @@ export class Effects {
     const pos = new THREE.Vector3(p[0], 0.6, p[2]);
     const shardMat = this.mat(0xd8f2ff, { opacity: 0.95 });
     for (let i = 0; i < 40; i++) {
-      const m = new THREE.Mesh(new THREE.TetrahedronGeometry(0.12 + Math.random() * 0.22, 0), shardMat);
+      const m = this.mesh(this.G(37, () => new THREE.TetrahedronGeometry(1, 0)), shardMat); m.scale.setScalar(0.12 + Math.random() * 0.22);
       m.position.set(p[0] + (Math.random() - 0.5) * 2, (p[1] || 0) + 0.3 + Math.random() * 1.2, p[2] + (Math.random() - 0.5) * 2);
       this.scene.add(m);
       const a = Math.random() * Math.PI * 2, sp = 3 + Math.random() * 6;
@@ -940,7 +993,7 @@ export class Effects {
         drag: 0.8, life: 1 + Math.random() * 0.6, size: [1, 2.6], spin: (Math.random() - 0.5), color: 0xeef8ff, alpha: 0.55, add: false, fadeIn: 0.1 });
     }
     this.S('window_04', { p: pos, size: [2.5, 0.5], life: 0.3, color: 0xffffff, alpha: 0.9 });
-    const ring = new THREE.Mesh(new THREE.RingGeometry(0.85, 1, 64).rotateX(-Math.PI / 2),
+    const ring = this.mesh(this.G(38, () => new THREE.RingGeometry(0.85, 1, 64).rotateX(-Math.PI / 2)),
       this.mat(0xdff6ff, { opacity: 0.9, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
     ring.position.set(p[0], (p[1] || 0) + 0.15, p[2]); ring.scale.setScalar(1);
     this.scene.add(ring);
@@ -951,10 +1004,10 @@ export class Effects {
   // The caster's targeting circle while RMB is held.
   frostAim() {
     const g = new THREE.Group();
-    const fill = new THREE.Mesh(new THREE.CircleGeometry(1, 48).rotateX(-Math.PI / 2),
-      new THREE.MeshBasicMaterial({ color: 0x7fd8ff, transparent: true, opacity: 0.16, depthWrite: false }));
-    const ring = new THREE.Mesh(new THREE.RingGeometry(0.94, 1, 64).rotateX(-Math.PI / 2),
-      new THREE.MeshBasicMaterial({ color: 0xcdf0ff, transparent: true, opacity: 0.85, depthWrite: false }));
+    const fill = this.mesh(this.G(39, () => new THREE.CircleGeometry(1, 48).rotateX(-Math.PI / 2)),
+      this.M(THREE.MeshBasicMaterial, { color: 0x7fd8ff, transparent: true, opacity: 0.16, depthWrite: false }));
+    const ring = this.mesh(this.G(40, () => new THREE.RingGeometry(0.94, 1, 64).rotateX(-Math.PI / 2)),
+      this.M(THREE.MeshBasicMaterial, { color: 0xcdf0ff, transparent: true, opacity: 0.85, depthWrite: false }));
     fill.position.y = ring.position.y = 0.16;
     g.add(fill, ring);
     g.scale.setScalar(FROST.radius);
@@ -968,17 +1021,17 @@ export class Effects {
   // `inner` (0..1 of the radius): a second, brighter disc and ring inside it (Meteor Rain's kill ring, round 15).
   cataAim(radius = MRAIN.radius, color = 0xff7a2a, rim = 0xffc080, inner = 0) {
     const g = new THREE.Group();
-    const fill = new THREE.Mesh(new THREE.CircleGeometry(1, 64).rotateX(-Math.PI / 2),
-      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.12, depthWrite: false }));
-    const ring = new THREE.Mesh(new THREE.RingGeometry(0.95, 1, 96).rotateX(-Math.PI / 2),
-      new THREE.MeshBasicMaterial({ color: rim, transparent: true, opacity: 0.9, depthWrite: false }));
+    const fill = this.mesh(this.G(41, () => new THREE.CircleGeometry(1, 64).rotateX(-Math.PI / 2)),
+      this.M(THREE.MeshBasicMaterial, { color, transparent: true, opacity: 0.12, depthWrite: false }));
+    const ring = this.mesh(this.G(42, () => new THREE.RingGeometry(0.95, 1, 96).rotateX(-Math.PI / 2)),
+      this.M(THREE.MeshBasicMaterial, { color: rim, transparent: true, opacity: 0.9, depthWrite: false }));
     fill.position.y = ring.position.y = 0.16;
     g.add(fill, ring);
     if (inner > 0) {
-      const core = new THREE.Mesh(new THREE.CircleGeometry(inner, 64).rotateX(-Math.PI / 2),
-        new THREE.MeshBasicMaterial({ color: 0xff2a10, transparent: true, opacity: 0.28, depthWrite: false }));
-      const coreRing = new THREE.Mesh(new THREE.RingGeometry(inner - 0.05, inner, 96).rotateX(-Math.PI / 2),
-        new THREE.MeshBasicMaterial({ color: 0xffe0b0, transparent: true, opacity: 1, depthWrite: false }));
+      const core = this.mesh(this.G(43, () => new THREE.CircleGeometry(inner, 64).rotateX(-Math.PI / 2), inner),
+        this.M(THREE.MeshBasicMaterial, { color: 0xff2a10, transparent: true, opacity: 0.28, depthWrite: false }));
+      const coreRing = this.mesh(this.G(44, () => new THREE.RingGeometry(inner - 0.05, inner, 96).rotateX(-Math.PI / 2), inner),
+        this.M(THREE.MeshBasicMaterial, { color: 0xffe0b0, transparent: true, opacity: 1, depthWrite: false }));
       core.position.y = 0.17; coreRing.position.y = 0.18;
       g.add(core, coreRing);
     }
@@ -995,13 +1048,13 @@ export class Effects {
     const layers = [];
     for (let i = 0; i < 4; i++) {
       const h = 1.3, r0 = 0.7 + i * 0.55, r1 = 1.0 + i * 0.75;
-      const m = new THREE.Mesh(new THREE.CylinderGeometry(r1, r0, h, 28, 1, true),
-        new THREE.MeshBasicMaterial({ map: windTexture(), color: i % 2 ? 0xb48cff : 0x7a3cdf, transparent: true, opacity: 0.85 - i * 0.12, side: THREE.DoubleSide, depthWrite: false }));
+      const m = this.mesh(this.G(45, () => new THREE.CylinderGeometry(r1, r0, h, 28, 1, true), r1, r0, h),
+        this.M(THREE.MeshBasicMaterial, { map: windTexture(), color: i % 2 ? 0xb48cff : 0x7a3cdf, transparent: true, opacity: 0.85 - i * 0.12, side: THREE.DoubleSide, depthWrite: false }));
       m.position.y = 0.35 + i * h * 0.95;
       g.add(m); layers.push(m);
     }
-    const pullRing = new THREE.Mesh(new THREE.RingGeometry(EYE.radius - 0.15, EYE.radius, 96).rotateX(-Math.PI / 2),
-      new THREE.MeshBasicMaterial({ color: 0xc8a0ff, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false }));
+    const pullRing = this.mesh(this.G(46, () => new THREE.RingGeometry(EYE.radius - 0.15, EYE.radius, 96).rotateX(-Math.PI / 2), EYE.radius),
+      this.M(THREE.MeshBasicMaterial, { color: 0xc8a0ff, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false }));
     pullRing.position.y = 0.14;
     g.add(pullRing);
     this.scene.add(g);
@@ -1021,7 +1074,7 @@ export class Effects {
   nightCage(p, left) {
     const g = new THREE.Group();
     g.position.set(p[0], p[1] || 0, p[2]);
-    const obsidian = new THREE.MeshStandardMaterial({ color: 0x0c0810, emissive: 0x3a0010, emissiveIntensity: 0.6, roughness: 0.25, metalness: 0.4, flatShading: true });
+    const obsidian = this.M(THREE.MeshStandardMaterial, { color: 0x0c0810, emissive: 0x3a0010, emissiveIntensity: 0.6, roughness: 0.25, metalness: 0.4, flatShading: true });
     const spikes = new THREE.Group();
     let seed = 7;
     const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
@@ -1029,19 +1082,20 @@ export class Effects {
     for (let i = 0; i < n; i++) {
       const a = i / n * Math.PI * 2 + rnd() * 0.05;
       const h = 0.9 + rnd() * 1.6;
-      const sp = new THREE.Mesh(new THREE.ConeGeometry(0.22 + rnd() * 0.18, h, 4), obsidian);
+      const sr = 0.22 + rnd() * 0.18;
+      const sp = this.mesh(this.G(47, () => new THREE.ConeGeometry(1, 1, 4)), obsidian); sp.scale.set(sr, h, sr);
       sp.position.set(Math.sin(a) * CAGE.radius, h / 2, Math.cos(a) * CAGE.radius);
       sp.rotation.set((rnd() - 0.5) * 0.5, rnd() * 3, (rnd() - 0.5) * 0.5);
       spikes.add(sp);
     }
-    const wall = new THREE.Mesh(new THREE.CylinderGeometry(CAGE.radius, CAGE.radius, 4, 72, 1, true),
-      new THREE.MeshBasicMaterial({ map: windTexture(), color: 0x2a0a18, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false }));
+    const wall = this.mesh(this.G(48, () => new THREE.CylinderGeometry(CAGE.radius, CAGE.radius, 4, 72, 1, true), CAGE.radius),
+      this.M(THREE.MeshBasicMaterial, { map: windTexture(), color: 0x2a0a18, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false }));
     wall.position.y = 2;
-    const ring = new THREE.Mesh(new THREE.RingGeometry(CAGE.radius - 0.35, CAGE.radius + 0.35, 96).rotateX(-Math.PI / 2),
-      new THREE.MeshBasicMaterial({ color: 0x050205, transparent: true, opacity: 0.85, depthWrite: false }));
+    const ring = this.mesh(this.G(49, () => new THREE.RingGeometry(CAGE.radius - 0.35, CAGE.radius + 0.35, 96).rotateX(-Math.PI / 2), CAGE.radius),
+      this.M(THREE.MeshBasicMaterial, { color: 0x050205, transparent: true, opacity: 0.85, depthWrite: false }));
     ring.position.y = 0.14;
-    const glow = new THREE.Mesh(new THREE.RingGeometry(CAGE.radius - 0.05, CAGE.radius + 0.05, 96).rotateX(-Math.PI / 2),
-      new THREE.MeshBasicMaterial({ color: 0xff1f3d, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false }));
+    const glow = this.mesh(this.G(50, () => new THREE.RingGeometry(CAGE.radius - 0.05, CAGE.radius + 0.05, 96).rotateX(-Math.PI / 2), CAGE.radius),
+      this.M(THREE.MeshBasicMaterial, { color: 0xff1f3d, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false }));
     glow.position.y = 0.16;
     g.add(ring, glow, spikes, wall);
     spikes.scale.y = 0.05; wall.scale.y = 0.05;
@@ -1108,19 +1162,19 @@ export class Effects {
     const g = new THREE.Group();
     g.position.set(p[0], floorUnder(p), p[2]);
     g.rotation.y = Math.atan2(dir[0], dir[2]);
-    const fill = new THREE.Mesh(new THREE.PlaneGeometry(width, length).rotateX(-Math.PI / 2).translate(0, 0, length / 2),
-      new THREE.MeshBasicMaterial({ color: 0xc8902a, transparent: true, opacity: 0, depthWrite: false }));
+    const fill = this.mesh(this.G(51, () => new THREE.PlaneGeometry(width, length).rotateX(-Math.PI / 2).translate(0, 0, length / 2), width, length),
+      this.M(THREE.MeshBasicMaterial, { color: 0xc8902a, transparent: true, opacity: 0, depthWrite: false }));
     fill.position.y = 0.14;
     const edges = [-1, 1].map(sd => {
-      const e = new THREE.Mesh(new THREE.PlaneGeometry(0.22, length).rotateX(-Math.PI / 2).translate(sd * width / 2, 0, length / 2),
-        new THREE.MeshBasicMaterial({ color: 0xffd080, transparent: true, opacity: 0, depthWrite: false }));
+      const e = this.mesh(this.G(52, () => new THREE.PlaneGeometry(0.22, length).rotateX(-Math.PI / 2).translate(sd * width / 2, 0, length / 2), length, sd, width),
+        this.M(THREE.MeshBasicMaterial, { color: 0xffd080, transparent: true, opacity: 0, depthWrite: false }));
       e.position.y = 0.15; g.add(e); return e;
     });
     // chevrons pointing down the lane
     const chev = [];
     for (let i = 1; i < 7; i++) {
-      const c = new THREE.Mesh(new THREE.RingGeometry(0.9, 1.25, 3, 1, Math.PI / 2 - 0.9, 1.8).rotateX(-Math.PI / 2),
-        new THREE.MeshBasicMaterial({ color: 0xffe0a0, transparent: true, opacity: 0, depthWrite: false }));
+      const c = this.mesh(this.G(53, () => new THREE.RingGeometry(0.9, 1.25, 3, 1, Math.PI / 2 - 0.9, 1.8).rotateX(-Math.PI / 2)),
+        this.M(THREE.MeshBasicMaterial, { color: 0xffe0a0, transparent: true, opacity: 0, depthWrite: false }));
       c.position.set(0, 0.16, i * length / 7); g.add(c); chev.push(c);
     }
     g.add(fill);
@@ -1132,13 +1186,13 @@ export class Effects {
   // The caster's lane marker while Q is held (Stampede).
   laneAim(width, length) {
     const g = new THREE.Group();
-    const fill = new THREE.Mesh(new THREE.PlaneGeometry(width, length).rotateX(-Math.PI / 2).translate(0, 0, length / 2),
-      new THREE.MeshBasicMaterial({ color: 0xc8902a, transparent: true, opacity: 0.14, depthWrite: false }));
+    const fill = this.mesh(this.G(54, () => new THREE.PlaneGeometry(width, length).rotateX(-Math.PI / 2).translate(0, 0, length / 2), width, length),
+      this.M(THREE.MeshBasicMaterial, { color: 0xc8902a, transparent: true, opacity: 0.14, depthWrite: false }));
     fill.position.y = 0.16;
     g.add(fill);
     for (const sd of [-1, 1]) {
-      const e = new THREE.Mesh(new THREE.PlaneGeometry(0.15, length).rotateX(-Math.PI / 2).translate(sd * width / 2, 0, length / 2),
-        new THREE.MeshBasicMaterial({ color: 0xffd080, transparent: true, opacity: 0.9, depthWrite: false }));
+      const e = this.mesh(this.G(55, () => new THREE.PlaneGeometry(0.15, length).rotateX(-Math.PI / 2).translate(sd * width / 2, 0, length / 2), length, sd, width),
+        this.M(THREE.MeshBasicMaterial, { color: 0xffd080, transparent: true, opacity: 0.9, depthWrite: false }));
       e.position.y = 0.17; g.add(e);
     }
     g.visible = false;
@@ -1150,11 +1204,11 @@ export class Effects {
   // Every ultimate's wind-up: a column of light in the wizard's colour and a ring tightening at their feet.
   ultTell(follow, left, color) {
     const g = new THREE.Group();
-    const col = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.8, 4, 20, 1, true),
-      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
+    const col = this.mesh(this.G(56, () => new THREE.CylinderGeometry(0.55, 0.8, 4, 20, 1, true)),
+      this.M(THREE.MeshBasicMaterial, { color, transparent: true, opacity: 0, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
     col.position.y = 2;
-    const ring = new THREE.Mesh(new THREE.RingGeometry(0.85, 1, 48).rotateX(-Math.PI / 2),
-      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }));
+    const ring = this.mesh(this.G(57, () => new THREE.RingGeometry(0.85, 1, 48).rotateX(-Math.PI / 2)),
+      this.M(THREE.MeshBasicMaterial, { color: 0xffffff, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }));
     ring.position.y = 0.15;
     g.add(col, ring);
     this.scene.add(g);
@@ -1173,16 +1227,16 @@ export class Effects {
   blizzard(w, left) {
     const g = new THREE.Group();
     const half = BLIZ.cone / 2 * Math.PI / 180;
-    const coneMat = new THREE.MeshBasicMaterial({ map: windTexture(), color: 0xf4fbff, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
-    const mistMat = new THREE.MeshBasicMaterial({ color: 0xdcefff, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
+    const coneMat = this.M(THREE.MeshBasicMaterial, { map: windTexture(), color: 0xf4fbff, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
+    const mistMat = this.M(THREE.MeshBasicMaterial, { color: 0xdcefff, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
     // a flattened cone: wide horizontally (the 70 degrees), a little less tall
-    const cone = new THREE.Mesh(new THREE.ConeGeometry(Math.tan(half) * BLIZ.range, BLIZ.range, 32, 1, true).translate(0, -BLIZ.range / 2, 0).rotateX(-Math.PI / 2), coneMat);
+    const cone = this.mesh(this.G(58, () => new THREE.ConeGeometry(Math.tan(half) * BLIZ.range, BLIZ.range, 32, 1, true).translate(0, -BLIZ.range / 2, 0).rotateX(-Math.PI / 2), half, BLIZ.range), coneMat);
     cone.scale.set(1, 0.3, 1); cone.position.y = 1.5;
-    const mist = new THREE.Mesh(cone.geometry, mistMat);   // a pale body under the streaks, so the cone reads as a mass of snow
+    const mist = this.mesh(cone.geometry, mistMat);   // a pale body under the streaks, so the cone reads as a mass of snow
     mist.scale.set(0.92, 0.26, 0.98); mist.position.y = 1.5;
     // frost spreading on the ground under the cone (a sector pointing along +z, the cone's direction)
-    const frost = new THREE.Mesh(new THREE.CircleGeometry(BLIZ.range, 40, Math.PI / 2 - half, half * 2).rotateX(Math.PI / 2),
-      new THREE.MeshBasicMaterial({ color: 0xeaf8ff, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }));
+    const frost = this.mesh(this.G(59, () => new THREE.CircleGeometry(BLIZ.range, 40, Math.PI / 2 - half, half * 2).rotateX(Math.PI / 2), BLIZ.range, half),
+      this.M(THREE.MeshBasicMaterial, { color: 0xeaf8ff, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }));
     frost.position.y = 0.13;
     g.add(mist, cone, frost);
     this.scene.add(g);
@@ -1194,12 +1248,12 @@ export class Effects {
   // Meteor Rain: the fiery launch (a column of flame and a shockwave), her flaming aura while up there, the blazing
   // dive, and the scorch she leaves.
   fireLaunch(p, top) {
-    const streak = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.7, top + 2, 14, 1, true),
+    const streak = this.mesh(this.G(60, () => new THREE.CylinderGeometry(0.2, 0.7, 1, 14, 1, true)),   // (1 m tall, stretched)
       this.mat(0xff7a1e, { opacity: 0.85, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
-    streak.position.set(p[0], floorUnder(p) + (top + 2) / 2, p[2]);
+    streak.position.set(p[0], floorUnder(p) + (top + 2) / 2, p[2]); streak.scale.y = top + 2;
     this.scene.add(streak);
     this.particles.push({ mesh: streak, vel: new THREE.Vector3(), life: 0, maxLife: 0.3, grav: 0, growXZ: -2, still: true });
-    const ring = new THREE.Mesh(new THREE.RingGeometry(0.8, 1, 48).rotateX(-Math.PI / 2), this.mat(0xffa040, { opacity: 0.9, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
+    const ring = this.mesh(this.G(61, () => new THREE.RingGeometry(0.8, 1, 48).rotateX(-Math.PI / 2)), this.mat(0xffa040, { opacity: 0.9, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
     ring.position.set(p[0], floorUnder(p) + 0.15, p[2]);
     this.scene.add(ring);
     this.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0, maxLife: 0.4, grav: 0, grow: 12, still: true });
@@ -1210,7 +1264,7 @@ export class Effects {
   }
   flameAura(follow) {
     const g = new THREE.Group();
-    const shell = new THREE.Mesh(this.sphereGeo, this.mat(0xff6a1e, { opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false }));
+    const shell = this.mesh(this.sphereGeo, this.mat(0xff6a1e, { opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false }));
     shell.scale.set(1.1, 1.5, 1.1); shell.position.y = 1;
     g.add(shell);
     this.scene.add(g);
@@ -1223,9 +1277,9 @@ export class Effects {
   blazeDive(from, to, left) {
     const a = new THREE.Vector3(...from), b = new THREE.Vector3(...to);
     const len = a.distanceTo(b);
-    const trail = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.9, len, 12, 1, true).translate(0, len / 2, 0).rotateX(Math.PI / 2),
+    const trail = this.mesh(this.G(62, () => new THREE.CylinderGeometry(0.25, 0.9, 1, 12, 1, true).translate(0, 0.5, 0).rotateX(Math.PI / 2)),   // (1 m, stretched)
       this.mat(0xff7a1e, { opacity: 0.8, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
-    trail.position.copy(b); trail.lookAt(a);
+    trail.position.copy(b); trail.lookAt(a); trail.scale.z = len;
     this.scene.add(trail);
     this.particles.push({ mesh: trail, vel: new THREE.Vector3(), life: 0, maxLife: left + 0.35, grav: 0, still: true });
     for (let i = 0, N = this.n(24); i < N; i++) {
@@ -1239,7 +1293,7 @@ export class Effects {
     this.burst(pos, 0xff7a1e, 50, 10, 0.8, 4);
     this.burst(pos, 0xffd080, 20, 6, 0.5, 0);
     for (let i = 0; i < 10; i++) this.dust(pos, 3);
-    const ring = new THREE.Mesh(new THREE.RingGeometry(0.85, 1, 64).rotateX(-Math.PI / 2), this.mat(0xffa040, { opacity: 0.9, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
+    const ring = this.mesh(this.G(63, () => new THREE.RingGeometry(0.85, 1, 64).rotateX(-Math.PI / 2)), this.mat(0xffa040, { opacity: 0.9, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
     ring.position.set(p[0], floorUnder(p) + 0.17, p[2]);
     this.scene.add(ring);
     this.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0, maxLife: 0.45, grav: 0, grow: (MRAIN.radius + 2) / 0.45, still: true });
@@ -1255,10 +1309,10 @@ export class Effects {
   // Flask Step's preview: a dotted arc along the throw and a ring where she'll arrive (main.js updates it each frame).
   flaskPreview() {
     const g = new THREE.Group();
-    const dots = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ color: 0xd0a0ff, size: 0.18, transparent: true, opacity: 0.9, depthWrite: false }));
+    const dots = new THREE.Points(new THREE.BufferGeometry(), this.M(THREE.PointsMaterial, { color: 0xd0a0ff, size: 0.18, transparent: true, opacity: 0.9, depthWrite: false }));
     dots.geometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(400 * 3), 3));
-    const ring = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.7, 32).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xc080ff, transparent: true, opacity: 0.9, depthWrite: false }));
-    const fill = new THREE.Mesh(new THREE.CircleGeometry(0.55, 24).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x6a3a9a, transparent: true, opacity: 0.35, depthWrite: false }));
+    const ring = this.mesh(this.G(64, () => new THREE.RingGeometry(0.55, 0.7, 32).rotateX(-Math.PI / 2)), this.M(THREE.MeshBasicMaterial, { color: 0xc080ff, transparent: true, opacity: 0.9, depthWrite: false }));
+    const fill = this.mesh(this.G(65, () => new THREE.CircleGeometry(0.55, 24).rotateX(-Math.PI / 2)), this.M(THREE.MeshBasicMaterial, { color: 0x6a3a9a, transparent: true, opacity: 0.35, depthWrite: false }));
     ring.position.y = fill.position.y = 0.16;
     const marker = new THREE.Group(); marker.add(ring, fill);
     g.add(dots, marker);
@@ -1282,7 +1336,7 @@ export class Effects {
     const pos = new THREE.Vector3(p[0], Math.max(0.2, p[1]), p[2]);
     this.burst(pos, 0xa050e0, 16, 4, 0.35, 8);
     this.burst(pos, 0xe8d0ff, 8, 3, 0.2, 10);
-    const ring = new THREE.Mesh(new THREE.RingGeometry(0.7, 1, 32).rotateX(-Math.PI / 2), this.mat(0xb060ff, { opacity: 0.8, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
+    const ring = this.mesh(this.G(66, () => new THREE.RingGeometry(0.7, 1, 32).rotateX(-Math.PI / 2)), this.mat(0xb060ff, { opacity: 0.8, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
     ring.position.set(p[0], floorUnder(p) + 0.15, p[2]);
     this.scene.add(ring);
     this.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0, maxLife: 0.3, grav: 0, grow: radius / 0.3, still: true });
@@ -1299,8 +1353,8 @@ export class Effects {
     }
     // the texture's green body reaches about 0.3 of its width from the centre, its splashes 0.45: drawn 2.5 R across, the
     // liquid fills most of the rim and the splashes and the soaked soil run a little past it
-    const liquid = new THREE.Mesh(new THREE.PlaneGeometry(R * 2.5, R * 2.5).rotateX(-Math.PI / 2),
-      new THREE.MeshStandardMaterial({ map: this.acidTex, emissiveMap: this.acidTex, emissive: 0x9aff40, emissiveIntensity: 0.35, roughness: 0.25, metalness: 0.1,
+    const liquid = this.mesh(this.G(67, () => new THREE.PlaneGeometry(R * 2.5, R * 2.5).rotateX(-Math.PI / 2), R),
+      this.M(THREE.MeshStandardMaterial, { map: this.acidTex, emissiveMap: this.acidTex, emissive: 0x9aff40, emissiveIntensity: 0.35, roughness: 0.25, metalness: 0.1,
         transparent: true, opacity: 0.8, alphaTest: 0.02, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
     liquid.rotation.y = Math.random() * Math.PI * 2;
     liquid.position.y = 0.1; liquid.renderOrder = 1;
@@ -1318,20 +1372,20 @@ export class Effects {
       puddle.scale.set(k, k * 0.45, k); puddle.rotation.y = liquid.rotation.y; puddle.position.y = 0.02;
       puddle.traverse(o => {
         if (!o.isMesh) return;
-        const mat = o.material = o.material.clone();
-        Object.assign(mat, { emissive: new THREE.Color(0x7aff30), emissiveMap: mat.map, emissiveIntensity: 0.3 });
+        const mat = o.material = this.Mc(o.material);
+        Object.assign(mat, { emissive: new THREE.Color(0x7aff30), emissiveMap: mat.map, emissiveIntensity: 0.3, transparent: true });   // (always: toggling it is a new shader mid-match)
         o.castShadow = false; o.receiveShadow = true;
         o.onBeforeRender = () => {
           const rn = realNow(), fade = Math.max(0, Math.min(1, (e.endAt - rn) / 0.6));
-          mat.transparent = fade < 0.999; mat.opacity = fade;
+          mat.opacity = fade;
           mat.emissiveIntensity = 0.3 + 0.15 * Math.sin(rn * 3.2);
         };
       });
       liquid.visible = false;
       g.add(puddle);
     });
-    const rim = new THREE.Mesh(new THREE.RingGeometry(R - 0.15, R, 48).rotateX(-Math.PI / 2),
-      new THREE.MeshBasicMaterial({ color: 0xb8ff60, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false }));
+    const rim = this.mesh(this.G(68, () => new THREE.RingGeometry(R - 0.15, R, 48).rotateX(-Math.PI / 2), R),
+      this.M(THREE.MeshBasicMaterial, { color: 0xb8ff60, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false }));
     rim.position.y = 0.13;
     g.add(liquid, rim);
     g.scale.setScalar(0.2);
@@ -1361,7 +1415,7 @@ export class Effects {
     g.position.set(p[0], p[1] || 0, p[2]);
     const puffs = [];
     for (let i = 0; i < 18; i++) {
-      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: puffTexture(), color: i % 3 ? 0x7a4aaa : 0xb890e0, transparent: true, opacity: 0, depthWrite: false }));
+      const sp = new THREE.Sprite(this.M(THREE.SpriteMaterial, { map: puffTexture(), color: i % 3 ? 0x7a4aaa : 0xb890e0, transparent: true, opacity: 0, depthWrite: false }));
       const a = Math.random() * Math.PI * 2, r = Math.random() * SF.radius * 0.8;
       const base = new THREE.Vector3(Math.sin(a) * r, 0.5 + Math.random() * (SF.height - 1), Math.cos(a) * r);
       sp.position.copy(base);
@@ -1375,15 +1429,15 @@ export class Effects {
   // Berserker Brew: a green-purple aura with rising fumes, and two glowing eyes, following the wizard.
   brewAura(w, left) {
     const g = new THREE.Group();
-    const shell = new THREE.Mesh(this.sphereGeo, this.mat(0x7fd34a, { opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false }));
+    const shell = this.mesh(this.sphereGeo, this.mat(0x7fd34a, { opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false }));
     shell.scale.set(0.9, 1.3, 0.9); shell.position.y = 1;
-    const shell2 = new THREE.Mesh(this.sphereGeo, this.mat(0xa050e0, { opacity: 0.18, blending: THREE.AdditiveBlending, depthWrite: false }));
+    const shell2 = this.mesh(this.sphereGeo, this.mat(0xa050e0, { opacity: 0.18, blending: THREE.AdditiveBlending, depthWrite: false }));
     shell2.scale.set(1.1, 1.45, 1.1); shell2.position.y = 1;
     g.add(shell, shell2);
     g.userData.lights = [this.lights.claim(0x9a60e0, 5, 8, g, 1.2)];
     const eyes = new THREE.Group();
-    for (const sx of [-0.05, 0.05]) { const e = new THREE.Mesh(new THREE.SphereGeometry(0.025, 6, 6), new THREE.MeshBasicMaterial({ color: 0xc8ff60 })); e.position.set(sx, 0.05, 0.1); eyes.add(e); }
-    const eyeGlow = new THREE.Mesh(this.sphereGeo, this.mat(0xb8ff60, { opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false }));
+    for (const sx of [-0.05, 0.05]) { const e = this.mesh(this.G(69, () => new THREE.SphereGeometry(0.025, 6, 6)), this.M(THREE.MeshBasicMaterial, { color: 0xc8ff60 })); e.position.set(sx, 0.05, 0.1); eyes.add(e); }
+    const eyeGlow = this.mesh(this.sphereGeo, this.mat(0xb8ff60, { opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false }));
     eyeGlow.scale.set(0.13, 0.05, 0.05); eyeGlow.position.set(0, 0.05, 0.1);
     eyes.add(eyeGlow);
     this.scene.add(g, eyes);
@@ -1696,7 +1750,7 @@ export class Effects {
       if (p.spinY) p.mesh.rotation.y += dt * p.spinY;
       else if (!p.still) { p.mesh.rotation.x += dt * 5; p.mesh.rotation.y += dt * 7; }
       // materials are shared; per-particle opacity needs its own copy (cloned once, lazily)
-      if (!p.ownMat) { p.mesh.material = p.mesh.material.clone(); p.ownMat = true; }
+      if (!p.ownMat) { p.mesh.material = this.Mc(p.mesh.material); p.ownMat = true; }
       p.mesh.material.opacity = (1 - k) * (p.grow || p.growXZ ? 0.6 : 1) * (p.still ? 1.4 : 1);
     }
 
