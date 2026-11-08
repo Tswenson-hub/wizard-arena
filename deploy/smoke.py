@@ -2,7 +2,7 @@
 # the empty seats), WebSocket traffic, no console errors.
 # usage: python3 deploy/smoke.py <base url> [screenshot path] [--swiftshader]
 #   python3 deploy/smoke.py http://localhost:3000
-#   python3 deploy/smoke.py https://wizard-arena.onrender.com /tmp/wa-deploy/live.png
+#   python3 deploy/smoke.py https://wizard-arena-76od.onrender.com /tmp/wa-deploy/live.png
 import asyncio, json, sys, time, urllib.request
 from playwright.async_api import async_playwright
 

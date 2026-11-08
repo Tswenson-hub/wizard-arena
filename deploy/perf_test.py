@@ -6,7 +6,7 @@
 #                                    [--swiftshader] [--room new] [--no-targets]
 #   python3 deploy/perf_test.py http://localhost:4105
 #   python3 deploy/perf_test.py http://localhost:4105 --latency 200     # +200 ms round trip on the game's WebSocket
-#   python3 deploy/perf_test.py https://wizard-arena.onrender.com --room new
+#   python3 deploy/perf_test.py https://wizard-arena-76od.onrender.com --room new
 #
 # How it measures (independent of the game's code, so it works on any commit and on the live server):
 # - frame times from its own requestAnimationFrame loop;
@@ -114,10 +114,10 @@ PROBE = r"""
     const wa = window.__wa, ri = wa && wa.renderer && wa.renderer.info.render;
     P.perFrame.push([P.draw, P.tris, ri ? ri.calls : -1, ri ? ri.triangles : -1]); P.draw = 0; P.tris = 0;
     if (P.t0 !== null && wa && wa.players) {
-      const row = [t];
+      const row = [t], me = wa.local && wa.local.pos;
       for (const [id, w] of wa.players) {
-        if (P.names[id] === P.me) continue;
         const g = w.group || w; if (!g.position) continue;
+        if (me && Math.hypot(g.position.x - me.x, g.position.z - me.z) < 0.6) continue;   // our own wizard (drawn at local.pos)
         row.push(id, g.position.x, g.position.z);
       }
       P.remote.push(row);
@@ -222,23 +222,26 @@ async def main():
         await pg.add_init_script(PROBE + (f'\nwindow.WA_SERVER = {json.dumps(loop_proxy)};' if loop_proxy else ''))
         t = time.time()
         await pg.goto(url, timeout=180000)
+        # (?room=new skips the builder: the page creates the room and goes straight into it)
         await pg.wait_for_function("""() => { const s = document.querySelector('#loadStatus')?.textContent || '';
-          return s.startsWith('Ready') || s.startsWith('Failed'); }""", timeout=180000)
+          return s.startsWith('Ready') || s.startsWith('Failed') || !document.querySelector('#hud').classList.contains('hidden'); }""", timeout=180000)
+        in_game = await pg.evaluate("!document.querySelector('#hud').classList.contains('hidden')")
         load_s = time.time() - t
         status = await pg.evaluate("document.querySelector('#loadStatus').textContent")
         print(f'{url}: {status!r} in {load_s:.1f} s, {W}x{H} DPR {A.dpr}, CPU throttle {A.throttle}x')
         progs_loaded = await pg.evaluate('__perf.programs')
-        if await pg.locator('.htp-close').count(): await pg.click('.htp-close')
-        await pg.fill('#nameInput', 'perftest')
+        if not in_game:
+            if await pg.locator('.htp-close').count(): await pg.click('.htp-close')
+            await pg.fill('#nameInput', 'perftest')
         cdp = await ctx.new_cdp_session(pg)
         if A.throttle > 1: await cdp.send('Emulation.setCPUThrottlingRate', {'rate': A.throttle})
-        await pg.click('#joinBtn')
+        if not in_game: await pg.click('#joinBtn')
         await pg.wait_for_function("!document.querySelector('#hud').classList.contains('hidden')", timeout=60000)
         for _ in range(60):
             n = await pg.evaluate('Object.keys(__perf.names).length')
             if n >= 4: break
             await pg.wait_for_timeout(500)
-        await pg.evaluate("__perf.me = 'perftest'; __perf.t0 = performance.now()")
+        await pg.evaluate("__perf.t0 = performance.now()")
         if proxy: proxy.sent.clear()
         driven = await pg.evaluate(DRIVE)
         await pg.keyboard.down('KeyW')
