@@ -8,7 +8,7 @@ import { buildWorld, makePropMesh, spinners, loadModels } from './world.js';
 import * as World from './world.js';   // round 14: cameraClearance / cameraCutaway (environment), looked up by name
 import { RamView, loadRamModel } from './rams.js';
 import { Wizard } from './wizard.js';
-import { loadWizardModels, BODY_KINDS } from './looks.js';
+import { loadWizardModels, BODY_KINDS, warmSet, disposeWarmSet } from './looks.js';
 import { Effects } from './effects.js';
 import * as Select from './select.js';
 import { loadLoadout, saveLoadout, loadVoice, saveVoice, loadSaved, saveSaved } from './loadout-store.js';
@@ -242,6 +242,9 @@ async function warmUp() {
     await Promise.race([ramModelP, new Promise(r => setTimeout(r, 3000))]).catch(() => {});
     const rv = [new RamView({ id: -1, p: [at.x, at.z], y: at.y, yaw: 0, s: 'run' }, scene), ghostRam(new RamView({ id: -2, p: [at.x + 1, at.z], y: at.y, yaw: 0, s: 'windup' }, scene))];
     temp.push(...rv);
+    // a Mage in every element's look with its aura, and Mirror Step's ghost (characters' looks.js)
+    const looksWarm = warmSet(); looksWarm.position.copy(at).x -= 4; scene.add(looksWarm);
+    temp.push({ dispose: () => disposeWarmSet(looksWarm) });
     await Promise.all([effects.iceWallModel, effects.acidModel]);   // (their models go onto the warm-up's wall and pool)
     await new Promise(r => setTimeout(r, 0));
     // every hidden part too (a wizard's ice, chains and ward; aim marks; the low tier's trees), shown for this frame only
@@ -250,6 +253,7 @@ async function warmUp() {
     if (renderer.compileAsync) await renderer.compileAsync(scene, camera); else renderer.compile(scene, camera);
     const vp = renderer.getViewport(new THREE.Vector4());
     renderer.setViewport(0, 0, 1, 1);
+    renderer.shadowMap.needsUpdate = true;   // (the shadow programs too, even when shadows don't update every frame)
     renderer.render(scene, camera);
     renderer.setViewport(vp);
     for (const o of hidden) o.visible = false;
@@ -257,6 +261,7 @@ async function warmUp() {
   effects.clearAll();
   for (const w of dummies) w.dispose(scene);
   for (const m of temp) if (m.dispose) m.dispose(scene); else scene.remove(m);
+  try { await Podium.warm?.(renderer, scene, camera); } catch (e) { console.warn('[warm-up] podium', e); }   // the end-of-match recap
   warming = false;
   console.log(`[warm-up] ${info.programs?.length ?? '?'} shader programs in ${Math.round(performance.now() - t0)} ms`);
 }
