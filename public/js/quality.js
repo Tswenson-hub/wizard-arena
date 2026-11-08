@@ -4,8 +4,9 @@
 //   low:    pixel ratio 1, no antialiasing, no shadows, no effect lights, a third of the particles, no grass, no auras
 // The setting (Graphics in the Esc menu) is auto | high | normal | low, saved with the other settings. Auto starts on the
 // tier it last settled on (else normal), drops a tier when the average frame over 3 s is slower than 22 ms (checked the
-// whole match, so a fight that gets heavy after 30 s still counts) and rises one, carefully, after 30 s at a steady 60.
-// ?low forces low.
+// whole match, so a fight that gets heavy after 30 s still counts) and rises one, carefully: once a session, after 30 s
+// at a steady 60 (60 s back to the tier it dropped from), never to high on its own.
+// ?low forces low; ?quality=auto|high|normal|low picks the setting for this visit (not saved).
 //
 // Antialiasing, shadows on or off and the effect lights can't change without a new context or recompiling every shader
 // (a long hitch), so they follow the tier we *start* on (`boot`). A drop mid-match lowers the pixel ratio, thins the
@@ -25,9 +26,11 @@ const store = {
   get(k) { try { return localStorage.getItem(k); } catch { return null; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch {} },
 };
-const forcedLow = (() => { try { return new URLSearchParams(location.search).has('low'); } catch { return false; } })();
+const query = (() => { try { return new URLSearchParams(location.search); } catch { return new URLSearchParams(); } })();
+const forcedLow = query.has('low');
+const asked = SETTINGS.includes(query.get('quality')) ? query.get('quality') : null;   // ?quality=high (tests): this visit only
 
-let setting = SETTINGS.includes(store.get(KEY)) ? store.get(KEY) : 'auto';
+let setting = asked ?? (SETTINGS.includes(store.get(KEY)) ? store.get(KEY) : 'auto');
 const startTier = () => forcedLow ? 'low' : setting !== 'auto' ? setting : (TIERS[store.get(AUTO_KEY)] ? store.get(AUTO_KEY) : 'normal');
 let tier = startTier();
 // what the tier we started on decided for good (see the top)
@@ -59,7 +62,7 @@ function setTier(t, why) {
 export function setSetting(v) {
   if (!SETTINGS.includes(v) || forcedLow) return;
   setting = v;
-  store.set(KEY, v);
+  if (!asked) store.set(KEY, v);
   if (v !== 'auto') setTier(v, 'setting');
   auto.rises = 0;
 }
@@ -82,9 +85,11 @@ export function sample(ms) {
   auto.sum = 0; auto.n = 0; auto.win = 0;
   const i = ORDER.indexOf(tier);
   if (avg > DROP_MS && i > 0) { auto.dropped = tier; setTier(ORDER[i - 1], `avg ${avg.toFixed(1)} ms`); return; }
-  // rising: only after RISE_S of frames at the display's 60, never back to a tier we dropped from, and once a session
+  // rising: after RISE_S of frames at the display's 60 (twice that back to a tier we dropped from), once a session, and
+  // never to high on its own
   auto.good = avg < RISE_MS ? auto.good + WINDOW_S : 0;
-  if (auto.good >= RISE_S && i < ORDER.length - 1 && ORDER[i + 1] !== auto.dropped && auto.rises < MAX_RISES && ORDER[i + 1] !== 'high') {
+  const up = ORDER[i + 1];
+  if (up && up !== 'high' && auto.rises < MAX_RISES && auto.good >= (up === auto.dropped ? 2 : 1) * RISE_S) {
     auto.rises++; setTier(ORDER[i + 1], `steady ${avg.toFixed(1)} ms`);
   }
 }
