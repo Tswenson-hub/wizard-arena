@@ -528,6 +528,7 @@ function makeWizard(info, isLocal) {
   const w = new Wizard({ ...info, bot: null, body: info.body || 'mage' }, scene, isLocal);
   w.botLevel = info.bot || null;
   w.bodyKind = info.body || 'mage';   // (w.body is looks.js's body object)
+  scene.remove(w.chargeLight);   // round 20: its glow is lent by effects.lights (a light of its own changes the light count: recompiles)
   return w;
 }
 function addPlayer(info) {
@@ -1604,8 +1605,8 @@ function potionMesh() {
   neck.position.y = 0.2;
   const cork = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.06, 8), wood); cork.position.y = 0.3;
   flask.add(glass, neck, cork); flask.position.y = 0.95;
-  const light = new THREE.PointLight(0xff3040, 2.5, 4); light.position.y = 1;
-  g.add(post, top, flask, light);
+  const light = new THREE.PointLight(0xff3040, 2.5, 4);   // (not in the scene: effects.lights lends one while it's ready)
+  g.add(post, top, flask);
   return { g, flask, light };
 }
 function setPotion(pt) {
@@ -1627,6 +1628,7 @@ function updatePotions(dt) {
   const tNow = performance.now() / 1000, v3 = tmp.vp ??= new THREE.Vector3();
   for (const v of potionViews.values()) {
     v.flask.rotation.y += dt * 1.6; v.flask.position.y = 0.95 + Math.sin(tNow * 2.2) * 0.05;
+    if (v.ready) effects.lights.feed(v.light, v3.set(v.p[0], v.p[1] + 1, v.p[2]));
     // the marker: ready potions within 25 m, when we're hurt or close
     const d = me ? Math.hypot(v.p[0] - local.pos.x, v.p[2] - local.pos.z) : 1e9;
     let show = v.ready && !me?.dead && d < 25 && (me.hp < C.MAX_HP || d < 8);
@@ -2831,7 +2833,7 @@ function frame(t) {
     }
     updateUltimates();
     updateSmokeHiding(dt);
-    for (const w of players.values()) { w.faceCamera(camera); capPlate(w); }
+    for (const w of players.values()) { w.faceCamera(camera); capPlate(w); effects.lights.feed(w.chargeLight); }
     updateHud(dt);
     matchUI.update(dt);
     if (input.justPressed('KeyM')) toggleMute();

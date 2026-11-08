@@ -112,11 +112,50 @@ const CRACKS = (() => {
   return out;
 })();
 
+// Round 20: point lights come from a fixed pool that is always in the scene. Adding or removing a light changes the light
+// count, and three.js then recompiles every lit material in view (the 150-250 ms hitches the first time each spell flew).
+// A claimed light follows its object (`follow`, + `y` up); with none free (or effect lights off on the low tier) claim()
+// returns a stand-in that isn't in the scene, so callers can still set its intensity.
+export const FX_LIGHTS = 6;
+class LightPool {
+  constructor(scene, n) {
+    this.all = [];
+    this.enabled = true;
+    for (let i = 0; i < n; i++) { const l = new THREE.PointLight(0xffffff, 0, 1); l.userData.free = true; scene.add(l); this.all.push(l); }
+    this.fed = new Map();   // per-frame sources (feed): src -> light
+  }
+  stub() { return { intensity: 0, distance: 0, decay: 2, position: new THREE.Vector3(), color: new THREE.Color(), stub: true }; }
+  claim(color, intensity, distance, follow = null, y = 0) {
+    const l = this.enabled && this.all.find(x => x.userData.free);
+    if (!l) return this.stub();
+    Object.assign(l.userData, { free: false, follow, y });
+    l.color.setHex(color); l.intensity = intensity; l.distance = distance; l.decay = 2;
+    if (follow) l.position.copy(follow.position).setY(follow.position.y + y);
+    return l;
+  }
+  release(l) { if (!l || l.stub) return; l.intensity = 0; Object.assign(l.userData, { free: true, follow: null }); }
+  // A light-like source outside the scene (a wizard's charge glow, a potion stand), fed every frame it should shine;
+  // settle() frees the lights of the sources not fed this frame.
+  feed(src, at = src.position) {
+    if (!(src.intensity > 0)) return;
+    let l = this.fed.get(src);
+    if (!l) { l = this.claim(src.color.getHex(), src.intensity, src.distance); if (l.stub) return; this.fed.set(src, l); }
+    l.userData.fedAt = this.frame;
+    l.color.copy(src.color); l.intensity = src.intensity; l.distance = src.distance; l.decay = src.decay ?? 2; l.position.copy(at);
+  }
+  update() {
+    for (const [src, l] of this.fed) if (l.userData.fedAt !== this.frame) { this.release(l); this.fed.delete(src); }
+    this.frame = (this.frame || 0) + 1;
+    for (const l of this.all) { const f = l.userData.follow; if (f) l.position.set(f.position.x, f.position.y + l.userData.y, f.position.z); }
+  }
+}
+
 export class Effects {
   constructor(scene, { low = false } = {}) {
     this.scene = scene;
     this.low = low;
     this.sprites = new SpriteFX(scene, { low });   // textured, pooled, instanced particles (sprites.js)
+    this.lights = new LightPool(scene, low ? 0 : FX_LIGHTS);   // round 20: none at all when we start on low
     this.camera = null;                            // main.js sets it (smoke sorts back to front)
     this.projectiles = new Map();
     this.particles = [];     // { mesh, vel, life, maxLife, grav, shrink }
@@ -218,6 +257,14 @@ export class Effects {
     return this.mats[key] ??= new THREE.MeshBasicMaterial({ color, transparent: true, ...extra });
   }
 
+  // Round 20: an effect leaving the scene gives back its pooled lights.
+  drop(obj) {
+    if (!obj) return;
+    this.scene.remove(obj);
+    for (const l of obj.userData.lights || []) this.lights.release(l);
+    obj.userData.lights = null;
+  }
+
   // ---------------------------------------------------------------- projectiles
   spawnProjectile(msg) {
     const g = new THREE.Group();
@@ -233,8 +280,7 @@ export class Effects {
       glow.scale.setScalar(msg.fin ? 0.52 : 0.3);
       g.add(core, glow);
       if (msg.fin) { const ring = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.04, 6, 20), this.mat(hot.getHex(), { opacity: 0.85 })); g.add(ring); g.userData.shell = ring; }
-      light = new THREE.PointLight(color, msg.fin ? 7 : 3, msg.fin ? 9 : 6);
-      g.add(light);
+      light = [color, msg.fin ? 7 : 3, msg.fin ? 9 : 6];
     } else if (msg.kind === 'potion' || msg.kind === 'toxic' || msg.kind === 'flaskstep') {
       // Embibe's potions: a little bottle (purple swirl, green crystal, or a pale vial) with a glowing brew inside
       const liquid = msg.kind === 'toxic' ? 0x7fd34a : msg.kind === 'potion' ? 0xa050e0 : 0xd0a0ff;
@@ -246,8 +292,7 @@ export class Effects {
       glow.scale.setScalar(0.32 * s);
       g.add(glass, neck, glow);
       g.userData.spin = new THREE.Vector3(7, 2, 5);
-      light = new THREE.PointLight(liquid, msg.fin ? 4 : 2.5, 6);
-      g.add(light);
+      light = [liquid, msg.fin ? 4 : 2.5, 6];
     } else if (msg.kind === 'sling') {
       // Shepherd's Sling: a tumbling river stone with a pale streak; the 2nd shot is bigger, with a ring
       const stone = new THREE.Mesh(new THREE.DodecahedronGeometry(msg.fin ? 0.17 : 0.12, 0), new THREE.MeshStandardMaterial({ color: 0x8a8070, roughness: 0.9, flatShading: true }));
@@ -269,8 +314,7 @@ export class Effects {
       g.add(core, flame, outer);
       g.userData.shell = outer;
       if (msg.fin) { const ring = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.05, 6, 24), this.mat(0xffd080, { opacity: 0.85 })); g.add(ring); g.userData.ring = ring; }
-      light = new THREE.PointLight(0xff6a1e, msg.fin ? 9 : 5, msg.fin ? 11 : 8);
-      g.add(light);
+      light = [0xff6a1e, msg.fin ? 9 : 5, msg.fin ? 11 : 8];
     } else if (msg.kind === 'shear') {
       // Gale Shear: a thin crescent blade of wind, flat, swept along its flight; the 3rd is wider
       const R = msg.r || C.SPELLS.shear.radius;
@@ -292,8 +336,7 @@ export class Effects {
       if (msg.fin) glyph.scale.setScalar(1.4);
       g.add(glyph, glow, dark);
       g.userData.glyph = glyph;
-      light = new THREE.PointLight(0xff1f3d, msg.fin ? 4 : 2.2, 6);
-      g.add(light);
+      light = [0xff1f3d, msg.fin ? 4 : 2.2, 6];
     } else if (msg.kind === 'heavy') {
       const core = new THREE.Mesh(this.sphereGeo, this.mat(0xfff0c0));
       core.scale.setScalar(0.35);
@@ -302,8 +345,7 @@ export class Effects {
       const shell = new THREE.Mesh(new THREE.IcosahedronGeometry(0.9, 0), this.mat(0xffb060, { wireframe: true, opacity: 0.7 }));
       g.add(core, glow, shell);
       g.userData.shell = shell;
-      light = new THREE.PointLight(color, 8, 12);
-      g.add(light);
+      light = [color, 8, 12];
     } else if (msg.kind === 'skim') {
       // an ice shard: a stretched crystal pointing along its flight
       const shard = new THREE.Mesh(new THREE.OctahedronGeometry(0.16, 0), this.mat(msg.fin ? 0xffffff : 0xe8f8ff));
@@ -322,8 +364,7 @@ export class Effects {
       const shadow = new THREE.Mesh(this.sphereGeo, this.mat(0x30000a, { opacity: 0.55, depthWrite: false }));
       shadow.scale.set(0.36, 0.36, 0.7);
       g.add(shadow, glow, core);
-      light = new THREE.PointLight(0xff2a3c, 3.5, 6);
-      g.add(light);
+      light = [0xff2a3c, 3.5, 6];
       g.userData.aimV = new THREE.Vector3(msg.v[0], msg.v[1], msg.v[2]);
     } else {
       const mesh = makePropMesh(msg.propType);
@@ -335,6 +376,7 @@ export class Effects {
     }
     g.position.set(msg.p[0], msg.p[1], msg.p[2]);
     this.scene.add(g);
+    if (light) g.userData.lights = [this.lights.claim(light[0], light[1], light[2], g)];
     // a soft textured glow riding on the projectile (and a ring on the big ones)
     const fk = msg.fin ? 1.3 : 1, coreSize = { fast: 0.8, fireball: 1.4, heavy: 2, hex: 0.9, siphon: 0.8, potion: 0.7, toxic: 0.7, flaskstep: 0.6, skim: 0.5, shear: 0.9 }[msg.kind];
     const cores = [];
@@ -354,7 +396,7 @@ export class Effects {
     const pr = this.projectiles.get(msg.id);
     if (!pr) return;
     this.projectiles.delete(msg.id);
-    this.scene.remove(pr.group);
+    this.drop(pr.group);
     for (const c of pr.cores || []) if (c) c.dead = true;
     const p = msg.p ? new THREE.Vector3(msg.p[0], msg.p[1], msg.p[2]) : pr.pos;
     const low = p.y < 1.8;   // near the ground: leave a mark
@@ -669,7 +711,7 @@ export class Effects {
   }
   wallShatter(entry, w) {
     this.walls?.delete(entry);
-    this.scene.remove(entry.group);
+    this.drop(entry.group);
     const rx = Math.cos(w.yaw), rz = -Math.sin(w.yaw);
     const shardMat = this.mat(0xc8eeff, { opacity: 0.9 });
     for (let i = 0; i < 34; i++) {
@@ -826,7 +868,7 @@ export class Effects {
     return e;
   }
   frostfallImpact(e, p) {
-    if (e) { this.frosts?.delete(e); this.scene.remove(e.group); if (e.rune) e.rune.dead = true; }
+    if (e) { this.frosts?.delete(e); this.drop(e.group); if (e.rune) e.rune.dead = true; }
     const pos = new THREE.Vector3(p[0], 0.6, p[2]);
     const shardMat = this.mat(0xd8f2ff, { opacity: 0.95 });
     for (let i = 0; i < 40; i++) {
@@ -914,7 +956,7 @@ export class Effects {
     (this.eyes ??= new Set()).add(e);
     return e;
   }
-  stopEye(e) { if (!e) return; this.eyes?.delete(e); this.scene.remove(e.group); }
+  stopEye(e) { if (!e) return; this.eyes?.delete(e); this.drop(e.group); }
   // The final fling: a burst of wind outward.
   eyeBurst(p) {
     this.cyclonePulse(p, EYE.radius);
@@ -970,10 +1012,9 @@ export class Effects {
     g.rotation.y = w.yaw;
     // round 10 (Ty: "rough and boxy"): no sheets; a curtain of flame billboards spawned in update(), feathered at the
     // ends and the top, over a glowing base, with embers, sparks and smoke. Only the light lives in the group.
-    const light = new THREE.PointLight(0xff6a1e, 10, 12);
-    light.position.y = 1.4;
-    g.add(light);
     this.scene.add(g);
+    const light = this.lights.claim(0xff6a1e, 10, 12, g, 1.4);
+    g.userData.lights = [light];
     const along = [Math.cos(w.yaw), -Math.sin(w.yaw)];
     // the ground glow along the base: a few long-lived flat glows, tapered at the ends
     const glows = [];
@@ -1070,7 +1111,7 @@ export class Effects {
   }
   // An interrupted ultimate: the light bursts and scatters.
   ultFizzle(pos) {
-    for (const e of this.tells || []) if (e.follow.position.distanceTo(pos) < 0.5) { this.tells.delete(e); this.scene.remove(e.group); for (const q of e.runes) if (q) q.dead = true; }
+    for (const e of this.tells || []) if (e.follow.position.distanceTo(pos) < 0.5) { this.tells.delete(e); this.drop(e.group); for (const q of e.runes) if (q) q.dead = true; }
     this.burst(new THREE.Vector3(pos.x, pos.y + 1.2, pos.z), 0xffffff, 16, 4, 0.4, 2);
     this.burst(new THREE.Vector3(pos.x, pos.y + 1.2, pos.z), 0x888888, 10, 2, 0.5, -1);
   }
@@ -1118,15 +1159,14 @@ export class Effects {
     const g = new THREE.Group();
     const shell = new THREE.Mesh(this.sphereGeo, this.mat(0xff6a1e, { opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false }));
     shell.scale.set(1.1, 1.5, 1.1); shell.position.y = 1;
-    const light = new THREE.PointLight(0xff6a1e, 8, 16);
-    light.position.y = 1;
-    g.add(shell, light);
+    g.add(shell);
     this.scene.add(g);
+    g.userData.lights = [this.lights.claim(0xff6a1e, 8, 16, g, 1)];
     const e = { group: g, shell, follow, ember: 0 };
     (this.auras ??= new Set()).add(e);
     return e;
   }
-  stopAura(e) { if (e) { this.auras?.delete(e); this.scene.remove(e.group); if (e.eyes) this.scene.remove(e.eyes); } }
+  stopAura(e) { if (e) { this.auras?.delete(e); this.drop(e.group); if (e.eyes) this.drop(e.eyes); } }
   blazeDive(from, to, left) {
     const a = new THREE.Vector3(...from), b = new THREE.Vector3(...to);
     const len = a.distanceTo(b);
@@ -1286,8 +1326,8 @@ export class Effects {
     shell.scale.set(0.9, 1.3, 0.9); shell.position.y = 1;
     const shell2 = new THREE.Mesh(this.sphereGeo, this.mat(0xa050e0, { opacity: 0.18, blending: THREE.AdditiveBlending, depthWrite: false }));
     shell2.scale.set(1.1, 1.45, 1.1); shell2.position.y = 1;
-    const light = new THREE.PointLight(0x9a60e0, 5, 8); light.position.y = 1.2;
-    g.add(shell, shell2, light);
+    g.add(shell, shell2);
+    g.userData.lights = [this.lights.claim(0x9a60e0, 5, 8, g, 1.2)];
     const eyes = new THREE.Group();
     for (const sx of [-0.05, 0.05]) { const e = new THREE.Mesh(new THREE.SphereGeometry(0.025, 6, 6), new THREE.MeshBasicMaterial({ color: 0xc8ff60 })); e.position.set(sx, 0.05, 0.1); eyes.add(e); }
     const eyeGlow = new THREE.Mesh(this.sphereGeo, this.mat(0xb8ff60, { opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false }));
@@ -1349,6 +1389,7 @@ export class Effects {
   update(dt) {
     this.clock += dt;
     this.sprites.update(dt, this.camera);
+    this.lights.update();
     for (const pr of this.projectiles.values()) {
       pr.age += dt;
       if (pr.curve) {
@@ -1389,7 +1430,7 @@ export class Effects {
         e.ice.position.y = 1.4 + f * f * 18;
         e.ice.rotation.y += dt * 2;
       }
-      if (e.left < -1) { this.frosts.delete(e); this.scene.remove(e.group); }   // lost the impact message
+      if (e.left < -1) { this.frosts.delete(e); this.drop(e.group); }   // lost the impact message
     }
 
     // ultimates
@@ -1413,7 +1454,7 @@ export class Effects {
     }
     for (const e of this.pools || []) {
       const grow = Math.min(1, (rn - e.born) / 0.3), fade = Math.max(0, Math.min(1, (e.endAt - rn) / 0.6));
-      if (fade <= 0) { this.pools.delete(e); this.scene.remove(e.group); continue; }
+      if (fade <= 0) { this.pools.delete(e); this.drop(e.group); continue; }
       e.group.scale.setScalar(0.2 + 0.8 * (1 - Math.pow(1 - grow, 3)));
       e.liquid.material.opacity = 0.8 * fade; e.rim.material.opacity = (0.5 + Math.sin(this.clock * 6) * 0.2) * fade;
       e.bubble += dt * 14;
@@ -1427,7 +1468,7 @@ export class Effects {
     }
     for (const e of this.flaskClouds || []) {
       const grow = Math.min(1, (rn - e.born) / 0.25), fade = Math.max(0, Math.min(1, (e.endAt + 0.6 - rn) / 0.6));
-      if (fade <= 0) { this.flaskClouds.delete(e); this.scene.remove(e.group); continue; }
+      if (fade <= 0) { this.flaskClouds.delete(e); this.drop(e.group); continue; }
       for (const q of e.puffs) {
         const w = rn * 0.9 + q.phase;
         q.sp.position.set(q.base.x + Math.sin(w) * 0.3, q.base.y + Math.sin(w * 0.7) * 0.15, q.base.z + Math.cos(w * 0.8) * 0.3);
@@ -1438,7 +1479,7 @@ export class Effects {
     }
     for (const e of this.tells || []) {
       const k = Math.min(1, (rn - e.born) / Math.max(0.05, e.endAt - e.born));
-      if (rn > e.endAt + 0.15) { this.tells.delete(e); this.scene.remove(e.group); continue; }
+      if (rn > e.endAt + 0.15) { this.tells.delete(e); this.drop(e.group); continue; }
       e.group.position.set(e.follow.position.x, e.follow.position.y, e.follow.position.z);
       e.col.material.opacity = 0.15 + 0.45 * k + Math.sin(this.clock * 20) * 0.05;
       e.col.scale.set(1 - k * 0.5, 0.5 + k * 0.6, 1 - k * 0.5);
@@ -1447,7 +1488,7 @@ export class Effects {
     }
     for (const e of this.blizzards || []) {
       const fade = Math.max(0, Math.min(1, (e.endAt - rn) / 0.4)), k = Math.min(1, (rn - e.born) / 0.25);
-      if (fade <= 0 || !e.w.group.parent) { this.blizzards.delete(e); this.scene.remove(e.group); continue; }
+      if (fade <= 0 || !e.w.group.parent) { this.blizzards.delete(e); this.drop(e.group); continue; }
       e.group.position.copy(e.w.group.position);
       if (e.w.blizz != null) e.group.rotation.y += Math.atan2(Math.sin(e.w.blizz - e.group.rotation.y), Math.cos(e.w.blizz - e.group.rotation.y)) * Math.min(1, dt * 10);
       else if (rn - e.born < 0.05) e.group.rotation.y = e.w.group.rotation.y;
@@ -1490,11 +1531,11 @@ export class Effects {
     }
     for (const e of this.scorches || []) {
       const age = rn - e.born;
-      if (age > 8) { this.scorches.delete(e); this.scene.remove(e.mesh); continue; }
+      if (age > 8) { this.scorches.delete(e); this.drop(e.mesh); continue; }
       if (age > 6) e.mesh.material.opacity = 0.75 * (8 - age) / 2;
     }
     for (const e of this.lanes || []) {
-      if (rn > e.endAt) { this.lanes.delete(e); this.scene.remove(e.group); continue; }
+      if (rn > e.endAt) { this.lanes.delete(e); this.drop(e.group); continue; }
       const warm = Math.min(1, (rn - e.born) / Math.max(0.05, e.runAt - e.born)), fade = Math.max(0, Math.min(1, (e.endAt - rn) / 0.6));
       e.fill.material.opacity = (0.1 + 0.15 * warm + Math.sin(this.clock * 10) * 0.04) * fade;
       for (const ed of e.edges) ed.material.opacity = (0.5 + 0.4 * warm) * fade;
@@ -1509,7 +1550,7 @@ export class Effects {
     }
     for (const e of this.firewalls || []) {
       const k = Math.min(1, (rn - e.born) / 0.2), fade = Math.max(0, Math.min(1, (e.endAt - rn) / 0.35));
-      if (fade <= 0) { this.firewalls.delete(e); this.scene.remove(e.group); continue; }
+      if (fade <= 0) { this.firewalls.delete(e); this.drop(e.group); continue; }
       // heat flicker on the light
       e.light.intensity = (8 + Math.sin(this.clock * 23) * 2 + (Math.random() - 0.5) * 3) * fade * k;
       const F = C.SPELLBOOK.firewall, W = F.width, rate = this.low ? 0.5 : 1;
@@ -1553,7 +1594,7 @@ export class Effects {
     }
     for (const e of this.cages || []) {
       const k = Math.min(1, (rn - e.born) / 0.35), fade = Math.max(0, Math.min(1, (e.endAt - rn) / 0.5 + 1));
-      if (rn > e.endAt + 0.5) { this.cages.delete(e); this.scene.remove(e.group); continue; }
+      if (rn > e.endAt + 0.5) { this.cages.delete(e); this.drop(e.group); continue; }
       const grow = 1 - Math.pow(1 - k, 3);
       e.spikes.scale.y = Math.max(0.05, grow * (rn > e.endAt ? fade : 1));
       e.wall.scale.y = Math.max(0.05, grow * (rn > e.endAt ? fade : 1));
@@ -1567,7 +1608,7 @@ export class Effects {
     for (const e of this.smokes || []) {
       const grow = Math.min(1, (tNow - e.born) / 0.35);
       const fade = Math.max(0, Math.min(1, (e.endAt + SMOKE.fade - tNow) / SMOKE.fade));
-      if (fade <= 0) { this.smokes.delete(e); this.scene.remove(e.group); continue; }
+      if (fade <= 0) { this.smokes.delete(e); this.drop(e.group); continue; }
       for (const q of e.puffs) {
         const w = tNow * 0.6 + q.phase;
         q.sp.position.set(q.base.x + Math.sin(w) * 0.35, q.base.y + Math.sin(w * 0.7) * 0.15 + (1 - fade) * 0.6, q.base.z + Math.cos(w * 0.8) * 0.35);
@@ -1593,7 +1634,7 @@ export class Effects {
       const p = this.particles[i];
       p.life += dt;
       const k = p.life / p.maxLife;
-      if (k >= 1) { this.scene.remove(p.mesh); this.particles.splice(i, 1); continue; }
+      if (k >= 1) { this.drop(p.mesh); this.particles.splice(i, 1); continue; }
       p.vel.y -= (p.grav || 0) * dt;
       p.mesh.position.addScaledVector(p.vel, dt);
       if (p.grow) p.mesh.scale.addScalar(p.grow * dt);
@@ -1609,7 +1650,7 @@ export class Effects {
     for (let i = this.debris.length - 1; i >= 0; i--) {
       const d = this.debris[i];
       d.life += dt;
-      if (d.life > d.maxLife) { this.scene.remove(d.mesh); this.debris.splice(i, 1); continue; }
+      if (d.life > d.maxLife) { this.drop(d.mesh); this.debris.splice(i, 1); continue; }
       d.vel.y -= 16 * dt;
       d.mesh.position.addScaledVector(d.vel, dt);
       if (d.mesh.position.y < 0.08) { d.mesh.position.y = 0.08; d.vel.y *= -0.35; d.vel.x *= 0.7; d.vel.z *= 0.7; d.spin.multiplyScalar(0.5); }
