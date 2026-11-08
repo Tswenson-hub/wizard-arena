@@ -2004,7 +2004,7 @@ python3 deploy/perf_test.py http://localhost:410x --quality low --seconds 30 --j
 |---|---|---|---|---|---|---|
 | 0 ms | 56.4 | 16.7 / 17.6 / **2133** | 8 (5) | 58 (160) | **361k** (448k) | **174** (39) |
 | +200 ms | 57.9 | 16.7 / 17.6 / **767** | 7 (4) | 81 (147) | **380k** (399k) | **233** (91) |
-| 15 s probe | 21.6 | 16.7 / 49.4 / 3383 | 14 (5) | 139 (213) | 388k | 146 (24) |
+| 15 s probe (first draft of the harness) | 21.6 | 16.7 / 49.4 / 3383 | 14 (5) | 95 (one mid-match sample) | 388k (same) | 146 (24) |
 
 - The hitches are compiles: the 2.1 s frame lines up with a 2.2 s snapshot gap the page saw, while the proxy delivered snapshots
   every 50 ms (max 136 ms). Fix the warm-up and the max frame goes with it.
