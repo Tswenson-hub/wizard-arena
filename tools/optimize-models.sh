@@ -9,6 +9,9 @@
 #   tools/optimize-models.sh kit <src-gltf-dir> <subdir> name...
 #     round 15: KayKit / Quaternius glTF pieces -> public/models/<subdir>/<name>.glb, meshopt, images stripped (world.js
 #     gives each kit one shared material set: castle/dungeon_texture.webp, village/*.webp)
+#     KIT_SIMPLIFY="<ratio> <error>" also simplifies them (uvs and normals kept). Round 20: the village's round-tile roofs,
+#     KIT_SIMPLIFY="0.25 0.005" tools/optimize-models.sh kit <MegaKit>/glTF village Roof_Tower_RoundTiles Roof_RoundTiles_6x14
+#     (4024 -> 2054 and 5372 -> 2373 triangles; KayKit's castle pieces won't go: every brick is its own piece)
 #   tools/optimize-models.sh pack <name> [maps-px] [simplify-ratio]
 #     meshopt-compress public/models/<name>.glb in place (EXT_meshopt_compression: world.js and the editor set
 #     three's MeshoptDecoder on their GLTFLoaders), shrinking its normal/roughness maps to maps-px (default 512;
@@ -78,16 +81,19 @@ kitpack() { # dst-dir src.gltf... : glTF -> meshopt GLB without its images (worl
   cat > "$TMP/kit/kit.mjs" <<'JS'
 import { NodeIO } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
-import { meshopt, prune, weld } from '@gltf-transform/functions';
-import { MeshoptEncoder } from 'meshoptimizer';
+import { meshopt, prune, simplify, weld } from '@gltf-transform/functions';
+import { MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
 import path from 'node:path';
 const [dst, ...srcs] = process.argv.slice(2);
-await MeshoptEncoder.ready;
+const [ratio, error] = (process.env.KIT_SIMPLIFY || '').split(' ').map(Number);
+await MeshoptEncoder.ready; await MeshoptSimplifier.ready;
 const io = new NodeIO().registerExtensions(ALL_EXTENSIONS).registerDependencies({ 'meshopt.encoder': MeshoptEncoder });
 for (const src of srcs) {
   const doc = await io.read(src);
   for (const t of doc.getRoot().listTextures()) t.dispose();     // materials keep their names (and factors); textures go
-  await doc.transform(weld(), prune({ keepAttributes: true }), meshopt({ encoder: MeshoptEncoder, level: 'high', quantizePosition: 14, quantizeNormal: 8 }));
+  await doc.transform(weld(), prune({ keepAttributes: true }));
+  if (ratio) await doc.transform(simplify({ simplifier: MeshoptSimplifier, ratio, error }));
+  await doc.transform(meshopt({ encoder: MeshoptEncoder, level: 'high', quantizePosition: 14, quantizeNormal: 8 }));
   const out = path.join(dst, path.basename(src).replace(/\.gltf$/, '.glb'));
   await io.write(out, doc);
   console.log(out);
