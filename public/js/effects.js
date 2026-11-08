@@ -273,6 +273,51 @@ export class Effects {
     obj.userData.lights = null;
   }
 
+  // ---------------------------------------------------------------- warm-up (round 20)
+  // One of every projectile (both shots), impact and zone at `at`, so main.js can compile their shaders behind the loading
+  // screen (a program compiled mid-match is a 100-250 ms hitch). `wiz` stands in for a caster ({ group, yaw }).
+  // clearAll() takes it all away again.
+  warmUp(at, wiz) {
+    const p = [at.x, at.y, at.z], fl = [at.x, 0, at.z], left = 5;
+    const T = (f) => { try { f(); } catch (e) { console.warn('[warm-up]', e?.message || e); } };
+    let id = -1;
+    const shot = (kind, fin, extra = {}) => ({ id: id--, kind, fin, p, v: [0, 0, 8], life: 2, color: 0x7ad8ff, ...extra });
+    const kinds = ['fast', 'heavy', 'fireball', 'hex', 'siphon', 'skim', 'shear', 'sling', 'potion', 'toxic', 'flaskstep'];
+    for (const kind of kinds) for (const fin of [false, true]) T(() => {
+      this.spawnProjectile(shot(kind, fin));
+      const hit = shot(kind, fin); this.spawnProjectile(hit); this.endProjectile({ id: hit.id, hit: true, p });   // its impact
+    });
+    for (const propType of Object.keys(C.PROP_TYPES)) T(() => { this.spawnProjectile(shot('prop', false, { propType })); this.propBreak(propType, p); });
+    T(() => this.muzzle(shot('fireball', true)));
+    T(() => this.ram(p, false)); T(() => this.ram(p, true)); T(() => this.blockFlash(at));
+    T(() => this.teleport(p, p)); T(() => this.cyclonePulse(p, 5)); T(() => this.skyward(fl, 3)); T(() => this.land(fl)); T(() => this.death(fl));
+    T(() => this.siphonTracer(p, wiz.group)); T(() => this.bind(p)); T(() => this.decoyPuff(p, 0xb48cff, true)); T(() => this.mirror(p, [p]));
+    T(() => this.wallShatter(this.wall({ id: 1, x: at.x, y: 0, z: at.z, yaw: 0, hp: 100 }), { id: 1, x: at.x, z: at.z, yaw: 0 }));
+    T(() => this.wall({ id: 2, x: at.x, y: 0, z: at.z, yaw: 0, hp: 50 }));
+    T(() => this.relicBlast(p, 3)); T(() => this.relicFuse(p, 1)); T(() => this.veilGust(p)); T(() => this.veilPop(p));
+    T(() => this.smoke(fl, left)); T(() => { const e = this.frostfall(fl, left); this.frostfallImpact(e, fl); }); T(() => this.frostfall(fl, left));
+    T(() => this.eyeStorm(wiz.group)); T(() => this.eyeBurst(p)); T(() => this.nightCage(fl, left));
+    T(() => this.firewall({ id: 1, x: at.x, y: 0, z: at.z, yaw: 0, left })); T(() => this.burnUp(p)); T(() => this.ramPoof(p));
+    T(() => this.stampedeLane(fl, [0, 0, 1], 4, 10, left)); T(() => this.ultTell(wiz.group, left, 0xffffff)); T(() => this.ultFizzle(at));
+    T(() => this.blizzard(wiz, left)); T(() => this.fireLaunch(fl, 3)); T(() => this.flameAura(wiz.group)); T(() => this.blazeDive(p, [at.x, 0, at.z + 4], 1));
+    T(() => this.scorch(fl, false)); T(() => this.scorch(fl, true)); T(() => this.potionShatter(p, 3)); T(() => this.toxicPool(fl, left));
+    T(() => this.flaskSmoke(fl)); T(() => this.smokeFlask(fl, left)); T(() => this.brewAura(wiz, left));
+    T(() => { this.hitFlash(at); this.slash(at); this.fireBurst(at); this.smokeBurst(at); this.scorchDecal(at, 1); this.groundRing(at, 2); this.dust(at); this.healShimmer(at); this.ultGlow(at, 0xffffff); });
+  }
+  clearAll() {
+    for (const pr of this.projectiles.values()) { this.drop(pr.group); for (const c of pr.cores || []) if (c) c.dead = true; }
+    this.projectiles.clear();
+    for (const set of Object.values(this)) {
+      if (!(set instanceof Set)) continue;
+      for (const e of set) { this.drop(e.group || e.mesh); if (e.eyes) this.drop(e.eyes); }
+      set.clear();
+    }
+    for (const p of this.particles) this.drop(p.mesh);
+    for (const d of this.debris) this.drop(d.mesh);
+    this.particles.length = 0; this.debris.length = 0;
+    for (const L of [this.sprites.add, this.sprites.norm]) L.list.length = 0;
+  }
+
   // ---------------------------------------------------------------- projectiles
   spawnProjectile(msg) {
     const g = new THREE.Group();

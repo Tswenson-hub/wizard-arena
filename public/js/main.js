@@ -8,15 +8,15 @@ import { buildWorld, makePropMesh, spinners, loadModels } from './world.js';
 import * as World from './world.js';   // round 14: cameraClearance / cameraCutaway (environment), looked up by name
 import { RamView, loadRamModel } from './rams.js';
 import { Wizard } from './wizard.js';
-import { loadWizardModels } from './looks.js';
+import { loadWizardModels, BODY_KINDS } from './looks.js';
 import { Effects } from './effects.js';
 import * as Select from './select.js';
 import { loadLoadout, saveLoadout, loadVoice, saveVoice, loadSaved, saveSaved } from './loadout-store.js';
 import { spellPlay } from './spellanim.js';
 import * as spellanim from './spellanim.js';   // (rollKey: round 12, may not be there yet)
 import { mountMatchUI } from './match-ui.js';
-import * as Podium from './podium.js';
-import * as Q from './quality.js';   // round 20: graphics tiers (high / normal / low), the Graphics setting and auto quality   // round 16: the end-of-match podium (characters agent); importing it preloads the stage
+import * as Podium from './podium.js';   // round 16: the end-of-match podium (characters agent); importing it preloads the stage
+import * as Q from './quality.js';   // round 20: graphics tiers (high / normal / low), the Graphics setting and auto quality
 
 // ---------------------------------------------------------------- setup
 const canvas = document.getElementById('game');
@@ -214,6 +214,49 @@ const spellName = (id) => SPELL[id]?.name || id;
 const shortName = (id) => SPELL[id]?.short || spellName(id);
 
 // ---------------------------------------------------------------- loading
+// Round 20: shader warm-up behind the loading screen. A shader program compiled mid-match is a 100-250 ms hitch (more on
+// a weak GPU), the first time each spell, body or prop shows. Before the join button wakes up, the world and one of
+// everything the match can show (a wizard of every body, each projectile, impact and zone, each prop, the faded props) is
+// put in front of the camera with every hidden part shown, compiled, drawn once into a 1-pixel viewport (the shadow pass
+// and the textures' uploads), then taken away. The frame loop draws nothing meanwhile.
+let warming = false;
+async function warmUp() {
+  const t0 = performance.now(), info = renderer.info;
+  warming = true;
+  const temp = [], dummies = [];
+  try {
+    camera.position.set(0, 9, 26); camera.lookAt(0, 2, 0); camera.updateMatrixWorld();
+    const at = camera.getWorldDirection(new THREE.Vector3()).multiplyScalar(10).add(camera.position);
+    at.y = Math.max(0.5, at.y);
+    BODY_KINDS.forEach((body, i) => {
+      const w = makeWizard({ id: -100 - i, name: 'Warm', body, bot: i ? 'normal' : null, loadout: wantLoadout, color: C.loadoutColor(wantLoadout), p: [at.x + i - 2, at.y, at.z], yaw: 0 }, i === 0);
+      w.group.position.set(at.x + i - 2, at.y, at.z);
+      dummies.push(w);
+    });
+    for (const type of Object.keys(C.PROP_TYPES)) {
+      const m = makePropMesh(type), f = fadeWarm(m);
+      m.position.copy(at); f.position.copy(at).x += 1;
+      scene.add(m, f); temp.push(m, f);
+    }
+    effects.warmUp(at, dummies[0]);
+    await Promise.all([effects.iceWallModel, effects.acidModel]);   // (their models go onto the warm-up's wall and pool)
+    await new Promise(r => setTimeout(r, 0));
+    // every hidden part too (a wizard's ice, chains and ward; aim marks; the low tier's trees), shown for this frame only
+    const hidden = [];
+    scene.traverse(o => { if (!o.visible) { hidden.push(o); o.visible = true; } });
+    if (renderer.compileAsync) await renderer.compileAsync(scene, camera); else renderer.compile(scene, camera);
+    const vp = renderer.getViewport(new THREE.Vector4());
+    renderer.setViewport(0, 0, 1, 1);
+    renderer.render(scene, camera);
+    renderer.setViewport(vp);
+    for (const o of hidden) o.visible = false;
+  } catch (e) { console.warn('[warm-up]', e); }
+  effects.clearAll();
+  for (const w of dummies) w.dispose(scene);
+  for (const m of temp) scene.remove(m);
+  warming = false;
+  console.log(`[warm-up] ${info.programs?.length ?? '?'} shader programs in ${Math.round(performance.now() - t0)} ms`);
+}
 try {
   ui.name.value = localStorage.getItem('wizardName') || '';
   const bots = JSON.parse(localStorage.getItem('wizardBots') || 'null');
@@ -224,7 +267,9 @@ ui.joinBtn.disabled = true;
 const loader = new GLTFLoader();
 loadRamModel(loader);   // (not waited on: a ram is a box until it arrives)
 // round 15: the KayKit bodies and clips (looks.js loads models/characters/*)
-Promise.all([loadWizardModels(loader), loadModels(loader, scene)]).then(() => {
+Promise.all([loadWizardModels(loader), loadModels(loader, scene)]).then(async () => {
+  ui.loadStatus.textContent = 'Preparing the spells…';
+  await warmUp();
   ui.loadStatus.textContent = 'Ready. Pick a name and enter.';
   ui.joinBtn.disabled = false;
   if (!ui.name.value) ui.name.value = 'Wizard' + Math.floor(Math.random() * 900 + 100);
@@ -2601,8 +2646,11 @@ function updateCamera(dt) {
 }
 
 // Round 15: props (barrels, crates, kegs, chests, potion barrels) are small and move, so they aren't camera blockers: a prop
-// near a sight line from the camera to our wizard fades to see-through instead (each faded prop gets its own material copies the
-// first time, so the others of its type stay solid). Held props count too.
+// near a sight line from the camera to our wizard fades to see-through instead. Held props count too.
+// Round 20: no per-prop material copies (each was a new material, and a transparent one a new shader program, mid-match):
+// a faded prop wears shared dithered variants of its own materials. Each stays opaque and drops a growing share of its
+// pixels in a 4×4 pattern, FADE_LEVELS steps from solid to PROP_FADE.alpha: one extra program per kind of material
+// (compiled in the warm-up) and a few materials per kind, whatever the number of props.
 const camDirFade = new THREE.Vector3();
 const PROP_FADE = { alpha: 0.22, pad: 0.6, close: 2.2, rate: 10 };
 const segDist3 = (p, a, b) => {
@@ -2610,6 +2658,31 @@ const segDist3 = (p, a, b) => {
   const k = Math.max(0, Math.min(1, ((p.x - a.x) * abx + (p.y - a.y) * aby + (p.z - a.z) * abz) / L2));
   return Math.hypot(a.x + abx * k - p.x, a.y + aby * k - p.y, a.z + abz * k - p.z);
 };
+const FADE_LEVELS = [1, 0.82, 0.64, 0.46, 0.3, 0.22];
+const fadeVariants = new WeakMap();   // material -> its variants by level (index 1..)
+const BAYER = 'const float WA_BAYER[16] = float[16](0.,8.,2.,10.,12.,4.,14.,6.,3.,11.,1.,9.,15.,7.,13.,5.);\n';
+function fadeMaterial(base, level) {
+  if (!level) return base;
+  let list = fadeVariants.get(base);
+  if (!list) fadeVariants.set(base, list = []);
+  if (list[level]) return list[level];
+  const m = base.clone(), u = { value: FADE_LEVELS[level] }, prev = base.onBeforeCompile, key = base.customProgramCacheKey();
+  m.onBeforeCompile = function (sh, r) {
+    prev.call(this, sh, r);
+    sh.uniforms.uFade = u;
+    sh.fragmentShader = sh.fragmentShader.replace('void main() {', `uniform float uFade;\n${BAYER}void main() {
+  { ivec2 q = ivec2(mod(gl_FragCoord.xy, 4.0)); if (uFade < (WA_BAYER[q.x + q.y * 4] + 0.5) / 16.0) discard; }`);
+  };
+  m.customProgramCacheKey = () => key + '|wa-dither';
+  return list[level] = m;
+}
+const fadeLevel = (f) => { let best = 0; for (let i = 1; i < FADE_LEVELS.length; i++) if (Math.abs(FADE_LEVELS[i] - f) < Math.abs(FADE_LEVELS[best] - f)) best = i; return best; };
+// the warm-up: a copy of a prop in its faded look (shares its geometry; the variants are the ones the match will use)
+function fadeWarm(m) {
+  const c = m.clone();
+  c.traverse(o => { if (o.isMesh) o.material = Array.isArray(o.material) ? o.material.map(x => fadeMaterial(x, 3)) : fadeMaterial(o.material, 3); });
+  return c;
+}
 function fadeBlockingProps(dt) {
   const eye = camera.position, body = tmp.fadeBody ??= new THREE.Vector3(), c = tmp.fadeC ??= new THREE.Vector3();
   // sight lines from the camera to our feet, waist, chest and hat: a prop on any of them hides part of us
@@ -2626,18 +2699,15 @@ function fadeBlockingProps(dt) {
     const block = m.visible && (near(c) < Math.max(spec.r, spec.h * 0.5) + PROP_FADE.pad || (ahead > -0.3 && c.distanceTo(eye) < PROP_FADE.close + spec.r));
     const want = block ? PROP_FADE.alpha : 1;
     e.fade = (e.fade ?? 1) + (want - (e.fade ?? 1)) * Math.min(1, dt * PROP_FADE.rate);
-    if (e.fade > 0.995 && !e.fadeMats) continue;
-    if (!e.fadeMats) {   // first fade: this prop's own materials
-      e.fadeMats = [];
-      m.traverse(o => { if (!o.isMesh) return; o.material = (Array.isArray(o.material) ? o.material : [o.material]).map(x => { const k = x.clone(); e.fadeMats.push({ m: k, base: x.opacity ?? 1, tr: x.transparent }); return k; }); if (o.material.length === 1) o.material = o.material[0]; });
+    const level = fadeLevel(e.fade);
+    if (e.fadeMesh !== m) { e.fadeMesh = m; e.fadeLevel = 0; e.fadeBase = null; }
+    if (level === (e.fadeLevel ?? 0)) continue;
+    e.fadeLevel = level;
+    if (!e.fadeBase) { e.fadeBase = []; m.traverse(o => { if (o.isMesh) e.fadeBase.push([o, o.material, o.castShadow]); }); }   // its own materials
+    for (const [o, base, cast] of e.fadeBase) {
+      o.material = Array.isArray(base) ? base.map(x => fadeMaterial(x, level)) : fadeMaterial(base, level);
+      o.castShadow = cast && e.fade > 0.6;
     }
-    const solid = e.fade > 0.995;
-    for (const f of e.fadeMats) {
-      const tr = solid ? f.tr : true;
-      if (f.m.transparent !== tr) { f.m.transparent = tr; f.m.needsUpdate = true; }
-      f.m.opacity = f.base * e.fade; f.m.depthWrite = solid;
-    }
-    m.traverse(o => { if (o.isMesh) o.castShadow = solid || e.fade > 0.6; });
   }
 }
 
@@ -2831,6 +2901,7 @@ function stopWizardAudio(w) { w.sndCharge?.stop(); w.sndWard?.stop(); w.sndHold?
 let last = performance.now(), lastFrameT = 0;
 function frame(t) {
   requestAnimationFrame(frame);
+  if (warming) return;   // (round 20: the shader warm-up has the scene)
   const dt = Math.min(0.05, (t - last) / 1000); last = t;
   now = t / 1000;
 
