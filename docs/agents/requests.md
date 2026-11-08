@@ -2030,4 +2030,4 @@ python3 deploy/perf_test.py http://localhost:410x --quality low --seconds 30 --j
   ping, whatever Render runs now): 57.6 fps, frame p50 16.7 / p95 18.5 / max **717** ms, 8 frames > 100 ms (4 after 10 s),
   82 draw calls, **377k** triangles, **259** programs (**98** linked after 10 s), remote wizards jump 9.0 / min, reversals 4.0 / min.
   Note the live URL is **wizard-arena-76od**.onrender.com: plain `wizard-arena.onrender.com` is somebody else's site (my old smoke.py
-  usage line had it wrong, fixed in the commit below).
+  usage line had it wrong, fixed in `fe6f97f`).
