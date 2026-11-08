@@ -8,6 +8,7 @@
 //   Podium.start(msg, { renderer, scene, onEnd })  play the recap for a {t:'recap'} message; `scene` lends its sky
 //   Podium.active()                             true while it plays: render with Podium.frame(dt) instead of the arena
 //   Podium.frame(dt)                            advance and draw (uses `renderer`)
+//   Podium.warm(renderer, scene, camera)        round 20: compile the recap's shaders behind the loading screen (awaits preload)
 //   Podium.stop()                               end it now (the rematch countdown started, the player left); calls onEnd once
 // The message: { t: 'recap', duration?: 10, top: [{ name, place, body, loadout, color, kills, deaths, accolades: [{ icon, title,
 // value }] }, ...], rest: [{ name, place, kills, deaths }] }. Missing fields fall back (no accolades, the Mage, the default loadout).
@@ -63,15 +64,23 @@ function dot() {
   return (dotTex = new THREE.CanvasTexture(c));
 }
 
-// A soft glow disc on a plinth top, and a ring of rising sparkles.
-function glow(color, r, n) {
+// Round 20: the recap's own materials are made once and kept (never disposed): disposing the last material of a kind lets three
+// delete its program, and the next recap would compile it again mid-game.
+const mats = {};
+const keep = (key, make) => mats[key] ??= make();
+
+// A soft glow disc on a plinth top, and a ring of rising sparkles (`place` picks the disc's material: it pulses on its own).
+function glow(color, r, n, place) {
   const g = new THREE.Group();
-  const disc = new THREE.Mesh(new THREE.CircleGeometry(r, 32).rotateX(-Math.PI / 2),
-    new THREE.MeshBasicMaterial({ map: dot(), color, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false }));
+  const discMat = keep('disc' + place, () => new THREE.MeshBasicMaterial({ map: dot(), transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false }));
+  discMat.color.setHex(color);
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(r, 32).rotateX(-Math.PI / 2), discMat);
   disc.position.y = 0.02; g.add(disc);
   const geo = new THREE.BufferGeometry(), pos = new Float32Array(n * 3);
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  const pts = new THREE.Points(geo, new THREE.PointsMaterial({ map: dot(), color, size: 0.12, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+  const ptsMat = keep('sparks' + place, () => new THREE.PointsMaterial({ map: dot(), size: 0.12, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+  ptsMat.color.setHex(color);
+  const pts = new THREE.Points(geo, ptsMat);
   pts.frustumCulled = false; g.add(pts);
   const seed = Array.from({ length: n }, (_, i) => [Math.random() * 6.283, Math.random(), 0.3 + Math.random() * 0.5]);
   g.userData.tick = (t) => {
@@ -88,8 +97,7 @@ function glow(color, r, n) {
 // Confetti over the winner: little coloured squares tumbling down, recycled at the top.
 function confetti(n, colors) {
   const geo = new THREE.PlaneGeometry(0.07, 0.11);
-  const mat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
-  const mesh = new THREE.InstancedMesh(geo, mat, n);
+  const mesh = new THREE.InstancedMesh(geo, keep('confetti', () => new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })), n);
   const st = [], col = new THREE.Color(), m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), s = new THREE.Vector3(1, 1, 1), p = new THREE.Vector3();
   for (let i = 0; i < n; i++) {
     st.push({ x: (Math.random() - 0.5) * 4.5, y: 2 + Math.random() * 5, z: (Math.random() - 0.5) * 2.5, v: 0.9 + Math.random() * 0.9, sp: Math.random() * 8, ph: Math.random() * 6 });
@@ -114,29 +122,63 @@ function confetti(n, colors) {
 let cur = null;
 export const active = () => !!cur;
 
-export function start(msg, { renderer, scene: arena, onEnd } = {}) {
-  stop(true);
-  const top = (msg.top || []).slice(0, 3).map((p, i) => ({ ...p, place: p.place || i + 1 }));
-  if (!top.length || !renderer) { onEnd?.(); return false; }
-  document.exitPointerLock?.();
-  const dur = msg.duration || DURATION;
-  const scene = new THREE.Scene();
-  scene.background = arena?.background || new THREE.Color(0x2a2238);
-  scene.environment = arena?.environment || null;
-  scene.add(new THREE.HemisphereLight(0xfff1dc, 0x40324a, 1.1));
-  const sun = new THREE.DirectionalLight(0xfff0d8, 1.6); sun.position.set(3, 8, 6); sun.castShadow = true;
-  sun.shadow.mapSize.set(1024, 1024); Object.assign(sun.shadow.camera, { left: -6, right: 6, top: 6, bottom: -2, near: 1, far: 20 });
-  scene.add(sun);
+// Round 20: the stage is lit with as many lights of each kind as the arena has (and its kind of fog), so its materials compile to
+// the programs the arena already has, plus the few that warm() compiles behind the loading screen: three builds a program per
+// light count, and a new one mid-game is a long hitch. The arena's spare lights (the effects' pool) stay dark here.
+function lightsLike(arena) {
+  const n = { HemisphereLight: [], DirectionalLight: [], PointLight: [], SpotLight: [] };
+  arena?.traverseVisible(o => { if (o.isLight && n[o.type]) n[o.type].push(o.castShadow); });
+  const out = [];
+  const make = (type, i) => {
+    const shadow = n[type][i];
+    if (type === 'HemisphereLight') return i ? new THREE.HemisphereLight(0, 0, 0) : new THREE.HemisphereLight(0xfff1dc, 0x40324a, 1.1);
+    if (type === 'DirectionalLight') {
+      const l = new THREE.DirectionalLight(0xfff0d8, i ? 0 : 1.6);
+      l.position.set(3, 8, 6); l.castShadow = shadow;
+      if (shadow) { l.shadow.mapSize.set(1024, 1024); Object.assign(l.shadow.camera, { left: -6, right: 6, top: 6, bottom: -2, near: 1, far: 20 }); }
+      return l;
+    }
+    if (type === 'SpotLight') { const l = new THREE.SpotLight(0xffffff, 0); l.castShadow = shadow; return l; }
+    // point lights: the two torches, then the winner's key light (it was a spotlight), the rest dark
+    const l = new THREE.PointLight(0xff9a40, 0, 6); l.castShadow = shadow;
+    if (i < 2) { l.intensity = 4; l.position.set(i ? 3.3 : -3.3, 2.4, -1.8); }
+    else if (i === 2) { l.color.setHex(0xffe2a0); l.intensity = 16; l.distance = 5.5; l.decay = 1.2; l.position.set(0, 3.9, 1.5); }
+    return l;
+  };
+  for (const type of Object.keys(n)) for (let i = 0; i < n[type].length; i++) out.push(make(type, i));
+  // no arena (a tool): the stage's own lights
+  if (!arena) out.push(make('HemisphereLight', 0), make('DirectionalLight', 0));
+  return out;
+}
+function fogLike(arena) {
+  const f = arena?.fog;
+  if (!f) return null;
+  return f.isFogExp2 ? new THREE.FogExp2(f.color, 0) : new THREE.Fog(f.color, 500, 1000);   // (the same program, no haze on the stage)
+}
 
-  // the stage: a stone floor, a wall of arches with pillars, torches, and the three plinths with banners in each player's colour
-  const stage = new THREE.Group(); scene.add(stage);
+// The stone floor, the wall of arches, pillars and torches: built once and reused.
+let stageCache = null;
+function staticStage() {
+  if (stageCache) return stageCache;
+  const stage = new THREE.Group();
   for (let x = -3; x <= 3; x++) for (let z = -2; z <= 1; z++) { const f = piece('floor_tile_large'); f.position.set(x * 3.33, 0, z * 3.33); stage.add(f); }
   for (let x = -3; x <= 3; x++) { const w = piece('wall_arched'); w.position.set(x * 3.33, 0, -2.6); stage.add(w); }
   for (const x of [-5, 5]) { const p = piece('pillar_decorated'); p.position.set(x, 0, -2.0); stage.add(p); }
-  for (const x of [-3.3, 3.3]) {
-    const t = piece('torch_mounted'); t.position.set(x, 1.9, -2.15); stage.add(t);
-    const l = new THREE.PointLight(0xff9a40, 4, 6); l.position.set(x, 2.4, -1.8); stage.add(l);
-  }
+  for (const x of [-3.3, 3.3]) { const t = piece('torch_mounted'); t.position.set(x, 1.9, -2.15); stage.add(t); }
+  if (pieces) stageCache = stage;
+  return stage;
+}
+
+function build(top, arena) {
+  const scene = new THREE.Scene();
+  scene.background = arena?.background || new THREE.Color(0x2a2238);
+  scene.environment = arena?.environment || null;
+  scene.fog = fogLike(arena);
+  for (const l of lightsLike(arena)) scene.add(l);
+
+  // the stage, and the three plinths with banners in each player's colour
+  const stage = new THREE.Group(); scene.add(stage);
+  stage.add(staticStage());
   const bodies = [], ticks = [];
   const emote = emoteClips();
   for (const p of top) {
@@ -151,7 +193,7 @@ export function start(msg, { renderer, scene: arena, onEnd } = {}) {
     body.model.position.set(P.x, P.h, 0);
     body.model.rotation.y = P.x * -0.12;                 // turned a little towards the middle
     stage.add(body.model);
-    const g = glow(p.place === 1 ? 0xffd86a : MEDAL[p.place], p.place === 1 ? 0.95 : 0.7, p.place === 1 ? 24 : 10);
+    const g = glow(p.place === 1 ? 0xffd86a : MEDAL[p.place], p.place === 1 ? 0.95 : 0.7, p.place === 1 ? 24 : 10, p.place);
     g.position.set(P.x, P.h, 0); stage.add(g); ticks.push(g.userData.tick);
     const mixer = new THREE.AnimationMixer(body.model);
     const skel = body.kind !== 'mage';
@@ -160,12 +202,19 @@ export function start(msg, { renderer, scene: arena, onEnd } = {}) {
     if (clip === emote.clap && body.grip) body.grip.visible = false;     // the staff is tucked away to clap
     bodies.push({ p, P, body, mixer, color });
   }
-  // the winner's spotlight and confetti in the top three's colours
-  const spot = new THREE.SpotLight(0xffe2a0, 60, 14, 0.32, 0.5, 1.2);
-  spot.position.set(0, 7.5, 3.5); spot.target.position.set(0, PLINTHS[1].h, 0); scene.add(spot, spot.target);
+  // confetti in the top three's colours (the winner's key light is one of the point lights, see lightsLike)
   const conf = confetti(180, [0xffc857, 0xff5c6a, 0x7fd8ff, 0x9cff50, 0xffffff, ...bodies.map(b => b.body.look.color)]);
   stage.add(conf); ticks.push(conf.userData.tick);
+  return { scene, bodies, ticks };
+}
 
+export function start(msg, { renderer, scene: arena, onEnd } = {}) {
+  stop(true);
+  const top = (msg.top || []).slice(0, 3).map((p, i) => ({ ...p, place: p.place || i + 1 }));
+  if (!top.length || !renderer) { onEnd?.(); return false; }
+  document.exitPointerLock?.();
+  const dur = msg.duration || DURATION;
+  const { scene, bodies, ticks } = build(top, arena);
   const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 200);
   const ui = overlay(top, msg.rest || [], dur, () => stop());
   cur = { scene, camera, renderer, bodies, ticks, ui, t: 0, dur, onEnd };
@@ -205,14 +254,42 @@ export function frame(dt) {
   if (c.t >= c.dur) stop();
 }
 
+function dispose(scene, bodies) {
+  for (const b of bodies) b.mixer.stopAllAction();
+  scene.traverse(o => { if (o.isPoints || o.isInstancedMesh) o.geometry.dispose(); });
+  stageCache?.removeFromParent();
+}
+
 export function stop(silent) {
   const c = cur;
   if (!c) return;
   cur = null;
   c.ui.remove();
-  for (const b of c.bodies) b.mixer.stopAllAction();
-  c.scene.traverse(o => { if (o.isPoints || o.isInstancedMesh) { o.geometry.dispose(); o.material.dispose(); } });
+  dispose(c.scene, c.bodies);
   if (!silent) c.onEnd?.();
+}
+
+// Round 20: build a recap (a Mage, a Skeleton and a Mage of another element) with the arena's lights, compile it and draw it once
+// into a 1-pixel viewport (the textures' uploads too), then drop it: the real recap then compiles nothing. For the warm-up behind
+// the loading screen; the arena must already have its lights (the world and the effects' light pool).
+export async function warm(renderer, arena, camera) {
+  if (!renderer || cur) return;
+  await Promise.all([looksReady(), preload()]);
+  const top = [{ place: 1, body: 'mage', loadout: C.DEFAULT_LOADOUT }, { place: 2, body: 'skeleton_mage' },
+    { place: 3, body: 'mage', loadout: { ...C.DEFAULT_LOADOUT, primary: 'fireball' } }];
+  const { scene, bodies, ticks } = build(top, arena);
+  for (const b of bodies) b.mixer.update(0.01);
+  for (const tick of ticks) tick(0.5, 0.01);
+  const cam = new THREE.PerspectiveCamera(40, camera?.aspect || 16 / 9, 0.1, 200);   // (its own: the arena's camera stays put)
+  cameraAt(5, cam);
+  try {
+    if (renderer.compileAsync) await renderer.compileAsync(scene, cam); else renderer.compile(scene, cam);
+    const vp = renderer.getViewport(new THREE.Vector4());
+    renderer.setViewport(0, 0, 1, 1);
+    renderer.shadowMap.needsUpdate = true;   // (the bodies' shadow programs too, when the shadows don't update every frame)
+    renderer.render(scene, cam);
+    renderer.setViewport(vp);
+  } finally { dispose(scene, bodies); }
 }
 
 // ---------------------------------------------------------------- the overlay
