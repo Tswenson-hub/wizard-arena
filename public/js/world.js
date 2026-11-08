@@ -64,18 +64,15 @@ export const SKY = { horizon: 0x48d7f2, fog: 0x7cc9de };
 
 // ------------------------------------------------------------ quality tiers (round 20)
 // quality.js (spells) owns the tier; world.js follows it (onQuality): the sun's shadow map (quality.js's shadowSize, and
-// how far round the view it reaches) and the trees (low draws the ring round the castle as impostors too). Whether there
+// how far round the view it reaches) and the distance LODs (LOD_DIST, re-sorted by lodTick). Whether there
 // are shadows at all and how many torch lights there are follow the tier we *booted* on (changing either recompiles every
 // lit shader). In the game the shadow camera follows the view (see shadowFollow); the editor keeps one wide static shadow.
 const SHADOW = { high: { half: 30, ahead: 12 }, normal: { half: 24, ahead: 10 }, low: { half: 20, ahead: 8 } };
 const SUN_DIR = new THREE.Vector3(30, 50, 20).normalize(), SUN_DIST = 70;
 let quality = Q.getTier();
 let sun = null, followShadow = false;
-const treeTiers = { models: null, impostors: null };   // the ring round the castle: its models (high, normal) or impostors (low)
 Q.onQuality((tier) => { quality = tier; applyQuality(); });
 function applyQuality() {
-  if (treeTiers.models) treeTiers.models.visible = quality !== 'low';
-  if (treeTiers.impostors) treeTiers.impostors.visible = quality === 'low';
   if (!sun || !followShadow) return;
   const S = SHADOW[quality], size = Q.params(quality).shadowSize;
   sun.castShadow = Q.boot.shadows !== 'off';
@@ -123,7 +120,7 @@ export function buildWorld(scene) {
   scene.add(hemi);
   sun = new THREE.DirectionalLight(0xffe9c4, 2.3);
   sun.position.copy(SUN_DIR).multiplyScalar(SUN_DIST);
-  sun.castShadow = true;
+  sun.castShadow = Q.boot.shadows !== 'off';   // (from the start: a light that stops casting later recompiles every lit shader)
   sun.shadow.mapSize.set(2048, 2048);
   // the editor's static shadow covers the castle and the trees round it; the game's follows the view (applyQuality)
   sun.shadow.camera.left = -42; sun.shadow.camera.right = 42;
@@ -136,7 +133,9 @@ export function buildWorld(scene) {
 
   // Ground: a big grid, flat inside the arena and rising into rolling hills outside it, all Ty's grass. The courtyard's
   // stone floor is drawn over it (layout 'floor' entries, see loadModels).
-  const groundGeo = new THREE.PlaneGeometry(240, 240, 72, 72);
+  // (round 20: its grid follows the boot tier; the hills are gentle and the fog takes their far side)
+  const seg = { high: 72, normal: 48, low: 32 }[Q.boot.tier] ?? 48;
+  const groundGeo = new THREE.PlaneGeometry(240, 240, seg, seg);
   groundGeo.rotateX(-Math.PI / 2);
   {
     const pos = groundGeo.attributes.position;
@@ -214,15 +213,14 @@ function fitModel(gltf, height, yaw = 0) {
 // Seeded so every client draws the same scatter.
 function seeded(seed) { return () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }; }
 // [x, z, yaw, height] per instance, by model: the low-poly *_far trees (about 1-1.6k triangles, sloppy-simplified) in a
-// loose ring close round the castle (from the wall-walk they're 7 m and more away), and, round 20, the many more out on
-// the hills as impostors (FAR_TREES: two crossed quads each, all in one draw call; they were 138k triangles as models).
+// loose ring close round the castle (from the wall-walk they're 7 m and more away) and many more out on the hills. Round
+// 20: each one past LOD_DIST.tree is drawn as an impostor (treeLod), which is nearly all of the hills' (they were 138k
+// triangles as models).
 const SCATTER = { pine_far: [], oak_far: [], birch_far: [] };
-const FAR_TREES = [];   // [x, z, yaw, height, kind] (kind: IMPOSTOR.cells index)
 const TREE_H = { pine: 9, oak: 7.5, birch: 8 };
 // Recomputed by buildWorld() from the current layout (the editor rebuilds the world after every change).
 function computeScatter() {
   for (const k in SCATTER) SCATTER[k].length = 0;
-  FAR_TREES.length = 0;
   const B = C.ARENA_BOUNDS, clear = 4;   // keep this far off the outer walls
   const outside = (x, z) => x < B.x0 - clear || x > B.x1 + clear || z < B.z0 - clear || z > B.z1 + clear;
   const FT = C.SCATTER_SETTINGS.farTrees || {}, rnd = seeded(FT.seed ?? 42);
@@ -237,12 +235,12 @@ function computeScatter() {
   for (let i = 0; i < (FT.count ?? 90); i++) {
     const a = rnd() * Math.PI * 2, r = C.ARENA_RADIUS + 12 + Math.pow(rnd(), 0.7) * 45, pick = rnd();
     const kind = pick < 0.55 ? 'pine' : pick < 0.8 ? 'oak' : 'birch';
-    FAR_TREES.push([Math.cos(a) * r, Math.sin(a) * r, rnd() * 6.3, TREE_H[kind] * (0.8 + rnd() * 0.5), IMPOSTOR.cells.indexOf(kind + '_far')]);
+    SCATTER[kind + '_far'].push([Math.cos(a) * r, Math.sin(a) * r, rnd() * 6.3, TREE_H[kind] * (0.8 + rnd() * 0.5)]);
   }
 }
 
 // Tree impostors: models/trees_impostor.webp (baked by tools/bake-impostors.py) has one square cell per *_far model,
-// `span` tree heights a side with the tree's foot at its bottom middle, lit like the game and not tone mapped. Each tree
+// `span` tree heights a side with the tree's foot at its bottom middle, lit like the game and not tone mapped. A far tree
 // is two crossed quads (4 triangles) sampling its cell, unlit (the bake carries the light), fogged, alpha-tested.
 const IMPOSTOR = { cells: ['pine_far', 'oak_far', 'birch_far'], span: 1.15 };
 let impostorMat = null;
@@ -252,25 +250,93 @@ function impostorMaterial() {
   t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
   return (impostorMat = new THREE.MeshBasicMaterial({ map: t, color: 0xe2e2e2, alphaTest: 0.5, side: THREE.DoubleSide }));   // a shade under the bake: the models' shaded sides
 }
-function treeImpostors(items) {
-  const n = items.length, pos = new Float32Array(n * 24), uv = new Float32Array(n * 16), idx = [];
-  const cw = 1 / IMPOSTOR.cells.length;
-  items.forEach(([x, z, yaw, h, kind], i) => {
-    const y0 = groundHeight(x, z) - 0.05 * h, s = IMPOSTOR.span * h, w = s / 2;
-    for (let q = 0; q < 2; q++) {
-      const a = yaw + q * Math.PI / 2, dx = Math.cos(a) * w, dz = Math.sin(a) * w, v = (i * 2 + q) * 4;
-      pos.set([x - dx, y0, z - dz, x + dx, y0, z + dz, x + dx, y0 + s, z + dz, x - dx, y0 + s, z - dz], v * 3);
-      uv.set([kind * cw, 0, (kind + 1) * cw, 0, (kind + 1) * cw, 1, kind * cw, 1], v * 2);
-      idx.push(v, v + 1, v + 2, v, v + 2, v + 3);
-    }
+// One tree impostor as an instance: the two crossed quads of `kind`'s cell, 1 unit = the tree's height (like instanced()'s
+// normalised models, so a tree's instance matrix places its impostor too).
+function impostorUnit(kind) {
+  const s = IMPOSTOR.span, w = s / 2, u0 = kind / IMPOSTOR.cells.length, u1 = (kind + 1) / IMPOSTOR.cells.length;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute([-w, 0, 0, w, 0, 0, w, s, 0, -w, s, 0, 0, 0, -w, 0, 0, w, 0, s, w, 0, s, -w], 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute([u0, 0, u1, 0, u1, 1, u0, 1, u0, 0, u1, 0, u1, 1, u0, 1], 2));
+  geo.setIndex([0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7]);
+  return geo;
+}
+
+// ------------------------------------------------------------ distance LOD (round 20)
+// A LOD set draws the same placements with two sets of InstancedMeshes: `hi` (the real model) and `lo` (a cheap stand-in:
+// a kit piece's baked box, a tree's impostor). A placement is drawn hi while the camera is within the tier's distance of
+// it (a metre of hysteresis), lo past that; high has no LOD. Re-sorted only when the camera has moved half a metre or the
+// tier changed (lodTick, from the scene's onBeforeRender). An empty set is hidden, not drawn with no instances.
+const LOD_DIST = { kit: { high: Infinity, normal: 15, low: 8 }, tree: { high: Infinity, normal: 26, low: 0 } };
+const lodSets = [], lodAt = new THREE.Vector3(), _cam = new THREE.Vector3();
+let lodTier = null;
+function lodSet(kind, items, hi, lo, far = 1) {   // items: [{ x, z, m: instance Matrix4 }]; far: x the tier's distance
+  for (const im of [...hi, ...lo]) { items.forEach((it, i) => im.setMatrixAt(i, it.m)); im.computeBoundingSphere(); }
+  lodSets.push({ kind, items, hi, lo, far, near: new Uint8Array(items.length).fill(1) });
+  lodTier = null;
+}
+function lodTick(camera) {
+  if (!lodSets.length) return;
+  _cam.setFromMatrixPosition(camera.matrixWorld).setY(0);
+  if (lodTier === quality && _cam.distanceTo(lodAt) < 0.5) return;
+  lodAt.copy(_cam); lodTier = quality;
+  for (const S of lodSets) {
+    const D = LOD_DIST[S.kind][quality] * S.far;
+    let h = 0, l = 0;
+    S.items.forEach((it, i) => {
+      const d = Math.hypot(it.x - _cam.x, it.z - _cam.z), near = S.near[i] = !S.hi.length ? 0 : d < D - 1 ? 1 : d > D + 1 ? 0 : S.near[i];
+      if (near) { for (const im of S.hi) im.setMatrixAt(h, it.m); h++; } else { for (const im of S.lo) im.setMatrixAt(l, it.m); l++; }
+    });
+    for (const im of S.hi) { im.count = h; im.visible = h > 0; im.instanceMatrix.needsUpdate = true; }
+    for (const im of S.lo) { im.count = l; im.visible = l > 0; im.instanceMatrix.needsUpdate = true; }
+  }
+}
+// Every tree outside the walls: its model near, its impostor past LOD_DIST.tree (all impostors on low).
+function treeMatrix([x, z, yaw, h]) {
+  return new THREE.Matrix4().compose(new THREE.Vector3(x, groundHeight(x, z) - 0.05 * h, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw), new THREE.Vector3(h, h, h));
+}
+function treeLod(scene, name, group, items) {
+  const hi = group ? [...group.children] : [], lo = [new THREE.InstancedMesh(impostorUnit(IMPOSTOR.cells.indexOf(name)), impostorMaterial(), items.length)];
+  for (const im of [...hi, ...lo]) { im.userData.cat = 'trees'; scene.add(im); }
+  lodSet('tree', items.map(it => ({ x: it[0], z: it[1], m: treeMatrix(it) })), hi, lo);
+}
+// Kit pieces (KIT_LOD.models): the real piece near, past LOD_DIST.kit a box of up to five quads textured with its own
+// sides seen straight on (models/castle/kit_lod.webp + .json, baked by tools/bake-kit-lod.py), lit like the rest of the
+// stone. Cut-out pieces (a balustrade's gaps, a banner's outline, a grate) keep their empty texels transparent, so the
+// boxes are alpha-tested, and so are the near pieces (see kitHiMat): one shader program for both.
+// Neither casts a shadow: these pieces cast theirs from their shadow proxies (see SHADOW_PROXY), floor tiles none.
+// `far`: a model whose detail shows from further off switches that much later (a crack's depth reads at 20 m).
+const KIT_LOD = { json: './models/castle/kit_lod.json', tex: './models/castle/kit_lod.webp', far: { 'castle/wall_cracked': 1.6 } };
+let kitLodMat = null, kitHiMat = null;
+function kitLodGeometry(faces) {
+  const pos = [], nor = [], uv = [], idx = [];
+  faces.forEach((f, k) => {
+    pos.push(...f.pos); uv.push(...f.uv);
+    for (let i = 0; i < 4; i++) nor.push(...f.normal);
+    idx.push(4 * k, 4 * k + 1, 4 * k + 2, 4 * k, 4 * k + 2, 4 * k + 3);
   });
   const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   geo.setIndex(idx);
-  const mesh = new THREE.Mesh(geo, impostorMaterial());
-  mesh.userData.cat = 'trees';
-  return mesh;
+  return geo;
+}
+function kitLod(scene, model, meshes, items, faces, { cat, solid }) {
+  kitLodMat ??= new THREE.MeshStandardMaterial({ map: kitTexture(KIT_LOD.tex), roughness: 0.7, metalness: 0, alphaTest: 0.5 });
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), p = new THREE.Vector3(), s = new THREE.Vector3();
+  const mk = (geo, mat) => {
+    const im = new THREE.InstancedMesh(geo, mat, items.length);
+    im.castShadow = false; im.receiveShadow = true; im.userData.cat = cat;
+    scene.add(im);
+    return im;
+  };
+  // the real piece near: the stone's settings, alpha-tested too (the palette is opaque, nothing is cut) so the near pieces
+  // and their boxes share one shader program
+  kitHiMat ??= new THREE.MeshStandardMaterial({ map: kitTexture('./models/castle/dungeon_texture.webp'), roughness: 0.7, metalness: 0, alphaTest: 0.5 });
+  const hi = meshes.map(([geo]) => mk(geo, kitHiMat));
+  if (solid) for (const im of hi) im.userData.cam = 'solid';   // (the camera grid is built before the first re-sort: every piece)
+  lodSet('kit', items.map(it => ({ x: it.x, z: it.z, m: m.compose(p.set(it.x, it.y, it.z), q.setFromAxisAngle(up, it.yaw), s.setScalar(it.s)).clone() })),
+    hi, [mk(kitLodGeometry(faces), kitLodMat)], KIT_LOD.far[model]);
 }
 
 // One InstancedMesh per mesh in the model, normalised like fitModel (base on y = 0, centred on x/z,
@@ -420,7 +486,7 @@ function castsShadow(model) {
 const kitCat = (model, floor) => floor ? 'floors' : KIT_TORCH.test(model) ? 'torches' : model.split('/')[0];
 // Round 20: the solid, box-shaped pieces (about 100k of the castle's 128k shadow-casting triangles: every brick of every
 // wall) cast their shadow from their bounding box instead, 12 triangles a piece, all in one mesh that only the shadow
-// pass sees (it writes no colour and no depth). Each box is pulled in a little (SHADOW_PROXY.inset, never more than a
+// pass sees (it writes no colour and no depth, so it's invisible). Each box is pulled in a little (SHADOW_PROXY.inset, never more than a
 // quarter of a side) so a piece's own sunlit face is never inside its box. Pieces with openings (arches, open windows,
 // gates, broken walls, stairs, roofs) keep their real shadows. Game only; the editor keeps the real ones.
 const SHADOW_PROXY = { models: /^castle\/(wall|wall_cracked|wall_window_closed|wall_shelves|barrier|barrier_column|pillar|column|floor_tile_large)$/, inset: 0.1 };
@@ -437,7 +503,8 @@ function shadowProxyGeometry(model, items) {
   return out;
 }
 function shadowProxies(geos) {
-  proxyMat ??= new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+  // the castle stone's own material type and settings (colour and depth writes aren't part of a shader program): no new program
+  proxyMat ??= new THREE.MeshStandardMaterial({ map: kitTexture('./models/castle/dungeon_texture.webp'), roughness: 0.7, metalness: 0, colorWrite: false, depthWrite: false });
   const mesh = new THREE.Mesh(mergeGeometries(geos), proxyMat);
   for (const g of geos) g.dispose();
   mesh.castShadow = true; mesh.receiveShadow = false;
@@ -498,10 +565,13 @@ function floorTiles(F) {
 // Every torch's flame: an additive glow sprite (one Points draw call for all of them, flickering in its shader) and, for
 // up to TORCH_LIGHTS of them (layout `light: 1` first, then the ones nearest the courtyard's middle, at least 8 m apart),
 // a real point light. FLAME_AT: where the flame is in each torch model's own units.
+const FLAME_UV = [994.5 / 1024, 596.5 / 1024];   // a warm yellow swatch of models/castle/dungeon_texture.webp
+const CRYSTAL_UV = [90.5 / 1024, 262.5 / 1024];   // and a white one
 const FLAME_AT = { 'castle/torch_mounted': [0, 0.58, 0.42], 'castle/torch_lit': [0, 0.62, 0], 'castle/torch': [0, 0.55, 0] };
 // Round 20: every point light is shaded on every lit fragment, and the count can't change without recompiling, so it
-// follows the tier we booted on: 6 on high, 4 on normal, none on low (the flames still glow).
-export const TORCH_LIGHTS = { high: 6, normal: 4, low: 0 }[Q.boot.tier] ?? 4;
+// follows the tier we booted on: 6 on high and normal (4 lost the glow on the cracked wall's torches), none on low (the
+// flames still glow).
+export const TORCH_LIGHTS = { high: 6, normal: 6, low: 0 }[Q.boot.tier] ?? 6;
 const torchLights = [], flameItems = [];
 let glowTex = null;
 function glowTexture() {
@@ -528,11 +598,18 @@ function addTorchFlames(scene, model, items) {
   };
   const pts = new THREE.Points(geo, mat); pts.frustumCulled = false; pts.renderOrder = 5; pts.userData.cat = 'torches';
   scene.add(pts);
-  // the flame itself (KayKit's mounted torch is an unlit holder): a small bright cone in each, one draw call
-  const cone = new THREE.InstancedMesh(new THREE.ConeGeometry(0.075, 0.3, 6).translate(0, 0.13, 0), new THREE.MeshBasicMaterial({ color: 0xffb347 }), items.length);
-  const m4 = new THREE.Matrix4();
-  for (let i = 0; i < items.length; i++) cone.setMatrixAt(i, m4.makeTranslation(pos[3 * i], pos[3 * i + 1], pos[3 * i + 2]));
-  cone.computeBoundingSphere(); cone.userData.cat = 'torches';
+  // the flame itself (KayKit's mounted torch is an unlit holder): a small bright cone in each, one draw call. Round 20:
+  // drawn with the torches' own material on a flame-coloured texel of the palette (FLAME_UV), which its shader makes
+  // glow, so the cones need no shader program of their own.
+  const cones = [];
+  for (let i = 0; i < items.length; i++) {
+    const c = new THREE.ConeGeometry(0.075, 0.3, 6).translate(pos[3 * i], pos[3 * i + 1] + 0.13, pos[3 * i + 2]);
+    c.setAttribute('uv', new THREE.Float32BufferAttribute(Array.from({ length: c.attributes.position.count }, () => FLAME_UV).flat(), 2));
+    cones.push(c.index ? c.toNonIndexed() : c);
+  }
+  const cone = new THREE.Mesh(mergeGeometries(cones), kitMaterial(model, null));
+  for (const c of cones) c.dispose();
+  cone.userData.cat = 'torches';
   scene.add(cone);
   const pick = [...flameItems].sort((a, b) => (b.light - a.light) || (Math.hypot(a.p[0], a.p[2]) - Math.hypot(b.p[0], b.p[2])));
   for (const fl of pick) {
@@ -566,8 +643,12 @@ function buildRunes(scene) {
     };
     const ring = new THREE.Mesh(new THREE.CircleGeometry(R.r / 2, 96).rotateX(-Math.PI / 2), ringMat);
     ring.position.y = 0.07;
-    const crystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.55, 0).scale(0.75, 1.5, 0.75),
-      new THREE.MeshStandardMaterial({ color: 0xc4a4ff, emissive: 0x7a40ff, emissiveIntensity: 1.4, flatShading: true, roughness: 0.25 }));
+    // (round 20: drawn with the castle stone's material type on a white texel of its palette, CRYSTAL_UV, instead of a
+    // flat-shaded material of its own: one shader program fewer. A detail-0 octahedron's normals are already per face.)
+    const crystalGeo = new THREE.OctahedronGeometry(0.55, 0).scale(0.75, 1.5, 0.75);
+    crystalGeo.setAttribute('uv', new THREE.Float32BufferAttribute(Array.from({ length: crystalGeo.attributes.position.count }, () => CRYSTAL_UV).flat(), 2));
+    const crystal = new THREE.Mesh(crystalGeo, new THREE.MeshStandardMaterial({ map: kitTexture('./models/castle/dungeon_texture.webp'), roughness: 0.25, metalness: 0,
+      color: 0xc4a4ff, emissive: 0x7a40ff, emissiveIntensity: 1.4 }));
     crystal.position.y = R.h; crystal.castShadow = true;
     const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0xb080ff, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
     halo.scale.setScalar(3.2); halo.position.y = R.h;
@@ -592,7 +673,8 @@ export function loadModels(loader, scene, { cameraGrid = true, merge = cameraGri
   for (const F of C.FLOORS) for (const t of floorTiles(F)) put(t.model, { ...t, floor: true });
   chunkGrid([...placed.values()].flat());
   torchLights.length = 0; flameItems.length = 0;
-  treeTiers.models = treeTiers.impostors = null;
+  lodSets.length = 0;
+  const lodData = merge ? fetch(KIT_LOD.json).then(r => r.json()).catch(() => null) : Promise.resolve(null);
   buildRunes(scene);
   const propModels = Object.entries(C.PROP_TYPES).filter(([, T]) => T.model);
   return Promise.all([
@@ -601,28 +683,33 @@ export function loadModels(loader, scene, { cameraGrid = true, merge = cameraGri
       for (const o of g.scene.children) o.traverse(m => { if (m.isMesh) m.material = kitMaterial(T.model, m.material); });
       models.props[type] = fitModel(g, T.h);
     }, () => {})),
-    ...[...placed].map(([model, items]) => load(`./models/${model}.glb`).then(g => {
-      const meshes = kitMeshes(model, g);
-      const floors = items.filter(it => it.floor), pieces = items.filter(it => !it.floor);
+    ...[...placed].map(([model, items]) => Promise.all([load(`./models/${model}.glb`), lodData]).then(([g, lod]) => {
+      const meshes = kitMeshes(model, g), faces = merge && lod?.models?.[model]?.faces;
+      let floors = items.filter(it => it.floor), pieces = items.filter(it => !it.floor);
       // ground tiles: no shadows cast, not in the camera grid; pieces: solid to the camera, one set per tint (an
-      // element-coloured banner); torches aren't solid to the camera and get a flame glow
+      // element-coloured banner); torches aren't solid to the camera and get a flame glow. A model with a baked far box
+      // (KIT_LOD) is drawn by its LOD set instead of the merge (its tinted pieces, if any, still merge).
+      if (faces && floors.length) { kitLod(scene, model, meshes, floors, faces, { cat: 'floors', solid: false }); floors = []; }
       if (floors.length) { if (merge) bucketPieces(buckets, model, meshes, floors, { shadows: false, solid: false, cat: 'floors' }); else scene.add(kitInstances(model, meshes, floors, { shadows: false })); }
       // (booted without shadows: no proxies, and casters merge with the rest, fewer draw calls)
       const proxy = merge && shadowsOn && pieces.length && castsShadow(model) && SHADOW_PROXY.models.test(model) && C.KIT_MODELS[model];
       if (proxy) proxyGeos.push(...shadowProxyGeometry(model, pieces));
       const shadows = (shadowsOn || !merge) && castsShadow(model) && !proxy, cat = kitCat(model, false);
+      if (faces && !KIT_TORCH.test(model) && pieces.some(it => it.tint == null)) {
+        kitLod(scene, model, meshes, pieces.filter(it => it.tint == null), faces, { cat, solid: true });
+        pieces = pieces.filter(it => it.tint != null);
+      }
       for (const tint of new Set(pieces.map(it => it.tint ?? null))) {
         const set = pieces.filter(it => (it.tint ?? null) === tint), torch = KIT_TORCH.test(model);
         if (merge) bucketPieces(buckets, model, meshes, set, { tint, solid: !torch, shadows, cat });
         else { const inst = kitInstances(model, meshes, set, { tint, shadows }); scene.add(torch ? inst : solid(inst)); }
       }
-      if (KIT_TORCH.test(model) && pieces.length) addTorchFlames(scene, model, pieces);
+      if (KIT_TORCH.test(model) && pieces.length) addTorchFlames(scene, model, pieces);   // (torches never take the LOD)
     }, (err) => console.warn(`kit model ${model} failed to load`, err))),
-    // trees round the castle: one InstancedMesh per model (as impostors on low); the ones out on the hills: impostors
-    ...Object.entries(SCATTER).filter(([, items]) => items.length).map(([name, items]) => load(`./models/${name}.glb`).then(g => {
-      const inst = instanced(g, items, !name.endsWith('_far'));
-      inst.userData.cat = 'trees';
-      (treeTiers.models ||= Object.assign(new THREE.Group(), { userData: { cat: 'trees' } })).add(inst);
+    // the trees outside the walls: one InstancedMesh per model, impostors past LOD_DIST.tree (treeLod); booted on low,
+    // impostors only (the models aren't even loaded)
+    ...Object.entries(SCATTER).filter(([, items]) => items.length).map(([name, items]) => Q.boot.tier === 'low' && merge ? treeLod(scene, name, null, items) : load(`./models/${name}.glb`).then(g => {
+      treeLod(scene, name, instanced(g, items, !name.endsWith('_far')), items);
       if (!name.endsWith('_far')) seeThrough(g.scene);
     }, () => {})),
     // decoration placed in the map editor (layout kind 'deco'): any other model, fitted to its height
@@ -639,13 +726,9 @@ export function loadModels(loader, scene, { cameraGrid = true, merge = cameraGri
   ]).then(() => {
     if (merge) scene.add(mergedPieces(buckets));
     if (proxyGeos.length) scene.add(shadowProxies(proxyGeos));
-    if (treeTiers.models) scene.add(treeTiers.models);
-    const near = Object.entries(SCATTER).flatMap(([name, items]) => items.map(([x, z, yaw, h]) => [x, z, yaw, h, IMPOSTOR.cells.indexOf(name)]));
-    if (near.length) scene.add(treeTiers.impostors = treeImpostors(near));
-    if (FAR_TREES.length) scene.add(treeImpostors(FAR_TREES));
     followShadow = cameraGrid;   // the game's shadow follows the view; the editor's stays wide and static
     applyQuality();
-    scene.onBeforeRender = (renderer, sc, camera) => { cutawayTick(); torchTick(); shadowFollow(camera); };
+    scene.onBeforeRender = (renderer, sc, camera) => { cutawayTick(); torchTick(); shadowFollow(camera); lodTick(camera); };
     if (cameraGrid) buildCameraGrid(scene);
   });
 }
