@@ -1,6 +1,6 @@
 // A wizard in the scene: cloned skinned model, animation state machine, nameplate, colour ring.
 import * as THREE from 'three';
-import { makeWizardBody, botBody, BONES, BODY_TOP } from './looks.js';
+import { makeWizardBody, botBody, cloneBodyMaterial, BONES, BODY_TOP } from './looks.js';
 import { FLIPS, PHASES } from './spellanim.js';
 import * as C from '../shared/constants.js';
 // ?clip: recording mode for store videos (no nameplates or health bars over wizards; see main.js)
@@ -207,8 +207,9 @@ export class Wizard {
       new THREE.MeshBasicMaterial({ color: 0xff8a3c, transparent: true, opacity: 0.9 }));
     this.chargeOrb.visible = false;
     scene.add(this.chargeOrb);
+    // (round 20: never in the scene: a light of its own changes the light count, which recompiles every lit material.
+    // main.js feeds it to effects.lights, which lends a pooled light while its intensity is above 0.)
     this.chargeLight = new THREE.PointLight(0xff7a2a, 0, 7);
-    scene.add(this.chargeLight);
 
     // Arcane Cyclone: runic circle on the ground during the wind-up, then a two-turn spin
     this.rune = new THREE.Mesh(new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2),
@@ -472,6 +473,7 @@ export class Wizard {
     this.model.traverse(o => {
       if (!o.material) return;
       for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+        if (m.userData.shared) continue;   // (looks.js: one material for every body, such as the ice shards)
         if (m.userData.baseOpacity === undefined) { m.userData.baseOpacity = m.opacity; m.userData.baseTransparent = m.transparent; }
         m.transparent = m.userData.baseTransparent || vis < 1;
         m.opacity = m.userData.baseOpacity * vis;
@@ -492,7 +494,7 @@ export class Wizard {
   makeGhost() {
     this.model.traverse(o => {
       if (!o.isMesh) return;
-      o.material = o.material.clone();
+      o.material = cloneBodyMaterial(o.material);   // (its own copy, the Mage's tint kept)
       o.material.transparent = true; o.material.opacity = 0.32; o.material.depthWrite = false;
       o.castShadow = false;
     });
