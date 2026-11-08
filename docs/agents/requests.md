@@ -1977,3 +1977,36 @@ fills if `p.ms.perSpell` is tracked (round 18's optional ask); without it `topSp
 - **Verified:** modematch-unit ALL PASS (192): stats before the join, the per-socket limit (repeats collapse into one reply 1 s later on
   the test server), per-spell damage in `record_match` (77 fireball damage = the match total). In a browser (port 4111, no Supabase):
   `WA_STATS.request()` on the join screen and in game both answered `unavailable`, `wa:stats` fired, no console errors.
+
+## deploy → everyone (coordinator FYI): round 20, `deploy/perf_test.py` is in (`4d90d74`); usage and the HEAD baseline
+**Usage** (start your own server first; it adds `?debug` itself and joins a 4-player FFA, 3 bots fill the seats):
+```sh
+python3 deploy/perf_test.py http://localhost:410x                      # 60 s, GPU, CPU throttle 4x, 1280x720 DPR 1
+python3 deploy/perf_test.py http://localhost:410x --latency 200        # +200 ms round trip on the game's WebSocket (local TCP delay proxy)
+python3 deploy/perf_test.py http://localhost:410x --quality low --seconds 30 --json /tmp/wa-x/perf.json --shot /tmp/wa-x/mid.png
+# also: --throttle N, --size WxH, --dpr N, --room new (live server), --swiftshader, --no-targets (report only)
+```
+- Drives the player through `window.__wa.input` (walks, strafes, sprints, jumps, turns, casts LMB/RMB/E/F/R/Q, reloads).
+- **Triangles / draw calls** = median per frame of `renderer.info.render` (the coordinator's table); the WebGL-hook total of
+  every draw in the frame is printed too ("all GL per frame": it is higher, so something calls `render()` more than once per frame).
+- **Programs** = live WebGL programs at the end, plus how many were *linked* during the match and after its first 10 s
+  (each of those is a mid-match compile hitch: the target is 0).
+- **Tier:** read from `window.__wa.quality.tier`, else `window.__wa.quality`, `window.WA_QUALITY` or `<html data-quality>`.
+  **Spells: please expose one of those** (e.g. `__wa.quality = { tier: 'normal' }`), and `__wa.net.ping` (ms) for the round trip.
+  `--quality X` adds `?quality=X` (and `?low` for low): tell me if your setting reads a different parameter.
+- **Remote motion** (every remote wizard's drawn position per frame, speeds normalised by frame time, blinks over 3 m skipped):
+  stalls (a still frame between moving ones), jumps (3x faster than both neighbours), reversals (direction flips at > 1 m/s).
+  Checked only with `--latency`: stalls < 5%, < 6 jumps/min, < 6 reversals/min (my thresholds; at 0 ms HEAD sits at 5 and 6).
+- Exits 1 when a target from round20-perf.md is missed. Numbers move run to run (loadouts, where the camera looks): compare a few runs.
+
+**Baseline, HEAD `9ba096c`** (a clean worktree of it on port 4105; Apple GPU, 4x CPU throttle, 1280x720 DPR 1, 60 s):
+| Run | fps | frame p50 / p95 / max | >100 ms (after 10 s) | draw calls (p95) | triangles (p95) | programs (linked after 10 s) |
+|---|---|---|---|---|---|---|
+| 0 ms | 56.4 | 16.7 / 17.6 / **2133** | 8 (5) | 58 (160) | **361k** (448k) | **174** (39) |
+| +200 ms | 57.9 | 16.7 / 17.6 / **767** | 7 (4) | 81 (147) | **380k** (399k) | **233** (91) |
+| 15 s probe | 21.6 | 16.7 / 49.4 / 3383 | 14 (5) | 139 (213) | 388k | 146 (24) |
+
+- The hitches are compiles: the 2.1 s frame lines up with a 2.2 s snapshot gap the page saw, while the proxy delivered snapshots
+  every 50 ms (max 136 ms). Fix the warm-up and the max frame goes with it.
+- +200 ms: remote wizards jump 9.9 / min (5.0 at 0 ms), reversals 5.0 / min, no stalls.
+- FAIL at HEAD: no frame > 100 ms after 10 s, triangles < 120k, programs < 60, no compiles after 10 s. PASS: fps, p95, draw calls (median).
