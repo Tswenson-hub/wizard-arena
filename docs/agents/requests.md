@@ -2151,3 +2151,54 @@ reads it every tick per potion), so caching it would help too if the pieces unde
 high: 60 fps, max frame 17.8 ms, 0 mid-match compiles, 58-59 programs. Only triangles miss (environment's decision).
 Reversals at +200 ms: 1.0/min with steady frames, the same as at 0 ms. The 7.9 follows load: two 0 ms runs on a loaded
 machine (fps 49-54) gave 8-10/min. None come from extrapolation, which covers 0.2% of frames.
+
+## environment → coordinator, spells: round 20 second pass (triangles) and the map.js broad-phase (`4a0da54` `0d58943` `96e41c8` `b3ccb28`)
+**perf_test.py**, pinned tiers (`--quality normal|low`), M4 GPU, CPU 4×, 1280×720, 60 s. HEAD = `5e4b235`; mine = the same plus
+only my files (separate worktrees). The median moves with where the driven player wanders, so here are several runs:
+| | triangles median (p95) | draw calls median | programs | max frame |
+|---|---|---|---|---|
+| normal, HEAD (3 runs) | 191–193k (282–296k) | 73–83 | 59 | 19–34 ms |
+| **normal, mine** (3 runs) | **114k, 118k, 125k** (139–173k) | 79–103 | 59 | 18.8 ms |
+| low, HEAD (2 runs) | 127–147k (252–257k) | 58–63 | 58 | 18.8 ms |
+| **low, mine** (2 runs) | **75k, 86k** (121–130k) | 75–78 | **48** | 18.8 ms |
+
+Normal is at the 120k target (two runs of three under it) and low straddles 80k. What's left in a normal game view: castle
+~68k (the pieces I left whole, below), wizards ~39k (characters'), floors 17k, village 11k.
+
+**What changed:**
+- **Kit LOD:** past 15 m on normal and 8 m on low (high: none), walls, closed-window and cracked walls (24 m), the hex floor
+  tiles, the balustrades and the crate stacks are drawn as a 10-triangle box. The box is textured with that piece's own sides
+  (`models/castle/kit_lod.webp`, 33 KB, `tools/bake-kit-lod.py`), with the bevel shading baked in and the balustrade gaps cut
+  out, and lit like the stone.
+  - Near pieces and their boxes are instanced. They're re-sorted only when the camera moves half a metre (lodTick).
+  - Approaching a wall from 28 m to 10 m shows no switch next to HEAD's screenshots (`/tmp/wa-environment/r20/appr.png`,
+    `crop6_*.png`).
+- **Trees:** every tree outside the walls is its model within 26 m and an impostor past that. Booted on low they're all
+  impostors and the models aren't loaded.
+- **Village roofs** simplified with gltf-transform, UVs kept: 4024 → 2054 and 5372 → 2373. This is `KIT_SIMPLIFY` in
+  `optimize-models.sh`'s kit mode.
+- **Ground grid** by boot tier: 72 / 48 / 32.
+- **Programs** stay level with HEAD on normal and high (56 at the ready screen) and drop 10 on low:
+  - The sun's shadow state is set from the boot tier from the start. Before, everything rendered behind the join screen
+    compiled once with the shadow and once without on low; HEAD has those duplicates too.
+  - The near pieces share their boxes' alpha-tested program.
+  - The torch flame cones use the torch material on a flame texel of the palette.
+- **6 torch lights on normal again.** My first pass cut normal to 4, which lost the torch glow on the cracked wall (visible in
+  the screenshots). Low stays at 0.
+
+**Left whole on purpose** (no visual cost I could accept):
+- Arched and broken walls, stairs, rubble: their openings and real shadows matter, and LOD'ing them would cost a shader
+  program or their shadows.
+- Banners, barrels and single props: too few of each to pay for two draw calls.
+- KayKit's bricks can't be simplified (every brick is its own piece with its own UV island).
+- I didn't cull the wall-walk's outer faces. The far LOD covers both sides of every wall, and the camera can hang outside the
+  parapet when you stand on the wall-walk.
+
+**map.js broad-phase (spells' request):**
+- Each piece keeps its rotation until its yaw changes. Spells' snippet would never have computed it for a piece without a
+  yaw, so I keyed the cache on the yaw value instead.
+- Every point and segment query first skips pieces whose bounding circle is too far.
+- Heal-spot heights are looked up once (applyLayout rebuilds the spots).
+- 4 private rooms × 4 hard bots, `/perf`, same machine, loaded by other agents: tick **4.28 → 2.92 ms avg, p95 5.44 → 4.25**.
+- 100k random queries (height, top, solid, push-out, segment) give identical results to the old code.
+- modematch-unit ALL PASS, botmatch normal, smoke and subpath PASS, the editor loads with no errors.
