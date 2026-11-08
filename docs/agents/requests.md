@@ -2031,3 +2031,60 @@ python3 deploy/perf_test.py http://localhost:410x --quality low --seconds 30 --j
   82 draw calls, **377k** triangles, **259** programs (**98** linked after 10 s), remote wizards jump 9.0 / min, reversals 4.0 / min.
   Note the live URL is **wizard-arena-76od**.onrender.com: plain `wizard-arena.onrender.com` is somebody else's site (my old smoke.py
   usage line had it wrong, fixed in `fe6f97f`).
+
+## environment → coordinator, spells, deploy: round 20 world perf landed (`d6e78d8` `ac413aa`), before / after numbers
+**What changed (world.js only, plus the impostor atlas):**
+- **Trees:** the 90 trees out on the hills are impostors: two crossed quads each, one draw call, from a baked atlas
+  (`models/trees_impostor.webp`, 23 KB, `tools/bake-impostors.py`). The 26-tree ring round the castle keeps its models,
+  except on low, where it swaps to impostors (a visibility toggle, so nothing recompiles). Trees: **138k → 31k** triangles (low: 0.5k).
+- **Shadows:**
+  - Only big pieces cast (walls, decks, roofs, stairs, pillars, barriers). Barrels, crates, boxes, columns, balconies,
+    torches and banners don't, and thrown props cast only on high.
+  - The solid box-shaped walls, barriers, pillars and decks cast from 12-triangle box proxies: one mesh the main pass
+    doesn't draw (no colour, no depth). Pieces with arches, open windows, gates or broken tops keep their real shadows.
+    Castle shadow-casting triangles: **166k → 30k**.
+  - The sun's shadow box follows the view: ±24 m on normal, ±30 m on high, ±20 m on low, snapped to texels so the edges
+    don't crawl. The map size is quality.js's `shadowSize`.
+- **Merges:** the big kit buckets are split into a 2×2 grid of chunks, so the view and the shadow camera cull them. 3×3
+  saved more triangles from mid-courtyard but cost about 14 more draw calls in normal views.
+- **quality.js hookup:** world.js listens with `onQuality` (tree tier, shadow size and box). It reads `boot` for whether
+  there are shadows and for the torch lights: **6 on high, 4 on normal, 0 on low** (the flames still glow, unlit).
+  Booting on low also merges the casters with the rest (no shadow buckets, no proxies), which saves draw calls.
+- Screenshots (HEAD vs mine, same views): `/tmp/wa-environment/r20/cmp_*.png` and `cmp2_*.png`. The courtyard and
+  wall-walk look the same, apart from the props' missing shadows.
+
+**perf_test.py** (M4 GPU, CPU 4×, 1280×720 DPR 1, 60 s, 3 bots). "before" = HEAD `4b6c4d1`; "after" = the same plus only
+my world.js and atlas (separate worktrees on 4113 / 4114, so others' uncommitted work isn't in either):
+| Run | fps | p50 / p95 / max ms | draw calls median (p95) | triangles median (p95) | all GL per frame: calls / triangles | programs (after 10 s) |
+|---|---|---|---|---|---|---|
+| normal, before (2 runs) | 59.6–60.0 | 16.7 / 18.3 / 33–250 | 77–81 (147–156) | **378–379k** (391–438k) | 128–131 / **578–580k** | 56 (0–1) |
+| normal, after (2 runs) | 59.9–60.0 | 16.7 / 18.3 / 35 | 78–86 (156–160) | **190–195k** (283–284k) | 104–111 / **260–272k** | 57 (0) |
+| low, before | 60.0 | 16.7 / 18.3 / 18.7 | 70 (144) | **376k** (388k) | 70 / 376k | 50 (0) |
+| low, after | 60.0 | 16.7 / 18.3 / 18.7 | 75 (156) | **156k** (251k) | 75 / 156k | 53 (0) |
+
+**Per category, my in-match probe (normal, game view, both passes):**
+| Category | Before | After |
+|---|---|---|
+| Castle kit | 371k triangles, 30 calls | 177k, 17 |
+| Trees | 138k, 4 | 31k, 3 |
+| Floors (were in the castle) | | 37k, 6 |
+| Village | | 34k, 17 |
+| Props | 12.5k, 38 | 5.5k, 17 |
+| Ground | 10k, 1 | unchanged |
+| Mountains | 0.3k, 1 | unchanged |
+
+World programs are about 12 (castle 3, village 3, trees 2, ground, mountains, torches, runes).
+
+**Not met: triangles < 120k (normal) / < 60k (low).** What's left is the kit's real geometry:
+- 95 walls × 494 triangles plus the cracked, arched and window walls ≈ 94k.
+- The floor tiles' hex bevels: 37k.
+- The near tree ring: 31k.
+
+meshoptimizer can't simplify the kit: the bricks are separate pieces with UV seams. With normals stripped and a 2 cm error,
+the wall goes 494 → 444. Getting under 120k needs a decision from Ty / the coordinator, because each option changes his art:
+- a flat-faced low-tier wall (a textured box per wall, ≈ −90k on low);
+- a flat floor texture instead of the bevelled tiles on low (≈ −35k);
+- the near ring as impostors on normal too (−30k, flatter trees from the wall-walk).
+
+Tell me which (if any) and I'll do it. On this GPU, triangles aren't what costs frames; the hitches were compiles and the
+2048 shadow map redrawing 166k triangles.
