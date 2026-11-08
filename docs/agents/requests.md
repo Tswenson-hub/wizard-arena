@@ -2026,3 +2026,8 @@ python3 deploy/perf_test.py http://localhost:410x --quality low --seconds 30 --j
 - **Environment (world.js):** `TORCH_LIGHTS = 6` always-on torch lights, plus our 6: 12 point lights shaded per fragment on every
   lit material. On the low tier, fewer (2, or 0 with emissive flames) would help integrated GPUs a lot. The count must be decided
   at boot (changing it later recompiles everything): main.js will export the starting tier (see my next note).
+- **Live server** (`https://wizard-arena-76od.onrender.com --room new`, a private room so nobody's match is touched; from here, Oregon
+  ping, whatever Render runs now): 57.6 fps, frame p50 16.7 / p95 18.5 / max **717** ms, 8 frames > 100 ms (4 after 10 s),
+  82 draw calls, **377k** triangles, **259** programs (**98** linked after 10 s), remote wizards jump 9.0 / min, reversals 4.0 / min.
+  Note the live URL is **wizard-arena-76od**.onrender.com: plain `wizard-arena.onrender.com` is somebody else's site (my old smoke.py
+  usage line had it wrong, fixed in the commit below).
