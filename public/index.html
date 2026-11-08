@@ -112,6 +112,11 @@
           <input id="volume" type="range" min="0" max="100" step="1" aria-label="Volume">
           <label><input id="mute" type="checkbox"> Mute <kbd>M</kbd></label>
         </div>
+        <div class="pause-group"><span class="pause-label">Graphics <span id="gfxNow"></span></span>
+          <div class="btn-row gfx-row" title="Auto lowers the quality when the frame rate drops">
+            <button data-gfx="auto">Auto</button><button data-gfx="high">High</button><button data-gfx="normal">Normal</button><button data-gfx="low">Low</button>
+          </div>
+        </div>
       </div>
       <div class="pause-keys" aria-label="Controls">
         <span><kbd>WASD</kbd> move</span><span><kbd>Space</kbd> jump, again in the air</span><span><kbd>Shift</kbd> sprint</span><span><kbd>C</kbd> crouch</span>

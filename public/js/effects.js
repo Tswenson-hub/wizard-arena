@@ -151,11 +151,12 @@ class LightPool {
 }
 
 export class Effects {
-  constructor(scene, { low = false } = {}) {
+  constructor(scene, { low = false, lights = !low, particles = 1 } = {}) {
     this.scene = scene;
     this.low = low;
     this.sprites = new SpriteFX(scene, { low });   // textured, pooled, instanced particles (sprites.js)
-    this.lights = new LightPool(scene, low ? 0 : FX_LIGHTS);   // round 20: none at all when we start on low
+    this.sprites.setCap(particles);
+    this.lights = new LightPool(scene, lights ? FX_LIGHTS : 0);   // round 20: none at all when we start on low
     this.camera = null;                            // main.js sets it (smoke sorts back to front)
     this.projectiles = new Map();
     this.particles = [];     // { mesh, vel, life, maxLife, grav, shrink }
@@ -165,6 +166,13 @@ export class Effects {
     this.particleGeo = new THREE.TetrahedronGeometry(0.12, 0);
     this.sphereGeo = new THREE.IcosahedronGeometry(1, 1);
     this.mats = {};
+  }
+
+  // Round 20: the quality tier (quality.js) changed: fewer particles and trails on low, effect lights off.
+  setQuality({ low = this.low, lights = true, particles = 1 } = {}) {
+    this.low = low; this.sprites.low = low;
+    this.sprites.setCap(particles);
+    this.lights.enabled = lights;
   }
 
   // ---------------------------------------------------------------- sprite helpers

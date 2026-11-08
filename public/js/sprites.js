@@ -105,11 +105,13 @@ export class SpriteFX {
   }
 
   alive() { return this.add.list.length + this.norm.list.length; }
+  // Round 20: the quality tier's share of the pool (1 = all 3200): a cap on live particles, for fill rate on weak GPUs.
+  setCap(k = 1) { for (const [L, full] of [[this.add, 3200], [this.norm, 1600]]) L.cap = Math.min(L.max, Math.max(50, Math.round(full * k))); }
 
   spawn(name, o = {}) {
     if (this.low && o.optional && Math.random() < 0.55) return null;
     const L = o.add === false ? this.norm : this.add;
-    if (L.list.length >= L.max) return null;
+    if (L.list.length >= (L.cap ?? L.max)) return null;
     const uv = UV[name] || UV.circle_05;
     const P = o.p || [0, 0, 0], V = o.v || [0, 0, 0];
     const px = P.x ?? P[0], py = P.y ?? P[1], pz = P.z ?? P[2];

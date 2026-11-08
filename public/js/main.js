@@ -15,19 +15,22 @@ import { loadLoadout, saveLoadout, loadVoice, saveVoice, loadSaved, saveSaved } 
 import { spellPlay } from './spellanim.js';
 import * as spellanim from './spellanim.js';   // (rollKey: round 12, may not be there yet)
 import { mountMatchUI } from './match-ui.js';
-import * as Podium from './podium.js';   // round 16: the end-of-match podium (characters agent); importing it preloads the stage
+import * as Podium from './podium.js';
+import * as Q from './quality.js';   // round 20: graphics tiers (high / normal / low), the Graphics setting and auto quality   // round 16: the end-of-match podium (characters agent); importing it preloads the stage
 
 // ---------------------------------------------------------------- setup
 const canvas = document.getElementById('game');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(new URLSearchParams(location.search).has('low') ? 1 : Math.min(devicePixelRatio, 2));
+// round 20: antialiasing and shadows follow the quality tier we start on (quality.js; ?low forces low)
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: Q.boot.antialias, powerPreference: 'high-performance' });
+const applyPixelRatio = () => renderer.setPixelRatio(Math.min(devicePixelRatio, Q.params().dpr));
+applyPixelRatio();
 renderer.setSize(innerWidth, innerHeight);
-const LOW_FX = new URLSearchParams(location.search).has('low');   // ?low for weak GPUs
+let LOW_FX = Q.getTier() === 'low';   // fewer particles and trails (follows the tier)
 // ?clip: recording mode for store videos: no HUD, crosshair, cursor, kill feed, match banner or help cards (style.css body.clip)
 if (new URLSearchParams(location.search).has('clip')) document.body.classList.add('clip');
 // in clip mode, H shows or hides the rest of the HUD (cooldowns, HP) for playing between shots
 if (document.body.classList.contains('clip')) addEventListener('keydown', e => { if (e.code === 'KeyH' && !e.repeat) document.body.classList.toggle('clip-hud'); });
-renderer.shadowMap.enabled = !LOW_FX;
+renderer.shadowMap.enabled = Q.params().shadowsOn;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -41,8 +44,19 @@ addEventListener('resize', () => {
 });
 
 buildWorld(scene);
-const effects = new Effects(scene, { low: LOW_FX });
+const effects = new Effects(scene, { low: LOW_FX, lights: Q.params().fxLights, particles: Q.params().particles });
 effects.camera = camera;
+// round 20: a tier change (the Graphics setting, or auto quality) applies here; world.js and looks.js listen too
+let shadowEvery = Q.params().shadowEvery, shadowTick = 0;
+function applyQuality(tier, p) {
+  LOW_FX = tier === 'low';
+  applyPixelRatio(); renderer.setSize(innerWidth, innerHeight);
+  effects.setQuality({ low: LOW_FX, lights: p.fxLights, particles: p.particles });
+  shadowEvery = p.shadowEvery;
+  renderer.shadowMap.autoUpdate = shadowEvery <= 1;
+  if (renderer.shadowMap.autoUpdate) renderer.shadowMap.needsUpdate = false;
+}
+Q.onQuality((tier, p, why) => { applyQuality(tier, p); if (why !== 'setting' && me) feed(`Graphics: ${tier[0].toUpperCase() + tier.slice(1)} (auto)`); });
 const input = new Input(canvas);
 const sfx = new Sfx();
 const net = new Net();
@@ -299,6 +313,20 @@ ui.volume.value = Math.round(sfx.volume * 100);
 ui.mute.checked = sfx.muted;
 ui.volume.addEventListener('input', () => { sfx.volume = ui.volume.value / 100; if (sfx.muted) { sfx.muted = false; ui.mute.checked = false; } updateSoundInd(); });
 ui.mute.addEventListener('change', () => { sfx.muted = ui.mute.checked; updateSoundInd(); });
+// round 20: Graphics (Auto / High / Normal / Low), saved with the other settings; auto shows the tier it's on
+const gfxButtons = [...document.querySelectorAll('[data-gfx]')];
+function updateGfxUI() {
+  for (const b of gfxButtons) { b.classList.toggle('on', b.dataset.gfx === (Q.isForcedLow() ? 'low' : Q.getSetting())); b.disabled = Q.isForcedLow(); }
+  const t = Q.getTier(), name = t[0].toUpperCase() + t.slice(1);
+  $('#gfxNow').textContent = Q.isForcedLow() ? '(Low: ?low)' : Q.getSetting() === 'auto' ? `(now ${name})` : '';
+  const p = Q.params(), boot = Q.boot;
+  // antialiasing, shadows and effect lights were set when the page loaded: say so when the pick needs a reload for them
+  const later = Q.getSetting() !== 'auto' && (p.shadows !== 'off') !== (boot.shadows !== 'off');
+  $('.gfx-row').title = later ? 'Shadows and effect lights change the next time the game loads' : 'Auto lowers the quality when the frame rate drops';
+}
+for (const b of gfxButtons) b.addEventListener('click', () => { sfx.click(); Q.setSetting(b.dataset.gfx); updateGfxUI(); });
+Q.onQuality(updateGfxUI);
+updateGfxUI();
 // Round 11 (Ty heard nothing): the HUD's speaker shows the mute state and volume; a click toggles mute like M.
 function updateSoundInd() {
   const el = ui.soundInd, off = sfx.muted || sfx.volume === 0;
@@ -401,7 +429,7 @@ function localSave() {
   let howto = false;
   try { howto = !!localStorage.getItem(HOWTO_KEY); } catch {}
   return { loadout: wantLoadout, loadouts: loadSaved(), voice: wantVoice,
-    settings: { volume: Math.round(sfx.volume * 100) / 100, muted: !!sfx.muted, bots: ui.botDiff.value, howto } };
+    settings: { volume: Math.round(sfx.volume * 100) / 100, muted: !!sfx.muted, bots: ui.botDiff.value, howto, graphics: Q.getSetting() } };
 }
 function saveNow() {
   if (!account || !net.connected) return;
@@ -424,6 +452,7 @@ function applySave(s) {
     try { localStorage.setItem('wizardBots', JSON.stringify({ difficulty: st.bots })); } catch {}
   }
   if (st.howto) try { localStorage.setItem(HOWTO_KEY, '1'); } catch {}
+  if (Q.SETTINGS.includes(st.graphics)) { Q.setSetting(st.graphics); updateGfxUI(); }
 }
 function onProfile(msg) {
   if (msg.guest) return;
@@ -2799,7 +2828,7 @@ function updateWizardAudio(w, dt) {
 function stopWizardAudio(w) { w.sndCharge?.stop(); w.sndWard?.stop(); w.sndHold?.stop(); w.sndCharge = w.sndWard = w.sndHold = null; }
 
 // ---------------------------------------------------------------- main loop
-let last = performance.now();
+let last = performance.now(), lastFrameT = 0;
 function frame(t) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, (t - last) / 1000); last = t;
@@ -2868,11 +2897,15 @@ function frame(t) {
   for (const s of spinners) { s.rotation.y += dt; s.position.y += Math.sin(t * 0.002) * 0.002; }
 
   effects.update(dt * slowMo);
+  if (shadowEvery > 1 && ++shadowTick % shadowEvery === 0) renderer.shadowMap.needsUpdate = true;   // a drop to low mid-match
   renderer.render(scene, camera);
+  // auto quality: the frame times of a match being played (not the menu, the podium or a hidden tab)
+  if (me && !menuOpen && !document.hidden) Q.sample(t - lastFrameT);
+  lastFrameT = t;
   input.endFrame();
 }
 requestAnimationFrame(frame);
 
 // Debug handle for the automated tests (round 14: off unless asked for, with ?debug in the URL or localStorage waDebug = 1).
 const DEBUG = (() => { try { return new URLSearchParams(location.search).has('debug') || localStorage.getItem('waDebug') === '1'; } catch { return false; } })();
-if (DEBUG) window.__wa = { renderer, input, net, local, players, props, rams, effects, scene, camera, sfx, decoys, walls, frosts, frostMark, mrainMark, flaskMark, cageMark, laneMark, cages, firewalls, stampedeFx, C, get cursedProps() { return cursedProps; }, get seenTraps() { return seenTraps; } };
+if (DEBUG) window.__wa = { renderer, input, net, local, players, props, rams, effects, scene, camera, sfx, decoys, walls, frosts, frostMark, mrainMark, flaskMark, cageMark, laneMark, cages, firewalls, stampedeFx, C, get cursedProps() { return cursedProps; }, get seenTraps() { return seenTraps; }, get quality() { return Q.debug(); }, Q };

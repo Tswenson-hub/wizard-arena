@@ -153,6 +153,8 @@ kbd {
 .pause-label { font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--dim); }
 .pause-top .vol-row { margin: 0; }
 .pause-top .btn-row button { padding: 5px 10px; font-size: 12px; }
+.pause .gfx-row button.on { border-color: var(--gold); color: var(--gold); }   /* round 20: the Graphics setting */
+#gfxNow { text-transform: none; letter-spacing: 0; }
 /* the Esc menu covers the fight: the ability bar, bars and banners would show through it */
 body.paused #abilities, body.paused #bars, body.paused #mBanner, body.paused #soundInd { visibility: hidden; }
 .pause-builder { flex: 1; min-height: 0; overflow-y: auto; }
