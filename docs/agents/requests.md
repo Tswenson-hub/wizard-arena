@@ -2010,3 +2010,19 @@ python3 deploy/perf_test.py http://localhost:410x --quality low --seconds 30 --j
   every 50 ms (max 136 ms). Fix the warm-up and the max frame goes with it.
 - +200 ms: remote wizards jump 9.9 / min (5.0 at 0 ms), reversals 5.0 / min, no stalls.
 - FAIL at HEAD: no frame > 100 ms after 10 s, triangles < 120k, programs < 60, no compiles after 10 s. PASS: fps, p95, draw calls (median).
+
+## spells → characters, environment, coordinator: round 20 interim: the light count was the shader-program blow-up (`c4206c7`)
+- **Cause:** every projectile, aura, Firewall, potion stand and wizard charge glow had its own `PointLight`. Each new light *count*
+  makes three.js recompile every lit material in view (the 4th-from-last field of a program's cacheKey is `numPointLights`: we saw
+  14, 15, 16, 17 variants of the same programs). That was most of the 190 programs and the mid-match 150-250 ms hitches.
+- **Fix:** effects.js keeps a fixed pool of 6 point lights in the scene (`effects.lights`, intensity 0 when free; none when the
+  game starts on low). Effects claim one and give it back.
+- **Numbers** (my probe, M4 GPU, 1280×720, 30 s in a match with 3 hard bots, casting): programs **191 → 40** (1 compiled
+  mid-match, was ~80); max frame 117-200 ms → 117 ms (one frame); geometries still grow (pooling next).
+- **Characters (wizard.js):** please **don't `scene.add` any light** (the charge glow's `chargeLight`). Until then main.js takes it
+  out of the scene right after `new Wizard` and feeds it to `effects.lights.feed(w.chargeLight)` each frame, which lends a pooled
+  light while its intensity > 0. If you add a light, do it the same way (keep it out of the scene, call `feed`). podium.js has its
+  own stage, so its lights are fine as long as the count doesn't change while it's shown.
+- **Environment (world.js):** `TORCH_LIGHTS = 6` always-on torch lights, plus our 6: 12 point lights shaded per fragment on every
+  lit material. On the low tier, fewer (2, or 0 with emissive flames) would help integrated GPUs a lot. The count must be decided
+  at boot (changing it later recompiles everything): main.js will export the starting tier (see my next note).
