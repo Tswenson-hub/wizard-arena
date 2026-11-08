@@ -1,5 +1,56 @@
 # Spells hand-off
 
+## Round 20: performance (CrazyGames: "The game seems very laggy")
+Commits: `c4206c7` lights, `40c1c57` quality tiers, `3296cab` warm-up + dithered fade, `2ae73a5` pooling, `940e30a` network
+smoothing + ping + predicted casts + /perf, `b28b7ec` warm-up additions (characters' warmSet, Podium.warm), `715359d` ?quality=,
+auto rise, `5e4b235` bot tick memos.
+
+**Before / after** (M4 GPU, 1280×720, 4× CPU throttle, 3 hard bots, casting):
+| | before (HEAD `9ba096c`, my probe) | after (`deploy/perf_test.py`, 60 s) |
+|---|---|---|
+| shader programs | 191-207 per match, ~80 compiled mid-match | 58-59, all at load, 0 mid-match (high, normal, low) |
+| max frame | 117-200 ms (one per new spell or body) | 17.8 ms (normal, low and high), 0 frames over 50 ms |
+| fps / p95 | 59 / 17.5 ms | 60 / 17.5 ms |
+| effect geometries | 113 → 258 in 30 s (never freed) | 346 → 358 in 70 s (a cache of 82 shapes) |
+| remote reversals at +200 ms | 13.4/min (`?netold`) | 0-2/min with steady frames |
+| server tick, 4 rooms × 4 bots (M4) | 4.22 ms avg, p95 5.18, max 9.3 | 3.67 avg, p95 4.63, max 5.6 |
+
+**What was built:**
+- **The cause of the hitches** was the light count: every projectile, aura, Firewall, potion stand and charge glow had its own
+  `PointLight`, and each new count recompiles every lit material. effects.js now has a fixed pool (`effects.lights`, 6, none
+  when booting on low); `feed()` lends one to a light kept out of the scene (wizard charge glows, potion stands).
+- **quality.js** (new): tiers high / normal / low (DPR 2 / 1.5 / 1, shadows on / small / off, antialias, effect lights,
+  particle cap 1 / 0.65 / 0.3, grass, auras). The Graphics setting (Auto / High / Normal / Low) is in the Esc menu, saved
+  locally and in the cloud save. Auto drops a tier when the 3 s average is over 22 ms (all match long), and rises once, after
+  30 s at 60 fps (60 s back to the tier it dropped from), never to high. Antialias, shadows on/off and effect lights follow
+  the boot tier. A mid-match drop updates shadows at 15 Hz. `?low` forces low; `?quality=` sets it for one visit.
+- **Warm-up** (main.js `warmUp`, before the join button wakes): one wizard of every body, every projectile, impact and zone,
+  every prop and its faded look, a ram and the ghost ram, characters' warmSet, every hidden object shown. Then compileAsync
+  and one 1-pixel render (shadow pass and uploads), then Podium.warm. About 0.7 s on the M4.
+- **Dithered fade:** props in the camera's way use shared opaque Bayer-dither variants of their own materials (6 levels),
+  not per-prop transparent copies.
+- **Pooling:** `G()` caches geometries per call site, `M()`/`Mc()` hand out materials, `mesh()` hands out meshes, and
+  `drop()` returns them. Nothing is built per hit. Prop fragments reuse world.js's pieces. The acid puddle stays transparent.
+- **Network:** remote wizards are drawn 100-150 ms behind the server clock (adapting to jitter), interpolated between
+  snapshots. Late snapshots extrapolate ≤120 ms, and teleports reset the buffer. `?netold` restores the old smoothing.
+  `{t:'ping'}` runs every 2 s, and each human's ping is in the Tab scoreboard. Our primary casts show their strike, muzzle
+  and sound on click; the server's bolt is fast-forwarded by half the ping. Hits are still authoritative.
+- **Server:** `GET /perf` (and `PERF_LOG=1`) gives tick, snapshot and timer lateness over 10 s windows. Bots memoize LOS,
+  floor and potion-spot queries per tick.
+
+**Known issues / for others:**
+- **Triangles** (120k normal / 60k low) are not met: 177k / 150k median. That's the castle kit; environment's options are
+  waiting on Ty.
+- **Server tick on Render:** 3.7 ms on the M4 for 16 bots. Render Standard is slower, so expect over 4 ms with 4 full bot
+  rooms. Most of it is map.js `surfaceSegmentHit` / `surfaceHeight` looping 356 surfaces with `cos`/`sin` per call.
+  Environment has a request for a broad-phase: in a scratch worktree it brought the tick to 2.90 ms avg (p95 3.81).
+- **Reversals at 200 ms** (coordinator saw 7.9/min on `b28b7ec`): with steady frames I measure 1.0/min at both 0 ms and
+  200 ms. Two 0 ms runs taken while the machine was loaded (fps 49-54) gave 8-10/min. Extrapolation covers 0.2% of frames
+  and no flip touches it. The flips that remain are the bots' own back-and-forth (strafe flips, dodges) within a snapshot
+  interval, more of them when frames or ticks are irregular.
+- Programs are at 58-59 of the 60 budget: the warm-up compiles every hidden variant (low-tier impostors too). A new material
+  kind should go into the warm-up and be checked against that budget.
+
 ## Round 16, last: Gale Shear and Telekinesis nerfs; the overpowered report (proposals only)
 - **Gale Shear** `037d991`, `0103af4`:
   - 5.5 m travel, 15 damage, radius 0.65, crescent 1.0, crescent stun 0.3.

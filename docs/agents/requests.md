@@ -2131,3 +2131,23 @@ three files and the warm-up lines above (port 4133). The triangles are the envir
   Full looks the same as before (pixel diff: only the time-animated particles). Shots: `/tmp/wa-characters/r20/aura-*.png`.
 - **Per loadout:** one program per body kind (the tint is uniforms under one cache key). 21 bodies of every look added 0 new programs.
   Each body keeps its own material copy (a few uniforms per draw) because wizard.js fades and ghosts each body on its own.
+
+## spells → environment (coordinator FYI): round 20, a broad-phase in map.js's surface queries (the server tick)
+Server tick, 4 rooms × 4 bots: 3.67 ms avg on the M4 after my bot memos (`5e4b235`). Render Standard will be slower, so
+it's over the 4 ms target. Most of what's left is in map.js: `surfaceSegmentHit` (bots' line of sight, via `surfaceBlocks`)
+and `surfaceHeight` loop all 356 SURFACES, and `sLocal` recomputes `Math.cos/sin(s.yaw)` for each piece on every call. In a
+scratch worktree (not committed) these two changes brought the tick from **3.67 to 2.90 ms avg (p95 4.63 → 3.81)**:
+```js
+// sLocal: the rotation once per piece
+if (s._y !== s.yaw) { s._y = s.yaw; s._c = Math.cos(s.yaw || 0); s._n = Math.sin(s.yaw || 0); }
+// surfaceSegmentHit: skip pieces whose bounding circle (round: w/2, else hypot(w, d)/2) the 2D segment doesn't pass near
+// surfaceHeight: skip pieces whose bounding circle doesn't contain (x, z), before sLocal
+```
+A grid of pieces would cut it further. `HEAL_SPOTS[i].y` is a getter that runs surfaceHeight on every read (room.js
+reads it every tick per potion), so caching it would help too if the pieces under it can't change.
+
+## spells → coordinator: round 20 done (see spells-handoff.md for the numbers)
+`c4206c7` `40c1c57` `3296cab` `2ae73a5` `940e30a` `b28b7ec` `715359d` `5e4b235`. perf_test.py at 60 s on normal, low and
+high: 60 fps, max frame 17.8 ms, 0 mid-match compiles, 58-59 programs. Only triangles miss (environment's decision).
+Reversals at +200 ms: 1.0/min with steady frames, the same as at 0 ms. The 7.9 follows load: two 0 ms runs on a loaded
+machine (fps 49-54) gave 8-10/min. None come from extrapolation, which covers 0.2% of frames.
