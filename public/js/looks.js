@@ -8,8 +8,10 @@
 // Clip keys are cut and retimed from those clips by the pick specs in spellanim.js.
 import * as THREE from 'three';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
-import { WIZARDS, ELEMENTS, loadoutElements } from '../shared/constants.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { WIZARDS, ELEMENTS, SPELLBOOK, SPELL_INFO, loadoutElements } from '../shared/constants.js';
 import { SPELL_ANIMS, COMMON_ANIMS, SKELETON_ANIMS, legacyKey } from './spellanim.js';
+import * as Q from './quality.js';
 
 // KayKit model units to metres: the head top (2.16 units) at 1.8 m. The environment agent scales the castle kit by the same
 // factor (map.js KIT_SCALE), so doorways keep KayKit's proportions next to the bodies.
@@ -315,6 +317,14 @@ function tintMaterial(src, u) {
   m.customProgramCacheKey = () => 'wa-kaykit-tint';
   return m;
 }
+// A body material's own copy (a decoy's see-through ghost): three's clone() drops onBeforeCompile, so the Mage's copy kept
+// KayKit's purple. Never marked shared.
+export function cloneBodyMaterial(m) {
+  const c = m.clone();
+  c.onBeforeCompile = m.onBeforeCompile; c.customProgramCacheKey = m.customProgramCacheKey;
+  delete c.userData.shared;
+  return c;
+}
 const tintUniforms = () => ({
   uOn: { value: 1 }, uRobe: { value: new THREE.Vector3(0, -1, 1) }, uCape: { value: new THREE.Vector3(0, -1, 1) },
   uGem: { value: new THREE.Color() },
@@ -353,8 +363,12 @@ function dotTexture() {
 }
 
 // A handful of points animated analytically: place(i, t, pos) fills pos (model space) and returns alpha.
-// One draw call per effect; the geometry is updated in onBeforeRender (one frame of lag is invisible).
+// One draw call per effect; the geometry is updated in onBeforeRender (one frame of lag is invisible). Round 20: culled by a
+// fixed sphere round the body (every aura stays within 2.3 m of the chest), so an aura off screen costs neither the draw nor
+// the update.
+const AURA_SPHERE = new THREE.Sphere(new THREE.Vector3(0, 1.2, 0), 2.3);
 function motes(count, { size, color, additive = true, place, tint }) {
+  count = Math.max(1, count);
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
   geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(count * 4).fill(1), 4));
@@ -363,14 +377,16 @@ function motes(count, { size, color, additive = true, place, tint }) {
     size, map: dotTexture(), color, vertexColors: true, transparent: true, depthWrite: false,
     blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
   });
+  geo.boundingSphere = AURA_SPHERE.clone();
   const pts = new THREE.Points(geo, mat);
-  pts.frustumCulled = false; pts.renderOrder = 3;
+  pts.renderOrder = 3;
   const p = new THREE.Vector3();
   pts.onBeforeRender = (renderer) => {
     // three sizes points by the whole canvas height; keep them right in a smaller viewport (the builder preview)
     renderer.getCurrentViewport(_vp); renderer.getDrawingBufferSize(_buf);
     mat.size = size * (_vp.w / (_buf.y || _vp.w || 1));
     const t = performance.now() / 1000;
+    frameStamp = renderer.info.render.frame;
     const pos = geo.attributes.position, col = geo.attributes.color;
     for (let i = 0; i < count; i++) {
       const a = place(i, t, p);
@@ -399,21 +415,66 @@ function attachToBone(model, boneName, obj, pos, quat = new THREE.Quaternion()) 
   return true;
 }
 
-// The position of `node` in `model`'s space, written into `out`.
+// The position of `node` in `model`'s space, written into `out`. Round 20: worked out once per node per frame (the motes of an
+// aura all ask for the same staff tip or hand; it was a matrix inverse per mote).
 const _m = new THREE.Matrix4();
+let frameStamp = 0;
 function inModel(model, node, out) {
-  node.getWorldPosition(out);
-  return out.applyMatrix4(_m.copy(model.matrixWorld).invert());
+  const c = node.userData.waAt ??= { f: -1, v: new THREE.Vector3() };
+  if (c.f !== frameStamp) {
+    c.f = frameStamp;
+    node.getWorldPosition(c.v).applyMatrix4(_m.copy(model.matrixWorld).invert());
+  }
+  return out.copy(c.v);
 }
 
-// Element auras: (host, body, k) adds to `host` (a group at the body's origin); `body` is the wrapper (metres); k is 1 for the
-// dominant element and 0.5 for the second (fewer, fainter particles). Returns objects attached to bones.
+// The ice shoulder shards: four flat-shaded shards per shoulder in one geometry (cached per side), one material for every body.
+const iceGeo = {};
+function iceShards(side) {
+  if (iceGeo[side]) return iceGeo[side];
+  const base = new THREE.OctahedronGeometry(1, 0), m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler();
+  const parts = [[0, 0, 0, 0.17, 0.25], [0.05, -0.02, 0.05, 0.12, 0.7], [0.03, -0.02, -0.06, 0.11, -0.5], [-0.04, -0.01, 0.0, 0.09, -0.2]].map(([x, y, z, len, tilt]) =>
+    base.clone().applyMatrix4(m.compose(new THREE.Vector3(x * side, y + len * 0.6, z),
+      q.setFromEuler(e.set(tilt * 0.6, 0, -side * (0.35 + Math.abs(tilt) * 0.5))), new THREE.Vector3(0.035, len, 0.035))));
+  const g = iceGeo[side] = mergeGeometries(parts);
+  g.userData.shared = true;
+  return g;
+}
+let iceMatShared = null;
+const iceMat = () => iceMatShared ??= Object.assign(new THREE.MeshStandardMaterial({ color: 0xbfeaff, emissive: 0x2a6f9a, emissiveIntensity: 0.6,
+  roughness: 0.25, metalness: 0.1, flatShading: true, transparent: true, opacity: 0.92 }), { userData: { shared: true } });
+
+// Round 20 (CrazyGames: "very laggy"): how much aura to draw, from the graphics tier (quality.js `params().auras`):
+//   'full'  the dominant element and the second one, every particle
+//   'cheap' the dominant element only, half the particles (the Mage keeps its centrepiece)
+//   'off'   none
+// Bodies built with { aura } keep theirs (the builder's preview always shows the full look). A change re-dresses the live bodies.
+const AURA_LEVELS = ['full', 'cheap', 'off'];
+let auraLevel = Q.params().auras || 'full';
+const liveBodies = new Set();   // WeakRefs to the bodies that follow the level
+export const getAuraLevel = () => auraLevel;
+export function setAuraLevel(level) {
+  if (!AURA_LEVELS.includes(level) || level === auraLevel) return;
+  auraLevel = level;
+  for (const ref of liveBodies) {
+    const b = ref.deref();
+    if (!b) { liveBodies.delete(ref); continue; }
+    b.setLook(b.loadout);
+  }
+}
+// quality.js (the spells track) owns the tier
+Q.onQuality((tier, p) => setAuraLevel(p?.auras));
+
+// Element auras: (host, body, k, big) adds to `host` (a group at the body's origin); `body` is the wrapper (metres); k scales the
+// particle counts (1 for the Mage's dominant element, 0.5 for the second or a Skeleton's, halved again on the 'cheap' level); `big`
+// adds the dominant element's centrepiece on the Mage (the staff flame, the shoulder shards, the blood pool). Returns objects
+// attached to bones.
 const AURA = {
-  fire(host, body, k) {
+  fire(host, body, k, big) {
     const tip = bone(body, 'tip') || bone(body, 'hand');
     if (!tip) return;
     const h = new THREE.Vector3();
-    if (k === 1) host.add(motes(1, { size: 0.5, color: 0xff7a2a, place: (i, t, p) => { inModel(body, tip, p); return 0.5 + 0.2 * Math.sin(t * 9) + 0.1 * Math.sin(t * 23); } }));
+    if (big) host.add(motes(1, { size: 0.5, color: 0xff7a2a, place: (i, t, p) => { inModel(body, tip, p); return 0.5 + 0.2 * Math.sin(t * 9) + 0.1 * Math.sin(t * 23); } }));
     host.add(motes(Math.round(8 * k), { size: 0.09, color: 0xffa040, place: (i, t, p) => {
       const q = fract(t * 0.9 + rand(i, 1));
       inModel(body, tip, h);
@@ -422,7 +483,7 @@ const AURA = {
     } }));
   },
   wind(host, body, k) {
-    const N = Math.round(10 * k), TRAIL = 4;
+    const N = Math.max(1, Math.round(10 * k)), TRAIL = k < 0.5 ? 2 : 4;
     host.add(motes(N * TRAIL, { size: 0.13, color: 0xc9a4ff, place: (j, t, p) => {
       const i = j % N, s = Math.floor(j / N);
       const sp = 1.8 + rand(i, 1) * 1.6, r = 0.55 + rand(i, 2) * 0.3;
@@ -431,19 +492,13 @@ const AURA = {
       return (0.7 + 0.3 * Math.sin(t * 4 + i * 1.7)) * (1 - s / TRAIL);
     } }));
   },
-  ice(host, body, k) {
+  ice(host, body, k, big) {
     const out = [];
-    if (k === 1) {
-      const mat = new THREE.MeshStandardMaterial({ color: 0xbfeaff, emissive: 0x2a6f9a, emissiveIntensity: 0.6, roughness: 0.25, metalness: 0.1, flatShading: true, transparent: true, opacity: 0.92 });
-      const geo = new THREE.OctahedronGeometry(1, 0);
+    if (big) {
       for (const side of [1, -1]) {
-        const cluster = new THREE.Group();
-        for (const [x, y, z, len, tilt] of [[0, 0, 0, 0.17, 0.25], [0.05, -0.02, 0.05, 0.12, 0.7], [0.03, -0.02, -0.06, 0.11, -0.5], [-0.04, -0.01, 0.0, 0.09, -0.2]]) {
-          const s = new THREE.Mesh(geo, mat);
-          s.scale.set(0.035, len, 0.035); s.position.set(x * side, y + len * 0.6, z);
-          s.rotation.set(tilt * 0.6, 0, -side * (0.35 + Math.abs(tilt) * 0.5)); s.castShadow = false;
-          cluster.add(s);
-        }
+        // one mesh per shoulder (round 20: the four shards merged, was a draw call each)
+        const cluster = new THREE.Mesh(iceShards(side), iceMat());
+        cluster.castShadow = false;
         // on KayKit's shoulders: the upper arm's root sits about 0.92 m up, 0.18 m out; the shards ride just above it
         if (attachToBone(body, side > 0 ? BONES.armL : BONES.armR, cluster, new THREE.Vector3(0.2 * side, 1.0, 0))) out.push(cluster);
       }
@@ -456,11 +511,11 @@ const AURA = {
     } }));
     return out;
   },
-  dark(host, body, k) {
-    host.add(motes(7, { size: 1.1, color: 0x8a0a22, place: (i, t, p) => {
-      const a = i / 7 * 6.283 + t * 0.3;
-      p.set(Math.cos(a) * 0.25, 0.35 + (i % 4) * 0.4, Math.sin(a) * 0.25);
-      return (0.26 + 0.07 * Math.sin(t * 2 + i)) * k;
+  dark(host, body, k, big, a = k) {
+    host.add(motes(k < 0.5 ? 4 : 7, { size: 1.1, color: 0x8a0a22, place: (i, t, p) => {
+      const ang = i / (k < 0.5 ? 4 : 7) * 6.283 + t * 0.3;
+      p.set(Math.cos(ang) * 0.25, 0.35 + (i % 4) * 0.4, Math.sin(ang) * 0.25);
+      return (0.26 + 0.07 * Math.sin(t * 2 + i)) * a;
     } }));
     host.add(motes(Math.round(16 * k), { size: 0.45, color: 0x2a0410, additive: false, place: (i, t, p) => {
       const q = fract(t * 0.35 + rand(i, 1));
@@ -474,7 +529,7 @@ const AURA = {
       p.set(Math.cos(a) * r, 0.2 + q * 1.6, Math.sin(a) * r);
       return Math.sin(q * Math.PI);
     } }));
-    if (k === 1) {
+    if (big) {
       const pool = new THREE.Mesh(new THREE.CircleGeometry(0.85, 32).rotateX(-Math.PI / 2),
         new THREE.MeshBasicMaterial({ map: dotTexture(), color: 0x5a0814, transparent: true, opacity: 0.7, depthWrite: false }));
       pool.position.y = 0.025; pool.renderOrder = 1;
@@ -522,7 +577,7 @@ const AURA = {
     const h = new THREE.Vector3();
     host.add(motes(Math.round(6 * k), { size: 0.08, color: 0xa8c8ff, place: (i, t, p) => {
       inModel(body, tip, h);
-      const a = t * 2.2 + i / 6 * 6.283;
+      const a = t * 2.2 + i / Math.max(1, Math.round(6 * k)) * 6.283;
       p.set(h.x + Math.cos(a) * 0.18, h.y + Math.sin(t * 1.7 + i) * 0.1, h.z + Math.sin(a) * 0.18);
       return 0.7;
     } }));
@@ -668,6 +723,12 @@ function updateGrip(body, w) {
   g.position.copy(_d).multiplyScalar(lift / (_sc.y || 1)).applyQuaternion(_qi);
 }
 
+// Round 20: one shadow-depth material for every skinned body. three's own shadow material is shared by every caster and only
+// picks a new program when skinning flips, taking the map of whatever it drew last: drawing a body after a static prop compiled
+// another depth variant mid-game (with or without the map) depending on the order. Bodies keep to theirs, the world to three's.
+let skinDepthMat = null;
+const skinDepth = () => skinDepthMat ??= new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+
 // A skeleton kind for a bot, from any number or string (stable for the same seed).
 export function botBody(seed) {
   let h = 0;
@@ -680,7 +741,8 @@ export function botBody(seed) {
 // `model` is a wrapper group (wizard.js moves and tilts it); the KayKit scene inside is scaled to metres. `hand` is the right hand
 // slot, `tip` the staff head (Object3Ds: getWorldPosition). setLook re-tints and swaps the aura in place (the clips stay; make a
 // new body when the loadout's spells change mid-game). An old hero id (string) wears that hero's old kit.
-export function makeWizardBody(loadout = {}, { body: kind = 'mage' } = {}) {
+export function makeWizardBody(loadout = {}, opts = {}) {
+  let kind = opts.body || 'mage';
   if (typeof loadout === 'string') loadout = WIZARDS[loadout]?.kit || {};
   if (!templates[kind]) kind = 'mage';
   const model = new THREE.Group();
@@ -693,11 +755,13 @@ export function makeWizardBody(loadout = {}, { body: kind = 'mage' } = {}) {
   const glow = [];
   inner.traverse(o => {
     if (!o.isMesh) return;
+    if (o.isSkinnedMesh) o.customDepthMaterial = skinDepth();
     if (!skel) o.material = tintMaterial(o.material, u);
     else if (o.material.name === 'Glow') { o.material = o.material.clone(); glow.push(o.material); }
     else o.material = o.material.clone();     // every body owns its materials (wizard.js fades and ghosts them)
   });
   let aura = null, onBones = [];
+  const fixedLevel = AURA_LEVELS.includes(opts.aura) ? opts.aura : null;
   const body = {
     model, kind, loadout, look: null, clips: genericClips(loadout, kind),
     hand: bone(model, 'hand'), head: bone(model, 'head'), tip: bone(model, 'tip') || bone(model, 'hand'),
@@ -718,14 +782,45 @@ export function makeWizardBody(loadout = {}, { body: kind = 'mage' } = {}) {
     lookUniforms(look, u);
     // skeletons: the eyes burn in the element colour
     for (const m of glow) { m.color.setHex(0x000000); m.emissive.setHex(ELEMENTS[look.main].bolt); m.emissiveIntensity = 2.2; }
-    if (aura) { model.remove(aura); aura.traverse(o => { o.geometry?.dispose(); o.material?.dispose?.(); }); }
+    if (aura) {
+      model.remove(aura);
+      aura.traverse(o => { if (o.geometry && !o.geometry.userData.shared) o.geometry.dispose(); if (o.material && !o.material.userData.shared) o.material.dispose(); });
+    }
     for (const o of onBones) o.removeFromParent();
     aura = new THREE.Group(); aura.name = 'aura';
-    onBones = [AURA[look.main]?.(aura, model, skel ? 0.5 : 1), look.second && AURA[look.second]?.(aura, model, 0.5)].flat().filter(Boolean);
+    const level = fixedLevel || auraLevel, cheap = level === 'cheap' ? 0.5 : 1;
+    onBones = level === 'off' ? [] : [AURA[look.main]?.(aura, model, (skel ? 0.5 : 1) * cheap, !skel, skel ? 0.5 : 1),
+      level === 'full' && look.second && AURA[look.second]?.(aura, model, 0.5, false, 0.5)].flat().filter(Boolean);
     model.add(aura);
     model.userData.look = look;
   };
   body.setLook(loadout);
+  if (!fixedLevel) liveBodies.add(new WeakRef(body));
   return body;
 }
 export const makeGenericBody = (loadout) => makeWizardBody(loadout);
+
+// Round 20, for the shader warm-up behind the loading screen (main.js): one of every body variant the match can show that a single
+// wizard per body kind doesn't, as a group to put in front of the camera, compile, draw once and take away. A Mage in every
+// element's look with its full aura (each aura's materials), and a see-through Mage (your own Mirror Step decoy, wizard.js
+// makeGhost: three compiles a transparent material as another program; only the caster sees it, and players are Mages).
+// Take it away with disposeWarmSet(group).
+export function warmSet() {
+  const g = new THREE.Group(); g.name = 'looksWarmSet';
+  const bySlot = {};
+  for (const [id, sp] of Object.entries(SPELLBOOK)) { const e = SPELL_INFO[id]?.element; if (e) ((bySlot[e] ||= {})[sp.slot] ||= id); }
+  let x = 0;
+  for (const e of Object.keys(ELEMENTS)) {
+    const b = makeWizardBody({ ...bySlot[e] }, { aura: 'full' });
+    b.model.position.x = (x++) * 0.8; g.add(b.model);
+  }
+  const ghost = makeWizardBody({}, { aura: 'off' });
+  ghost.model.traverse(o => { if (o.isMesh) { o.material = cloneBodyMaterial(o.material); o.material.transparent = true; o.material.opacity = 0.32; o.material.depthWrite = false; o.castShadow = false; } });
+  ghost.model.position.x = x * 0.8; g.add(ghost.model);
+  return g;
+}
+// (Only the geometries: disposing the last material of a kind would let three delete the program the warm-up just compiled.)
+export function disposeWarmSet(g) {
+  g.removeFromParent();
+  g.traverse(o => { if (o.isPoints) o.geometry.dispose(); });
+}

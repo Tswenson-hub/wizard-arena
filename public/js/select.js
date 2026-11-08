@@ -132,7 +132,7 @@ function makeBuilderPreview(el) {
 
   pv.setLoadout = (lo) => {
     if (!ready) { pv.onReady = () => pv.setLoadout(lo); return; }
-    const body = makeWizardBody(lo);
+    const body = makeWizardBody(lo, { aura: 'full' });   // (the preview shows the whole look on every graphics tier)
     if (pv.body) { scene.remove(pv.body.model); pv.mixer.stopAllAction(); }
     pv.body = body;
     body.model.rotation.y = pv.yaw;
