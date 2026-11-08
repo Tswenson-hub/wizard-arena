@@ -2088,3 +2088,46 @@ the wall goes 494 → 444. Getting under 120k needs a decision from Ty / the coo
 
 Tell me which (if any) and I'll do it. On this GPU, triangles aren't what costs frames; the hitches were compiles and the
 2048 shadow map redrawing 166k triangles.
+
+## characters → spells (coordinator, environment FYI): round 20, characters landed (`8d3612a` `e9e47d1` `babd10d`); two lines for the warm-up
+**Spells, please add to `warmUp()` in main.js** (I tested exactly this in a scratch worktree; main.js is yours):
+```js
+import { loadWizardModels, BODY_KINDS, warmSet, disposeWarmSet } from './looks.js';
+// after effects.warmUp(at, dummies[0]):
+const looksWarm = warmSet(); looksWarm.position.copy(at).x -= 4; scene.add(looksWarm);
+// before the 1-pixel render:   renderer.shadowMap.needsUpdate = true;   (the shadow programs too, when shadows don't update every frame)
+// after `for (const o of hidden) o.visible = false;`:
+disposeWarmSet(looksWarm);
+await Podium.warm(renderer, scene, camera);
+```
+- `warmSet()`: a Mage in every element's look with its full aura, plus your own Mirror Step ghost (a see-through Mage). Your one wizard
+  per body kind only covers `wantLoadout`'s element. `disposeWarmSet` disposes geometries only: **disposing the last material of a kind
+  makes three delete its program**, so the warm-up's work is lost. That applies to effects too: don't `dispose()` pooled or warmed materials.
+- `Podium.warm()` builds a recap with the arena's lights, compiles it, draws it once into 1 px and drops it. It needs the arena's
+  lights in place (the world and your light pool), so call it after the effects pool exists.
+- **Auras** read `Q.params().auras` at load and follow `onQuality` (they re-dress the live bodies; checked: 0 compiles on full ↔ cheap ↔ off).
+  `cheap`: dominant element only, half the particles. `off`: none. The builder preview always shows full.
+- **wizard.js:** `chargeLight` is no longer `scene.add`ed. Your `scene.remove` + `effects.lights.feed` in main.js still work as before.
+- **Found while tracing (all agents):** three's shared shadow-depth material picks its program by whichever object it last drew
+  (it takes each caster's `map` but only recompiles when skinning flips). That compiled extra depth variants depending on draw order.
+  Skinned bodies now have their own `customDepthMaterial`.
+- **Still compiling mid-match (one of six traced runs, at about 11 s):** two `MeshStandardMaterial` programs with
+  `USE_NORMALMAP USE_EMISSIVEMAP USE_ROUGHNESSMAP USE_METALNESSMAP`, i.e. a full-PBR glTF material. Not a body (KayKit bodies have only a
+  map). Probably a prop or effect model (potion, ram, ice wall, acid pool?). Whoever owns it: put one in the warm-up, or flatten its
+  material to the plain textured one the kit uses.
+
+**Numbers** (`deploy/perf_test.py`, Apple GPU, 4x CPU throttle, 1280×720, 60 s). Before = HEAD `4b6c4d1` (port 4123), after = that plus my
+three files and the warm-up lines above (port 4133). The triangles are the environment's (bodies are 5.7k-7.1k each, under the 8k limit, unchanged).
+| Run | fps | p95 / max frame | >100 ms after 10 s | draws (p95) | programs (mid-match) |
+|---|---|---|---|---|---|
+| before, normal | 59.5 | 18.3 / **432** ms | 1 | 78 (148) | 56 (1) |
+| after, normal (3 runs) | 60.0 | 17.5-18.3 / **17.8-49** ms | 0 | 64-68 (138-160) | 57-60 (0, 0, 2*) |
+| before, low | 60.0 | 17.5 / 17.7 | 0 | **78 (193)** | 50 (0) |
+| after, low | 60.0 | 17.5 / 17.8 | 0 | **65 (134)** | 54 (0) |
+\* the PBR material above.
+- **Podium recap** (start it mid-match): programs compiled **13 → 0**, `start()` **83-108 → 13 ms**, the longest frame **67-1067 → 18 ms**.
+  Same look (`/tmp/wa-characters/r20/podium-{before,after}-*.png`); the winner's spotlight is a point light now (no SpotLight in the arena).
+- **Auras**, 9 bodies of every look, CPU per frame at 4x: full **0.96 → 0.83 ms**, cheap 0.76, off 0.53; draws 55 → 43 (full) / 42 / 21.
+  Full looks the same as before (pixel diff: only the time-animated particles). Shots: `/tmp/wa-characters/r20/aura-*.png`.
+- **Per loadout:** one program per body kind (the tint is uniforms under one cache key). 21 bodies of every look added 0 new programs.
+  Each body keeps its own material copy (a few uniforms per draw) because wizard.js fades and ghosts each body on its own.
