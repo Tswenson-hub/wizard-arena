@@ -27,6 +27,21 @@ export class Net {
     this.connected = false;
     this.onClose = null;
     this.statsWaiters = [];   // round 19: requestStats() promises waiting for the server's { t: 'stats' }
+    this.ping = null;         // round 20: the round trip (ms, smoothed), from { t: 'ping' } every 2 s
+    this.pingTimer = null;
+  }
+
+  // Round 20: measure the round trip (the server answers a ping at once; our last measure rides along for the scoreboard).
+  startPing() {
+    clearInterval(this.pingTimer);
+    const ping = () => this.send({ t: 'ping', c: performance.now(), rtt: this.ping == null ? undefined : Math.round(this.ping) });
+    ping();
+    this.pingTimer = setInterval(ping, 2000);
+  }
+  onPong(msg) {
+    const rtt = performance.now() - msg.c;
+    if (!(rtt >= 0 && rtt < 10000)) return;
+    this.ping = this.ping == null ? rtt : this.ping + (rtt - this.ping) * 0.3;
   }
 
   // round 11: `pick` is { loadout, voice } from the builder. Round 17: `room` is '' or undefined (a public match), 'new'
@@ -36,15 +51,17 @@ export class Net {
       // round 14: the CrazyGames build sets window.WA_SERVER (config.js) to the Render server; our own site leaves it unset
       const ws = new WebSocket(serverUrl());
       this.ws = ws;
-      ws.onopen = () => { this.connected = true; this.send({ t: 'join', name, loadout: pick?.loadout, voice: pick?.voice, difficulty, room: room || undefined }); };
+      ws.onopen = () => { this.connected = true; this.send({ t: 'join', name, loadout: pick?.loadout, voice: pick?.voice, difficulty, room: room || undefined }); this.startPing(); };
       ws.onmessage = (e) => {
         let msg; try { msg = JSON.parse(e.data); } catch { return; }
+        if (msg.t === 'pong') { this.onPong(msg); return; }
+        msg.rx = performance.now();   // (round 20: when it arrived: the snapshots' timing for the interpolation)
         if (msg.t === 'welcome') resolve(msg);
         else if (msg.t === 'stats') { for (const w of this.statsWaiters.splice(0)) w(msg); }   // (not the game loop's)
         else this.queue.push(msg);
       };
       ws.onerror = () => reject(new Error('Could not reach the server'));
-      ws.onclose = () => { this.connected = false; this.onClose?.(); };
+      ws.onclose = () => { this.connected = false; clearInterval(this.pingTimer); this.onClose?.(); };
     });
   }
 

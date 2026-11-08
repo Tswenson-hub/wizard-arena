@@ -116,7 +116,9 @@ kbd {
 #scoreboard th, #scoreboard td { text-align: left; padding: 5px 8px; }
 #scoreboard th { color: var(--dim); font-weight: normal; font-size: 12px; }
 #scoreboard tr.me td { color: var(--gold); }
-#scoreboard td:nth-child(3), #scoreboard td:nth-child(4), #scoreboard th:nth-child(3), #scoreboard th:nth-child(4) { text-align: right; }
+#scoreboard td:nth-child(n+3), #scoreboard th:nth-child(n+3) { text-align: right; }
+#scoreboard td.ping { color: var(--dim); font-size: 12px; white-space: nowrap; }   /* round 20: the round trip */
+#scoreboard td.ping.slow { color: #ff9a6a; }
 
 #clickToPlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.45); pointer-events: auto; }
 .pause.panel { width: min(96vw, 1600px); height: calc(100vh - 92px); max-height: none; margin-top: 76px; padding: 14px 20px; overflow: hidden;

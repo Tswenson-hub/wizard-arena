@@ -85,7 +85,7 @@ export function createRoom(opts) {
   function playerPublic(p) {
     return {
       ...match.playerExtras(p),
-      id: p.id, name: p.name, color: p.color, body: p.body || 'mage',
+      id: p.id, name: p.name, color: p.color, body: p.body || 'mage', ping: p.ping,   // (round 20: a human's round trip, ms)
       p: p.p, yaw: p.yaw, anim: p.anim,
       hp: Math.round(p.hp), st: Math.round(p.st),
       blocking: p.blocking, charging: p.charging,

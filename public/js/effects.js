@@ -366,7 +366,8 @@ export class Effects {
   }
 
   // ---------------------------------------------------------------- projectiles
-  spawnProjectile(msg) {
+  // `ff` (round 20): seconds to fast-forward it (our own shots: the server launched them half a round trip ago)
+  spawnProjectile(msg, ff = 0) {
     const g = new THREE.Group();
     const color = msg.kind === 'fast' && msg.color !== undefined ? msg.color : SPELL_COLORS[msg.kind];
     let light = null;
@@ -490,6 +491,13 @@ export class Effects {
       vel: new THREE.Vector3(msg.v[0], msg.v[1], msg.v[2]),
       g: msg.g || 0, life: msg.life, age: 0, trail: 0, fin: !!msg.fin, color, curve: msg.curve || null, cores,
     });
+    if (ff > 0) {
+      const pr = this.projectiles.get(msg.id);
+      pr.age = ff;
+      if (pr.curve) { const at = C.hexAt(pr.curve, ff); pr.pos.fromArray(at.p); pr.vel.fromArray(at.v); }
+      else { pr.pos.addScaledVector(pr.vel, ff); pr.pos.y -= 0.5 * pr.g * ff * ff; pr.vel.y -= pr.g * ff; }
+      g.position.copy(pr.pos);
+    }
   }
 
   endProjectile(msg) {

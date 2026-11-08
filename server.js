@@ -149,6 +149,17 @@ wss.on('connection', (ws) => {
     }
     if (msg.t === 'save') { if (ws.account) Saves.writeSave(ws.account.playerId, msg.data); return; }
     if (msg.t === 'stats') { statsRequest(ws); return; }   // round 19: the stats panel (before or after the join)
+    // round 20: the round trip for the scoreboard. { t: 'ping', c, rtt } is answered at once with { t: 'pong', c }; `rtt` is the
+    // client's own last measure (ms), shown to everyone in the match. At most two a second.
+    if (msg.t === 'ping') {
+      const t = Date.now();
+      if (t - (ws.pingAt || 0) < 500) return;
+      ws.pingAt = t;
+      ws.send(JSON.stringify({ t: 'pong', c: msg.c }));
+      const rtt = Number(msg.rtt), p = id !== null && room?.players.get(id);
+      if (p && Number.isFinite(rtt) && rtt >= 0 && rtt < 10000) p.ping = Math.round(rtt);
+      return;
+    }
 
     if (id === null) {
       if (msg.t === 'addBot' || msg.t === 'removeBots') {
@@ -184,14 +195,33 @@ setInterval(() => {
   }
 }, 15000);
 
+// round 20: tick profiling. How long each loop takes (every room's simulate; every room's snapshot, which serialises and
+// sends), and how late the tick timer fires, over 10 s windows: GET /perf, and a log line with PERF_LOG=1. The target:
+// a tick under 4 ms at 60 Hz on Render Standard with 4 rooms of 4.
+const prof = { sim: [], snap: [], late: [], last: null };
+const sum = (xs) => {
+  if (!xs.length) return null;
+  const s = [...xs].sort((a, b) => a - b), at = (q) => s[Math.min(s.length - 1, Math.floor(q * s.length))];
+  return { n: s.length, avg: +(s.reduce((a, b) => a + b, 0) / s.length).toFixed(3), p95: +at(0.95).toFixed(3), max: +s[s.length - 1].toFixed(3) };
+};
+setInterval(() => {
+  prof.last = { at: new Date().toISOString(), rooms: rooms.size, humans: totalHumans(), bots: totalBots(),
+    tickMs: sum(prof.sim), snapshotMs: sum(prof.snap), timerLateMs: sum(prof.late), heapMB: Math.round(process.memoryUsage().heapUsed / 1048576) };
+  prof.sim.length = prof.snap.length = prof.late.length = 0;
+  if (process.env.PERF_LOG) console.log('[perf]', JSON.stringify(prof.last));
+}, 10000);
+app.get('/perf', (req, res) => res.json(prof.last ?? { pending: 'the first 10 s window' }));
+
 // loops: one tick for every room
 let last = now();
 setInterval(() => {
   const t = now();
   const dt = Math.min(0.1, t - last); last = t;
+  prof.late.push(Math.max(0, (dt - 1 / C.TICK_RATE) * 1000));
   for (const r of rooms.values()) r.simulate(dt);
+  prof.sim.push((now() - t) * 1000);
 }, 1000 / C.TICK_RATE);
-setInterval(() => { for (const r of rooms.values()) r.snapshot(); }, 1000 / C.SNAPSHOT_RATE);
+setInterval(() => { const t = now(); for (const r of rooms.values()) r.snapshot(); prof.snap.push((now() - t) * 1000); }, 1000 / C.SNAPSHOT_RATE);
 setInterval(cleanupRooms, 1000);
 
 // round 18: a deploy or restart writes the saves still waiting on their 10 s

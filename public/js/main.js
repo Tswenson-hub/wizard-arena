@@ -641,7 +641,7 @@ function applySnapshot(w, s) {
     w.targetYaw = s.yaw;
     w.netAnim = s.anim;
   }
-  w.hp = s.hp; w.st = s.st; w.kills = s.kills; w.deaths = s.deaths;
+  w.hp = s.hp; w.st = s.st; w.kills = s.kills; w.deaths = s.deaths; w.ping = s.ping;
   if (!!s.spectator !== !!w.spectator) { w.spectator = !!s.spectator; if (w !== me) w.group.visible = !w.spectator; }   // a 5th human watching
   if (s.blocking && !w.blocking && !w.dead && w.loadout?.guard === 'black_death') sfx.play('black_death_cast', { pos: wpos(w), vol: 0.6, jitter: 0.05 });   // raising Sanguine Aegis
   w.blocking = s.blocking; w.charging = s.charging; w.stunned = s.stun;
@@ -737,16 +737,127 @@ function withBolt(pj) {
   return pj.kind === 'fast' && owner ? { ...pj, color: C.ELEMENTS[C.dominantElement(owner.loadout)].bolt } : pj;
 }
 
+// ---------------------------------------------------------------- network smoothing (round 20)
+// Remote wizards are drawn NET.delay behind the server's clock, between the two snapshots around that moment, instead of
+// chasing the newest one (which stepped and rubber-banded on a jittery 150-200 ms round trip: CrazyGames' reviewers are in
+// Belgium, the server in Oregon). The delay follows the measured jitter between 100 and 150 ms. A late snapshot is
+// bridged by extrapolating along the last velocity for up to NET.EXTRAP, then holding; what's shown eases onto the
+// target, so a correction slides instead of popping. A jump of more than NET.CUT between snapshots (a teleport, a
+// respawn) isn't interpolated across, and the teleport messages reset the buffer (netJump).
+const NET = { offset: null, jitter: 0, delay: 0.1, MIN: 0.1, MAX: 0.15, EXTRAP: 0.12, CUT: 5, KEEP: 1.2,
+  off: new URLSearchParams(location.search).has('netold') };   // (?netold: the old smoothing, to compare)
+const netBuf = new Map();   // remote player id -> [{ t (server s), x, y, z, yaw, cut }]
+// the server clock against ours: the best (largest) of (server time - arrival) is the quickest delivery; later ones are jitter
+function netClock(msg) {
+  if (!(msg.time > 0) || !msg.rx) return;
+  const sample = msg.time - msg.rx / 1000;
+  NET.offset = NET.offset == null ? sample : Math.max(sample, NET.offset - 0.0002);   // (drifts down 4 ms/s: follows a route change)
+  NET.jitter += (NET.offset - sample - NET.jitter) * 0.08;
+  const want = Math.min(NET.MAX, Math.max(NET.MIN, 1 / C.SNAPSHOT_RATE + 2.5 * NET.jitter + 0.01));
+  NET.delay += (want - NET.delay) * 0.05;
+}
+const netNow = () => performance.now() / 1000 + NET.offset - NET.delay;   // the moment remote wizards are drawn at (server s)
+function netPush(s, t) {
+  let buf = netBuf.get(s.id);
+  if (!buf) netBuf.set(s.id, buf = []);
+  const last = buf[buf.length - 1];
+  if (last && t <= last.t) return;
+  buf.push({ t, x: s.p[0], y: s.p[1], z: s.p[2], yaw: s.yaw, cut: !!last && Math.hypot(s.p[0] - last.x, s.p[2] - last.z) > NET.CUT });
+  while (buf.length > 2 && buf[1].t < t - NET.KEEP) buf.shift();
+}
+// a teleport handled by a message: show it now, and draw from there on (the buffered path led to the old place)
+function netJump(w) {
+  if (w === me || NET.offset == null) return;
+  const p = w.group.position;
+  netBuf.set(w.id, [{ t: netNow(), x: p.x, y: p.y, z: p.z, yaw: w.group.rotation.y, cut: true }]);
+}
+const netTarget = new THREE.Vector3();
+function netSmooth(w, dt) {
+  const buf = netBuf.get(w.id);
+  if (!buf || !buf.length || NET.offset == null || NET.off) { w.interpolate(dt); return; }   // (NET.off: the old way, for comparing)
+  const rt = netNow(), n = buf.length, b = buf[n - 1];
+  let yaw;
+  if (rt >= b.t || n === 1) {   // nothing newer yet: extrapolate a little (on the ground plane), then hold
+    const a = n > 1 ? buf[n - 2] : null, span = a ? b.t - a.t : 0, ex = Math.min(Math.max(0, rt - b.t), NET.EXTRAP);
+    if (a && span > 0 && !b.cut) netTarget.set(b.x + (b.x - a.x) / span * ex, b.y, b.z + (b.z - a.z) / span * ex);
+    else netTarget.set(b.x, b.y, b.z);
+    yaw = b.yaw;
+  } else if (rt <= buf[0].t) { netTarget.set(buf[0].x, buf[0].y, buf[0].z); yaw = buf[0].yaw; }
+  else {
+    let i = n - 1;
+    while (i > 1 && buf[i - 1].t > rt) i--;
+    const p = buf[i - 1], q = buf[i];
+    if (q.cut) { netTarget.set(p.x, p.y, p.z); yaw = p.yaw; }   // (the jump happens when its snapshot's moment comes)
+    else {
+      const k = (rt - p.t) / (q.t - p.t);
+      netTarget.set(p.x + (q.x - p.x) * k, p.y + (q.y - p.y) * k, p.z + (q.z - p.z) * k);
+      const d = Math.atan2(Math.sin(q.yaw - p.yaw), Math.cos(q.yaw - p.yaw));
+      yaw = p.yaw + d * k;
+    }
+  }
+  const g = w.group;
+  if (g.position.distanceTo(netTarget) > NET.CUT) g.position.copy(netTarget);
+  else g.position.lerp(netTarget, Math.min(1, dt * 30));
+  const dy = Math.atan2(Math.sin(yaw - g.rotation.y), Math.cos(yaw - g.rotation.y));
+  g.rotation.y += dy * Math.min(1, dt * 30);
+}
+
+// A cast leaving the hand: the strike or pose, the muzzle flash and the sound (for a 'proj', or predicted for ours).
+function projFeedback(owner, msg) {
+  // a body with the shared triple-strike combo (combo1/2/3) plays the strike for this shot of its magazine
+  const combo = msg.shot != null && owner.actions['combo' + (msg.shot + 1)];
+  if (combo) owner.oneShot('combo' + (msg.shot + 1), Math.min(0.7, combo.getClip().duration), Math.max(1, combo.getClip().duration / 0.7), 0);
+  // the cast's muzzle flash; a combo strike (and Gale Shear) also sweeps an arc in the hero's colour
+  if (msg.kind !== 'prop' && msg.kind !== 'flaskstep' && !(msg.kind === 'skim' && owner.inOneShot() && !combo)) effects.muzzle(msg);
+  if ((combo || msg.kind === 'shear') && C.PRIMARY_KINDS.has(msg.kind)) effects.slash([msg.p[0] + msg.v[0] * 0.04, msg.p[1], msg.p[2] + msg.v[2] * 0.04], owner.color ?? 0xffffff, msg.fin ? 1.2 : 0.9);
+  if (msg.fin && C.PRIMARY_KINDS.has(msg.kind) && !(performance.now() - (owner.finSndAt || 0) < 150)) { owner.finSndAt = performance.now(); sfx.finisher(msg.p, C.primaryElement(owner.loadout)); }   // the 3rd-shot accent, by element (once for Skim's three shards)
+  if (msg.kind === 'potion') { if (!combo) owner.pose('throw', 0.45); sfx.play('potion_toss', { pos: msg.p, vol: 0.8, jitter: 0.08 }); }
+  else if (msg.kind === 'toxic') { if (!playSpell(owner, 'toxic_flask', 'cast')) owner.pose('throw', 0.5); sfx.play('potion_toss', { pos: msg.p, vol: 0.85, rate: 0.85 }); }
+  else if (msg.kind === 'flaskstep') { sfx.play('whoosh', { pos: msg.p, vol: 0.6, rate: 1.3 }); }
+  else if (msg.kind === 'fast') { if (!combo) owner.pose('cast', 0.45); if (!msg.fin) sfx.castFast(msg.p); }
+  else if (msg.kind === 'fireball') { if (!combo) owner.pose('cast', 0.5); sfx.play('spark_cast', { pos: msg.p, vol: 0.7, rate: msg.fin ? 0.75 : 0.85 }); }
+  else if (msg.kind === 'shear') { if (!combo) owner.pose('cast', 0.35); sfx.play('shear_cast', { pos: msg.p, vol: msg.fin ? 0.95 : 0.75, rate: msg.fin ? 0.9 : 1, jitter: 0.06 }); }
+  else if (msg.kind === 'hex') { if (!combo) owner.pose('cast', 0.45); sfx.play('hex_cast', { pos: msg.p, vol: 0.75, rate: 1 + (msg.curve?.shot ?? 0) * 0.08, jitter: 0.04 }); }
+  else if (msg.kind === 'sling') { if (!combo) owner.pose('cast', 0.4); sfx.play('sling_cast', { pos: msg.p, vol: 0.75, jitter: 0.06 }); }   // (it used to fall through to the thrown-prop branch)
+  else if (msg.kind === 'skim') { if (!owner.inOneShot()) { if (!combo) owner.pose('cast', 0.4); sfx.castSkim(msg.p); } }   // three per cast
+  else if (msg.kind === 'siphon') {   // round 16: Blood Siphon's bolt leaves (the cast pose has played the thrust)
+    owner.siphoning = false;
+    if (!owner.inOneShot()) playSpell(owner, 'sanguine_lash', 'release') || owner.pose('cast', 0.4);
+    sfx.lashCrack(msg.p);
+  }
+  else if (msg.kind === 'heavy') { owner.charging = false; owner.pose('cast_release', 0.55); sfx.castHeavy(msg.p); }
+  else { tkGesture(owner, 'tk_throw'); sfx.throw_(msg.p); if (owner.carrying) startCarry(owner, null); }
+}
+// Round 20: our primary casts are shown when we click (the muzzle, the strike, the sound), not a round trip later; the
+// server's 'proj' for one of them then only adds the bolt. (Skim's three shards come together: one cast shows them all.)
+const predicted = [];   // { kind, at, used }
+function predictCast(kind, shot, fin) {
+  predicted.push({ kind, at: now, used: null });
+  const v = aimDir.clone().multiplyScalar(C.SPELLS[kind]?.speed ?? 30).toArray();
+  projFeedback(me, withBolt({ owner: myId, kind, p: aimOrigin.toArray(), v, fin, shot, curve: kind === 'hex' ? { shot } : undefined }));
+}
+function predictedCast(msg) {
+  if (!C.PRIMARY_KINDS.has(msg.kind)) return false;
+  while (predicted.length && (now - predicted[0].at > 1.5 || (predicted[0].used != null && now - predicted[0].used > 0.1))) predicted.shift();
+  const e = predicted.find(e => e.kind === msg.kind);
+  if (!e) return false;
+  e.used ??= now;
+  return true;
+}
+
 // Where a wizard's sounds come from (chest height).
 function wpos(w) { return w.group.position.clone().setY(w.group.position.y + 1.1); }
 
 function handleMessage(msg) {
   switch (msg.t) {
     case 'snap':
+      netClock(msg);
       for (const s of msg.players) {
         const w = players.get(s.id) || addPlayer(s);
         applySnapshot(w, s);
+        if (s.id !== myId) netPush(s, msg.time);
       }
+      for (const id of netBuf.keys()) if (!players.has(id)) netBuf.delete(id);
       updateDecoys(msg.decoys || []);
       for (const g of msg.rams || []) { const v = rams.get(g.id) || addRam(g); v.apply(g); }
       // a ram no longer in the snapshot is gone, even if we missed its ramGone
@@ -788,33 +899,11 @@ function handleMessage(msg) {
       break;
     }
     case 'proj': {
-      effects.spawnProjectile(withBolt(msg));
+      // round 20: ours already showed its cast when we clicked (predictCast); its bolt starts where the server's is by now
+      const own = msg.owner === myId;
+      effects.spawnProjectile(withBolt(msg), own ? Math.min(0.15, (net.ping ?? 0) / 2000) : 0);
       const owner = players.get(msg.owner);
-      if (owner) {
-        // a body with the shared triple-strike combo (combo1/2/3) plays the strike for this shot of its magazine
-        const combo = msg.shot != null && owner.actions['combo' + (msg.shot + 1)];
-        if (combo) owner.oneShot('combo' + (msg.shot + 1), Math.min(0.7, combo.getClip().duration), Math.max(1, combo.getClip().duration / 0.7), 0);
-        // the cast's muzzle flash; a combo strike (and Gale Shear) also sweeps an arc in the hero's colour
-        if (msg.kind !== 'prop' && msg.kind !== 'flaskstep' && !(msg.kind === 'skim' && owner.inOneShot() && !combo)) effects.muzzle(msg);
-        if ((combo || msg.kind === 'shear') && C.PRIMARY_KINDS.has(msg.kind)) effects.slash([msg.p[0] + msg.v[0] * 0.04, msg.p[1], msg.p[2] + msg.v[2] * 0.04], owner.color ?? 0xffffff, msg.fin ? 1.2 : 0.9);
-        if (msg.fin && C.PRIMARY_KINDS.has(msg.kind) && !(performance.now() - (owner.finSndAt || 0) < 150)) { owner.finSndAt = performance.now(); sfx.finisher(msg.p, C.primaryElement(owner.loadout)); }   // the 3rd-shot accent, by element (once for Skim's three shards)
-        if (msg.kind === 'potion') { if (!combo) owner.pose('throw', 0.45); sfx.play('potion_toss', { pos: msg.p, vol: 0.8, jitter: 0.08 }); }
-        else if (msg.kind === 'toxic') { if (!playSpell(owner, 'toxic_flask', 'cast')) owner.pose('throw', 0.5); sfx.play('potion_toss', { pos: msg.p, vol: 0.85, rate: 0.85 }); }
-        else if (msg.kind === 'flaskstep') { sfx.play('whoosh', { pos: msg.p, vol: 0.6, rate: 1.3 }); }
-        else if (msg.kind === 'fast') { if (!combo) owner.pose('cast', 0.45); if (!msg.fin) sfx.castFast(msg.p); }
-        else if (msg.kind === 'fireball') { if (!combo) owner.pose('cast', 0.5); sfx.play('spark_cast', { pos: msg.p, vol: 0.7, rate: msg.fin ? 0.75 : 0.85 }); }
-        else if (msg.kind === 'shear') { if (!combo) owner.pose('cast', 0.35); sfx.play('shear_cast', { pos: msg.p, vol: msg.fin ? 0.95 : 0.75, rate: msg.fin ? 0.9 : 1, jitter: 0.06 }); }
-        else if (msg.kind === 'hex') { if (!combo) owner.pose('cast', 0.45); sfx.play('hex_cast', { pos: msg.p, vol: 0.75, rate: 1 + (msg.curve?.shot ?? 0) * 0.08, jitter: 0.04 }); }
-        else if (msg.kind === 'sling') { if (!combo) owner.pose('cast', 0.4); sfx.play('sling_cast', { pos: msg.p, vol: 0.75, jitter: 0.06 }); }   // (it used to fall through to the thrown-prop branch)
-        else if (msg.kind === 'skim') { if (!owner.inOneShot()) { if (!combo) owner.pose('cast', 0.4); sfx.castSkim(msg.p); } }   // three per cast
-        else if (msg.kind === 'siphon') {   // round 16: Blood Siphon's bolt leaves (the cast pose has played the thrust)
-          owner.siphoning = false;
-          if (!owner.inOneShot()) playSpell(owner, 'sanguine_lash', 'release') || owner.pose('cast', 0.4);
-          sfx.lashCrack(msg.p);
-        }
-        else if (msg.kind === 'heavy') { owner.charging = false; owner.pose('cast_release', 0.55); sfx.castHeavy(msg.p); }
-        else { tkGesture(owner, 'tk_throw'); sfx.throw_(msg.p); if (owner.carrying) startCarry(owner, null); }
-      }
+      if (owner && !(own && predictedCast(msg))) projFeedback(owner, withBolt(msg));
       break;
     }
     case 'projEnd': {
@@ -939,7 +1028,7 @@ function handleMessage(msg) {
       effects.skyward(p, msg.top);
       sfx.skyward([p[0], 1, p[2]]);
       w.pose('dash', 0.5);
-      if (w !== me) { w.targetPos.set(msg.p[0], msg.top, msg.p[2]); w.group.position.copy(w.targetPos); }
+      if (w !== me) { w.targetPos.set(msg.p[0], msg.top, msg.p[2]); w.group.position.copy(w.targetPos); netJump(w); }
       break;
     }
     case 'skywardCancel':
@@ -985,7 +1074,7 @@ function handleMessage(msg) {
         local.pos.set(msg.to[0], msg.to[1] || 0, msg.to[2]); local.vel.multiplyScalar(0.5); local.tpSeq = msg.seq ?? local.tpSeq;
         if ((msg.to[1] || 0) > groundAt(msg.to[0], msg.to[2], msg.to[1] || 0) + 0.05) { local.jump = null; local.hover = null; local.airDash = null; local.fall = { start: now, y0: msg.to[1], air: true }; }
       }
-      else { w.targetPos.set(msg.to[0], msg.to[1] || 0, msg.to[2]); w.group.position.copy(w.targetPos); w.targetYaw = msg.yaw; w.group.rotation.y = msg.yaw; }
+      else { w.targetPos.set(msg.to[0], msg.to[1] || 0, msg.to[2]); w.group.position.copy(w.targetPos); netJump(w); w.targetYaw = msg.yaw; w.group.rotation.y = msg.yaw; }
       for (const d of msg.decoys) spawnDecoy({ ...d, owner: msg.id });
       break;
     }
@@ -1106,7 +1195,7 @@ function handleMessage(msg) {
       if (w) {
         sfx.teleport(msg.to);
         w.pose('dash', 0.5);
-        if (w !== me) { w.targetPos.set(msg.to[0], msg.to[1] || 0, msg.to[2]); w.group.position.copy(w.targetPos); }
+        if (w !== me) { w.targetPos.set(msg.to[0], msg.to[1] || 0, msg.to[2]); w.group.position.copy(w.targetPos); netJump(w); }
         else if (local.pos.distanceTo(new THREE.Vector3(msg.to[0], msg.to[1] || 0, msg.to[2])) > 1.5) local.pos.set(msg.to[0], msg.to[1] || 0, msg.to[2]);
       }
       break;
@@ -1153,7 +1242,7 @@ function handleMessage(msg) {
       w.dead = false;
       w.bound = w.slowed = w.frozen = false;
       if (w === me) { local.pos.set(msg.p[0], msg.p[1] || 0, msg.p[2]); local.vel.set(0, 0, 0); local.tpSeq = msg.seq ?? local.tpSeq; if (Number.isFinite(msg.yaw)) local.yaw = msg.yaw; ui.death.classList.add('hidden'); dmgFrom.clear(); killedBy = null; local.stunUntil = 0; local.slowUntil = local.rootUntil = local.silenceUntil = 0; }
-      else { w.targetPos.set(msg.p[0], msg.p[1] || 0, msg.p[2]); w.group.position.copy(w.targetPos); }
+      else { w.targetPos.set(msg.p[0], msg.p[1] || 0, msg.p[2]); w.group.position.copy(w.targetPos); netJump(w); }
       effects.teleport(msg.p, msg.p);
       sfx.respawn([msg.p[0], 1, msg.p[2]]);
       break;
@@ -1465,7 +1554,7 @@ function handleMessage(msg) {
       if (w) {
         if (!w.pose('arrival')) w.pose('dash', 0.4);
         if (w === me) { local.flaskWind = null; local.pos.set(msg.to[0], msg.to[1] || 0, msg.to[2]); local.vel.set(0, 0, 0); local.tpSeq = msg.seq ?? local.tpSeq; }
-        else { w.targetPos.set(msg.to[0], msg.to[1] || 0, msg.to[2]); w.group.position.copy(w.targetPos); }
+        else { w.targetPos.set(msg.to[0], msg.to[1] || 0, msg.to[2]); w.group.position.copy(w.targetPos); netJump(w); }
       }
       break;
     }
@@ -1856,7 +1945,10 @@ function hitmarker() {
 let scoreVisible = false, scoreT = 0;
 function updateScoreboard() {
   const rows = [...players.values()].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
-  ui.scoreBody.innerHTML = rows.map(w => `<tr class="${w === me ? 'me' : ''}"><td style="color:#${w.color.toString(16).padStart(6, '0')}">${esc(w.name)}${w.botLevel ? `<span class="bot">${w.botLevel} bot</span>` : ''}</td><td class="wiz">${esc(loadoutLine(w.loadout))}</td><td>${w.kills}</td><td>${w.deaths}</td></tr>`).join('');
+  // round 20: each human's round trip (ours measured here, the others' as they report it); bots have none
+  const pingOf = (w) => w.botLevel ? null : w === me ? net.ping : w.ping;
+  const pingCell = (ms) => ms == null ? '<td class="ping">–</td>' : `<td class="ping${ms > 200 ? ' slow' : ''}">${Math.round(ms)} ms</td>`;
+  ui.scoreBody.innerHTML = rows.map(w => `<tr class="${w === me ? 'me' : ''}"><td style="color:#${w.color.toString(16).padStart(6, '0')}">${esc(w.name)}${w.botLevel ? `<span class="bot">${w.botLevel} bot</span>` : ''}</td><td class="wiz">${esc(loadoutLine(w.loadout))}</td><td>${w.kills}</td><td>${w.deaths}</td>${pingCell(pingOf(w))}</tr>`).join('');
 }
 
 // ---------------------------------------------------------------- local player update
@@ -2164,6 +2256,7 @@ function updateLocal(dt) {
       if (kind === 'skim') net.send({ t: 'cast', kind, dir: [aimDir.x, 0, aimDir.z] });
       else if (kind === 'hex' || kind === 'potion') net.send({ t: 'cast', kind, origin: aimOrigin.toArray(), dir: aimDir.toArray(), target: aimPoint() });   // curves (or arcs) onto what the crosshair is on
       else net.send({ t: 'cast', kind, origin: aimOrigin.toArray(), dir: aimDir.toArray() });
+      predictCast(kind, MAG.magazine - local.ammo - 1, local.ammo === 0);   // (round 20: shown now, not a round trip later)
     }
     // power slot
     if (input.rmbPressed && !local.blocking && !busy && !holding && now >= local.cd.power) {
@@ -2923,7 +3016,7 @@ function frame(t) {
     updateLocal(dt);
     for (const w of players.values()) {
       if (w === me) continue;
-      w.interpolate(dt);
+      netSmooth(w, dt);
       const moving = w.netAnim === 'run';
       w.updateAnimation(moving, dt * slowMo);
       // a remote wizard touching down after a Skyward Flash
@@ -2986,4 +3079,4 @@ requestAnimationFrame(frame);
 
 // Debug handle for the automated tests (round 14: off unless asked for, with ?debug in the URL or localStorage waDebug = 1).
 const DEBUG = (() => { try { return new URLSearchParams(location.search).has('debug') || localStorage.getItem('waDebug') === '1'; } catch { return false; } })();
-if (DEBUG) window.__wa = { renderer, input, net, local, players, props, rams, effects, scene, camera, sfx, decoys, walls, frosts, frostMark, mrainMark, flaskMark, cageMark, laneMark, cages, firewalls, stampedeFx, C, get cursedProps() { return cursedProps; }, get seenTraps() { return seenTraps; }, get quality() { return Q.debug(); }, Q };
+if (DEBUG) window.__wa = { renderer, input, net, local, players, props, rams, effects, scene, camera, sfx, decoys, walls, frosts, frostMark, mrainMark, flaskMark, cageMark, laneMark, cages, firewalls, stampedeFx, C, get cursedProps() { return cursedProps; }, get seenTraps() { return seenTraps; }, get quality() { return Q.debug(); }, Q, NET, netBuf };
