@@ -47,13 +47,28 @@ export const kitScale = (model) => KIT_SCALE;
 export const STEP_UP = 0.45;      // the highest rise a wizard steps onto without jumping
 export const BODY_HEIGHT = 1.8;   // for walking under decks
 export const SURFACES = [];       // filled in from the layout further down
+// Round 20 (the server tick): a piece's turn is kept with it (recomputed only when its yaw changes, as in the editor),
+// and every query first skips the pieces whose bounding circle (sReach: the footprint's half-diagonal, or a round piece's
+// radius) is too far away, before turning the point into the piece's frame.
+const ROT = Symbol('rot');   // [yaw, cos, sin], off the piece's own (enumerable) fields
+const sRot = (s) => { const y = s.yaw || 0, r = s[ROT]; return r && r[0] === y ? r : (s[ROT] = [y, Math.cos(y), Math.sin(y)]); };
 const sLocal = (s, x, z) => {
-  const dx = x - s.x, dz = z - s.z, c = Math.cos(s.yaw || 0), n = Math.sin(s.yaw || 0);
+  const [, c, n] = sRot(s), dx = x - s.x, dz = z - s.z;
   return [dx * c - dz * n, dx * n + dz * c];
 };
 const sWorld = (s, lx, lz) => {
-  const c = Math.cos(s.yaw || 0), n = Math.sin(s.yaw || 0);
+  const [, c, n] = sRot(s);
   return [s.x + lx * c + lz * n, s.z - lx * n + lz * c];
+};
+const sReach2 = (s) => s.round ? s.w * s.w / 4 : (s.w * s.w + s.d * s.d) / 4;   // the bounding circle's radius, squared
+// can (x, z) be inside the piece (grown by pad)?
+const sNear = (s, x, z, pad = 0) => { const dx = x - s.x, dz = z - s.z, r2 = sReach2(s); return dx * dx + dz * dz <= (pad ? (Math.sqrt(r2) + pad) ** 2 : r2); };
+// can the 2D segment (ax, az) -> (bx, bz) cross the piece's bounding circle?
+const sNearSegment = (s, ax, az, bx, bz) => {
+  const ex = bx - ax, ez = bz - az, L = ex * ex + ez * ez;
+  const t = L > 1e-12 ? Math.max(0, Math.min(1, ((s.x - ax) * ex + (s.z - az) * ez) / L)) : 0;
+  const dx = ax + ex * t - s.x, dz = az + ez * t - s.z;
+  return dx * dx + dz * dz <= sReach2(s);
 };
 // The top of `s` at local z (no bounds check), and the bottom of its solid part.
 const sTop = (s, lz) => s.kind === 'ramp' ? s.y0 + (s.y1 - s.y0) * Math.max(0, Math.min(1, lz / s.d + 0.5)) : s.top;
@@ -64,6 +79,7 @@ const sInside = (s, lx, lz, pad = 0) => s.round ? Math.hypot(lx, lz) <= s.w / 2 
 export function surfaceTopAt(x, z, list = SURFACES) {
   let h = 0;
   for (const s of list) {
+    if (!sNear(s, x, z)) continue;
     const [lx, lz] = sLocal(s, x, z);
     if (sInside(s, lx, lz) && !(s.thick && sBottom(s, lz) > BODY_HEIGHT * 0.6)) h = Math.max(h, sTop(s, lz));
   }
@@ -72,7 +88,7 @@ export function surfaceTopAt(x, z, list = SURFACES) {
 // Is the point (x, y, z) inside a piece's solid part? (`moveOnly` pieces count unless `shots` is true.)
 export function surfaceSolidAt(x, y, z, shots = false) {
   for (const s of SURFACES) {
-    if (shots && s.moveOnly) continue;
+    if ((shots && s.moveOnly) || !sNear(s, x, z)) continue;
     const [lx, lz] = sLocal(s, x, z);
     if (sInside(s, lx, lz) && y < sTop(s, lz) && y > sBottom(s, lz)) return s;
   }
@@ -83,8 +99,9 @@ export function surfaceSolidAt(x, y, z, shots = false) {
 export function surfaceHeight(x, z, footY = 0, list = SURFACES) {
   let h = 0;
   for (const s of list) {
+    if (s.noStand || !sNear(s, x, z)) continue;
     const [lx, lz] = sLocal(s, x, z);
-    if (s.noStand || !sInside(s, lx, lz)) continue;
+    if (!sInside(s, lx, lz)) continue;
     const t = sTop(s, lz);
     if (t <= footY + STEP_UP && t > h) h = t;
   }
@@ -97,6 +114,7 @@ export function surfacePushOut(x, z, footY, r, height = BODY_HEIGHT) {
   for (let it = 0; it < 3; it++) {
     let moved = false;
     for (const s of SURFACES) {
+      if (!sNear(s, x, z, r)) continue;
       const [lx, lz] = sLocal(s, x, z);
       if (!sInside(s, lx, lz, r)) continue;
       let nx, nz;
@@ -132,7 +150,7 @@ export function surfacePushOut(x, z, footY, r, height = BODY_HEIGHT) {
 export function surfaceSegmentHit(a, b) {
   let best = null;
   for (const s of SURFACES) {
-    if (s.moveOnly) continue;
+    if (s.moveOnly || !sNearSegment(s, a[0], a[2], b[0], b[2])) continue;
     const [ax, az] = sLocal(s, a[0], a[2]), [bx, bz] = sLocal(s, b[0], b[2]);
     let t0 = 0, t1 = 1, ok = true;
     // the footprint in 2D: a slab pair, or a circle
@@ -365,7 +383,8 @@ export function buildMap(L) {
   // ({ id, x, z, y: on top of whatever is there })
   out.PROP_SPAWNS = of('prop').map(e => [e.type, e.x, e.z]);
   out.SPAWN_POINTS = of('spawn').map(e => [e.x, e.y ?? surfaceTopAt(e.x, e.z, out.SURFACES), e.z, e.rotY || 0]);
-  out.HEAL_SPOTS = of('heal').map(e => { const { name: id, x, z } = e, y0 = e.y; return { id, x, z, get y() { return y0 ?? surfaceHeight(x, z, 99); } }; });
+  // (y: the floor under the spot, looked up once: applyLayout rebuilds the spots whenever the pieces change)
+  out.HEAL_SPOTS = of('heal').map(e => { const { name: id, x, z } = e, y0 = e.y; let under; return { id, x, z, get y() { return y0 ?? (under ??= surfaceHeight(x, z, 99)); } }; });
   out.SCATTER_SETTINGS = { ...(L.scatter || {}) };
   // decoration placed in the editor: any model, optionally solid
   out.DECOS = of('deco').map(e => ({ id: e.id, model: e.model, x: e.x, z: e.z, yaw: e.rotY || 0, h: (e.h || 2) * S_(e), y: e.y || 0,
