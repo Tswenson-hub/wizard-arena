@@ -17,7 +17,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { makeWizardBody, emoteClips, BODY_SCALE, BODY_TOP, looksReady } from './looks.js';
 import * as C from '../shared/constants.js';
-import { hasProfile } from './select.js';   // round 18: "Saved to your profile" for a logged-in CrazyGames player
+import { hasProfile, firstVisitUI, openEscMenu } from './select.js';   // round 18: "Saved to your profile"; round 21: "Try another wizard" on a first visit
 
 const KIT = './models/castle/';
 const PIECES = ['floor_foundation_allsides', 'floor_tile_large', 'wall_arched', 'wall_pillar', 'pillar_decorated', 'banner_white', 'torch_mounted'];
@@ -321,10 +321,13 @@ function overlay(top, rest, dur, onSkip) {
     ${top.map(tag).join('')}
     ${rest.length ? `<div class="rc-rest">${rest.map(r => `<span>${PLACE[r.place] || `${r.place}th`} <b>${esc(r.name)}</b> ${r.kills ?? 0}/${r.deaths ?? 0}</span>`).join('')}</div>` : ''}
     ${hasProfile() ? '<div class="rc-saved">✓ Saved to your profile</div>' : ''}
+    ${firstVisitUI() ? '<button type="button" class="rc-try">Try another wizard <span>Six ready-made wizards, or build your own</span></button>' : ''}
     <div class="rc-bar"><i></i></div>`;
   document.body.appendChild(el);
   document.body.classList.add('recap-on');
   el.querySelector('.rc-skip').addEventListener('click', (e) => { e.stopPropagation(); onSkip(); });
+  // round 21, a first visit: ends the recap and opens the Esc menu's builder (the presets pulse there, Respawn applies them)
+  el.querySelector('.rc-try')?.addEventListener('click', (e) => { e.stopPropagation(); onSkip(); setTimeout(openEscMenu, 50); });
   const tags = [...el.querySelectorAll('.rc-tag')], bar = el.querySelector('.rc-bar i');
   const onKey = (e) => { if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onSkip(); } };
   addEventListener('keydown', onKey, true);

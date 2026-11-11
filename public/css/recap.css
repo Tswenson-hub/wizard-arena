@@ -50,3 +50,12 @@ body.recap-on .htp-float, body.recap-on .htp-back { visibility: hidden !importan
   position: absolute; top: 58px; left: 50%; transform: translateX(-50%); padding: 4px 14px; border-radius: 999px; white-space: nowrap;
   background: rgba(18, 40, 24, 0.75); border: 1px solid rgba(140, 230, 140, 0.45); color: #b8f0b0; font-size: 13px; font-weight: 700;
 }
+/* round 21, a first visit: "Try another wizard" ends the recap and opens the Esc menu's builder (podium.js, select.js openEscMenu) */
+.rc-try {
+  position: absolute; right: 18px; bottom: 28px; pointer-events: auto; cursor: pointer; white-space: nowrap;
+  padding: 11px 26px; border-radius: 999px; border: none; background: #ffc857; color: #2a1d05; font: 800 17px/1.2 inherit;
+  box-shadow: 0 0 26px rgba(255, 200, 87, 0.45), 0 6px 20px rgba(0, 0, 0, 0.45); animation: rcTry 2s ease-in-out infinite;
+}
+.rc-try span { display: block; font-size: 12px; font-weight: 600; color: rgba(42, 29, 5, 0.75); margin-top: 2px; }
+.rc-try:hover { background: #ffd77f; }
+@keyframes rcTry { 0%, 100% { box-shadow: 0 0 16px rgba(255, 200, 87, 0.3), 0 6px 20px rgba(0, 0, 0, 0.45); } 50% { box-shadow: 0 0 34px rgba(255, 200, 87, 0.65), 0 6px 20px rgba(0, 0, 0, 0.45); } }
