@@ -356,3 +356,88 @@ body.recap-on .wa-invite { display: none; }
 .st-board tfoot tr td { position: sticky; bottom: 0; border-top: 2px dashed rgba(255, 200, 87, 0.5); background: #2a1f34; }
 .st-board tfoot tr.me td { background: #4a3a2a; }
 @media (max-width: 600px) { .st-tiles { grid-template-columns: repeat(2, 1fr); } .st-cols { grid-template-columns: 1fr; } }
+
+/* ================================================================ round 21: first play */
+/* The join screen (returning players): the wizards row and Play carry the weight; the spell grid sits back until hovered. */
+.sb-presets .sb-chip[data-preset] { --el: var(--accent); border-color: color-mix(in srgb, var(--el) 45%, transparent); background: color-mix(in srgb, var(--el) 10%, rgba(255,255,255,0.04)); }
+.sb-presets .sb-chip[data-preset]::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 0; background: var(--el); box-shadow: 0 0 6px var(--el); }
+.sb-presets .sb-chip[data-preset]:hover { border-color: var(--el); background: color-mix(in srgb, var(--el) 22%, transparent); }
+.sb-presets .sb-chip[data-preset].active { border-color: var(--el); background: color-mix(in srgb, var(--el) 30%, transparent); color: #fff; box-shadow: 0 0 10px color-mix(in srgb, var(--el) 45%, transparent); }
+.sb-join .sb-presets { gap: 7px; }
+.sb-join .sb-presets .sb-label { font-size: 12px; color: var(--ink); }
+.sb-join .sb-presets .sb-chip[data-preset] { font-size: 13.5px; font-weight: 700; padding: 8px 15px; }
+.sb-join .sb-rows { opacity: 0.86; transition: opacity .25s; }
+.sb-join .sb-rows:hover, .sb-join .sb-rows:focus-within { opacity: 1; }
+.sb-join .sb-card:not(.selected) { border-top-color: color-mix(in srgb, var(--el) 40%, transparent); background: linear-gradient(165deg, color-mix(in srgb, var(--el) 7%, rgba(20,16,24,0.5)), rgba(255,255,255,0.015) 70%); }
+.sb-join .sb-card:not(.selected) .sb-icon { opacity: 0.85; }
+.sb-join .sb-slot { background: rgba(255,255,255,0.025); }
+.spell-builder .sb-extra #joinBtn {
+  font-size: 17px; font-weight: 800; letter-spacing: 0.5px; padding: 11px 34px; border-radius: 10px;
+  box-shadow: 0 0 22px rgba(255, 200, 87, 0.35), 0 4px 14px rgba(0,0,0,0.35); animation: sbPlayGlow 2.2s ease-in-out infinite;
+}
+.spell-builder .sb-extra #joinBtn:disabled { animation: none; box-shadow: none; }
+@keyframes sbPlayGlow { 0%, 100% { box-shadow: 0 0 14px rgba(255, 200, 87, 0.25), 0 4px 14px rgba(0,0,0,0.35); } 50% { box-shadow: 0 0 28px rgba(255, 200, 87, 0.55), 0 4px 14px rgba(0,0,0,0.35); } }
+
+/* The first visit's "Click to start" (select.js setFirstVisit; the prompt is index.html's #lockPrompt, back to normal after the first lock) */
+body.wa-start #lockPrompt .lp-card { padding: 30px 54px 28px; border-color: rgba(255, 214, 120, 0.6); background: rgba(16, 12, 26, 0.9); box-shadow: 0 0 60px rgba(255, 200, 87, 0.18), 0 14px 50px rgba(0,0,0,0.6); }
+body.wa-start #lockPrompt .lp-big { font-size: 48px; letter-spacing: 1.5px; text-shadow: 0 0 28px rgba(255, 200, 87, 0.45); }
+body.wa-start #lockPrompt .lp-sub { font-size: 19px; color: #f4ecd8; margin-top: 10px; max-width: none; }
+body.wa-start #lockPrompt .lp-sub [data-kill-target] { color: #ffc857; font-weight: 700; }
+body.wa-start #lockPrompt .lp-more { margin-top: 12px; font-size: 13px; color: rgba(244, 236, 216, 0.6); }
+#lockPrompt .lp-more b { color: #ffc857; }
+body:not(.wa-start) #lockPrompt .lp-more { display: none; }
+
+/* The controls strip (select.js showControlsStrip): under the match bar, no input but its x; hidden under the menu and the recap */
+.wa-strip {
+  position: fixed; left: 50%; top: 92px; transform: translate(-50%, -8px); z-index: 16; max-width: calc(100vw - 32px);
+  display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px 10px; padding: 8px 36px 8px 16px; border-radius: 12px;
+  font: 13px/1.3 "Trebuchet MS", "Segoe UI", system-ui, sans-serif; color: #f4ecd8; text-shadow: 0 1px 2px #000;
+  background: rgba(18, 12, 26, 0.8); border: 1px solid rgba(255, 200, 87, 0.4); box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+  pointer-events: none; opacity: 0; transition: opacity 0.5s, transform 0.5s;
+}
+.wa-strip.on { opacity: 1; transform: translate(-50%, 0); }
+.wa-strip span { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; transition: opacity .3s; }
+.wa-strip span em { font-style: normal; margin-left: 4px; }
+.wa-strip span.done { opacity: 0.45; }
+.wa-strip span.done em::after { content: ' ✓'; color: #9fe39a; }
+.wa-strip kbd { font: 700 11.5px/1 inherit; color: #ffc857; padding: 4px 6px; min-width: 12px; text-align: center; border-radius: 5px; border: 1px solid rgba(255, 200, 87, 0.5); background: rgba(255, 200, 87, 0.08); }
+.wa-strip .dot { width: 3px; height: 3px; border-radius: 50%; background: rgba(244, 236, 216, 0.4); }
+.wa-strip .htp-x { top: 4px; right: 6px; }
+body.paused .wa-strip, body.recap-on .wa-strip, body:has(#hud.hidden) .wa-strip, body.clip .wa-strip { visibility: hidden; }
+
+/* The "change your wizard" toast (select.js showChangeWizardHint), and the death screen's line (index.html .ds-hint) */
+.wa-esc-hint {
+  position: fixed; left: 50%; top: 21%; transform: translate(-50%, -10px); z-index: 16; text-align: center; max-width: calc(100vw - 32px);
+  padding: 12px 26px 11px; border-radius: 14px; font-family: "Trebuchet MS", "Segoe UI", system-ui, sans-serif; color: #f4ecd8;
+  background: linear-gradient(170deg, rgba(42, 30, 52, 0.95), rgba(18, 13, 24, 0.95)); border: 1px solid rgba(255, 200, 87, 0.55);
+  box-shadow: 0 0 40px rgba(255, 200, 87, 0.18), 0 12px 40px rgba(0, 0, 0, 0.5); pointer-events: none; opacity: 0; transition: opacity 0.5s, transform 0.5s;
+}
+.wa-esc-hint.on { opacity: 1; transform: translate(-50%, 0); }
+.wa-esc-hint .eh-main { font-size: 20px; font-weight: 700; }
+.wa-esc-hint .eh-sub { margin-top: 4px; font-size: 13.5px; color: rgba(244, 236, 216, 0.7); }
+.wa-esc-hint kbd, #deathScreen .ds-hint kbd {
+  display: inline-block; font: 800 15px/1 inherit; color: #2a1d05; background: #ffc857; padding: 5px 9px 4px; margin: 0 3px; border-radius: 6px; vertical-align: 1px;
+  box-shadow: 0 2px 0 #a67a1e, 0 0 14px rgba(255, 200, 87, 0.5); animation: ehKey 1.4s ease-in-out infinite;
+}
+@keyframes ehKey { 0%, 100% { transform: translateY(0); box-shadow: 0 2px 0 #a67a1e, 0 0 14px rgba(255, 200, 87, 0.5); } 50% { transform: translateY(1px); box-shadow: 0 1px 0 #a67a1e, 0 0 22px rgba(255, 200, 87, 0.75); } }
+body.paused .wa-esc-hint, body.recap-on .wa-esc-hint, body:has(#hud.hidden) .wa-esc-hint { visibility: hidden; }
+#deathScreen .ds-hint { display: none; margin-top: 22px; font-size: 17px; color: #f4ecd8; text-shadow: 0 1px 3px #000; }
+#deathScreen .ds-hint kbd { font-size: 13px; padding: 4px 8px 3px; }
+body.wa-hinted:not(.wa-menu-seen) #deathScreen .ds-hint { display: block; }
+
+/* The first Esc menu of the visit (select.js watchMenu): "Try another wizard" pulses on the presets, Respawn is the obvious button */
+.sb-presets.sb-try { padding: 6px 10px 6px 8px; margin: -6px -10px -6px -8px; border-radius: 999px; animation: sbTry 1.6s ease-in-out infinite; }
+.sb-presets.sb-try .sb-label { color: #ffc857; font-size: 13px; letter-spacing: 0.5px; text-transform: none; font-weight: 700; }
+.sb-presets.sb-try .sb-chip[data-preset] { border-color: var(--el); box-shadow: 0 0 10px color-mix(in srgb, var(--el) 50%, transparent); }
+@keyframes sbTry { 0%, 100% { box-shadow: 0 0 0 1px rgba(255, 200, 87, 0.25), 0 0 10px rgba(255, 200, 87, 0.1); } 50% { box-shadow: 0 0 0 2px rgba(255, 200, 87, 0.7), 0 0 24px rgba(255, 200, 87, 0.3); } }
+#clickToPlay .pause-top #respawnBtn.wa-obvious { background: #ffc857; color: #2a1d05; border-color: #ffc857; font-size: 15px; padding: 10px 24px; box-shadow: 0 0 22px rgba(255, 200, 87, 0.5); animation: sbPlayGlow 2.2s ease-in-out infinite; }
+#clickToPlay .pause-top #respawnBtn.wa-obvious.danger { background: #ffb3bc; border-color: #e2304a; color: #2a0a10; box-shadow: none; animation: none; }
+body.wa-try #clickToPlay .pause-top #resumeBtn { background: transparent; color: var(--ink, #f4ecd8); border: 1px solid rgba(255,255,255,0.25); }
+#clickToPlay .pause-top .wa-help { padding: 7px 12px; font-size: 13px; }
+/* a 720 px screen: the join builder must still fit without scrolling (the name field's focus would scroll the wizards row away) */
+@media (max-height: 800px) {
+  .sb-join { gap: 7px; }
+  .sb-join .sb-top { row-gap: 4px; }
+  .sb-join .sb-presets .sb-chip[data-preset] { font-size: 13px; padding: 5px 13px; }
+  .spell-builder .sb-extra #joinBtn { font-size: 16px; padding: 9px 30px; }
+}

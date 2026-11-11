@@ -55,8 +55,8 @@ const DEMO = ['windup', 'cast', 'release', 'channel', 'loop', 'hold'];
 
 function builderHTML() {
   return `<div class="sb-top">
-      <div class="sb-group sb-presets" role="group" aria-label="Presets"><span class="sb-label">Presets</span>${C.PRESETS.map(p =>
-        `<button type="button" class="sb-chip" data-preset="${p.id}" title="${esc(p.name)}: ${esc(C.LOADOUT_SLOTS.map(s => C.SPELLBOOK[p.loadout[s]]?.name).join(', '))}">${esc(p.name)}</button>`).join('')}
+      <div class="sb-group sb-presets" role="group" aria-label="Ready-made wizards"><span class="sb-label">Pick a wizard</span>${C.PRESETS.map(p =>
+        `<button type="button" class="sb-chip" data-preset="${p.id}" style="--el:${hex(lookOf(p.loadout).color)}" title="${esc(p.name)}: ${esc(C.LOADOUT_SLOTS.map(s => C.SPELLBOOK[p.loadout[s]]?.name).join(', '))}">${esc(p.name)}</button>`).join('')}
         <button type="button" class="sb-chip sb-random" data-random title="A random spell in every slot">🎲 Randomize</button>
         <button type="button" class="sb-chip sb-howto" data-howto title="Controls and the goal">How to play</button>
         <button type="button" class="sb-chip sb-stats-btn" data-stats title="Your stats and the leaderboard">📊 Stats</button></div>
@@ -214,6 +214,8 @@ export function mountSpellBuilder(container, { loadout, voice, onChange, onVoice
   let vox = C.sanitizeVoice(voice);
   const root = document.createElement('div');
   root.className = 'spell-builder';
+  const inJoin = !!container.closest('#join');
+  root.classList.add(inJoin ? 'sb-join' : 'sb-pause');   // round 21: the join screen's emphasis; the pause menu's "Try another wizard"
   root.innerHTML = builderHTML();
   container.appendChild(root);
   const $ = (s) => root.querySelector(s), $$ = (s) => [...root.querySelectorAll(s)];
@@ -258,6 +260,7 @@ export function mountSpellBuilder(container, { loadout, voice, onChange, onVoice
     if (!clean) return;
     const changed = !C.sameLoadout(clean, cur);
     cur = clean;
+    if (inJoin) lastJoinLoadout = { ...cur };   // (the controls strip names its primary and power)
     paint();
     pv.setLoadout(cur);
     if (changed && !silent) onChange?.({ ...cur });
@@ -292,7 +295,7 @@ export function mountSpellBuilder(container, { loadout, voice, onChange, onVoice
     if (card) { pick(card); card.focus({ preventScroll: true }); return; }
     const b = e.target.closest('button');
     if (!b) return;
-    if (b.dataset.preset) setLoadout(C.PRESETS.find(p => p.id === b.dataset.preset).loadout);
+    if (b.dataset.preset) { setLoadout(C.PRESETS.find(p => p.id === b.dataset.preset).loadout); $('.sb-presets').classList.remove('sb-try'); }
     else if ('random' in b.dataset) setLoadout(C.randomLoadout());
     else if ('howto' in b.dataset) openHowToPlay();
     else if ('stats' in b.dataset) openStats();
@@ -359,15 +362,16 @@ export function mountSpellBuilder(container, { loadout, voice, onChange, onVoice
   const sub = container.closest('#join')?.querySelector('.sub');
   if (sub) sub.textContent = JOIN_SUB(matchTarget);     // (index.html's own line said 10)
   // One-click start (CrazyGames): a first visit isn't stopped by the how-to-play card. Once the player enters the arena from the
-  // join screen, a compact controls card floats over the first match instead (openFirstMatchTips), without taking any input.
+  // join screen (or round 21's auto-join submits the form), the controls strip shows over the first match instead
+  // (showControlsStrip), without taking any input.
   const form = footer?.querySelector('form');
-  if (container.closest('#join') && form) mountJoinRooms($('.sb-side'), form);
-  if (container.closest('#join') && form && !howToSeen()) {
+  if (inJoin && form) mountJoinRooms($('.sb-side'), form);
+  if (inJoin && form && !howToSeen()) {
     form.addEventListener('submit', () => {
       const join = container.closest('#join'), t0 = performance.now();
       const wait = () => {
         if (howToSeen()) return;
-        if (!join.offsetParent || getComputedStyle(join).display === 'none') setTimeout(openFirstMatchTips, 600);
+        if (!join.offsetParent || getComputedStyle(join).display === 'none') setTimeout(() => showControlsStrip({ loadout: cur }), 600);
         else if (performance.now() - t0 < 15000) setTimeout(wait, 250);
       };
       wait();
@@ -460,27 +464,148 @@ export function openHowToPlay() {
   back.querySelector('.htp-close').focus({ preventScroll: true });
 }
 
-// openFirstMatchTips(): the first visit's controls, as a small card over the first match (round 16, one-click start). It takes
-// no input and doesn't move focus, so the game's "Click to play" and the keys work through it; it fades out after 25 s, or at
-// once from its x. Shown once (the same localStorage flag as the full card, which stays on the builder's "How to play" chip).
-let tips = null;
-export function openFirstMatchTips() {
-  if (tips) return;
-  try { localStorage.setItem(HOWTO_KEY, '1'); } catch { /* private mode */ }
-  const el = document.createElement('aside');
-  el.className = 'htp-float';
-  el.setAttribute('aria-label', 'Controls');
-  el.innerHTML = `<button type="button" class="htp-x" title="Hide" aria-label="Hide the controls">×</button>
-    <h2>How to play</h2>
-    <p class="htp-goal"><b>First to <span data-kill-target>${matchTarget}</span> kills</b> wins. Your spells are on the keys below; <kbd>Esc</kbd> changes them.</p>
-    <div class="htp-keys">${Object.entries(KEYS).map(([h, list]) => `<dl><h3>${h}</h3>${list.map(([ks, t]) =>
-      `<dt>${ks.map(k => k.startsWith('×') ? `<span>${k}</span>` : `<kbd>${k}</kbd>`).join('')}</dt><dd>${esc(t)}</dd>`).join('')}</dl>`).join('')}</div>`;
-  const close = () => { if (!tips) return; tips = null; el.classList.add('gone'); setTimeout(() => el.remove(), 400); };
-  el.querySelector('.htp-x').addEventListener('click', (e) => { e.stopPropagation(); close(); });
-  document.body.appendChild(el);
-  tips = el;
-  setTimeout(close, 25000);
+// ================================================================ first play (round 21)
+// A first visit skips the builder and drops into a match as the Pyromancer (main.js detects it and auto-joins). This side:
+//   setFirstVisit(on)            body.wa-first; the "Click to start" prompt (back to "Click to play" after the first lock);
+//                                arms the first Esc menu (the presets pulse under "Try another wizard", Respawn is the obvious
+//                                button) and the podium's "Try another wizard" (podium.js reads firstVisitUI()).
+//   showControlsStrip({loadout}) the controls strip under the match bar: WASD · Mouse · LMB <primary> · RMB <power> · Space ×2 ·
+//                                Q. Hides after 25 s of locked play, or once the player has moved and fired. "?" in the Esc
+//                                menu reopens it. (openFirstMatchTips is its old name.)
+//   showChangeWizardHint()       the toast "Press Esc to change your wizard and spells" for 8 s (main.js times it: 75 s or the
+//                                first death, visits 1-3), and the same line on the death screen until the menu has been opened.
+//   openEscMenu() / closeEscMenu()  through main.js's window.WA_MENU when it exists, else a synthetic Escape / the Resume button.
+const LOCK_NOTE = 'The mouse aims while the game has it. <kbd>Esc</kbd> opens the menu.';   // main.js's default, restored after the first lock
+let firstVisit = false, lastJoinLoadout = null, hintShown = false, menuSeen = false;
+export function firstVisitUI() { return firstVisit; }
+export function setFirstVisit(on) {
+  firstVisit = !!on;
+  document.body.classList.toggle('wa-first', firstVisit);
+  const big = document.querySelector('#lockPrompt .lp-big'), note = document.querySelector('#lockNote');
+  const normal = () => { document.body.classList.remove('wa-start'); if (big) big.textContent = 'Click to play'; if (note) note.innerHTML = LOCK_NOTE; };
+  if (!firstVisit) { normal(); return; }
+  document.body.classList.add('wa-start');
+  if (big) big.textContent = 'Click to start';
+  if (note) {
+    note.innerHTML = `First to <span data-kill-target>${matchTarget}</span> kills wins`;
+    const preset = C.PRESETS.find(p => lastJoinLoadout && C.sameLoadout(p.loadout, lastJoinLoadout));
+    let more = note.parentElement.querySelector('.lp-more');
+    if (!more) { more = document.createElement('div'); more.className = 'lp-more'; note.after(more); }
+    more.innerHTML = `${preset ? `You're the <b>${esc(preset.name)}</b>. ` : ''}Move the mouse to aim, click to cast.`;
+  }
+  // main.js rewrites the subline when a lock is refused (the welcome's own request, without a click, usually is): ours stays
+  // until the first lock succeeds
+  const mine = note?.innerHTML;
+  const keep = note && new MutationObserver(() => { if (document.body.classList.contains('wa-start') && note.innerHTML !== mine) note.innerHTML = mine; });
+  keep?.observe(note, { childList: true });
+  const onLock = () => {
+    if (!document.pointerLockElement) return;
+    document.removeEventListener('pointerlockchange', onLock); keep?.disconnect();
+    if (document.body.classList.contains('wa-start')) normal();
+  };
+  document.addEventListener('pointerlockchange', onLock);
 }
+
+let strip = null;
+export function showControlsStrip({ loadout } = {}) {
+  if (strip) return;
+  try { localStorage.setItem(HOWTO_KEY, '1'); } catch { /* private mode */ }
+  const lo = C.sanitizeLoadout(loadout) || lastJoinLoadout || C.DEFAULT_LOADOUT;
+  const name = (id) => C.SPELLBOOK[id]?.name || '';
+  const items = [['move', ['W', 'A', 'S', 'D'], 'Move'], ['aim', ['Mouse'], 'Aim'], ['fire', ['Left click'], name(lo.primary)], ['power', ['Right click'], name(lo.power)],
+    ['jump', ['Space'], 'Jump, twice to double jump'], ['ult', ['Q'], 'Ultimate when charged']];
+  const el = document.createElement('aside');
+  el.className = 'wa-strip';
+  el.setAttribute('aria-label', 'Controls');
+  el.innerHTML = items.map(([k, keys, t]) => `<span data-k="${k}">${keys.map(x => `<kbd>${x}</kbd>`).join('')}<em>${esc(t)}</em></span>`).join('<i class="dot"></i>')
+    + `<button type="button" class="htp-x" title="Hide" aria-label="Hide the controls">×</button>`;
+  document.body.appendChild(el);
+  strip = el;
+  requestAnimationFrame(() => el.classList.add('on'));
+  let moved = false, fired = false, lockedAt = 0, timer = 0;
+  const close = () => {
+    if (strip !== el) return;
+    strip = null; clearTimeout(timer);
+    removeEventListener('keydown', onKey, true); removeEventListener('mousedown', onMouse, true); document.removeEventListener('pointerlockchange', onLock);
+    el.classList.remove('on'); setTimeout(() => el.remove(), 500);
+  };
+  const done = (k) => el.querySelector(`[data-k="${k}"]`)?.classList.add('done');
+  const check = () => { if (moved && fired) { clearTimeout(timer); timer = setTimeout(close, 1500); } };
+  const onKey = (e) => { if (/^Key[WASD]$/.test(e.code) && document.pointerLockElement) { moved = true; done('move'); check(); } };
+  const onMouse = (e) => { if (!document.pointerLockElement) return; if (e.button === 0) { fired = true; done('fire'); check(); } else if (e.button === 2) done('power'); };
+  const onLock = () => { if (document.pointerLockElement && !lockedAt) { lockedAt = performance.now(); if (!(moved && fired)) timer = setTimeout(close, 25000); } };
+  addEventListener('keydown', onKey, true); addEventListener('mousedown', onMouse, true); document.addEventListener('pointerlockchange', onLock);
+  onLock();
+  timer = setTimeout(close, 90000);   // never locked (the prompt refused, a tab in the background): gone anyway
+  el.querySelector('.htp-x').addEventListener('click', (e) => { e.stopPropagation(); close(); });
+}
+export const openFirstMatchTips = showControlsStrip;
+
+let hintEl = null;
+export function showChangeWizardHint() {
+  if (hintShown) return;
+  hintShown = true;
+  document.body.classList.add('wa-hinted');   // the death screen's line (index.html .ds-hint) until the menu has been opened
+  const el = document.createElement('div');
+  el.className = 'wa-esc-hint';
+  el.setAttribute('role', 'status');
+  el.innerHTML = `<div class="eh-main">Press <kbd>Esc</kbd> to change your wizard and spells</div><div class="eh-sub">Six ready-made wizards, or build your own</div>`;
+  document.body.appendChild(el);
+  hintEl = el;
+  requestAnimationFrame(() => el.classList.add('on'));
+  setTimeout(() => { el.classList.remove('on'); setTimeout(() => { el.remove(); if (hintEl === el) hintEl = null; }, 600); }, 8000);
+}
+
+export function openEscMenu() {
+  if (window.WA_MENU?.open) { window.WA_MENU.open(); return; }
+  if (document.pointerLockElement) { try { document.exitPointerLock(); } catch { /* not locked */ } }
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+}
+export function closeEscMenu() {
+  if (window.WA_MENU?.close) { window.WA_MENU.close(); return; }
+  document.querySelector('#resumeBtn')?.click();
+}
+
+// The Esc menu's first opening of the visit: after a first visit (or once the hint has shown) the presets pulse under "Try
+// another wizard" and Respawn is the obvious button, until the menu closes (the pulse: a preset click or 12 s). The menu's
+// "?" chip reopens the controls strip. Watched on #clickToPlay's class (main.js's updateLockUI toggles it).
+function watchMenu() {
+  const menu = document.querySelector('#clickToPlay');
+  if (!menu) return;
+  const leave = document.querySelector('#leaveBtn');
+  if (leave && !menu.querySelector('.wa-help')) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'ghost wa-help'; b.title = 'Show the controls again';
+    b.textContent = '? Controls';
+    b.addEventListener('click', () => { if (hintEl) { hintEl.remove(); hintEl = null; } closeEscMenu(); setTimeout(() => showControlsStrip(), 150); });
+    leave.after(b);
+  }
+  let wasOpen = false;
+  const sync = () => {
+    const open = !menu.classList.contains('hidden');
+    if (open === wasOpen) return;
+    wasOpen = open;
+    const presets = menu.querySelector('.sb-pause .sb-presets'), label = presets?.querySelector('.sb-label'), respawn = menu.querySelector('#respawnBtn');
+    if (open && !menuSeen) {
+      menuSeen = true;
+      document.body.classList.add('wa-menu-seen');
+      if (firstVisit || hintShown) {
+        document.body.classList.add('wa-try');
+        if (label) label.textContent = 'Try another wizard';
+        presets?.classList.add('sb-try');
+        respawn?.classList.add('wa-obvious');
+        setTimeout(() => presets?.classList.remove('sb-try'), 12000);
+      }
+    } else if (!open) {
+      document.body.classList.remove('wa-try');
+      presets?.classList.remove('sb-try');
+      respawn?.classList.remove('wa-obvious');
+    }
+  };
+  new MutationObserver(sync).observe(menu, { attributes: true, attributeFilter: ['class'] });
+  sync();
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', watchMenu); else watchMenu();
 
 // ================================================================ rooms (round 17)
 // The join screen: Play (public matchmaking, the default and Enter in the name field), Create private match, and Join with
