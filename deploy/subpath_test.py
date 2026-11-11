@@ -45,6 +45,7 @@ async def player(b, url, name, errs, first=False):
             seen['frames'] += 1
             if isinstance(f, str) and '"name"' in f:
                 for m in re.finditer(r'"name":"([^"]{1,24})"', f): seen['names'].add(m.group(1))
+            if isinstance(f, str) and '"bot"' in f:
                 for m in re.finditer(r'"bot":"(easy|normal|hard)"', f): seen.setdefault('bots', set()).add(m.group(1))
         ws.on('framereceived', on_frame)
     pg.on('websocket', on_ws)
@@ -134,7 +135,9 @@ async def rooms(b):
     except Exception:
         err = None
     check(err and bad in err, f'unknown code {bad}: {err!r}')
-    # round 21: a first visit (a fresh context, no ?builder) is in a public match with no click, its fill bots Easy
+    # round 21: a first visit (a fresh context, no ?builder) is in a public match with no click, its fill bots Easy. D and E leave
+    # their public rooms first: a first-timer joining other humans keeps their room's difficulty, by design.
+    await cd.close(); await ce.close(); await asyncio.sleep(1.5)
     cf, f, sf = await player(b, PAGE + sep + 'cgdebug', 'F', errs, first=True)
     try:
         await in_game(f); await f.wait_for_timeout(3500)
@@ -143,7 +146,7 @@ async def rooms(b):
         check(rf is None and fv['prompt'] and fv['join'] == 'none' and sf.get('bots') == {'easy'}, f"F (first visit) is in a public match with no click, Easy bots: {fv}, bots {sorted(sf.get('bots', []))}")
     except Exception as ex:
         check(False, f'F (first visit): {ex}')
-    for c in (ca, cb, cd, ce, cf) + ((cc,) if SITE else ()): await c.close()
+    for c in (ca, cb, cf) + ((cc,) if SITE else ()): await c.close()
     errs = [x for x in errs if 'WebSocket' not in x]   # closing a context mid-socket logs one
     check(not errs, f'no console errors in the room browsers: {errs or "none"}')
     return ok, errs
@@ -223,6 +226,7 @@ async def main():
         st = await pg.evaluate("document.querySelector('#status')?.textContent || ''")
         print('status line:', repr(st))
         rooms_ok = True
+        await pg.close()   # (round 21: out of its public room, so the rooms' first-visit player can start an empty one)
         if ROOMS: rooms_ok, _ = await rooms(b)
         await b.close()
     print(f'requests to the page host: {own}, outside {folder}: {escaped or "none"}')

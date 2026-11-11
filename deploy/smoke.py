@@ -74,7 +74,16 @@ async def main():
         ok = ok and st['players'] >= 4 and len(st['bots']) >= 3
         if SHOT:
             await pg.screenshot(path=SHOT, timeout=120000); print('screenshot:', SHOT)
-        # round 21: a first visit (a fresh context, no ?builder) is in a match with no click, as the Pyromancer, with Easy bots
+        # any frame within 8 s: a headless page can stall a couple of seconds compiling shaders after the screenshot
+        before, waited = frames['recv'], 0
+        while frames['recv'] <= before and waited < 8000:
+            await pg.wait_for_timeout(500); waited += 500
+        await pg.wait_for_timeout(1000)
+        connected = frames['recv'] > before
+        print('still connected after screenshot:', connected, f"({frames['recv'] - before} frames, first after {waited / 1000:.1f} s)")
+        # round 21: a first visit (a fresh context, no ?builder) is in a match with no click, as the Pyromancer, with Easy bots.
+        # The first player leaves first: a first-timer joining other humans keeps their room's difficulty, by design.
+        await pg.close(); await asyncio.sleep(1.5)
         ctx2 = await b.new_context(viewport={'width': 1280, 'height': 720})
         pg2 = await ctx2.new_page()
         pg2.on('pageerror', lambda e: errs.append(str(e)))
@@ -102,13 +111,6 @@ async def main():
         if SHOT:
             await pg2.screenshot(path=SHOT.replace('.png', '-first.png'), timeout=120000)
         await ctx2.close()
-        # any frame within 8 s: a headless page can stall a couple of seconds compiling shaders after the screenshot
-        before, waited = frames['recv'], 0
-        while frames['recv'] <= before and waited < 8000:
-            await pg.wait_for_timeout(500); waited += 500
-        await pg.wait_for_timeout(1000)
-        connected = frames['recv'] > before
-        print('still connected after screenshot:', connected, f"({frames['recv'] - before} frames, first after {waited / 1000:.1f} s)")
         await b.close()
     want = 'wss://' if BASE.startswith('https') else 'ws://'
     ws_ok = any(u.startswith(want) for u in sockets) and frames['recv'] > 10 and connected
