@@ -2202,3 +2202,35 @@ Normal is at the 120k target (two runs of three under it) and low straddles 80k.
 - 4 private rooms × 4 hard bots, `/perf`, same machine, loaded by other agents: tick **4.28 → 2.92 ms avg, p95 5.44 → 4.25**.
 - 100k random queries (height, top, solid, push-out, segment) give identical results to the old code.
 - modematch-unit ALL PASS, botmatch normal, smoke and subpath PASS, the editor loads with no errors.
+
+## characters → spells: round 21, the first-play hooks (select.js's side; what I need from main.js)
+All of these exist in select.js as soon as my first commit lands (they're no-ops before, so `Select.x?.()` is safe). Detection,
+the auto-join, the 75 s / first-death timer and the visit counter stay yours, as the brief says.
+
+**What you call:**
+- `Select.setFirstVisit(on)`: tell me it's a first visit, **before the auto-join** (as soon as your detection settles). It
+  puts `wa-first` on `<body>`, restyles the "Click to play" prompt as the big **"Click to start"** with "First to N kills wins"
+  (back to the normal copy after the first pointer lock), arms the first Esc menu (the presets pulse under "Try another
+  wizard", Respawn is the obvious button) and the podium's "Try another wizard" button. Calling it with `false` undoes all that.
+- `Select.showControlsStrip({ loadout })`: the bottom controls strip (WASD · Mouse · LMB *Fireball* · RMB *Meteor* · Space ×2 ·
+  Q), with the primary's and power's names from `loadout` (default: the loadout the join builder had). Idempotent. It hides
+  itself after 25 s of locked play, or once the player has both moved (WASD) and fired (LMB), whichever is first; I watch
+  those keys myself, so nothing to call. It also fires by itself when the join form submits and `waHowToPlaySeen` isn't set
+  (today's path), so if your auto-join goes through `ui.form.requestSubmit()` you needn't call it, but calling it is free.
+  It replaces the old floating card (`openFirstMatchTips` stays as an alias). The Esc menu gets a "?" chip from me that
+  reopens it.
+- `Select.showChangeWizardHint()`: the toast at the top centre, "Press **Esc** to change your wizard and spells" + "Six
+  ready-made wizards, or build your own", for 8 s, no input taken. Call it at 75 s or the first death, once per visit, per
+  your counter (visits 1-3). While the death screen is up it also shows the line under "Respawning…", and that line stays on
+  later death screens until the player has opened the Esc menu once this visit. Idempotent per visit.
+
+**What I'd like from main.js** (a `window.WA_MENU` like `WA_ROOM` / `WA_STATS`):
+- `window.WA_MENU = { open() { menuOpen = true; updateLockUI(); }, close() { menuOpen = false; play(); updateLockUI(); } }`
+  (`open` only when `me && !input.locked`; `document.exitPointerLock()` first if locked). Used by the podium's "Try another
+  wizard" (after the recap stops) and by the Esc menu's "?" chip (close, then the strip). Until it exists I fall back to a
+  synthetic `Escape` keydown on `document` and a click on `#resumeBtn`, which work with today's main.js but are fragile.
+- Nothing else: I read the Esc menu's open state from `#clickToPlay`'s `hidden` class (a MutationObserver), and the death
+  screen's from `#deathScreen`.
+
+**index.html** (mine this round, per the brief): I'll add one hidden line inside `#deathScreen` (`.ds-hint`) and nothing else;
+the "?" chip and the toast are created from select.js. `style.css` is untouched: my overrides live in select.css.
