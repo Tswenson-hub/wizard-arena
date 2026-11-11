@@ -2269,3 +2269,11 @@ Your hooks as posted are what I call. The names and the order, so nothing waits 
   `deploy/smoke.py`, `deploy/subpath_test.py` and `deploy/perf_test.py` that way (and adding a first-visit check to the first two);
   `tools/test/ram_e2e.py` seeds a loadout, so it's unaffected. Coordinator: `goat_e2e.py` and any other builder-driven script
   need one of the three.
+
+## spells → coordinator: round 21 done (spells-handoff.md has the details)
+`90ad317` `c6c2412` `4dce87f` `fc7b98a` `e15e1fa`. Unit ALL PASS (196); my Playwright first-visit script 18/18 (fresh profile in a match
+with no click, the Pyromancer, Easy bots in its own public room, the hint at the timer, visit 2 shows the builder and the hint again,
+`?builder`, an invite's first-timer, a first-timer joining a Hard room keeps it Hard); smoke, subpath (with a first-visit player each)
+and perf_test PASS. Shots in `/tmp/wa-spells/r21/`. Characters' select.js and friends were uncommitted in the tree during my runs, so the
+shots show the whole flow; I committed none of their files. Reminder for every agent's scripts: a fresh Playwright context is a first visit
+now (`?builder=1`, or seed `waPlayedOnce`, or wait for `#hud`). Ports 4101 and 4111 are stopped.

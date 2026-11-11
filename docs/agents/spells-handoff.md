@@ -1,5 +1,65 @@
 # Spells hand-off
 
+## Round 21: the first visit drops into a match (conversion)
+Commits: `90ad317` (requests.md post), `c6c2412` (main.js, net.js, room.js), `4dce87f` (unit checks), `fc7b98a` + `e15e1fa` (smoke, subpath, perf tests).
+
+**What was built (main.js, net.js, server/room.js):**
+- **Detection** (`settleFirstVisit`, at Ready): a first visit means none of `waPlayedOnce`, a saved `wizardLoadout` /
+  `wizardLoadouts`, `waHowToPlaySeen` (the old card: players from before this round aren't dropped into a match once), a cached
+  `waProfile` with `stats.matches > 0`, or, on CrazyGames with a token, the server's `profile` with `matches > 0`. That last one
+  is `fetchProfile(token)` in net.js (a short socket that sends `auth` and resolves with the `profile` message), started at page
+  load and waited for at most 1.5 s at Ready; unsure = first visit. `?builder` forces the builder, `?first` forces the first-visit
+  path (for Ty to replay it).
+- **The flow:** the status line says "Ready. Entering the arena…", `autoJoin()` sets the Pyromancer (`C.PRESETS` of
+  `DEFAULT_WIZARD`, not saved: a saved loadout is a sign of a returning player), calls `Select.setFirstVisit(true)` and submits
+  the join form with `room: ''`. An invite (`?room=`, SDK invite params) or instant multiplayer still picks the room first; a
+  first-timer on an invite gets the Pyromancer and no builder too. The name is the CrazyGames username (`Select.nameReady`) or
+  `WizardNNN`. The welcome's own `requestLock()` is refused without a click (as before), and its refusal no longer overwrites the
+  prompt's copy with "The browser didn't hand over the mouse" (only a click that failed does: `lockAsked`).
+- **The join carries `firstVisit: true`.** room.js `join`: a first-timer **alone in a public room** gets `botPref = 'easy'`
+  (the fill bots are Easy; `room.bots` in the welcome says so); a first-timer joining a public room **with other humans** sends
+  no preference, so the room's difficulty stands; private rooms and invites are unchanged. A plain join still sets the room's
+  difficulty (the most recent human's), as before.
+- **After the welcome:** `Select.showControlsStrip({ loadout })` on a first visit; the visit counter (`waVisits`, +1 per tab
+  session unless the last count there is over 30 min old, so a room switch's reload or a refresh isn't a visit); `tickPlay(dt)`
+  counts locked play (pointer captured, no menu, no podium, tab in front): `waPlayedOnce` at 10 s, and at 75 s
+  `Select.showChangeWizardHint({ reason: 'time' })`. Our first death (`cause !== 'respawn'`: the menu's own Respawn means they found
+  the menu) calls it with `reason: 'death'`. Once per page load, visits 1-3 only, and skipped once the Esc menu has been opened.
+- **`window.WA_MENU`** `{ open(), close(), isOpen() }` for select.js and podium.js (the podium's "Try another wizard", the "?" chip).
+  `open()` releases the lock if we have it; `close()` is Resume.
+- **`window.__wa.first`** (with `?debug`): `{ firstVisit, visitNo, playT, hintShown, playedOnce, menuEverOpened, cfg }`; tests
+  shorten `cfg.hintAfter` and set `__wa.input.locked = true` to stand in for the pointer lock headless can't get.
+
+**Verified:**
+- `MATCH_DEBUG=1 node tools/test/modematch-unit.mjs`: **ALL PASS (196 checks)**. (A first run was interrupted by the Mac sleeping and failed 11
+  real-time checks, trap fuses and idle timers; the rerun is the one that counts.) The four new checks: Easy bots for a first-timer alone
+  in a public room (sent 'normal'), its three fill bots Easy, a first-timer joining a room with a human leaves it alone, a plain join sets it.
+- `/tmp/wa-spells/r21/firstvisit.py` (Playwright, GPU, port 4101, fresh contexts; characters' uncommitted select.js was in the tree,
+  so the shots show the whole flow): **ALL PASS, 18 checks.**
+  - A fresh profile is in a match with **no click in 0.8-1.1 s after the page is ready** (the whole load is the usual
+    model load + warm-up), as the Pyromancer, in a public room whose three fill bots are Easy, the "Click to start" prompt up and the
+    builder hidden. `waPlayedOnce` after 10 s of (stood-in) locked play; the hint at the timer; `WA_MENU.open()` shows the menu.
+  - The same browser, a new tab session: the builder, no auto-join, visit 2, the hint again; a reload in the same tab isn't a visit.
+  - `?builder` keeps a fresh profile on the builder. `?room=new` on a fresh profile: the private room, the Pyromancer, its bots
+    at the room's setting (normal). A first-timer joining a veteran's Hard room keeps its Hard bots.
+  - Shots: `/tmp/wa-spells/r21/A-first-prompt.png` (strip + Click to start), `A-hint.png` (the toast), `A-menu.png` (Esc:
+    "Try another wizard", Respawn highlighted), `A2-builder.png`, `C-invite.png`.
+- `deploy/smoke.py http://localhost:4101` (GPU): **PASS**. The builder path with `?builder=1` as before (6 rows, 35 cards, 4 in the match), then a fresh context: in the match with no click in 0.7 s after the page is ready, the prompt up, the fill bots `['easy']`. Shots `/tmp/wa-spells/r21/smoke*.png`.
+- `deploy/subpath_test.py http://localhost:4111/game/ --site http://localhost:4101/` (the CrazyGames bundle built against 4101): **PASS**, every rooms check as before (A creates, B by code, C from the site's `?room=` with no click, D public, E's bad code) plus F, a fresh context: a public match with no click, Easy bots. Download 8.9 MB, no requests outside the folder, no console errors.
+- `deploy/perf_test.py http://localhost:4101 --seconds 20` (now `?builder=1`): **PASS** all targets: 60 fps, max frame 17.8 ms, 59 programs, 0 compiled in the match, triangles median 118k, draw calls 88.
+- `node tools/test/botmatch.mjs 4101 25 normal`: ran clean (no server errors).
+
+**Known issues / for others:**
+- **Every fresh Playwright context is a first visit now** and the page joins by itself: scripts that wait for "Ready" and then fill
+  `#nameInput` / click `#joinBtn` hang on the hidden form. Use `?builder=1`, or `add_init_script("localStorage.setItem('waPlayedOnce','1')")`,
+  or wait for `#hud`. smoke, subpath and perf_test are updated; `ram_e2e.py` seeds a loadout so it's fine; other scripts need one of the three.
+- The characters agent's part (select.js, select.css, podium.js, index.html, recap.css) was uncommitted in the tree while I verified;
+  the hooks are guarded (`typeof Select.x === 'function'`), so main.js works with or without it.
+- The "Click to start" sub-line: the HTML's default copy, plus characters' own line. The pre-round-21 "Click again to play" text now
+  only appears after a click that the browser refused.
+- A sub-10 s first visit (they leave before `waPlayedOnce`) is dropped into a match again next time, by the brief's definition; the
+  characters' strip may set `waHowToPlaySeen`, which is one of my signals, in which case they get the builder instead. Either is fine.
+
 ## Round 20: performance (CrazyGames: "The game seems very laggy")
 Commits: `c4206c7` lights, `40c1c57` quality tiers, `3296cab` warm-up + dithered fade, `2ae73a5` pooling, `940e30a` network
 smoothing + ping + predicted casts + /perf, `b28b7ec` warm-up additions (characters' warmSet, Podium.warm), `715359d` ?quality=,
