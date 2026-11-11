@@ -1078,6 +1078,31 @@ async function roomChecks() {
         'an add-bots-only socket gets its own lab room and sees its bots; a plain join does not land there');
       ws.close(); await close(H);
     }
+
+    // round 21: a first-timer (join.firstVisit) alone in a public room gets Easy fill bots, whatever difficulty the client sent;
+    // a first-timer joining other humans leaves the room's difficulty alone; a plain join still sets it (the most recent human's)
+    {
+      await wait(2500);   // (the rooms above have emptied and closed: ROOM_EMPTY_TTL 2)
+      const joinAs = async (name, extra) => {
+        const ws = new WebSocket(`ws://localhost:${port}`);
+        const c = { ws, name, msgs: [], id: null, room: null, send: (m) => ws.send(JSON.stringify(m)) };
+        ws.on('message', raw => { const m = JSON.parse(raw); if (m.t === 'welcome') { c.id = m.id; c.room = m.room; } c.msgs.push(m); });
+        await new Promise(r => ws.on('open', r));
+        c.send({ t: 'join', name, ...extra });
+        while (c.id == null) await wait(10);
+        return c;
+      };
+      const F1 = await joinAs('Newbie', { firstVisit: true, difficulty: 'normal' });
+      ok(!F1.room.private && F1.room.humans === 1 && F1.room.bots === 'easy', `a first-timer alone in a public room: the room's bots are Easy (${F1.room.id}, sent 'normal', bots ${F1.room.bots})`);
+      await wait(3000);   // the 1.5 s grace, then the fill
+      const fill = F1.msgs.filter(m => m.t === 'joined' && m.player.bot).map(m => m.player.bot);
+      ok(fill.length === 3 && fill.every(d => d === 'easy'), `its three fill bots are Easy (${fill.join(', ') || 'none'})`);
+      const F2 = await joinAs('Newbie2', { firstVisit: true, difficulty: 'hard' });
+      ok(F2.room.id === F1.room.id && F2.room.bots === 'easy', `a first-timer joining a room with a human leaves its difficulty alone (${F2.room.id}, bots ${F2.room.bots})`);
+      const F3 = await joinAs('Vet', { difficulty: 'hard' });
+      ok(F3.room.id === F1.room.id && F3.room.bots === 'hard', `a plain join still sets the room's difficulty (bots ${F3.room.bots})`);
+      await close(F1, F2, F3);
+    }
   } catch (e) { ok(false, `room checks: ${e.message}`); }
   finally { if (srv.exitCode === null) { srv.kill(); await new Promise(r => srv.once('exit', r)); } }
 }
