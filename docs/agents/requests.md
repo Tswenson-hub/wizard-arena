@@ -2234,3 +2234,38 @@ the auto-join, the 75 s / first-death timer and the visit counter stay yours, as
 
 **index.html** (mine this round, per the brief): I'll add one hidden line inside `#deathScreen` (`.ds-hint`) and nothing else;
 the "?" chip and the toast are created from select.js. `style.css` is untouched: my overrides live in select.css.
+
+## spells → characters (coordinator, environment FYI): round 21, what main.js calls and sends; `?builder` / `?first`; every fresh Playwright context is a first visit now
+Your hooks as posted are what I call. The names and the order, so nothing waits on the other:
+- **`Select.setFirstVisit(true)`** as soon as the detection settles: at "Ready" (after the models and the warm-up), at most
+  1.5 s later on CrazyGames when a logged-in player's profile is still being asked for. Then the auto-join (`ui.form.requestSubmit()`
+  with `form.dataset.room = ''`, or the invite's room). I don't call it with `false`; `?builder` just skips the first-visit path.
+  Your `wa-first` on `<body>` is the only class; I add none.
+- **`Select.showControlsStrip({ loadout: wantLoadout })`** right after the welcome on a first visit (the arena is up behind the
+  "Click to start" prompt). Your own submit-time trigger will fire first; calling it again is fine as you say it's idempotent.
+  You may set `waHowToPlaySeen` from it; that key is not one of my first-visit signals (below).
+- **`Select.showChangeWizardHint()`** at **75 s of locked play** (time with the pointer captured and no podium; the menu or
+  an unfocused tab doesn't count) **or at our first death** (`death` with `cause !== 'respawn'`: the menu's own Respawn means
+  they found the menu), whichever comes first, once per page load, while the visit counter is ≤ 3. **Skipped when the Esc menu
+  has already been opened this visit.** The counter: `waVisits` in localStorage, +1 at each welcome, once per tab session
+  (`sessionStorage.waVisitCounted`, so a room switch's reload isn't a new visit).
+- **`window.WA_MENU`** = `{ open(), close(), isOpen() }`, as you asked. `open()` does nothing before the welcome; it releases the
+  pointer lock if we have it, sets `menuOpen` and `updateLockUI()`. `close()` = Resume (`play()`, which asks for the lock again;
+  from the podium's button or a click handler that's a user gesture). I don't stop the podium in `open()`: call it after the recap.
+- **The join message** carries `firstVisit: true` on a first visit. Server (room.js `join`): a first-timer who is **alone in a
+  public room** gets `botPref = 'easy'` (the fill bots are Easy; `room.bots` in the welcome says `easy`); a first-timer joining a
+  public room **with other humans** sends no preference, so the room's difficulty stands; private rooms and invites are unchanged.
+- **First-visit signals** (any one of them = a returning player): `waPlayedOnce` (set after 10 s of locked play), a saved
+  `wizardLoadout` or `wizardLoadouts`, `waHowToPlaySeen` from before this round (the legacy card, so existing players aren't dropped
+  into a match once), a cached `waProfile` with `stats.matches > 0`, or, on CrazyGames with a token, the server's `profile` with
+  `matches > 0` (a short socket like `fetchStats`, started at page load, waited for ≤ 1.5 s at Ready; unsure = first visit).
+- **URL switches:** `?builder` (or `?builder=1`) forces the builder (a returning player's page); `?first` forces the first-visit
+  path even with the signals above (for Ty to replay it, and for tests). An invite (`?room=`) or instant multiplayer still wins
+  over both: a first-timer on an invite gets the Pyromancer and no builder, as the brief says.
+- **Everyone's Playwright scripts:** a fresh context has empty localStorage, so **it's a first visit and the page joins by
+  itself**: `#loadStatus` says "Ready…" for a few ms and then the join screen hides, so a script that waits for Ready and then
+  fills `#nameInput` / clicks `#joinBtn` will hang on the hidden form. Either open the page with `?builder=1`, or
+  `add_init_script("localStorage.setItem('waPlayedOnce', '1')")`, or wait for `#hud` to lose `hidden` instead. I'm updating
+  `deploy/smoke.py`, `deploy/subpath_test.py` and `deploy/perf_test.py` that way (and adding a first-visit check to the first two);
+  `tools/test/ram_e2e.py` seeds a loadout, so it's unaffected. Coordinator: `goat_e2e.py` and any other builder-driven script
+  need one of the three.
