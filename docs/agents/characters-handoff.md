@@ -1,5 +1,72 @@
 # Characters hand-off
 
+## Round 21: first play (the "Click to start" prompt, the controls strip, the Esc hint, the first menu, the podium button, the lighter builder)
+Commits: `6ab3ee9` requests.md (the hooks), `ad18c44` select.js + select.css + index.html, `107324c` podium.js + recap.css.
+Spells' main.js (`c6c2412`) calls the hooks as posted; nothing of mine waits on anything else.
+
+### What I built (select.js, "first play (round 21)" section)
+- **`setFirstVisit(on)`**: `body.wa-first` for the visit and `body.wa-start` for the prompt. The prompt (index.html's `#lockPrompt`)
+  reads **"Click to start"**, "First to **15** kills wins" and "You're the **Pyromancer**. Move the mouse to aim, click to cast."
+  (the preset's name is looked up from the join builder's loadout; no preset match: the second sentence alone). A
+  MutationObserver keeps the subline while `wa-start` is on, because main.js rewrites it when a lock is refused (the welcome's
+  own request, with no click behind it, usually is). The first successful pointer lock puts the prompt back to "Click to play"
+  and main.js's note. **Big styles live in select.css under `body.wa-start`; style.css is untouched.**
+- **`showControlsStrip({ loadout })`** (`openFirstMatchTips` is an alias; the old floating card is gone): a strip under the match
+  bar (`top: 92px`, centred, `z-index 16`, no input but its ×): `W A S D Move · Mouse Aim · Left click <primary> · Right click
+  <power> · Space Jump, twice to double jump · Q Ultimate when charged`. The spell names come from `loadout`, else the last
+  loadout the join builder had, else the default. Move (a WASD key while locked) and the primary (LMB while locked) tick off in
+  green; RMB ticks the power. Both Move and fire → it fades 1.5 s later; else 25 s after the first lock; never locked → 90 s.
+  Hidden under the Esc menu (`body.paused`), the recap, a clip and the join screen. Sets `waHowToPlaySeen` as the card did.
+  It still fires by itself when the join form submits with the flag unset (today's path), and main.js calls it after the
+  welcome on a first visit: idempotent.
+- **`showChangeWizardHint()`**: the toast at 21 % from the top, "Press **Esc** to change your wizard and spells" (Esc as a gold,
+  pressing key) + "Six ready-made wizards, or build your own", 8 s, idempotent per page load. It also puts `body.wa-hinted`,
+  which shows index.html's new `#deathScreen .ds-hint` line under "Respawning…" until the Esc menu has been opened once
+  (`body.wa-menu-seen`). main.js times the call (75 s of locked play or the first real death, visits 1-3).
+- **The first Esc menu of the visit** (`watchMenu`, a MutationObserver on `#clickToPlay`'s class): when `firstVisit` or the hint
+  has shown, the pause builder's presets row pulses (`sb-try`, gold ring) under the label **"Try another wizard"**, `#respawnBtn`
+  gets `wa-obvious` (gold, filled, glowing; Resume goes hollow) and both end when the menu closes (the pulse also on a preset
+  click or after 12 s). A **"? Controls"** chip after Leave match closes the menu (Resume) and reopens the strip.
+- **`openEscMenu()` / `closeEscMenu()`**: `window.WA_MENU.open()/close()` (spells' main.js), with a synthetic Escape / a Resume
+  click as the fallback. **`firstVisitUI()`** is read by podium.js.
+- **Podium** (podium.js, recap.css): on a first visit the overlay has **"Try another wizard"** bottom right (clear of the winner's
+  name plate, which moves to the bottom centre during the close-up); it ends the recap and opens the Esc menu's builder.
+- **The returning player's builder** (join screen, `.sb-join`): the presets row is labelled **"Pick a wizard"**, each chip is
+  tinted by its wizard's element with a dot, 13.5 px bold (13 px under 800 px tall); **Play** is 17 px (16 px) with a slow gold
+  glow; the spell grid sits at 0.86 opacity with quieter card tops until hovered or focused. The pause builder keeps the same
+  tinted chips. Under 800 px tall the join builder's gaps tighten so it is exactly 649 px at 1280×720 and **doesn't scroll**
+  (before the fix the name field's focus scrolled the wizards row 15 px under the header).
+
+### Verified (`/tmp/wa-characters/r21/`, port 4103, GPU Chromium `--use-angle=metal --enable-gpu --ignore-gpu-blocklist`)
+`firstplay.py`: **ALL PASS (26 checks)**, no page errors, with spells' main.js `c6c2412` in the tree:
+- A fresh profile loads and is in a match (HUD up) **1.3 s** after `goto`, the builder hidden, the player's loadout the Pyromancer's six
+  spells; `body.wa-first wa-start`; the prompt "Click to start / First to 15 kills wins / You're the Pyromancer…"; the strip
+  shows Fireball and Meteor. `first_prompt.png`.
+- A faked lock (`document.pointerLockElement` = the canvas + `pointerlockchange`, which is what input.js reads): the prompt is
+  back to "Click to play" + main.js's note, the strip stays. `first_strip.png`. W + a left click tick Move and Fireball
+  (`first_strip_done.png`) and the strip is gone 2.5 s later.
+- `showChangeWizardHint()`: the toast, visible, opacity 1 (`hint_toast.png`); the death screen's line is `display: block` with the
+  screen forced visible (`death_hint.png`); the toast is gone after 8 s.
+- `WA_MENU.open()`: the presets pulse, the label "Try another wizard", Respawn `wa-obvious`, the "? Controls" chip there; the
+  death-screen line retired (`menu_try.png`). A preset click ends the pulse. "? Controls" hides the menu and the strip returns,
+  visible (`help_strip.png`).
+- A recap played with the page's renderer: the button is on screen, `pointer-events: auto`, inside 1280×720 (`podium_try.png`);
+  clicking it removes the recap, `Podium.active()` is false and the menu is open (`podium_to_menu.png`).
+- Returning player (`waPlayedOnce` seeded) at 1280×720 and 1920×1080: the builder shows, no auto-join, no `wa-first`, "Pick a
+  wizard" chips at 13.5 px bold, Play at 17 px, **0 clipped cards**, document width = viewport, the top bar 62 / 34 px.
+  `builder_1280.png`, `builder_1920.png`. `probe.py`: `#joinPicker.scrollTop` 0 with the builder at 649 of 649 px.
+- `MATCH_DEBUG=1 node tools/test/modematch-unit.mjs` ALL PASS; `node --check` on select.js and podium.js.
+
+### Not verified here
+- A real pointer lock, the 75 s timer and a real first death (spells' timing; my part is driven the way main.js drives it).
+- The toast and the strip at the same time (the "?" chip after the hint fired): they're 70 px apart and the strip is on top.
+
+### Notes for the others
+- `openFirstMatchTips` still exists as an alias of `showControlsStrip`; `.htp-float` CSS stays for nothing and can go next round.
+- The "15" on the prompt is `matchTarget` with `data-kill-target`, so `setMatchTarget` updates it like the other copies.
+- The presets' label is "Pick a wizard" on both builders; only the first menu renames it "Try another wizard".
+
+
 ## Round 15: the KayKit Mage, the Skeleton bots and the animation remap
 
 ### The upright staff (`3cb6204`)
