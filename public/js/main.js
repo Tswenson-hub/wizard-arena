@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as C from '../shared/constants.js';
-import { Net, fetchStats } from './net.js';
+import { Net, fetchStats, fetchProfile } from './net.js';
 import { Input } from './input.js';
 import { Sfx } from './audio.js';
 import { buildWorld, makePropMesh, spinners, loadModels } from './world.js';
@@ -278,11 +278,12 @@ const ramModelP = loadRamModel(loader);   // (not waited on: a ram is a box unti
 Promise.all([loadWizardModels(loader), loadModels(loader, scene)]).then(async () => {
   ui.loadStatus.textContent = 'Preparing the spells…';
   await warmUp();
-  ui.loadStatus.textContent = 'Ready. Pick a name and enter.';
+  firstVisit = await settleFirstVisit();   // round 21 (≤ 1.5 s more on CrazyGames while a logged-in player's profile is asked for)
+  ui.loadStatus.textContent = firstVisit ? 'Ready. Entering the arena…' : 'Ready. Pick a name and enter.';
   ui.joinBtn.disabled = false;
   if (!ui.name.value) ui.name.value = 'Wizard' + Math.floor(Math.random() * 900 + 100);
-  ui.name.focus();
-  autoJoin();   // round 17: an invite or CrazyGames' instant multiplayer goes straight in
+  if (!firstVisit) ui.name.focus();
+  autoJoin();   // round 17: an invite or CrazyGames' instant multiplayer goes straight in; round 21: a first visit too
 }, (err) => {
   ui.loadStatus.textContent = 'Failed to load the models: ' + (err?.message || err);
 });
@@ -299,7 +300,8 @@ ui.form.addEventListener('submit', async (e) => {
   sfx.init(); sfx.resume();
   try {
     const room = ui.form.dataset.room || undefined;   // round 17: select.js's buttons ('' public, 'new', a code); the launch's auto-join
-    const welcome = await net.connect(name, { loadout: wantLoadout, voice: wantVoice }, ui.botDiff.value, room);   // fill bots play at this difficulty
+    // fill bots play at this difficulty; round 21: a first-timer's own new public room gets Easy ones (the server's rule)
+    const welcome = await net.connect(name, { loadout: wantLoadout, voice: wantVoice }, ui.botDiff.value, room, firstVisit ? { firstVisit: true } : null);
     onWelcome(welcome);
   } catch (err) {
     ui.loadStatus.textContent = err.message || 'Connection failed';
@@ -320,13 +322,15 @@ function updateLockUI() {
   document.body.classList.toggle('paused', free && menuOpen);
   // tell the server when the Esc menu is open: it waits longer before calling us idle (C.IDLE.waiting)
   const open = free && menuOpen;
+  if (open) menuEverOpened = true;   // round 21: the "change your wizard" hint isn't needed once they've seen the menu
   if (inGame && open !== lastMenuSent) { lastMenuSent = open; net.send({ t: 'menu', open }); }
   updateBotTally();
   updateRespawnBtn();
 }
 function lockNote(text) { $('#lockNote').innerHTML = text; }
 const LOCK_NOTE = 'The mouse aims while the game has it. <kbd>Esc</kbd> opens the menu.';
-function play() { lockNote(LOCK_NOTE); input.requestLock(); }
+let lockAsked = false;   // round 21: a click asked for the lock (the welcome's own attempt isn't one: its refusal keeps the prompt's copy)
+function play() { lockAsked = true; lockNote(LOCK_NOTE); input.requestLock(); }
 ui.clickToPlay.addEventListener('click', (e) => { if (e.target === ui.clickToPlay) play(); });
 ui.lockPrompt.addEventListener('click', () => { sfx.init(); sfx.resume(); sfx.click(); play(); });   // (round 17: after an auto-join this is the first click)
 $('#resumeBtn').addEventListener('click', () => { sfx.click(); menuOpen = false; play(); updateLockUI(); });
@@ -358,7 +362,7 @@ document.addEventListener('keydown', (e) => {
 });
 input.onLockError = () => {
   menuOpen = false;
-  lockNote('The browser didn\'t hand over the mouse. Click again to play. <kbd>Esc</kbd> opens the menu.');
+  if (lockAsked) lockNote('The browser didn\'t hand over the mouse. Click again to play. <kbd>Esc</kbd> opens the menu.');
   updateLockUI();
 };
 for (const b of document.querySelectorAll('[data-bot]')) b.addEventListener('click', () => { sfx.click(); net.send({ t: 'addBot', difficulty: b.dataset.bot }); });
@@ -460,16 +464,82 @@ withPlatform(P => P.onMuteAudio?.(m => sfx.setPlatformMute(m)));
 // the Esc menu changes it. The name: the saved one, or the CrazyGames username (select.js fills the field).
 async function autoJoin() {
   const P = await platform();
-  if (!P) return;
-  await P.ready?.();
-  const room = P.inviteRoom?.() || (P.isInstantMultiplayer?.() ? 'new' : null);   // (an invite first: platform.js's order)
-  if (!room || me || ui.joinBtn.disabled) return;
+  await P?.ready?.();
+  const room = P ? (P.inviteRoom?.() || (P.isInstantMultiplayer?.() ? 'new' : null)) : null;   // (an invite first: platform.js's order)
+  if ((!room && !firstVisit) || me || ui.joinBtn.disabled) return;
   await Select.nameReady?.();
   if (me || ui.joinBtn.disabled) return;
+  if (firstVisit) startFirstVisit();   // round 21: the Pyromancer, and select.js's first-visit dress (an invite's first-timer too)
   inviteOnWelcome = room === 'new';
-  ui.form.dataset.room = room;
+  ui.form.dataset.room = room || '';
   ui.form.requestSubmit();
 }
+
+// ---------------------------------------------------------------- the first visit (round 21)
+// A first visit skips the builder: the page joins a public match by itself as the Pyromancer, and the one click is the
+// "Click to start" prompt that pointer lock needs. "First" means none of: waPlayedOnce (set after 10 s of locked play), a saved
+// loadout, the how-to card seen (players from before this round), or a CrazyGames profile with matches (the cached one, or
+// the server's answer to the token, asked for at page load and waited for at most 1.5 s at Ready; unsure = first visit).
+// `?builder` forces the builder, `?first` forces the first-visit path. An invite or instant multiplayer still picks the room.
+// After the welcome: the controls strip (select.js), waPlayedOnce at 10 s, and the "Press Esc to change your wizard" hint at 75 s
+// of locked play or our first death, once per page load, on visits 1-3 (waVisits), unless the Esc menu has been opened already.
+const URLQ = (() => { try { return new URLSearchParams(location.search); } catch { return new URLSearchParams(); } })();
+const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch { /* not remembered */ } };
+const PLAYED_KEY = 'waPlayedOnce', VISITS_KEY = 'waVisits', VISIT_SESSION_KEY = 'waVisitAt';
+const FIRST = { playedAfter: 10, hintAfter: 75, hintVisits: 3 };
+let firstVisit = false, playedOnce = !!lsGet(PLAYED_KEY), visitNo = 0, playT = 0, hintShown = false, menuEverOpened = false;
+// the logged-in CrazyGames player's profile: null for guests, our own site, no token or any error
+const profileP = (async () => {
+  const P = await platform();
+  let token = null;
+  try { token = await P?.getUserToken?.(); } catch {}
+  return typeof token === 'string' && token ? fetchProfile(token) : null;
+})().catch(() => null);
+function localSignsOfPlay() {
+  if (lsGet(PLAYED_KEY) || lsGet('wizardLoadout') || loadSaved().length || lsGet(HOWTO_KEY)) return true;
+  try { if ((JSON.parse(lsGet('waProfile') || 'null')?.stats?.matches ?? 0) > 0) return true; } catch {}
+  return false;
+}
+async function settleFirstVisit() {
+  if (URLQ.has('first')) return true;
+  if (URLQ.has('builder') || localSignsOfPlay()) return false;
+  const prof = await Promise.race([profileP, new Promise(r => setTimeout(() => r(null), 1500))]);
+  return !(prof && !prof.guest && (prof.stats?.matches ?? 0) > 0);
+}
+function startFirstVisit() {
+  const preset = C.PRESETS.find(k => k.id === C.DEFAULT_WIZARD) || C.PRESETS[0];   // Cinder, the Pyromancer
+  wantLoadout = { ...preset.loadout };   // (not saved: a saved loadout is a sign of a returning player)
+  for (const pk of pickers) pk.set(wantLoadout);
+  if (typeof Select.setFirstVisit === 'function') Select.setFirstVisit(true);
+}
+// a visit is counted once per tab session, unless the last count there is over 30 min old (a room switch or a reload isn't
+// a new visit; coming back to the same tab after a break is)
+function countVisit() {
+  let last = 0;
+  try { last = +sessionStorage.getItem(VISIT_SESSION_KEY) || 0; } catch {}
+  let n = parseInt(lsGet(VISITS_KEY), 10) || 0;
+  if (Date.now() - last > 30 * 60 * 1000) { n += 1; lsSet(VISITS_KEY, String(n)); try { sessionStorage.setItem(VISIT_SESSION_KEY, String(Date.now())); } catch {} }
+  visitNo = n || 1;
+}
+// a frame of play with the pointer captured (no menu, no podium, the tab in front)
+function tickPlay(dt) {
+  playT += dt;
+  if (!playedOnce && playT >= FIRST.playedAfter) { playedOnce = true; lsSet(PLAYED_KEY, '1'); }
+  if (playT >= FIRST.hintAfter) changeWizardHint('time');
+}
+function changeWizardHint(reason) {
+  if (hintShown || menuEverOpened || visitNo > FIRST.hintVisits) return;
+  hintShown = true;
+  if (typeof Select.showChangeWizardHint === 'function') Select.showChangeWizardHint({ reason });
+}
+// The Esc menu for select.js and podium.js (the podium's "Try another wizard", the menu's "?" chip): open() releases the mouse
+// if we have it; close() is Resume (it asks for the lock again, so call it from a click).
+window.WA_MENU = {
+  open() { if (!me) return; menuOpen = true; if (input.locked) { try { document.exitPointerLock(); } catch {} } updateLockUI(); },
+  close() { if (!me) return; menuOpen = false; play(); updateLockUI(); },
+  isOpen: () => !!me && menuOpen && !input.locked,
+};
 
 // ---------------------------------------------------------------- saves (round 18)
 // A logged-in CrazyGames player: after the welcome we send their token (platform.js getUserToken); the server answers with
@@ -580,6 +650,8 @@ function onWelcome(msg) {
   if (sfx.muted) feed('<span class="warn">Sound is muted (press M)</span>');   // round 11: a saved mute is easy to forget
   if (me.spectator) feed('The match is full: you are watching until a place opens.');
   updateSoundInd();
+  countVisit();   // round 21: the visit counter (the "change your wizard" hint shows on visits 1-3)
+  if (firstVisit && typeof Select.showControlsStrip === 'function') Select.showControlsStrip({ loadout: wantLoadout });   // (the strip replaces the how-to card)
 }
 
 // A ram seen for the first time (rams.js: its size, gold tint and orbit/mount motion).
@@ -1239,6 +1311,7 @@ function handleMessage(msg) {
       if (msg.cause === 'respawn') feed(k && k !== w ? `<b>${esc(k.name)}</b> finished <b>${esc(w.name)}</b>` : `<b>${esc(w.name)}</b> respawned`);   // (round 16: the menu's Respawn while hurt)
       if (msg.killer === myId && msg.id !== myId) killMarker();
       if (w === me) showKilledBy(k && k !== w ? k : null, msg.kind || msg.cause);
+      if (w === me && msg.cause !== 'respawn') changeWizardHint('death');   // round 21: our first death (not the menu's own Respawn)
       break;
     }
     case 'respawn': {
@@ -3018,6 +3091,7 @@ function frame(t) {
     }
     // round 16: the end's 1.5 s gap plays the others' animations and the effects in slow motion (the last kill sinking in)
     slowMo = matchUI.state()?.phase === 'end' ? 0.3 : 1;
+    if (input.locked && !menuOpen && !document.hidden) tickPlay(dt);   // round 21: time played (waPlayedOnce, the change-wizard hint)
     updateLocal(dt);
     for (const w of players.values()) {
       if (w === me) continue;
@@ -3084,4 +3158,5 @@ requestAnimationFrame(frame);
 
 // Debug handle for the automated tests (round 14: off unless asked for, with ?debug in the URL or localStorage waDebug = 1).
 const DEBUG = (() => { try { return new URLSearchParams(location.search).has('debug') || localStorage.getItem('waDebug') === '1'; } catch { return false; } })();
-if (DEBUG) window.__wa = { renderer, input, net, local, players, props, rams, effects, scene, camera, sfx, decoys, walls, frosts, frostMark, mrainMark, flaskMark, cageMark, laneMark, cages, firewalls, stampedeFx, C, get cursedProps() { return cursedProps; }, get seenTraps() { return seenTraps; }, get quality() { return Q.debug(); }, Q, NET, netBuf };
+if (DEBUG) window.__wa = { renderer, input, net, local, players, props, rams, effects, scene, camera, sfx, decoys, walls, frosts, frostMark, mrainMark, flaskMark, cageMark, laneMark, cages, firewalls, stampedeFx, C, get cursedProps() { return cursedProps; }, get seenTraps() { return seenTraps; }, get quality() { return Q.debug(); }, Q, NET, netBuf,
+  get first() { return { firstVisit, visitNo, playT, hintShown, playedOnce, menuEverOpened, cfg: FIRST }; } };

@@ -20,6 +20,23 @@ export function fetchStats(token, ms = 8000) {
   });
 }
 
+// Round 21: is this CrazyGames player new? A short-lived socket sends their token; the server's { t: 'profile' } (username, save,
+// stats with `matches`) resolves this, or { guest: true } for a token the server rejects. null after `ms` or on any error. Never
+// rejects. main.js starts it at page load and waits for it at most 1.5 s at Ready (the first-visit detection).
+export function fetchProfile(token, ms = 6000) {
+  return new Promise((resolve) => {
+    let ws, done = false;
+    const end = (msg) => { if (done) return; done = true; clearTimeout(timer); try { ws?.close(); } catch {} resolve(msg); };
+    const timer = setTimeout(() => end(null), ms);
+    if (!token) { end(null); return; }
+    try { ws = new WebSocket(serverUrl()); } catch { end(null); return; }
+    ws.onopen = () => ws.send(JSON.stringify({ t: 'auth', token }));
+    ws.onmessage = (e) => { let m; try { m = JSON.parse(e.data); } catch { return; } if (m.t === 'profile') end(m); };
+    ws.onerror = () => end(null);
+    ws.onclose = () => end(null);
+  });
+}
+
 export class Net {
   constructor() {
     this.ws = null;
@@ -45,13 +62,14 @@ export class Net {
   }
 
   // round 11: `pick` is { loadout, voice } from the builder. Round 17: `room` is '' or undefined (a public match), 'new'
-  // (a new private room) or a room's code.
-  connect(name, pick, difficulty, room) {
+  // (a new private room) or a room's code. Round 21: `extra` rides along in the join ({ firstVisit: true }: a first-timer's
+  // new public room fills with Easy bots).
+  connect(name, pick, difficulty, room, extra = null) {
     return new Promise((resolve, reject) => {
       // round 14: the CrazyGames build sets window.WA_SERVER (config.js) to the Render server; our own site leaves it unset
       const ws = new WebSocket(serverUrl());
       this.ws = ws;
-      ws.onopen = () => { this.connected = true; this.send({ t: 'join', name, loadout: pick?.loadout, voice: pick?.voice, difficulty, room: room || undefined }); this.startPing(); };
+      ws.onopen = () => { this.connected = true; this.send({ t: 'join', name, loadout: pick?.loadout, voice: pick?.voice, difficulty, room: room || undefined, ...(extra || {}) }); this.startPing(); };
       ws.onmessage = (e) => {
         let msg; try { msg = JSON.parse(e.data); } catch { return; }
         if (msg.t === 'pong') { this.onPong(msg); return; }

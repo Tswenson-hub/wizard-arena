@@ -2432,8 +2432,12 @@ export function createRoom(opts) {
     const lo = C.sanitizeLoadout(msg.loadout);
     const p = newPlayer(id, name, lo || C.DEFAULT_LOADOUT, msg.voice);
     if (room.kind === 'private' && room.host == null) room.host = id;   // the creator (or the first in after everyone left)
-    // fill bots play at this difficulty (a private room: the host's choice only)
-    if (['easy', 'normal', 'hard'].includes(msg.difficulty) && (room.kind !== 'private' || room.host === id)) p.botPref = msg.difficulty;
+    // fill bots play at this difficulty (a private room: the host's choice only). Round 21: a first-timer (the client's
+    // `firstVisit`) alone in a public room gets Easy bots, so they can win their first fights; one joining other humans
+    // leaves the room's difficulty alone. Private rooms and invites are unchanged.
+    const first = msg.firstVisit === true && room.kind === 'public';
+    if (first) { if (!humans().length) p.botPref = 'easy'; }
+    else if (['easy', 'normal', 'hard'].includes(msg.difficulty) && (room.kind !== 'private' || room.host === id)) p.botPref = msg.difficulty;
     if (ws.account) p.account = ws.account;   // round 18: an auth that came before the join
     players.set(id, p);
     sockets.set(id, ws);
