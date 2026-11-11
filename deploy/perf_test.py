@@ -210,6 +210,7 @@ async def main():
     if A.quality: q.append('quality=' + A.quality)
     if A.quality == 'low': q.append('low')
     if A.room: q.append('room=' + A.room)
+    else: q.append('builder=1')   # round 21: a fresh profile is a first visit and joins by itself; the builder path is the measured one
     url = BASE + '/?' + '&'.join(q)
     gl = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] if A.swiftshader else ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist']
     async with async_playwright() as p:

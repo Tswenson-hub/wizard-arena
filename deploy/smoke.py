@@ -38,7 +38,8 @@ async def main():
             ws.on('framereceived', on_frame)
         pg.on('websocket', on_ws)
         t = time.time()
-        await pg.goto(BASE + '/', timeout=120000)
+        # round 21: a fresh profile is a first visit and joins by itself; ?builder=1 keeps the builder for these checks
+        await pg.goto(BASE + '/?builder=1', timeout=120000)
         # Wait for main.js's own ready line, not just an enabled button: #joinBtn starts enabled in the HTML
         # until main.js runs, so a slow module load would otherwise let the check race ahead of the builder.
         await pg.wait_for_function("""() => { const s = document.querySelector('#loadStatus')?.textContent || '';
@@ -73,6 +74,34 @@ async def main():
         ok = ok and st['players'] >= 4 and len(st['bots']) >= 3
         if SHOT:
             await pg.screenshot(path=SHOT, timeout=120000); print('screenshot:', SHOT)
+        # round 21: a first visit (a fresh context, no ?builder) is in a match with no click, as the Pyromancer, with Easy bots
+        ctx2 = await b.new_context(viewport={'width': 1280, 'height': 720})
+        pg2 = await ctx2.new_page()
+        pg2.on('pageerror', lambda e: errs.append(str(e)))
+        pg2.on('console', lambda m: errs.append(m.text) if m.type == 'error' else None)
+        bots2 = set()
+        def on_ws2(ws):
+            def on_frame(f):
+                if isinstance(f, str) and f.startswith('{"t":"snap"'):
+                    for p_ in json.loads(f)['players']:
+                        if p_.get('bot'): bots2.add(p_['bot'])
+            ws.on('framereceived', on_frame)
+        pg2.on('websocket', on_ws2)
+        t = time.time()
+        await pg2.goto(BASE + '/', timeout=120000)
+        try:
+            await pg2.wait_for_function("!document.querySelector('#hud').classList.contains('hidden')", timeout=60000)
+            first_in = time.time() - t
+            await pg2.wait_for_timeout(3500)
+            fv = await pg2.evaluate("({ prompt: !document.querySelector('#lockPrompt').classList.contains('hidden'), join: getComputedStyle(document.querySelector('#join')).display })")
+            first_ok = fv['prompt'] and fv['join'] == 'none' and bots2 == {'easy'}
+            print(f'first visit: in the match with no click in {first_in:.1f}s, prompt {fv["prompt"]}, bots {sorted(bots2)}', 'ok' if first_ok else 'FAIL')
+        except Exception as e:
+            first_ok = False; print('first visit: FAIL', e)
+        ok = ok and first_ok
+        if SHOT:
+            await pg2.screenshot(path=SHOT.replace('.png', '-first.png'), timeout=120000)
+        await ctx2.close()
         # any frame within 8 s: a headless page can stall a couple of seconds compiling shaders after the screenshot
         before, waited = frames['recv'], 0
         while frames['recv'] <= before and waited < 8000:

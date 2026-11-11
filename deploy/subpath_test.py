@@ -33,7 +33,9 @@ page_url = urlparse(PAGE)
 folder = page_url.path if page_url.path.endswith('/') else page_url.path.rsplit('/', 1)[0] + '/'
 
 # ---- rooms: one browser per player (separate contexts = separate localStorage, like separate people)
-async def player(b, url, name, errs):
+async def player(b, url, name, errs, first=False):
+    # round 21: a fresh context is a first visit (the page joins by itself); the builder-driven players ask for ?builder=1
+    if not first and 'room=' not in url: url += ('&' if '?' in url else '?') + 'builder=1'
     ctx = await b.new_context(viewport={'width': 1280, 'height': 720})
     await ctx.grant_permissions(['clipboard-read', 'clipboard-write'], origin=f'{urlparse(url).scheme}://{urlparse(url).netloc}')
     pg = await ctx.new_page()
@@ -43,6 +45,7 @@ async def player(b, url, name, errs):
             seen['frames'] += 1
             if isinstance(f, str) and '"name"' in f:
                 for m in re.finditer(r'"name":"([^"]{1,24})"', f): seen['names'].add(m.group(1))
+                for m in re.finditer(r'"bot":"(easy|normal|hard)"', f): seen.setdefault('bots', set()).add(m.group(1))
         ws.on('framereceived', on_frame)
     pg.on('websocket', on_ws)
     pg.on('pageerror', lambda e: errs.append(f'{name}: {e}'))
@@ -131,7 +134,16 @@ async def rooms(b):
     except Exception:
         err = None
     check(err and bad in err, f'unknown code {bad}: {err!r}')
-    for c in (ca, cb, cd, ce) + ((cc,) if SITE else ()): await c.close()
+    # round 21: a first visit (a fresh context, no ?builder) is in a public match with no click, its fill bots Easy
+    cf, f, sf = await player(b, PAGE + sep + 'cgdebug', 'F', errs, first=True)
+    try:
+        await in_game(f); await f.wait_for_timeout(3500)
+        rf = await chip(f, 1000)
+        fv = await f.evaluate("({ prompt: !document.querySelector('#lockPrompt').classList.contains('hidden'), join: getComputedStyle(document.querySelector('#join')).display })")
+        check(rf is None and fv['prompt'] and fv['join'] == 'none' and sf.get('bots') == {'easy'}, f"F (first visit) is in a public match with no click, Easy bots: {fv}, bots {sorted(sf.get('bots', []))}")
+    except Exception as ex:
+        check(False, f'F (first visit): {ex}')
+    for c in (ca, cb, cd, ce, cf) + ((cc,) if SITE else ()): await c.close()
     errs = [x for x in errs if 'WebSocket' not in x]   # closing a context mid-socket logs one
     check(not errs, f'no console errors in the room browsers: {errs or "none"}')
     return ok, errs
@@ -182,7 +194,7 @@ async def main():
         pg.on('websocket', on_ws)
         t = time.time()
         sep = '&' if '?' in PAGE else '?'
-        await pg.goto(PAGE + sep + 'cgdebug', timeout=120000)
+        await pg.goto(PAGE + sep + 'cgdebug&builder=1', timeout=120000)   # (round 21: ?builder keeps a fresh profile on the builder)
         await pg.wait_for_function("""() => { const s = document.querySelector('#loadStatus')?.textContent || '';
           return s.startsWith('Ready') || s.startsWith('Failed'); }""", timeout=120000)
         status = await pg.evaluate("document.querySelector('#loadStatus').textContent")
