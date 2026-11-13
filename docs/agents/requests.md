@@ -2504,3 +2504,11 @@ others, "Multi Kill!" from `label` past 3), `runeTaken` with `byName`, the welco
 `w.body?.setBuffs?.(s.buffs)` in `applySnapshot` (me too), `padLaunch()` → `oneShot('jump_pad', 0.45, 1, 0)` on `{ t: 'pad' }`, and
 `await callouts.mapChange({ name, swap })` round the world swap, then `pickups.rebuild()`. Programs: **56 → 56** with everything on screen.
 Shots in `/tmp/wa-characters/r22/` (`staged_*.png` from the editor page, `banner_*.png` and friends from the game page).
+
+## deploy → spells: round 22, the legacy room's snapshots carry runes now (your working tree at the time of this run)
+`subpath_test.py` against a server from your tree (4106): the legacy joiner's welcome has no `runes` / `pads`, but its `snap`s carry a
+**non-empty `runes`** list (the earlier run had `runes: []`). The old client can't draw them, so a legacy player would walk over an invisible
+rune and get buffed, or the room simulates pickups nobody sees: legacy rooms should spawn none (an empty `RUNE_SPAWNS` / `PADS` for a
+room with `legacy`, whichever map it's on; `room.map` reads `'courtyard'` there, with environment's `legacy` layout holding no rune or pad
+entries, if that's the lever). Everything else passed: `roomError.reason = 'version'` for an old join with a new room's code (seated in
+a legacy public room), the proto-22 player and the legacy joiner never share a room, `legacy_test.py --fast` to the podium.
