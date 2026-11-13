@@ -80,6 +80,8 @@ export const COMMON_ANIMS = {
   jump: { clip: 'Jump_Start', from: 0.27, to: 0.55, warp: [[0.27, 0], [0.55, 0.25]], pinXZ: true },
   double_jump: { clip: 'Jump_Start', from: 0.2, to: 0.5, warp: [[0.2, 0], [0.3, 0.12], [0.5, 0.45]], flatY: 0.1 },
   double_jump_back: { clip: 'Jump_Start', from: 0.2, to: 0.5, warp: [[0.2, 0], [0.3, 0.12], [0.5, 0.45]], flatY: 0.1 },
+  // round 22: a jump pad's launch (wizard.js padLaunch): the whole push-off, arms thrown up, stretched over 0.45 s; the float holds after
+  jump_pad: { clip: 'Jump_Start', from: 0.2, to: 0.55, warp: [[0.2, 0], [0.3, 0.1], [0.55, 0.45]], pinXZ: true },
   land: { clip: 'Jump_Land', warp: [[0, 0], [0.3, 0.12], [0.67, 0.4]], pinXZ: true },          // crouched by 0.12 s, up by 0.4 s
   land_soft: { clip: 'Jump_Land', from: 0.1, to: 0.67, warp: [[0.1, 0], [0.3, 0.08], [0.67, 0.25]], pinXZ: true },
   air_cast: strike('Ranged_Magic_Shoot', SHOOT, 0.2, 0.4, { flatY: 0 }),

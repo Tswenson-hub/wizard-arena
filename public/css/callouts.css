@@ -1,0 +1,65 @@
+/* Callouts (callouts.js, round 22): the streak and multikill banners under the match bar, the rune announcer line, the
+   "Next map" chip in the rematch countdown, and the map-change fade. */
+#callouts { position: fixed; inset: 0; pointer-events: none; z-index: 15; font-family: "Trebuchet MS", "Segoe UI", system-ui, sans-serif; color: #f4ecd8; }
+#callouts [hidden] { display: none !important; }
+
+/* the banner: under the match bar (its bottom is at about 84 px); under the controls strip when that is up */
+.co-banner { position: absolute; left: 50%; top: 96px; transform: translateX(-50%); text-align: center; white-space: nowrap; animation: coPop 2.1s ease-out forwards; }
+body:has(.wa-strip.on) .co-banner { top: 178px; }   /* (the strip is 92 + about 75 px) */
+.co-big {
+  font-size: 44px; font-weight: 800; letter-spacing: 2px; line-height: 1.1; color: var(--c, #ffc857);
+  text-shadow: 0 0 18px color-mix(in srgb, var(--c, #ffc857) 55%, transparent), 0 3px 10px rgba(0, 0, 0, 0.8), 0 0 2px #000;
+  -webkit-text-stroke: 1px rgba(0, 0, 0, 0.35);
+}
+.co-small { margin-top: 2px; font-size: 15px; color: rgba(244, 236, 216, 0.9); text-shadow: 0 2px 6px rgba(0, 0, 0, 0.8); }
+.co-small b { color: var(--c, #ffc857); }
+.co-first { --c: #ff8a5c; }
+.co-multi { --c: #ffc857; }
+.co-s3 { --c: #ff9a3c; }
+.co-s5 { --c: #ff5c6a; }
+.co-s8 { --c: #d9a4ff; }
+.co-shut { --c: #7fd8ff; }
+.co-s8 .co-big { font-size: 52px; letter-spacing: 4px; }
+.co-mine .co-big { font-size: 50px; color: #fff3c4; text-shadow: 0 0 26px var(--c, #ffc857), 0 0 60px color-mix(in srgb, var(--c, #ffc857) 60%, transparent), 0 3px 10px rgba(0, 0, 0, 0.8); }
+.co-mine.co-s8 .co-big { font-size: 58px; }
+@keyframes coPop {
+  0% { opacity: 0; transform: translateX(-50%) scale(1.5); filter: blur(4px); }
+  9% { opacity: 1; transform: translateX(-50%) scale(1.06); filter: blur(0); }
+  16% { transform: translateX(-50%) scale(1); }
+  82% { opacity: 1; transform: translateX(-50%) scale(1); }
+  100% { opacity: 0; transform: translateX(-50%) scale(0.96) translateY(-8px); }
+}
+
+/* the rune line: a small chip under the banner's spot */
+.co-line {
+  position: absolute; left: 50%; top: 158px; transform: translateX(-50%); white-space: nowrap; padding: 4px 14px; border-radius: 999px; font-size: 14px;
+  background: rgba(18, 14, 28, 0.78); border: 1px solid color-mix(in srgb, var(--c, #ffc857) 60%, transparent);
+  box-shadow: 0 0 16px color-mix(in srgb, var(--c, #ffc857) 25%, transparent); animation: coLine 2.4s ease-out forwards;
+}
+body:has(.wa-strip.on) .co-line { top: 240px; }
+.co-line b { color: var(--c, #ffc857); }
+.co-line i { font-style: normal; font-weight: 800; color: var(--c, #ffc857); margin-right: 2px; }
+@keyframes coLine { 0% { opacity: 0; transform: translate(-50%, -6px); } 12% { opacity: 1; transform: translate(-50%, 0); } 80% { opacity: 1; } 100% { opacity: 0; } }
+
+/* the "Next map" chip: under the match bar in the recap phase, once the podium is over */
+.co-next {
+  position: absolute; left: 50%; top: 92px; transform: translateX(-50%); white-space: nowrap; padding: 5px 16px; border-radius: 999px; font-size: 13px; letter-spacing: 1px; text-transform: uppercase;
+  color: rgba(244, 236, 216, 0.8); background: rgba(18, 14, 28, 0.78); border: 1px solid rgba(255, 200, 87, 0.4); animation: coChip 0.5s ease-out;
+}
+.co-next b { color: #ffc857; text-transform: none; letter-spacing: 0; font-size: 15px; margin-left: 2px; }
+body.recap-on .co-next { display: none; }
+@keyframes coChip { from { opacity: 0; transform: translate(-50%, -6px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+/* the map-change fade: black over everything (the join screen and the menus included), the next map's name in the middle */
+.co-fade { position: fixed; inset: 0; z-index: 60; background: #050309; opacity: 0; transition: opacity 0.62s ease-in-out; pointer-events: none; display: flex; align-items: center; justify-content: center; }
+.co-fade.co-in { opacity: 1; transition-duration: 0.36s; pointer-events: auto; }
+.co-map { text-align: center; opacity: 0; transform: translateY(8px); transition: opacity 0.4s 0.25s, transform 0.5s 0.25s; }
+.co-fade.co-in.co-named .co-map { opacity: 1; transform: none; }
+.co-kicker { display: block; font-size: 13px; letter-spacing: 3px; text-transform: uppercase; color: rgba(244, 236, 216, 0.6); }
+.co-map b { display: block; margin-top: 6px; font-size: 42px; font-weight: 800; letter-spacing: 2px; color: #ffc857; text-shadow: 0 0 30px rgba(255, 200, 87, 0.45); }
+
+/* hidden with the rest of the HUD */
+body.paused .co-banner, body.paused .co-line, body.paused .co-next, body.recap-on .co-banner, body.recap-on .co-line,
+body:has(#hud.hidden) .co-banner, body:has(#hud.hidden) .co-line, body:has(#hud.hidden) .co-next,
+body.clip:not(.clip-hud) .co-banner, body.clip:not(.clip-hud) .co-line, body.clip .co-next { visibility: hidden; }
+@media (max-width: 720px) { .co-big { font-size: 32px; } .co-mine .co-big { font-size: 36px; } .co-s8 .co-big, .co-mine.co-s8 .co-big { font-size: 40px; } .co-map b { font-size: 30px; } }

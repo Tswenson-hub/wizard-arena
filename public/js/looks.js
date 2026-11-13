@@ -350,7 +350,7 @@ function lookUniforms(look, u) {
 // ---------------------------------------------------------------- attachments (element auras)
 
 let dotTex = null;
-function dotTexture() {
+export function dotTexture() {
   if (dotTex) return dotTex;
   const c = document.createElement('canvas'); c.width = c.height = 64;
   const g = c.getContext('2d');
@@ -366,8 +366,10 @@ function dotTexture() {
 // One draw call per effect; the geometry is updated in onBeforeRender (one frame of lag is invisible). Round 20: culled by a
 // fixed sphere round the body (every aura stays within 2.3 m of the chest), so an aura off screen costs neither the draw nor
 // the update.
+// Round 22: exported for pickups.js (the rune and pad visuals ride on this program too); `sphere` replaces the body's
+// culling sphere for effects that are bigger than a body (a pad's arc).
 const AURA_SPHERE = new THREE.Sphere(new THREE.Vector3(0, 1.2, 0), 2.3);
-function motes(count, { size, color, additive = true, place, tint }) {
+export function motes(count, { size, color, additive = true, place, tint, sphere = null }) {
   count = Math.max(1, count);
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
@@ -377,7 +379,7 @@ function motes(count, { size, color, additive = true, place, tint }) {
     size, map: dotTexture(), color, vertexColors: true, transparent: true, depthWrite: false,
     blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
   });
-  geo.boundingSphere = AURA_SPHERE.clone();
+  geo.boundingSphere = (sphere || AURA_SPHERE).clone();
   const pts = new THREE.Points(geo, mat);
   pts.renderOrder = 3;
   const p = new THREE.Vector3();
@@ -794,10 +796,79 @@ export function makeWizardBody(loadout = {}, opts = {}) {
     model.add(aura);
     model.userData.look = look;
   };
+  // Round 22: the rune buffs' auras (main.js: body.setBuffs(snapshot.buffs) every snap; it diffs). `buffs`: { haste?: 1, fury?: 1,
+  // aegis?: <shield HP left> } or nothing. Gameplay information, so they show on every tier (fewer motes below 'full').
+  let buffFx = null;   // { group, items: { name: { obj, set? } } }
+  body.setBuffs = (buffs) => {
+    const want = buffs && typeof buffs === 'object' ? Object.keys(BUFF).filter(k => buffs[k]) : [];
+    if (!want.length && !buffFx) return;
+    buffFx ??= { group: Object.assign(new THREE.Group(), { name: 'buffs' }), items: {} };
+    if (!buffFx.group.parent) model.add(buffFx.group);
+    const k = (fixedLevel || auraLevel) === 'full' ? 1 : 0.5;
+    for (const name of Object.keys(buffFx.items)) if (!want.includes(name)) {
+      const it = buffFx.items[name];
+      it.obj.removeFromParent(); it.obj.traverse(o => { if (o.isPoints) o.geometry.dispose(); });
+      delete buffFx.items[name];
+    }
+    for (const name of want) {
+      const it = buffFx.items[name] ??= BUFF[name](buffFx.group, model, k);
+      it.set?.(buffs[name]);
+    }
+  };
   body.setLook(loadout);
   if (!fixedLevel) liveBodies.add(new WeakRef(body));
   return body;
 }
+
+// The rune buffs (round 22). Each adds to `host` (a group at the body's origin) and returns { obj, set?(value) }. Drawn with the
+// auras' programs only (motes, a sprite with the soft dot, the plain MeshBasicMaterial the player ring uses).
+let buffShieldGeo = null;
+const BUFF = {
+  // Haste: quick blue-white streaks whipping up round the legs and body
+  haste(host, body, k) {
+    const obj = motes(Math.round(14 * k), { size: 0.12, color: 0x9fe4ff, place: (i, t, p) => {
+      const q = fract(t * 2.4 + rand(i, 1));
+      const a = rand(i, 2) * 6.283 - t * 3, r = 0.42 + rand(i, 3) * 0.2;
+      p.set(Math.cos(a) * r, 0.08 + q * 1.5, Math.sin(a) * r);
+      return (1 - q) * 0.9;
+    } });
+    host.add(obj);
+    return { obj };
+  },
+  // Arcane Fury: big embers boiling up, and a red glow in the chest
+  fury(host, body, k) {
+    const g = new THREE.Group();
+    g.add(motes(Math.round(16 * k), { size: 0.17, color: 0xff6a2a, place: (i, t, p) => {
+      const q = fract(t * 0.8 + rand(i, 1));
+      const a = rand(i, 2) * 6.283 + t * 0.6, r = 0.5 + rand(i, 3) * 0.25 - q * 0.2;
+      p.set(Math.cos(a) * r, 0.2 + q * 2.0, Math.sin(a) * r);
+      return Math.sin(q * Math.PI) * 0.95;
+    } }));
+    const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTexture(), color: 0xff3a1a, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.45 }));
+    glow.position.y = 1.1; glow.scale.setScalar(1.7); glow.renderOrder = 3;
+    glow.onBeforeRender = () => { glow.material.opacity = 0.35 + 0.15 * Math.sin(performance.now() / 110); };
+    g.add(glow);
+    host.add(g);
+    return { obj: g };
+  },
+  // Aegis: a faint golden bubble that brightens with the shield's HP left, and a belt of motes round the chest
+  aegis(host, body, k) {
+    const g = new THREE.Group();
+    buffShieldGeo ??= Object.assign(new THREE.IcosahedronGeometry(1.0, 2), { userData: { shared: true } });
+    const bubble = new THREE.Mesh(buffShieldGeo, new THREE.MeshBasicMaterial({ color: 0xffd36a, transparent: true, opacity: 0.16, depthWrite: false, blending: THREE.AdditiveBlending }));
+    bubble.position.y = 1.0; bubble.scale.set(1.05, 1.25, 1.05); bubble.renderOrder = 2;
+    g.add(bubble);
+    g.add(motes(Math.round(12 * k), { size: 0.1, color: 0xffe8a0, place: (i, t, p) => {
+      const a = i / Math.max(1, Math.round(12 * k)) * 6.283 + t * 1.2, y = 1.0 + Math.sin(t * 1.5 + i * 0.9) * 0.35;
+      p.set(Math.cos(a) * 1.05, y, Math.sin(a) * 1.05);
+      return 0.8;
+    } }));
+    host.add(g);
+    let hp = 40;
+    bubble.onBeforeRender = () => { bubble.material.opacity = (0.06 + 0.16 * Math.min(1, hp / 40)) * (0.85 + 0.15 * Math.sin(performance.now() / 300)); };
+    return { obj: g, set: (v) => { hp = typeof v === 'number' ? v : 40; } };
+  },
+};
 export const makeGenericBody = (loadout) => makeWizardBody(loadout);
 
 // Round 20, for the shader warm-up behind the loading screen (main.js): one of every body variant the match can show that a single
