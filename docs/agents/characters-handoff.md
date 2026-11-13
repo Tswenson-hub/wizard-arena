@@ -1,5 +1,48 @@
 # Characters hand-off
 
+## Round 22: banners, rune and pad visuals, buff auras, the launch pose, "Next map", the fade, first to 10 (IN PROGRESS: usage limit)
+Commits: `b98c395` `89f67e7`-adjacent `a51d489` (callouts.js, callouts.css, pickups.js, looks.js, spellanim.js), `2eed43e` (select.js,
+select.css, podium.js, recap.css). The interfaces are in requests.md ("characters → spells, environment: round 22"); spells' and
+environment's uncommitted work in the tree already matches them (callout `label`/`sub`, the welcome's `pads`, `JUMP_PADS` with `target`,
+`C.RUNES.types` colours), and my modules read those shapes.
+
+### What's built
+- **callouts.js / callouts.css** (`mountCallouts({ sfx, players, myId })`, `onMessage(msg)`, `update(dt)`, `mapChange({ name, swap })`,
+  `show(kind, opts)`): First Blood, Double/Triple (Multi) Kill, On Fire! / Unstoppable! / Archmage!, Shutdown; "you" lines for the local
+  player, the server's `sub` for others; two in one tick show bigger first, 0.9 s apart; a synthesized bell arpeggio sting on `sfx.sfxBus`
+  (mute and volume apply, no file). The rune line ("Fury rune taken by X", the type's colour, a soft chime). The "Next map: X" chip under
+  the match bar in the recap phase once the podium is over (`msg.match.next`). The fade: black in 0.36 s with the map's name, awaits
+  `swap()`, back in 0.62 s; calls queue.
+- **pickups.js** (`mountPickups({ scene, sfx, pads? })`): runes from the snapshot (`runes: [{ i, x, y, z, type, up, in }]`): a runic floor
+  ring, the type's glyph plane turning over it, a halo, orbiting motes and a rising pillar; dim and slowly brightening while down, pulsing
+  in the last 3 s; a burst on `runeTaken` (or a missed one). Pads from the welcome's `pads`, else `C.JUMP_PADS`: a mint chevron ring, an
+  updraft of motes, a dotted arc to the target; a flash and `sfx.play('whoosh')` on `{ t: 'pad' }`. **0 new shader programs** (measured:
+  56 → 56 on the game page with everything shown): the auras' Points program, MeshBasic+map, Sprite+map only (no DoubleSide: the glyph is
+  two front faces).
+- **looks.js**: `body.setBuffs({ haste?, fury?, aegis? })` (diffs; haste streaks, fury embers + chest glow, an Aegis bubble whose
+  brightness follows the shield HP + a belt of motes); `motes` and `dotTexture` exported. **spellanim.js**: `jump_pad` (Jump_Start 0.2–0.55
+  over 0.45 s; named `jump_` so wizard.js's regexes treat it as a jump).
+- **select.js**: default target 10; the how-to card's "Runes and jump pads" line (Haste/Fury/Aegis/Surge, 25 s, the two maps). **podium.js**:
+  `msg.next.name` → "Next map Sky Ruins" bottom left of the recap overlay (recap.css `.rc-next`).
+
+### Verified (`/tmp/wa-characters/r22/visuals.py`, port 4103, GPU Chromium, first-visit page with my modules mounted by hand)
+PASS: the prompt "First to 10 kills"; First Blood (you) under the strip; banner 96 px under the match bar; each kind's text; the rune line;
+the chip shows in recap and hides in countdown; 4 runes + 1 pad built, down after the pickup; the three auras attach and clear; the
+`jump_pad` clip exists on the Mage; the fade completes and hides; the podium's "Next map Sky Ruins" at the bottom left; the how-to card
+reads first to 10 with runes/pads/maps and fits 720 px (688 px); programs 56 → 56; no page errors. Shots: `banner_*.png`, `rune_line.png`,
+`next_map_chip.png`, `podium_next_*.png`, `howto.png`, `buff_*.png`, `jump_pad_pose.png`.
+
+### NOT verified / left (the usage limit cut this off)
+- After the last fixes (banner pumped from `update()` so the bigger of two shows first; the banner at 178 px under the strip; the fade test's
+  await bug) the script was **not re-run**. Re-run `visuals.py`: the four earlier FAILs should pass.
+- **No clean look at the 3D visuals yet**: the game-page shots had a wall in front and bots fighting; `staged.py` (editor page, no bots)
+  timed out waiting for `window.__edit` on `/?edit=1`. Next: find the editor's URL, run it, and look at the rune/pad/aura/pose shots. Tune
+  colours and sizes from those.
+- spells still has to call the hooks (requests.md) and `applySnapshot` `w.body?.setBuffs?.(s.buffs)`, `padLaunch()`; the sting's volume
+  should be checked by ear; the pad's whoosh needs the pad message's `from` when `pad` isn't an index (handled by `padId`).
+- Shader programs on **Sky Ruins** and the perf_test runs on both maps: not done.
+
+
 ## Round 21: first play (the "Click to start" prompt, the controls strip, the Esc hint, the first menu, the podium button, the lighter builder)
 Commits: `6ab3ee9` requests.md (the hooks), `ad18c44` select.js + select.css + index.html, `107324c` podium.js + recap.css.
 Spells' main.js (`c6c2412`) calls the hooks as posted; nothing of mine waits on anything else.
