@@ -647,7 +647,7 @@ async function agilityChecks(join, since, spots) {
     await walk(F, 0.75, () => [fx, 1.0, fz]);
     await walk(F, 0.15, () => [fx, 1.0, fz]);
     ok(snap(F).hover == null, 'the hang ends with the wind-up');
-    await walk(F, 0.4, k => [fx, 1.0 * (1 - k), fz]);
+    await walk(F, 0.4, k => [fx, 1.0 * (1 - k), fz]); await wait(150);   // (a snapshot after the last report)
     ok(snap(F).p[1] < 0.05, `then the caster falls (${snap(F).p[1].toFixed(2)} m)`);
     await wait(150);
   }
