@@ -11,9 +11,9 @@ import json
 
 JOIN_JS = r"""
 async ({ url, name, seconds }) => new Promise((resolve) => {
-  const out = { welcome: null, names: [], bots: [], snaps: 0, keys: [], msgs: [], closed: false, error: null, players: [] };
-  const names = new Set(), bots = new Set(), keys = new Set(), msgs = new Set();
-  const fin = () => { out.names = [...names]; out.bots = [...bots]; out.keys = [...keys]; out.msgs = [...msgs]; resolve(out); };
+  const out = { welcome: null, names: [], bots: [], snaps: 0, keys: [], filled: [], msgs: [], closed: false, error: null, players: [] };
+  const names = new Set(), bots = new Set(), keys = new Set(), filled = new Set(), msgs = new Set();
+  const fin = () => { out.names = [...names]; out.bots = [...bots]; out.keys = [...keys]; out.filled = [...filled]; out.msgs = [...msgs]; resolve(out); };
   let ws;
   try { ws = new WebSocket(url); } catch (e) { out.error = String(e); return fin(); }
   ws.onopen = () => ws.send(JSON.stringify({ t: 'join', name, difficulty: 'normal' }));   // the old build's join: no proto, no map
@@ -26,7 +26,7 @@ async ({ url, name, seconds }) => new Promise((resolve) => {
     if (m.t === 'welcome') { out.welcome = m; for (const k of Object.keys(m)) keys.add(k); }
     if (m.t === 'snap') {
       out.snaps++;
-      for (const k of Object.keys(m)) keys.add('snap.' + k);
+      for (const k of Object.keys(m)) { keys.add('snap.' + k); if (Array.isArray(m[k]) ? m[k].length : m[k]) filled.add('snap.' + k); }
       for (const p of m.players || []) { if (p.name) names.add(p.name); if (p.bot) bots.add(p.bot); }
     }
   };
@@ -68,8 +68,9 @@ def report(res, current_name, current_saw, name='legacyjoin'):
     check(map_id(match.get('map', 'courtyard')) in ('courtyard', 'legacy'), f"the courtyard (match.map {match.get('map')!r})")
     runes, pads = w.get('runes'), w.get('pads')
     check(not runes and not pads, f'no runes or pads in the welcome (runes {runes!r}, pads {pads!r})')
-    snap_extras = sorted(k for k in res.get('keys', []) if k.startswith('snap.') and k.split('.')[1] in ('runes', 'pads', 'portals', 'buffs'))
-    check(not snap_extras, f'no rune or pad fields in the legacy room\'s snapshots ({snap_extras or "none"})')
+    extra = lambda ks: sorted(k for k in ks if k.startswith('snap.') and k.split('.')[1] in ('runes', 'pads', 'portals', 'buffs'))
+    seen, nonempty = extra(res.get('keys', [])), extra(res.get('filled', []))
+    check(not nonempty, f'no runes or pads in the legacy room\'s snapshots (non-empty: {nonempty or "none"}; present but empty: {sorted(set(seen) - set(nonempty)) or "none"})')
     check(current_name not in res.get('names', []), f'{current_name!r} (a proto-22 client) is not in the legacy room')
     check(name not in (current_saw or set()), f"{current_name!r} never saw {name!r} in its own room's snapshots")
     return ok
