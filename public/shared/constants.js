@@ -319,7 +319,15 @@ export function landingSpot(x, z, footY = 0, dir = null) {
   if (!solid || !top) return [x, footY, z];
   const dl = dir ? Math.hypot(dir[0], dir.length === 3 ? dir[2] : dir[1]) || 1 : 1;
   const bx = dir ? -dir[0] / dl : 0, bz = dir ? -(dir.length === 3 ? dir[2] : dir[1]) / dl : 0;
+  // round 22 (Sky Ruins): a spot over the void (its highest floor below MAP_INFO.void) is no landing: step back along `dir` like out
+  // of a wall; one that fell past an island's floor (a flask that dropped into the cloud) lands on that floor
+  const vy = voidY();
   for (let k = 0; k < 30; k++) {
+    if (vy != null) {
+      const T = top(x, z);
+      if (T < vy) { if (!dir) break; x += bx * 0.4; z += bz * 0.4; continue; }
+      if (footY < T) footY = T;
+    }
     if (!solid(x, footY + 0.5, z) && !solid(x, footY + 1.4, z)) {
       const y = _sh(x, z, footY);
       if (push) [x, z] = push(x, z, y, PLAYER_RADIUS);   // (not half inside a wall's edge)

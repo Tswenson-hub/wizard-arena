@@ -628,7 +628,7 @@ function think(me, world, t) {
     return;
   }
   // Round 13: now and then hop first and fire from the air (the next decision, mid-jump); Hard bots more often
-  if (fastReady && canJump(me, t) && d > 5 && Math.random() < (cfg.airCast ?? 0)) {
+  if (fastReady && canJump(me, t) && d > 5 && Math.random() < (cfg.airCast ?? 0) && !dashOverVoid(me, [b.vel[0], 0, b.vel[1]], Math.hypot(b.vel[0], b.vel[1]) * C.JUMP.airTime + 0.5)) {
     act({ t: 'jump' });
     if (Math.random() < 0.4 * (cfg.airJump ?? 0)) b.ledgeAirJumpAt = t + C.JUMP.airTime * 0.45;   // and up again at the top
     return;
@@ -1091,6 +1091,14 @@ function curseCandidate(me, target, world, mine = []) {
   return best;
 }
 
+// Round 22 (Sky Ruins): would a dash of `dist` m along `dir` ([x, 0, z] or [x, z]) end over the void? (checked at the end and halfway)
+function dashOverVoid(me, dir, dist) {
+  const vy = C.voidY();
+  if (vy == null) return false;
+  const dx = dir[0], dz = dir.length === 3 ? dir[2] : dir[1], l = Math.hypot(dx, dz) || 1;
+  for (const k of [1, 0.5]) if (C.surfaceHeight(me.p[0] + dx / l * dist * k, me.p[2] + dz / l * dist * k, Math.max(me.p[1], vy)) < vy) return true;
+  return false;
+}
 // Teleport perpendicular to `away` (a point we want to get off the line of), picking the safer side.
 function blinkSideways(me, awayFrom, act, along = null) {
   let ax, az;
@@ -1101,7 +1109,7 @@ function blinkSideways(me, awayFrom, act, along = null) {
   let best = sides[0], bs = -Infinity;
   for (const s of sides) {
     const to = C.computeTeleport(me.p, s);
-    const score = -Math.hypot(to[0], to[2]) * 0.3 + dist2D(to, me.p);   // stay central, go the full distance
+    const score = -Math.hypot(to[0], to[2]) * 0.3 + dist2D(to, me.p) - (C.voidY() != null && to[1] < C.voidY() ? 100 : 0);   // (never into the void)   // stay central, go the full distance
     if (score > bs) { bs = score; best = s; }
   }
   act({ t: 'teleport', dir: best, from: me.p.slice() });
@@ -1118,6 +1126,7 @@ function inward(me, dir) {
 }
 // Mirror Step along `dir`.
 function mirrorStep(me, dir, act) {
+  if (dashOverVoid(me, inward(me, dir), C.SPELLBOOK.mirror_step.distance ?? 7)) return;
   act({ t: 'mirror', dir: inward(me, dir), from: me.p.slice() });
   me.bot.vel = [0, 0];
 }
@@ -1132,12 +1141,14 @@ function blinkAway(me, dir, act) {
 // Smoke Screen: the dash goes backwards, so turn our back to where we want to go.
 function smokeAway(me, dir, act) {
   const d = inward(me, dir);
+  if (dashOverVoid(me, d, SMOKE.distance)) return;
   me.yaw = Math.atan2(-d[0], -d[2]);
   act({ t: 'smoke', yaw: me.yaw, from: me.p.slice() });
 }
 
 // Roll along `dir` (any way: it goes along the movement keys, so we keep facing the fight).
 function rollAway(me, dir, act) {
+  if (dashOverVoid(me, inward(me, dir), ROLL.distance ?? 4.5)) return;
   act({ t: 'roll', dir: inward(me, dir), yaw: me.yaw, from: me.p.slice() });
 }
 
@@ -1314,6 +1325,8 @@ function moveBot(me, dt, world, t) {
     me.ride.heading ??= me.ride.yaw;
     me.ride.heading += clampAbs(Math.atan2(Math.sin(me.yaw - me.ride.heading), Math.cos(me.yaw - me.ride.heading)), RIDE.turnRate * dt);
     b.vel = [Math.sin(me.ride.heading) * RIDE.speed, Math.cos(me.ride.heading) * RIDE.speed];
+    // round 22: the void ahead: off the ram now
+    if (C.voidY() != null && dashOverVoid(me, [Math.sin(me.ride.heading), 0, Math.cos(me.ride.heading)], RIDE.speed * 0.45 + 1)) { world.handle(me, { t: 'rideStop' }); b.rideGoal = null; }
     // ridden far enough (the target reached, or far enough away): get off early
     if (b.rideGoal) {
       me.yaw = Math.atan2(b.rideGoal[0] - me.p[0], b.rideGoal[1] - me.p[2]);
@@ -1433,10 +1446,15 @@ function moveBot(me, dt, world, t) {
     if (r > C.ARENA_RADIUS - 5) { wx -= me.p[0] / r * 1.5; wz -= me.p[2] / r * 1.5; }
     // round 22 (Sky Ruins): never walk off an island. If the floor a step ahead is below the void, turn along the edge
     // (the least turn that keeps a floor under us), else stop
-    if (C.voidY() != null && !me.jump && !flying && (wx || wz)) {
-      const safe = (dx, dz) => floorUnder([me.p[0] + dx * 1.4, me.p[1], me.p[2] + dz * 1.4]) >= C.voidY() - 0.01 && floorUnder([me.p[0] + dx * 0.7, me.p[1], me.p[2] + dz * 0.7]) >= C.voidY() - 0.01;
-      const l0 = Math.hypot(wx, wz) || 1, ux = wx / l0, uz = wz / l0;
-      if (!safe(ux, uz)) {
+    if (C.voidY() != null && !flying) {
+      // the reach: how far the bot gets before it can turn (a sprint needs about 0.3 s), at least 1.4 m; three probes along it
+      const reach = Math.max(1.4, Math.hypot(b.vel[0], b.vel[1]) * 0.35 + 0.6);
+      const safe = (dx, dz) => [1, 0.6, 0.3].every(k => floorUnder([me.p[0] + dx * reach * k, me.p[1], me.p[2] + dz * reach * k]) >= C.voidY() - 0.01);
+      const l0 = Math.hypot(wx, wz), ux = l0 > 1e-6 ? wx / l0 : 0, uz = l0 > 1e-6 ? wz / l0 : 0;
+      // the way it's already going (momentum, a fall's drift, knockback): over the edge, stop dead (the server moves bots, so it can)
+      const vl = Math.hypot(b.vel[0], b.vel[1]);
+      if (vl > 0.3 && !safe(b.vel[0] / vl, b.vel[1] / vl)) { b.vel = [0, 0]; }
+      if (l0 > 1e-6 && !safe(ux, uz)) {
         let found = false;
         for (const a of [0.9, -0.9, 1.6, -1.6, 2.3, -2.3, Math.PI]) {
           const c = Math.cos(a), n = Math.sin(a), rx = ux * c - uz * n, rz = ux * n + uz * c;
@@ -1517,15 +1535,24 @@ function moveBot(me, dt, world, t) {
   const r = Math.hypot(me.p[0], me.p[2]);
   if (r > C.ARENA_RADIUS) { me.p[0] *= C.ARENA_RADIUS / r; me.p[2] *= C.ARENA_RADIUS / r; }
 
+  // round 22 (Sky Ruins): the last word. Sliding along a wall can carry a bot over an edge the probe above didn't look at, so a
+  // step that ends over the void (and isn't a pad arc, a knockback or an Eye's pull; in the air too: a jump or a Skyward drift stays
+  // over the island's edge) is taken back and the bot stops.
+  if (C.voidY() != null && !me.pad && !(me.kbUntil > t) && !(b.pull && t < b.pull.until) && b.lastPos
+      && floorUnder(me.p) < C.voidY() && floorUnder(b.lastPos) >= C.voidY()) {
+    me.p[0] = b.lastPos[0]; me.p[2] = b.lastPos[2];
+    b.vel = [0, 0]; b.strafe *= -1; b.edgeStops = (b.edgeStops || 0) + 1;
+  }
   // stuck against something: switch strafe direction
   if (b.lastPos && wl > 0.01 && dist2D(b.lastPos, me.p) < speed * dt * 0.25) {
     b.stuckT += dt;
     // stuck on something low (a fence, crops, hay): hop it
-    if (b.stuckT > 0.25 && canJump(me, t) && lowCoverToward(me, [me.p[0] + wx, 0, me.p[2] + wz])) { world.handle(me, { t: 'jump' }); b.stuckT = 0; }
+    const hopSafe = !dashOverVoid(me, [wx, 0, wz], speed * C.JUMP.airTime + 0.6);   // round 22: no hop that lands in the void
+    if (b.stuckT > 0.25 && canJump(me, t) && hopSafe && lowCoverToward(me, [me.p[0] + wx, 0, me.p[2] + wz])) { world.handle(me, { t: 'jump' }); b.stuckT = 0; }
     // round 10: against a ledge we can grab (the server pulls us up mid-jump): jump at it
-    else if (b.stuckT > 0.25 && canJump(me, t) && C.ledgeTarget(me.p, [wx / (wl || 1), wz / (wl || 1)], me.p[1] + C.JUMP.height)) { world.handle(me, { t: 'jump' }); b.stuckT = 0; }
+    else if (b.stuckT > 0.25 && canJump(me, t) && hopSafe && C.ledgeTarget(me.p, [wx / (wl || 1), wz / (wl || 1)], me.p[1] + C.JUMP.height)) { world.handle(me, { t: 'jump' }); b.stuckT = 0; }
     // round 13: a ledge only the air jump's apex reaches: jump, then the air jump at the top (below)
-    else if (b.stuckT > 0.25 && canJump(me, t) && C.ledgeTarget(me.p, [wx / (wl || 1), wz / (wl || 1)], me.p[1] + C.JUMP.height + C.AIR_JUMP.height)) {
+    else if (b.stuckT > 0.25 && canJump(me, t) && hopSafe && C.ledgeTarget(me.p, [wx / (wl || 1), wz / (wl || 1)], me.p[1] + C.JUMP.height + C.AIR_JUMP.height)) {
       world.handle(me, { t: 'jump' }); b.stuckT = 0; b.ledgeAirJumpAt = t + C.JUMP.airTime * 0.45;
     }
     else if (b.stuckT > 0.4) { b.strafe *= -1; b.stuckT = 0; }

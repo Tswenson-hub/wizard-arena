@@ -703,7 +703,7 @@ export function createRoom(opts) {
     if (q.sprinting) setSprint(q, false, t);
     q.crouch = false;
     if (q.blocking) { q.blocking = false; q.blockReleasedAt = t; }
-    if (q.bot) { q.bot.vel = [pd.arc.v[0], pd.arc.v[2]]; q.vy = 0; }
+    if (q.bot) { q.bot.vel = [pd.arc.v[0], pd.arc.v[2]]; q.bot.dash = null; q.bot.dodgeUntil = 0; q.vy = 0; }
     broadcast({ t: 'pad', id: q.id, pad: pd.i, padId: pd.id, from: [pd.x, pd.y, pd.z], to: [pd.tx, pd.ty, pd.tz], time: +pd.arc.time.toFixed(3) });
   }
   function updatePads(t, dt) {
@@ -712,10 +712,9 @@ export function createRoom(opts) {
       if (q.dead) continue;
       if (q.pad) {
         if (!q.bot) { if (t - q.pad.start > q.pad.arc.time + 1.0) q.pad = null; continue; }   // (a human's landing comes in its report)
-        // a bot: along the arc, steered a little by its own wish (bots.js keeps b.vel at the arc's speed plus the steer)
+        // a bot: exactly along the arc (no steering: a dash or a knockback mid-flight used to drift it into the void)
         const e = t - q.pad.start, at = C.padAt(q.pad.arc, q.pad.pd, e);
-        const sx = q.bot.vel[0] - q.pad.arc.v[0], sz = q.bot.vel[1] - q.pad.arc.v[2];
-        q.p[0] = at[0] + sx * e; q.p[2] = at[2] + sz * e;
+        q.p[0] = at[0]; q.p[2] = at[2];
         const fl = groundAt(q.p[0], q.p[2], at[1] + 0.3);
         if (e > 0.15 && at[1] <= fl + 0.01) { q.p[1] = fl; q.pad = null; q.vy = 0; q.bot.vel = [0, 0]; touchedDown(q); }
         else if (e > q.pad.arc.time + 1.0) { q.pad = null; q.vy = 0; }
