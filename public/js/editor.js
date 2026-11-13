@@ -24,6 +24,14 @@ const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 50
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 
 const L = C.LAYOUT;                                  // the live layout (map.js's); edits change L.entries
+// Round 22: more than one map. ?map=sky opened that layout (map.js read the query); the selector reloads the page on another.
+const MAP = C.ACTIVE_MAP.name;
+{
+  const sel = $('mapSel');
+  for (const [id, M] of Object.entries(C.MAPS)) if (!M.hidden || id === MAP) { const o = document.createElement('option'); o.value = id; o.textContent = `${M.title} (${M.file})`; sel.appendChild(o); }
+  sel.value = MAP;
+  sel.onchange = () => { if (dirty && !confirm('Unsaved changes will be lost. Switch map?')) { sel.value = MAP; return; } dirty = false; location.search = `?edit=1&map=${sel.value}`; };
+}
 const byId = (id) => L.entries.find(e => e.id === id);
 const status = (text, cls = '') => { const s = $('status'); s.textContent = text; s.className = cls; };
 
@@ -101,11 +109,13 @@ const segDist = (x, z, a, b) => {
   const sx = b[0] - a[0], sz = b[1] - a[1], l2 = sx * sx + sz * sz || 1e-9, k = Math.max(0, Math.min(1, ((x - a[0]) * sx + (z - a[1]) * sz) / l2));
   return Math.hypot(a[0] + sx * k - x, a[1] + sz * k - z);
 };
-const RADIUS = { prop: 0.75, spawn: 1.2, heal: 1.1 };
+const RADIUS = { prop: 0.75, spawn: 1.2, heal: 1.1, rune: 1.0, pad: 1.1, portal: 1.1 };
+const FLOOR_KINDS = ['prop', 'spawn', 'heal', 'rune', 'pad', 'portal'];   // stand on what's under them (their own `y` wins)
 const LIFTS = new Set(['kit', 'deco', 'block']);   // kinds with a `y` the gizmo moves up and down
 function anchorY(e) {
   if (LIFTS.has(e.kind)) return e.y || 0;
-  return ['prop', 'spawn', 'heal'].includes(e.kind) ? C.surfaceHeight(e.x, e.z, 99) : 0;
+  if (e.kind === 'circle') return e.y || 0;
+  return FLOOR_KINDS.includes(e.kind) ? (e.y ?? C.surfaceHeight(e.x, e.z, 99)) : 0;
 }
 // The entry's own surfaces (kit pieces, blocks).
 function surfacesOf(e) {
@@ -136,7 +146,7 @@ function pickScore(e, x, z) {
     }
     return best > 0 ? 1 + best : 0.9 - 0.4 / (1 + sf.length);   // inside a footprint: favour small pieces over the big one they sit on
   }
-  const r = e.kind === 'kit' ? kitRadius(e) * 0.8 : e.kind === 'deco' ? Math.max(0.6, (e.h || 2) * (e.scale ?? 1) * 0.4) : (RADIUS[e.kind] || 1.5) * (e.scale ?? 1);
+  const r = e.kind === 'kit' ? kitRadius(e) * 0.8 : e.kind === 'deco' ? Math.max(0.6, (e.h || 2) * (e.scale ?? 1) * 0.4) : e.kind === 'circle' ? (e.r ?? 6) * (e.scale ?? 1) / 2 : (RADIUS[e.kind] || 1.5) * (e.scale ?? 1);
   return Math.hypot(x - e.x, z - e.z) / r;
 }
 function extentRadius(e) {
@@ -144,13 +154,14 @@ function extentRadius(e) {
   if (e.kind === 'kit') return kitRadius(e);
   const sf = surfacesOf(e);
   if (sf.length) return Math.max(...sf.map(s => Math.hypot(s.x - e.x, s.z - e.z) + Math.hypot(s.w, s.d) / 2));
+  if (e.kind === 'circle') return (e.r ?? 6) * (e.scale ?? 1) / 2;
   return e.kind === 'deco' ? Math.max(0.8, (e.h || 2) * (e.scale ?? 1) * 0.5) : (RADIUS[e.kind] || 1.5) * (e.scale ?? 1);
 }
 
 // ------------------------------------------------------------ overlays (toggles) and markers
 const OVERLAYS = { colliders: 'Colliders', surfaces: 'Walkable surfaces', walls: 'Wall boxes (red: no standing)', spawns: 'Spawns', heals: 'Heal spots', props: 'Props',
-  rim: 'Arena bounds and rim', labels: 'Selection outline' };
-const shown = { colliders: true, surfaces: true, walls: false, spawns: true, heals: true, props: true, rim: true, labels: true };
+  runes: 'Runes (power-ups)', pads: 'Jump pads and their arcs', portals: 'Portals', rim: 'Arena bounds and rim', labels: 'Selection outline' };
+const shown = { colliders: true, surfaces: true, walls: false, spawns: true, heals: true, props: true, runes: true, pads: true, portals: true, rim: true, labels: true };
 try { Object.assign(shown, JSON.parse(localStorage.getItem('waEditOverlays') || '{}')); } catch {}
 for (const [k, name] of Object.entries(OVERLAYS)) {
   const l = document.createElement('label'); l.className = 'tog';
@@ -201,6 +212,29 @@ function drawOverlays() {
     const m = (propCache[type] ??= makePropMesh(type)).clone();
     m.position.set(x, C.surfaceHeight(x, z, 99), z); overlayRoot.add(m);
   });
+  // round 22: rune spawns (a spinning diamond in the type's colour, white for random), jump pads (a ring, the arc the server flies
+  // (constants.js padArc, the same maths the game uses), a cross where it lands) and portals (a ring and a line to the other end)
+  if (shown.runes) for (const R of C.RUNE_SPAWNS) {
+    const col = C.RUNES?.types?.[R.type]?.color ?? 0xffffff;
+    const m = new THREE.Mesh(new THREE.OctahedronGeometry(0.45).scale(0.7, 1.2, 0.7), new THREE.MeshBasicMaterial({ color: col, depthTest: false, transparent: true, opacity: 0.9 }));
+    m.position.set(R.x, R.y + 1.0, R.z); m.renderOrder = 11; m.rotation.y = 0.78; overlayRoot.add(m);
+    overlayRoot.add(lines(circlePts(R.x, R.z, 1.0, R.y + 0.06, 24), col, 0.9));
+  }
+  if (shown.pads) for (const P of C.JUMP_PADS) {
+    const arc = C.padArc ? C.padArc(P) : null, pts = [];
+    for (let i = 0; i <= 32; i++) {
+      const q = arc ? C.padAt(arc, P, arc.time * i / 32) : C.padArcPoint(P, C.JUMP.gravity, i / 32);
+      if (i) pts.push(...pts.slice(-3)); pts.push(q[0], q[1] + 0.9, q[2]);
+    }
+    overlayRoot.add(lines(pts, 0x4ac8ff, 0.95), lines(circlePts(P.x, P.z, P.r, P.y + 0.06, 24), 0x4ac8ff, 0.9), lines(circlePts(P.x, P.z, P.r * 0.6, P.y + 0.06, 16), 0x4ac8ff, 0.7));
+    const [tx, ty, tz] = P.target;
+    overlayRoot.add(lines([tx - 0.7, ty + 0.06, tz, tx + 0.7, ty + 0.06, tz, tx, ty + 0.06, tz - 0.7, tx, ty + 0.06, tz + 0.7, tx, ty, tz, tx, ty + 1.2, tz], 0xffa040, 1));
+  }
+  if (shown.portals) for (const P of C.PORTALS) {
+    overlayRoot.add(lines(circlePts(P.x, P.z, P.r, P.y + 0.06, 24), 0xff70ff, 0.9), lines(circlePts(P.x, P.z, P.r * 0.8, P.y + 2.2, 24), 0xff70ff, 0.5));
+    const o = C.PORTALS.find(q => q.id === P.link);
+    if (o) overlayRoot.add(lines([P.x, P.y + 1.1, P.z, o.x, o.y + 1.1, o.z], 0xff70ff, 0.6));
+  }
   if (shown.rim) {
     const B = C.ARENA_BOUNDS, y = 0.15;
     overlayRoot.add(lines(circlePts(0, 0, C.ARENA_RADIUS, y, 96), 0xff5050, 0.6),
@@ -328,9 +362,9 @@ let dirty = false;
 
 // ------------------------------------------------------------ undo / redo (whole-layout snapshots)
 const undo = [], redo = [];
-function snapshot() { return JSON.stringify({ entries: L.entries, scatter: L.scatter }); }
+function snapshot() { return JSON.stringify({ entries: L.entries, scatter: L.scatter, map: L.map }); }
 function pushUndo() { undo.push(snapshot()); if (undo.length > 200) undo.shift(); redo.length = 0; }
-function restore(json) { const s = JSON.parse(json); L.entries = s.entries; L.scatter = s.scatter; commit(); setSelection(selection); }
+function restore(json) { const s = JSON.parse(json); L.entries = s.entries; L.scatter = s.scatter; L.map = s.map; commit(); setSelection(selection); }
 function doUndo() { if (!undo.length) return; redo.push(snapshot()); restore(undo.pop()); }
 function doRedo() { if (!redo.length) return; undo.push(snapshot()); restore(redo.pop()); }
 $('undoBtn').onclick = doUndo; $('redoBtn').onclick = doRedo;
@@ -371,6 +405,10 @@ const PALETTE = [
   { group: 'Gameplay', label: 'Spawn', make: () => ({ kind: 'spawn', rotY: 0 }) },
   { group: 'Gameplay', label: 'Heal spot', make: () => ({ kind: 'heal', name: 'heal' }) },
   ...Object.keys(C.PROP_TYPES).map(t => ({ group: 'Gameplay', label: `Prop: ${t}`, make: () => ({ kind: 'prop', type: t }) })),
+  { group: 'Gameplay', label: 'Rune (power-up)', make: () => ({ kind: 'rune' }) },
+  { group: 'Gameplay', label: 'Jump pad', make: () => ({ kind: 'pad', tx: 0, tz: 0, h: 4 }) },   // (the target is set 6 m ahead when placed)
+  { group: 'Gameplay', label: 'Portal', make: () => ({ kind: 'portal', link: '' }) },
+  { group: 'Gameplay', label: 'Rune circle (decor)', make: () => ({ kind: 'circle', r: 6, h: 5 }) },
   { group: 'Gameplay', label: 'Invisible block', make: () => ({ kind: 'block', rotY: 0, w: 2, d: 2, h: 3 }) },
   { group: 'Gameplay', label: 'Stone floor', make: () => ({ kind: 'floor', model: 'castle/floor_tile_large', rotY: 0, w: 10, d: 10, seed: 1 }) },
 ];
@@ -409,6 +447,7 @@ function place(item, p) {
   const e = { id: '', ...item.make(), x: +snapKitXZ(p.x).toFixed(4), z: +snapKitXZ(p.z).toFixed(4) };
   e.id = newId(e.kind === 'deco' ? e.model : e.kind === 'kit' ? e.model.split('/')[1] : e.kind === 'prop' ? `prop-${e.type}` : e.kind);
   if (e.kind === 'heal') e.name = e.id;
+  if (e.kind === 'pad') { e.tx = +(e.x + 6).toFixed(4); e.tz = e.z; }   // a 6 m hop to start with; type the real target (or drag it: tx/tz)
   // a kit piece lands on what's under the click (a wall-walk, a tower top) when ground snap is on
   if ((e.kind === 'deco' || e.kind === 'kit') && $('snapGround').checked) { const y = groundUnder(e.x, e.z); if (y > 0.01) e.y = +y.toFixed(4); }
   // props keep their ids in order (index + 1): a new prop goes after the last prop
@@ -433,7 +472,7 @@ function inspect(live = false) {
   root.innerHTML = `<div class="sel-title">${e.kind}${e.model ? ' · ' + e.model : ''}</div>`;
   for (const k of fields) {
     const v = k === 'rotY' ? (e.rotY ?? 0) : k === 'scale' ? (e.scale ?? 1) : e[k];
-    if (v === undefined && !['h', 'y'].includes(k) && !(e.kind === 'kit' && k === 'solid')) continue;
+    if (v === undefined && !['h', 'y', 'r', 'ty', 'type', 'link', 'strength'].includes(k) && !(e.kind === 'kit' && k === 'solid')) continue;
     const row = document.createElement('div'); row.className = 'field';
     row.innerHTML = `<span>${k === 'rotY' ? 'rotY (rad)' : k}</span>`;
     const inp = document.createElement('input');
@@ -562,11 +601,11 @@ async function save() {
   if (bad.length) { status('Not saved: ' + bad[0], 'err'); return; }
   status('Saving…');
   try {
-    const res = await fetch('/api/map/layout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(L) });
+    const res = await fetch(`/api/map/layout?map=${encodeURIComponent(MAP)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(L) });
     const j = await res.json().catch(() => ({}));
     if (!res.ok) { status(`Not saved: ${j.error || res.status}`, 'err'); return; }
     dirty = false;
-    status(`Saved ${new Date().toLocaleTimeString()} · the server restarts with it; players reload to see it`, 'ok');
+    status(`Saved ${C.MAPS[MAP]?.file} ${new Date().toLocaleTimeString()} · the server restarts with it; players reload to see it`, 'ok');
   } catch (err) { status('Not saved: ' + err.message, 'err'); }
 }
 $('saveBtn').onclick = save;
@@ -581,7 +620,7 @@ $('importFile').onchange = async (ev) => {
   try {
     const j = JSON.parse(await f.text()), bad = C.validateLayout(j);
     if (bad.length) { status('Not imported: ' + bad[0], 'err'); return; }
-    pushUndo(); L.entries = j.entries; L.scatter = j.scatter; commit(); setSelection([]);
+    pushUndo(); L.entries = j.entries; L.scatter = j.scatter; L.map = j.map; commit(); setSelection([]);
     status('Imported (not saved yet)');
   } catch (err) { status('Not imported: ' + err.message, 'err'); }
   ev.target.value = '';
@@ -624,4 +663,4 @@ status('Loading the map…');
 drawOverlays(); runChecks(); buildPalette();
 requestAnimationFrame(frame);
 const t0 = performance.now();
-rebuild().then(() => status(`Ready · ${L.entries.length} entries · loaded in ${Math.round(performance.now() - t0)} ms`, 'ok'));
+rebuild().then(() => status(`Ready · ${C.MAPS[MAP]?.title ?? MAP} · ${L.entries.length} entries · loaded in ${Math.round(performance.now() - t0)} ms`, 'ok'));
