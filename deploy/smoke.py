@@ -3,8 +3,10 @@
 # usage: python3 deploy/smoke.py <base url> [screenshot path] [--swiftshader]
 #   python3 deploy/smoke.py http://localhost:3000
 #   python3 deploy/smoke.py https://wizard-arena-76od.onrender.com /tmp/wa-deploy/live.png
-import asyncio, json, sys, time, urllib.request
+import asyncio, json, os, sys, time, urllib.request
 from playwright.async_api import async_playwright
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from legacyjoin import legacy_join, report as legacy_report   # round 22: a join without `proto` (the live CrazyGames build)
 
 # GPU by default (ANGLE on Metal: macOS); --swiftshader for software GL (slow: it can stall several seconds compiling the castle's shaders)
 GL_ARGS = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] if '--swiftshader' in sys.argv else ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist']
@@ -27,11 +29,13 @@ async def main():
         errs, sockets, frames = [], [], {'sent': 0, 'recv': 0}
         pg.on('pageerror', lambda e: errs.append(str(e)))
         pg.on('console', lambda m: errs.append(m.text) if m.type == 'error' else None)
-        last_snap = {}
+        last_snap, seen_names = {}, set()
         def on_frame(payload):
             frames['recv'] += 1
             if isinstance(payload, str) and payload.startswith('{"t":"snap"'):
                 last_snap['players'] = json.loads(payload)['players']
+                for p_ in last_snap['players']:
+                    if p_.get('name'): seen_names.add(p_['name'])
         def on_ws(ws):
             sockets.append(ws.url)
             ws.on('framesent', lambda _: frames.__setitem__('sent', frames['sent'] + 1))
@@ -81,6 +85,13 @@ async def main():
         await pg.wait_for_timeout(1000)
         connected = frames['recv'] > before
         print('still connected after screenshot:', connected, f"({frames['recv'] - before} frames, first after {waited / 1000:.1f} s)")
+        # round 22: the live CrazyGames build joins without `proto`; the server must still welcome it, and (once it has legacy
+        # rooms) keep it apart from this proto-22 player: the courtyard only, no runes or pads
+        ws_url = BASE.replace('https://', 'wss://', 1).replace('http://', 'ws://', 1)
+        lj = await legacy_join(b, ws_url, 'legacyjoin', seconds=6)
+        await pg.wait_for_timeout(1000)
+        legacy_ok = legacy_report(lj, 'smoketest', seen_names)
+        ok = ok and legacy_ok
         # round 21: a first visit (a fresh context, no ?builder) is in a match with no click, as the Pyromancer, with Easy bots.
         # The first player leaves first: a first-timer joining other humans keeps their room's difficulty, by design.
         await pg.close(); await asyncio.sleep(1.5)

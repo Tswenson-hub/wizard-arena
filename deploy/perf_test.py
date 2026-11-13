@@ -3,10 +3,11 @@
 # target in docs/agents/round20-perf.md is missed.
 # usage: python3 deploy/perf_test.py <base url> [--seconds 60] [--throttle 4] [--size 1280x720] [--dpr 1]
 #                                    [--latency MS] [--quality auto|high|normal|low] [--json out.json] [--shot out.png]
-#                                    [--swiftshader] [--room new] [--no-targets]
+#                                    [--swiftshader] [--room new] [--no-targets] [--map courtyard|sky]
 #   python3 deploy/perf_test.py http://localhost:4105
 #   python3 deploy/perf_test.py http://localhost:4105 --latency 200     # +200 ms round trip on the game's WebSocket
 #   python3 deploy/perf_test.py https://wizard-arena-76od.onrender.com --room new
+#   python3 deploy/perf_test.py http://localhost:4105 --map sky         # round 22: measure on Sky Ruins (see --map below)
 #
 # How it measures (independent of the game's code, so it works on any commit and on the live server):
 # - frame times from its own requestAnimationFrame loop;
@@ -17,6 +18,10 @@
 # - the tier: window.__wa.quality / window.WA_QUALITY / <html data-quality>, whichever the page sets;
 # - --latency MS: the WebSocket goes through a local TCP proxy that holds every chunk MS/2 in each direction, and the
 #   harness reports the gaps between snapshots and how smoothly the remote wizards are drawn (stalls, jumps, reversals).
+# - --map NAME (round 22, two maps in rotation): asks the server for that map before measuring. On a private server
+#   (MATCH_DEBUG=1) it sends { t: 'matchDebug', map } (the match restarts on that map); with --room new (live) it sends the
+#   private host's map lock (ROOM_MAP below). Then it waits for the client's swap (<html data-map>, or window.__wa.map) and
+#   fails the run if the map never arrives. The map reached is reported either way.
 import argparse, asyncio, json, ssl, statistics, sys, time, urllib.parse, urllib.request
 from playwright.async_api import async_playwright
 
@@ -33,7 +38,11 @@ ap.add_argument('--json', default=None)
 ap.add_argument('--shot', default=None)
 ap.add_argument('--swiftshader', action='store_true')
 ap.add_argument('--no-targets', action='store_true', help='report only, always exit 0')
+ap.add_argument('--map', default=None, choices=['courtyard', 'sky'], help='measure on this map (round 22)')
 A = ap.parse_args()
+# the private host's map lock (spells' room protocol, round 22): sent with --map on a --room new page
+ROOM_MAP = lambda m: {'t': 'roomMap', 'map': m}
+MAP_JS = "(document.documentElement.dataset.map ?? window.__wa?.map ?? null)"
 BASE = A.base.rstrip('/')
 W, H = (int(v) for v in A.size.split('x'))
 WARMUP = 10.0   # seconds of the match excluded from the "no frame over 100 ms" and "no new programs" checks
@@ -242,6 +251,19 @@ async def main():
             n = await pg.evaluate('Object.keys(__perf.names).length')
             if n >= 4: break
             await pg.wait_for_timeout(500)
+        map_wanted, map_now = A.map, await pg.evaluate(MAP_JS)
+        if A.map:
+            msg = ROOM_MAP(A.map) if A.room else {'t': 'matchDebug', 'map': A.map}
+            sent = await pg.evaluate("(m) => { const n = window.__wa?.net; if (!n || !n.send) return false; n.send(m); return true; }", msg)
+            print(f"map: asked for {A.map!r} with {json.dumps(msg)} ({'sent' if sent else 'NOT sent: no window.__wa.net'}); the page is on {map_now!r}")
+            t_map = time.time()
+            while time.time() - t_map < 90:
+                map_now = await pg.evaluate(MAP_JS)
+                if map_now == A.map: break
+                await pg.wait_for_timeout(500)
+            print(f"map: the page reports {map_now!r} after {time.time() - t_map:.1f} s" + ('' if map_now == A.map else ' (the swap never came: an old server or client?)'))
+            await pg.wait_for_timeout(3000)   # (the swap's fade and the first frames on the new map stay out of the measure)
+            progs_loaded = await pg.evaluate('__perf.programs')
         await pg.evaluate("__perf.t0 = performance.now()")
         if proxy: proxy.sent.clear()
         driven = await pg.evaluate(DRIVE)
@@ -267,6 +289,7 @@ async def main():
         P = await pg.evaluate("""() => { const P = __perf; return { frames: P.frames, perFrame: P.perFrame, programs: P.programs,
           created: P.created, snaps: P.snaps, remote: P.remote, t0: P.t0, names: P.names,
           tier: window.__wa?.quality?.tier ?? window.__wa?.quality ?? window.WA_QUALITY ?? document.documentElement.dataset.quality ?? null,
+          map: document.documentElement.dataset.map ?? window.__wa?.map ?? null,
           ping: window.__wa?.net?.ping ?? window.__wa?.net?.rtt ?? null }; }""")
         players = len(P['names'])
         await b.close()
@@ -285,7 +308,7 @@ async def main():
     match_compiles = [c for c in P['created'] if c >= t0]
     R = {
         'url': url, 'size': A.size, 'dpr': A.dpr, 'throttle': A.throttle, 'latency_ms': A.latency, 'seconds': round(span, 1),
-        'players': players, 'driven': driven, 'tier': P['tier'], 'load_s': round(load_s, 1),
+        'players': players, 'driven': driven, 'tier': P['tier'], 'map': P['map'], 'map_wanted': A.map, 'load_s': round(load_s, 1),
         'fps': round(len(dts) / span, 1) if dts else 0,
         'frame_ms': {'p50': round(pct(dts, 50), 1), 'p95': round(pct(dts, 95), 1), 'p99': round(pct(dts, 99), 1), 'max': round(max(dts or [0]), 1)},
         'max_after_warmup_ms': round(max(late or [0]), 1),
@@ -332,6 +355,7 @@ async def main():
         ('4 players in the match', players >= 4),
         ('no console errors', not errs),
     ]
+    if A.map: T.append((f'on the {A.map} map', P['map'] == A.map))
     if A.latency > 0:
         rm = R['remote_motion']
         T += [('remote wizards: stalls < 5% of moving frames', rm['stall_pct'] < 5),
@@ -341,7 +365,7 @@ async def main():
     if A.json:
         with open(A.json, 'w') as fh: json.dump(R, fh, indent=1)
 
-    print(f"tier {R['tier']}, {players} players, driver {'on' if driven else 'off (no window.__wa: walk only)'}, {R['seconds']} s measured")
+    print(f"tier {R['tier']}, map {R['map']}, {players} players, driver {'on' if driven else 'off (no window.__wa: walk only)'}, {R['seconds']} s measured")
     fm = R['frame_ms']
     print(f"fps {R['fps']}  frame p50 {fm['p50']} / p95 {fm['p95']} / p99 {fm['p99']} / max {fm['max']} ms  "
           f"(max after 10 s {R['max_after_warmup_ms']})  >50 ms: {R['frames_over_50']}  >100 ms: {R['frames_over_100']} ({R['frames_over_100_after_warmup']} after 10 s)")

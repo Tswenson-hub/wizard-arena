@@ -15,9 +15,11 @@
 #   node tools/build-crazygames.mjs --server ws://localhost:4105 --out dist/crazygames-local --no-zip
 #   PORT=4105 node server.js &  node tools/serve-subpath.mjs dist/crazygames-local 4199 /game &
 #   python3 deploy/subpath_test.py http://localhost:4199/game/ /tmp/wa-deploy/subpath.png
-import asyncio, re, sys, time
+import asyncio, os, re, sys, time
 from urllib.parse import urlparse
 from playwright.async_api import async_playwright
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from legacyjoin import legacy_join, report as legacy_report   # round 22: a join without `proto` (the live CrazyGames build)
 
 # GPU by default (ANGLE on Metal: macOS); --swiftshader for software GL (slow: it can stall several seconds compiling the castle's shaders)
 GL_ARGS = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] if '--swiftshader' in sys.argv else ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist']
@@ -191,9 +193,14 @@ async def main():
                 if 'gameplayStart' in m.text and 'start' not in marks: marks['start'] = (dl['bytes'], dl['n'])
             elif m.type == 'error' and not (BLOCK_SDK and 'crazygames-sdk' in m.text + str(m.location)): errs.append(m.text)
         pg.on('console', on_console)
+        seen_names = set()
         def on_ws(ws):
             sockets.append(ws.url)
-            ws.on('framereceived', lambda _: frames.__setitem__('recv', frames['recv'] + 1))
+            def on_frame(f):
+                frames['recv'] += 1
+                if isinstance(f, str) and f.startswith('{"t":"snap"'):
+                    for m in re.finditer(r'"name":"([^"]{1,24})"', f): seen_names.add(m.group(1))
+            ws.on('framereceived', on_frame)
         pg.on('websocket', on_ws)
         t = time.time()
         sep = '&' if '?' in PAGE else '?'
@@ -225,6 +232,13 @@ async def main():
         await pg.wait_for_timeout(500)
         st = await pg.evaluate("document.querySelector('#status')?.textContent || ''")
         print('status line:', repr(st))
+        # round 22: the live CrazyGames build joins the same server without `proto`: it must still be welcomed, and (once the
+        # server has legacy rooms) kept apart from this build's player: the courtyard only, no runes or pads
+        legacy_ok = True
+        if cfg.get('server'):
+            lj = await legacy_join(b, cfg['server'], 'legacyjoin', seconds=6)
+            await pg.wait_for_timeout(1000)
+            legacy_ok = legacy_report(lj, 'subpath', seen_names)
         rooms_ok = True
         await pg.close()   # (round 21: out of its public room, so the rooms' first-visit player can start an empty one)
         if ROOMS: rooms_ok, _ = await rooms(b)
@@ -244,7 +258,7 @@ async def main():
         print(f'initial download {MB(initial)} is over the {MAX_MB:g} MB target'); ok = False
     ws_ok = bool(sockets) and frames['recv'] > 20
     starts = sum('gameplayStart' in c for c in cg)
-    ok = ok and not escaped and not failed and ws_ok and not errs and rooms_ok
+    ok = ok and not escaped and not failed and ws_ok and not errs and rooms_ok and legacy_ok
     if cfg['sdk']: ok = ok and starts >= 1
     print('RESULT:', 'PASS' if ok else 'FAIL')
     sys.exit(0 if ok else 1)

@@ -130,7 +130,8 @@ async def main():
         # the legacy room: only checked once the server has them (room.legacy); before that, a note
         if 'legacy' in room:
             check(room['legacy'] is True, f"a legacy room (room.legacy {room['legacy']})")
-            check(match.get('map', 'courtyard') == 'courtyard', f"on the courtyard (match.map {match.get('map')})")
+            mid = match.get('map', 'courtyard'); mid = mid.get('id') if isinstance(mid, dict) else mid   # (a string, or { id, name })
+            check(mid in ('courtyard', 'legacy'), f"on the courtyard (match.map {match.get('map')!r}; 'legacy' is environment's frozen copy of the live layout)")
             runes, pads = w.get('runes'), w.get('pads')
             check(not runes and not pads, f'no runes or pads in the welcome (runes {runes!r}, pads {pads!r})')
         else:
