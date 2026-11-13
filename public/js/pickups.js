@@ -92,31 +92,32 @@ const GLYPHS = {
     g.beginPath(); g.arc(c, c, 7 * k, 0, 6.283); g.fill();
   },
 };
-const glyphTex = (kind) => canvasTex('glyph_' + kind, 128, (g, s) => {
-  g.shadowColor = '#fff'; g.shadowBlur = 8;
+const glyphTex = (kind) => canvasTex('glyph_' + kind, 256, (g, s) => {
+  g.shadowColor = '#fff'; g.shadowBlur = 14;
   g.lineWidth = 3; g.beginPath(); g.arc(s / 2, s / 2, s * 0.46, 0, 6.283); g.stroke();
   for (let i = 0; i < 12; i++) { const a = i / 12 * 6.283; g.beginPath(); g.moveTo(s / 2 + Math.cos(a) * s * 0.42, s / 2 + Math.sin(a) * s * 0.42); g.lineTo(s / 2 + Math.cos(a) * s * 0.46, s / 2 + Math.sin(a) * s * 0.46); g.stroke(); }
-  GLYPHS[kind]?.(g, s);
+  GLYPHS[kind]?.(g, s); GLYPHS[kind]?.(g, s);   // (twice: the strokes over their own glow read solid)
 });
 
 // ---------------------------------------------------------------- materials (per type, made once and kept: no program churn)
 const mats = {};
-function flat(map, color) {
-  return new THREE.MeshBasicMaterial({ map, color, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+// (normal blending: additive washed the rings and glyphs to white on the light stone; the halo, the pad's disc and the motes stay additive)
+function flat(map, color, additive = false) {
+  return new THREE.MeshBasicMaterial({ map, color, transparent: true, blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending, depthWrite: false });
 }
 function matsFor(type) {
   if (mats[type]) return mats[type];
   const R = RUNE_TYPES[type];
   return (mats[type] = { ring: flat(ringTex(), R.color), glyph: flat(glyphTex(R.glyph), R.color),
-    halo: new THREE.SpriteMaterial({ map: dotTexture(), color: R.color, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.55 }) });
+    halo: new THREE.SpriteMaterial({ map: dotTexture(), color: R.color, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.32 }) });
 }
 let padMats = null;
-const padMatsFor = () => padMats ??= { ring: flat(padTex(), PAD_COLOR), disc: flat(dotTexture(), PAD_COLOR) };
+const padMatsFor = () => padMats ??= { ring: flat(padTex(), PAD_COLOR), disc: flat(dotTexture(), PAD_COLOR, true) };
 // a vertical plane seen from both sides without DoubleSide (that would be another program): two front faces back to back
 let glyphGeo = null;
 function glyphGeometry() {
   if (glyphGeo) return glyphGeo;
-  const a = new THREE.PlaneGeometry(1.1, 1.1), b = a.clone().rotateY(Math.PI);
+  const a = new THREE.PlaneGeometry(1.35, 1.35), b = a.clone().rotateY(Math.PI);
   const pos = new Float32Array([...a.attributes.position.array, ...b.attributes.position.array]);
   const uv = new Float32Array([...a.attributes.uv.array, ...b.attributes.uv.array]);
   const idx = [...a.index.array, ...b.index.array.map(i => i + 4)];
@@ -199,12 +200,12 @@ export function mountPickups({ scene, sfx = null, pads: pads0 = null } = {}) {  
     if (bursting) {
       const k = (t - v.burst) / 0.5;
       v.ring.scale.setScalar(1 + k * 1.4); v.ring.material.opacity = 1 - k;
-      v.halo.scale.setScalar(2.4 + k * 4); v.halo.material.opacity = 0.55 * (1 - k);
+      v.halo.scale.setScalar(2.4 + k * 4); v.halo.material.opacity = 0.32 * (1 - k);
       v.glyph.position.y = 1.3 + k * 1.6; v.glyph.scale.setScalar(1 + k * 0.6); v.glyph.material.opacity = 1 - k;
       v.glyph.visible = v.halo.visible = true; v.orbit.visible = false; v.pillar.visible = true;
       return;
     }
-    if (v.burst >= 0) { v.burst = -1; v.ring.scale.setScalar(1); v.halo.scale.setScalar(2.4); v.glyph.scale.setScalar(1); v.ring.material.opacity = 1; v.halo.material.opacity = 0.55; v.glyph.material.opacity = 1; }
+    if (v.burst >= 0) { v.burst = -1; v.ring.scale.setScalar(1); v.halo.scale.setScalar(2.4); v.glyph.scale.setScalar(1); v.ring.material.opacity = 1; v.halo.material.opacity = 0.32; v.glyph.material.opacity = 1; }
     if (v.up) {
       v.glyph.visible = v.halo.visible = v.orbit.visible = v.pillar.visible = true;
       v.ring.rotation.y = tt * 0.5; v.ring.scale.setScalar(1 + 0.03 * Math.sin(tt * 2.2));

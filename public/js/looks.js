@@ -826,11 +826,11 @@ let buffShieldGeo = null;
 const BUFF = {
   // Haste: quick blue-white streaks whipping up round the legs and body
   haste(host, body, k) {
-    const obj = motes(Math.round(14 * k), { size: 0.12, color: 0x9fe4ff, place: (i, t, p) => {
-      const q = fract(t * 2.4 + rand(i, 1));
-      const a = rand(i, 2) * 6.283 - t * 3, r = 0.42 + rand(i, 3) * 0.2;
-      p.set(Math.cos(a) * r, 0.08 + q * 1.5, Math.sin(a) * r);
-      return (1 - q) * 0.9;
+    const obj = motes(Math.round(26 * k), { size: 0.26, color: 0xa8f0ff, place: (i, t, p) => {
+      const q = fract(t * 2.2 + rand(i, 1));
+      const a = rand(i, 2) * 6.283 - t * 3.5, r = 0.5 + rand(i, 3) * 0.2;
+      p.set(Math.cos(a) * r, 0.08 + q * 1.7, Math.sin(a) * r);
+      return 1 - q;
     } });
     host.add(obj);
     return { obj };
@@ -838,15 +838,15 @@ const BUFF = {
   // Arcane Fury: big embers boiling up, and a red glow in the chest
   fury(host, body, k) {
     const g = new THREE.Group();
-    g.add(motes(Math.round(16 * k), { size: 0.17, color: 0xff6a2a, place: (i, t, p) => {
-      const q = fract(t * 0.8 + rand(i, 1));
-      const a = rand(i, 2) * 6.283 + t * 0.6, r = 0.5 + rand(i, 3) * 0.25 - q * 0.2;
-      p.set(Math.cos(a) * r, 0.2 + q * 2.0, Math.sin(a) * r);
-      return Math.sin(q * Math.PI) * 0.95;
+    g.add(motes(Math.round(28 * k), { size: 0.34, color: 0xff7a30, place: (i, t, p) => {
+      const q = fract(t * 0.9 + rand(i, 1));
+      const a = rand(i, 2) * 6.283 + t * 0.6, r = 0.55 + rand(i, 3) * 0.25 - q * 0.2;
+      p.set(Math.cos(a) * r, 0.2 + q * 2.1, Math.sin(a) * r);
+      return Math.sin(q * Math.PI);
     } }));
-    const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTexture(), color: 0xff3a1a, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.45 }));
-    glow.position.y = 1.1; glow.scale.setScalar(1.7); glow.renderOrder = 3;
-    glow.onBeforeRender = () => { glow.material.opacity = 0.35 + 0.15 * Math.sin(performance.now() / 110); };
+    const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTexture(), color: 0xff3a1a, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.6 }));
+    glow.position.y = 1.1; glow.scale.setScalar(3.0); glow.renderOrder = 3;
+    glow.onBeforeRender = () => { glow.material.opacity = 0.55 + 0.2 * Math.sin(performance.now() / 110); };
     g.add(glow);
     host.add(g);
     return { obj: g };
@@ -855,17 +855,17 @@ const BUFF = {
   aegis(host, body, k) {
     const g = new THREE.Group();
     buffShieldGeo ??= Object.assign(new THREE.IcosahedronGeometry(1.0, 2), { userData: { shared: true } });
-    const bubble = new THREE.Mesh(buffShieldGeo, new THREE.MeshBasicMaterial({ color: 0xffd36a, transparent: true, opacity: 0.16, depthWrite: false, blending: THREE.AdditiveBlending }));
-    bubble.position.y = 1.0; bubble.scale.set(1.05, 1.25, 1.05); bubble.renderOrder = 2;
+    const bubble = new THREE.Mesh(buffShieldGeo, new THREE.MeshBasicMaterial({ color: 0xffc040, transparent: true, opacity: 0.14, depthWrite: false, blending: THREE.AdditiveBlending }));
+    bubble.position.y = 1.05; bubble.scale.set(0.85, 1.1, 0.85); bubble.renderOrder = 2;
     g.add(bubble);
-    g.add(motes(Math.round(12 * k), { size: 0.1, color: 0xffe8a0, place: (i, t, p) => {
-      const a = i / Math.max(1, Math.round(12 * k)) * 6.283 + t * 1.2, y = 1.0 + Math.sin(t * 1.5 + i * 0.9) * 0.35;
-      p.set(Math.cos(a) * 1.05, y, Math.sin(a) * 1.05);
+    g.add(motes(Math.round(14 * k), { size: 0.15, color: 0xffe8a0, place: (i, t, p) => {
+      const a = i / Math.max(1, Math.round(12 * k)) * 6.283 + t * 1.2, y = 1.05 + Math.sin(t * 1.5 + i * 0.9) * 0.35;
+      p.set(Math.cos(a) * 0.88, y, Math.sin(a) * 0.88);
       return 0.8;
     } }));
     host.add(g);
     let hp = 40;
-    bubble.onBeforeRender = () => { bubble.material.opacity = (0.06 + 0.16 * Math.min(1, hp / 40)) * (0.85 + 0.15 * Math.sin(performance.now() / 300)); };
+    bubble.onBeforeRender = () => { bubble.material.opacity = (0.06 + 0.14 * Math.min(1, hp / 40)) * (0.85 + 0.15 * Math.sin(performance.now() / 300)); };
     return { obj: g, set: (v) => { hp = typeof v === 'number' ? v : 40; } };
   },
 };
