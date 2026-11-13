@@ -1,59 +1,72 @@
 # Environment hand-off: the castle courtyard (round 15), then the farmstead (earlier rounds)
 
-## Round 22 (IN PROGRESS, stopped at a usage limit): map data landed (`edb3293` requests note, `89f67e7` code); dressing, courtyard pads/runes, Sky Ruins and the editor overlays are NOT done
-**Landed in `89f67e7`** (port 3000 restarted on it cleanly; `constants.js` imports fine; unit tests were ALL PASS before the change and
-the change only adds kinds and exports, but botmatch and modematch-unit have NOT been re-run on it yet; do that first):
-- **map.js:** kinds `rune` (power-up spawn: `type` in `RUNE_TYPES` or random), `pad` (jump pad: `tx ty tz`, `h` apex, `r`), `portal`
-  (`link`), and the drawn rune circle is now kind **`circle`** (export `RUNE_CIRCLES`, was `RUNES`; layout.json's one entry renamed).
-  Exports `RUNE_SPAWNS`, `JUMP_PADS`, `PORTALS`, `padLaunch(pad, gravity)`, `padArcPoint(pad, gravity, u)`, `MAPS`, `MAP_ORDER`,
-  `DEFAULT_MAP`, `ACTIVE_MAP`, `MAP_INFO` (`void` from the layout file's top-level `map` block), `setActiveMap(name)`, `loadMap(name)`,
-  `activeMap()`. `applyLayout(L)` keeps the edit on the live map. Node reads all three layout files at start (a missing one just
-  drops that map with a warning); the browser fetches `?map=` or the default and `loadMap` the rest.
-- **`layout-legacy.json`** = a frozen copy of today's layout.json, byte-identical to what `dist/crazygames` bundles (checked), for the
-  legacy rooms. **`layout-sky.json`** is a 4-entry PLACEHOLDER (bounds, one floor, two spawns, `map.void` 1.5): the real map is to do.
-- **world.js:** reads `RUNE_CIRCLES` and lifts the circle by its `y`. Nothing else yet (no `preloadMap`/`switchMap`, no cloud sky).
-- **editor.js:** the Top-down button had no handler (only the T key); wired, and `__edit.toggleTop()` exposed. No palette entries or
-  overlays for the new kinds yet.
-- **Kit:** 57 pieces imported (castle: tables, chairs, stools, shelf, decorated barrels and kegs, box_stacked, trunks, rocky and weedy
-  floor tiles, narrow/long/modular stairs, wall endcaps, sloped and small corner walls, gated windows, crossing, scaffold, grate
-  tiles, candle, bottle; village: Prop_Wagon, Prop_Crate, wooden and metal fences, Vine5/6/9, Roof_Wooden_2x1, Overhang_Roof_Plaster,
-  bricks, Stairs_Exterior_Straight, Wall_Arch, Floor_UnevenBrick, roof supports, 4x4/6x6/2x4/dormer round-tile roofs simplified
-  0.25). `kit-models.js` regenerated (147 models). All village material names are already in `VILLAGE_MAT`. The Quaternius folder has
-  spaces in its name and `optimize-models.sh kit` splits on them: import through a symlink (`/tmp/wa-environment/village-gltf`).
-- **The interface note** in requests.md (`edb3293`) tells spells and characters the shapes above, plus: the server must call
-  `C.setActiveMap(room.map)` at the top of each room's tick and message handler (bots.js's module-level `HOT_SPOTS`/`TALL_COVER` need to
-  be per map); `World.preloadMap(loader, name)` and `World.switchMap(loader, scene, name)` are promised but not written.
+## Round 22: map data, the dressed courtyard with runes and pads, Sky Ruins, multi-map world.js (`89f67e7` `a406a7c` `bf01e07` `85183fa` `8476562`; notes `edb3293` `acd7b87` and the bots note)
+**Map data (map.js).** Kinds `rune` (a power-up spawn: `type` in `RUNE_TYPES` or random, `y` optional), `pad` (a jump pad: `tx ty tz`, `h` the
+apex above the pad, raised to clear the target by 0.5 m, `r`), `portal` (`link`), and the drawn rune circle is kind **`circle`** (export
+`RUNE_CIRCLES`, was `RUNES`). Exports `RUNE_SPAWNS`, `JUMP_PADS` (`target: [x, y, z]`, `yaw` facing it), `PORTALS`, `ISLANDS` (blocks with `rock: 1`),
+`padLaunch(pad, g)` / `padArcPoint(pad, g, u)` (pure; constants.js's `padArc` wraps them, so the editor's overlay, the server and the client fly one arc).
+- **Maps:** `MAPS` (`courtyard` layout.json, `sky` layout-sky.json, `legacy` layout-legacy.json), `MAP_ORDER = ['courtyard', 'sky']`, `DEFAULT_MAP`.
+  **`setActiveMap(name)`** refills every export in place from the prebuilt map (microseconds); `ACTIVE_MAP.name`, `MAP_INFO` (the file's `map` block:
+  `title`, `void`, `ground`), `loadMap(name)` (the browser fetches on demand; node reads all at start, a missing file drops that map with a warning).
+  `applyLayout(L)` (the editor) keeps the edit on the live map. Spells' room.js calls `setActiveMap` at each room entry point and rotates (verified: a
+  public room went countdown → Sky Ruins live).
+- **`layout-legacy.json`** is byte-identical to what `dist/crazygames` bundles (checked with cmp), so legacy rooms collide exactly as their clients draw.
 
-**Still to do (in the coordinator's order):**
-1. **Courtyard runes and pads** in layout.json: 4 runes (`rune-centre` on the altar top, `rune-gatehouse` (0, −25, on the deck),
-   `rune-ne-tower` (25, 25), `rune-sw-tower` (−25, −25)) and 6 pads (east floor → east walk, west floor → the hall balcony, two corner
-   pads → the NE and SW towers, two long ones across the altar). Ids as promised in the requests note.
-2. **The dressing pass** (a generator script is the plan, like round 15's blockout): a raised altar in the middle (3×3
-   `floor_foundation_allsides` at 2-unit spacing = 5 m square, 1.67 m high, four `stairs_wide` at scale 0.5 on its sides, four
-   `column`s on top, the circle entry lifted to y 1.67 r 5 h 4.6, the obelisk `pillar_decorated-1`/`column-1` and the centre grate
-   tile removed); market stalls (`table_long_tablecloth` + two `Corner_Exterior_Wood` posts + `Roof_Wooden_2x1` or
-   `Overhang_Roof_Plaster` at y 2.6) at about (−6, 20.5), (9, 20.5), (−9, −20), (18, 12); `Prop_Wagon` at (−18, 17.5); crate, barrel,
-   keg and trunk clusters at (6, −19.5), (12, −6), (−12, 6); `barrier_corner` low walls at (12, 5.5), (−12, −5.5); brazier posts
-   (`column` + `torch_lit` at y 1.17) round the altar; planters (`box_large` + a `birch_far`/`oak_far` deco at h 3.5–4, y 1);
-   `floor_tile_large_rocks` added to the courtyard floor's `mix`; weed tiles as `solid: 0` kit entries by the walls; more vines on the
-   inner walls. Keep every spawn 1.5 m clear and the gate approach open. The courtyard inventory (every placed piece with its
-   position) is easy to dump with a 6-line python over layout.json. "Before" shots are in `/tmp/wa-environment/r22/before-*.png`
-   (`shots.py <port> <prefix> [map]` there takes overhead + 4 ground views + oblique through the editor camera; it needs
-   `MAP_EDIT=1 PORT=4102 node server.js`). Then the after shots, perf_test on normal and low (target under 120k triangles, under 60
-   programs), a botmatch (no new stalls).
-3. **world.js polish:** banner sway (route all banners through the tint program with a `wob` attribute and `uTime`, so no new
-   program), motes over the rune circle on the torch flames' Points material.
-4. **Sky Ruins** (`layout-sky.json`, about 36 m across, islands 4–10 m up so `map.void` 1.5 sits under them, 8 spawns, 4 heals, 4 runes,
-   6 pads; island undersides as procedural noise-displaced cones on the castle stone material (a rock texel of the palette: no new
-   program); clouds as one translucent noise plane (the one new program); the vista ring lowered so the peaks show through the
-   cloud). world.js: `preloadMap`, `switchMap` (everything world.js adds tagged so it can be removed), the ground and grass skipped
-   when `MAP_INFO.ground === 'none'` (add that field).
-5. **Editor:** palette entries (Rune, Jump pad, Portal, Rune circle), overlays (rune markers, pad discs with the arc drawn from
-   `padArcPoint`, portal links), `?edit=1&map=sky`, and `server/mapedit.js` saving to the right file for the map (`layout` POST with a
-   `map` field; validate against `MAPS`).
-6. **Wish-list for Ty** (post in requests.md): a rock/cliff pack for the island undersides and rubble (Quaternius Ultimate or
-   Stylized Nature, or KayKit Forest/Nature), a market/fountain/statue set (KayKit Medieval Hexagon or Builder packs), hanging
-   lanterns, crows/birds. Nothing in Downloads has rocks, statues, lanterns or a fountain.
+**The courtyard** (`a406a7c`, generator `/tmp/wa-environment/r22/dress.mjs`, not in the repo; the layout is the source of truth now):
+- A 5 m altar 1.67 m up in the middle (3×3 foundation blocks, `stairs_wide` at scale 0.5 on four sides, four columns and the lifted crystal on top,
+  four brazier posts (column + lit torch) round it; the obelisk, its column and the centre grate are gone), four market stalls (cloth table, two posts,
+  two plank roofs you can stand on, a crate and a barrel), a wagon, crate/keg/trunk/barrel clusters, two L-walls, a table with chairs, fences, two
+  planters with low-poly trees, four weedy tiles, eight vines on the inner walls. The flasks and props keep their ids; the gatehouse flask moved to
+  (−9, −24.65) because the gatehouse rune takes the deck.
+- Runes `rune-centre` (altar top), `rune-gatehouse`, `rune-ne-tower`, `rune-sw-tower`; pads `pad-1`..`pad-6` (east floor → east walk, west floor → the hall
+  balcony, two → the corner towers, two across the altar). Positions: requests.md `acd7b87`.
+- **Shots:** `/tmp/wa-environment/r22/before-*.png` and `after-*.png` (overhead, four ground views, oblique, through the editor camera),
+  `editor-courtyard-overlays.png` (pad rings and targets), `perf-courtyard.png` (in game).
+- **Trimmed for the budget:** 12 weed tiles → 4 (500 triangles each), the decorated keg/crates/barrel → plain ones (KayKit's bricks don't simplify),
+  4 planter trees → 2; the deco trees are instanced on the far trees' program.
+
+**Sky Ruins** (`bf01e07`, generator `/tmp/wa-environment/r22/sky.mjs`): 46 m bounds; islands are solid `block`s (`rock: 1`, stand, shots) with floor
+tiles drawn on top, floors at **6 m**, the tower deck at **8.5 m**, `map.void = 2.5`, `map.ground = 'none'`. A centre octagon with stairs east and west
+up to the broken tower (open to the sky, gaps east and west, the rune circle inside, a ruined second storey), four outer islands with 2.3 m plank
+bridges, shrines with tiled roofs over the north and south flasks. 8 spawns, flasks `north-shrine` `south-shrine` `east-stairs` `west-stairs`, runes
+`rune-centre` `rune-east` `rune-west` `rune-south-bridge`, pads `pad-1`..`pad-4` (a ring between the outer islands over the void) and `pad-5`/`pad-6`
+(the lower deck over the tower). Shots: `/tmp/wa-environment/r22/sky2-*.png` (editor), `swap-1-sky.png` `swap-2-sky-north.png` (in game), `perf-sky.png`.
+
+**world.js.** Everything it adds is tagged `userData.world`; **`preloadMap(loader, name)`** (the layout and its GLBs, fetched once per page) and
+**`switchMap(loader, scene, name)`** (clear, `setActiveMap`, rebuild; 20–170 ms when preloaded). The sun, the sky light and a pool of `TORCH_LIGHTS`
+point lights live across switches (a frame with other light counts recompiled every lit shader twice: 56 → 93 programs on a round trip, now
+54 → 55 → 55). A `ground: 'none'` map gets no grass, hills or trees but a cloud sea (one material, one mesh, one program) and the vista ring lowered
+to −48 m so the peaks poke through the clouds; islands hang procedural rock (rings of the block's outline shrinking to a point, hash-jittered,
+flat-shaded) on the castle stone material at a grey texel. The painted sky loads once; the crystal rides the banners' tint program; `forceSinglePass`
+on the transparent double-sided materials (three drew each in a back- and a front-face pass with a program apiece).
+
+**Editor.** Rune, Jump pad, Portal and Rune circle in the palette (a pad's target starts 6 m ahead; type `tx ty tz`), overlays for runes (a diamond in the
+type's colour), pads (ring, the arc from constants.js `padArc`, a cross at the landing) and portals, a map selector (`?edit=1&map=sky`), saving to the
+chosen map's file with its `map` block kept (`server/mapedit.js` takes `?map=`), the reachability check starts from the spawns on a map with no ground,
+and the Top-down button works (it had no handler).
+
+**Kit:** 57 pieces imported (`optimize-models.sh kit`; the Quaternius folder has spaces in its name, import through a symlink), `kit-models.js` 147 models.
+
+**Verified** (this tree with the other agents' round-22 files, `perf_test.py` normal 1280×720 CPU 4×, 40 s, `--map`):
+| | triangles median (p95) | draw calls | programs | result |
+|---|---|---|---|---|
+| courtyard, dressed | **117.9k** (164k) | 79 | 57 | PASS (earlier 30 s runs: 120–134k; the same harness read 124–147k on the same layout in other runs, it follows the driven player) |
+| Sky Ruins | **52.0k** (55k) | 102 | 59 | PASS |
+| courtyard, low | 103.5k | 114 | 48 | FAIL triangles < 60k (low was 75–86k in round 20: already over; the new pieces have no far LOD box) |
+- `MATCH_DEBUG=1 node tools/test/modematch-unit.mjs` ALL PASS on the dressed courtyard.
+- Bot matches: courtyard 60 s hard/normal/easy/easy with a joined watcher, 5 kills, no server errors (`/tmp/wa-environment/r22/botmatch-courtyard.log`);
+  **Sky Ruins 75 s: 9 void deaths among 3 bots (they walk off edges)**: spells' pathing, the data they need is in requests.md.
+- The in-game swap test `/tmp/wa-environment/r22/swap.py` (courtyard → sky → courtyard through world.js on the real page): no errors, programs 54 → 55 → 55.
+- `tools/test/botmatch.mjs` against a public room whose humans have left reports 0 kills (the match is paused); `botmatch-sky.mjs` joins first.
+
+**Not done / known.**
+- **Banner sway and the motes over the rune circle** (the brief's "liveliness"): not done. The plan: all banners through the tint program with a per-vertex
+  weight and `uTime` (no new program); motes on the torch flames' Points material.
+- **Low tier** is over its 60k target (it was before); far LOD boxes for the altar's foundation blocks and the stalls' roofs would help (`tools/bake-kit-lod.py`).
+- **Puddles, lanterns, birds, statues:** no assets; the wish-list is in requests.md `acd7b87`.
+- The weed tiles read as bright green squares from above; fine at ground level. Vines are flat cut-outs.
+- The camera still clips into banners (they aren't camera-solid), as before.
+- Ports: 4102 stopped.
 
 ## Round 15: the castle courtyard (`886c687`, `e3b595d`, `15949f0`, plus requests `f7ca1d1`, `2ff6edc`, `fa35c3a`)
 **What's built.** A 53 m square KayKit castle inside the old 40 m arena circle:
