@@ -579,6 +579,8 @@ function unreachableSurfaces() {
     return pts;
   };
   const reached = new Set();
+  // round 22: on a map with no ground (Sky Ruins) the walk starts from the floors under the spawn points, not the void
+  if (C.MAP_INFO?.ground === 'none') for (const [x, , z] of C.SPAWN_POINTS) for (const s of stand) if (inside(s, x, z)) reached.add(s);
   for (let pass = 0, grew = true; grew && pass < 12; pass++) {
     grew = false;
     for (const s of stand) {

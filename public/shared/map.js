@@ -263,14 +263,15 @@ if (IS_NODE) {
 //   floor   a rectangle of ground tiles (`model`, `w` x `d` m), drawn only: the ground is at 0 under it. `mix`: other tile
 //           models sprinkled in ('castle/a,castle/b'), `seed` for where
 //   block   an invisible box (`w` x `d`, from `y` up `h`): blocks movement only (an edge you can't walk or jump off),
-//           unless `shots: 1` (blocks spells and sight too) or `stand: 1` (you can stand on its top)
+//           unless `shots: 1` (blocks spells and sight too) or `stand: 1` (you can stand on its top); `rock: 1` (round 22,
+//           Sky Ruins) draws a rocky underside hanging from its footprint (ISLANDS), the island whose floor tiles sit on it
 //   deco    any other model from public/models fitted to `h` m, lifted by `y`; a round collider when `r` > 0 (`colH` tall)
 //   prop    a throwable (PROP_TYPES `type`; its id is its index + 1 among the props), spawn (facing rotY), heal (named spot);
 //           a spawn or heal spot stands on top of what's there unless its `y` says otherwise (under a deck, inside the hall)
 //   bounds  the playable rectangle (`w` x `d`): blinks and thrown wizards are kept inside it (ARENA_BOUNDS)
 export const RUNE_TYPES = ['haste', 'fury', 'aegis', 'surge'];
 export const LAYOUT_KINDS = {
-  kit: ['model', 'y', 'solid', 'tint', 'light'], circle: ['r', 'h'], rune: ['type', 'y'], pad: ['tx', 'ty', 'tz', 'h', 'r', 'y'], portal: ['link', 'r', 'y'], floor: ['model', 'w', 'd', 'mix', 'seed'], block: ['w', 'd', 'y', 'h', 'shots', 'stand'],
+  kit: ['model', 'y', 'solid', 'tint', 'light'], circle: ['r', 'h'], rune: ['type', 'y'], pad: ['tx', 'ty', 'tz', 'h', 'r', 'y'], portal: ['link', 'r', 'y'], floor: ['model', 'w', 'd', 'mix', 'seed'], block: ['w', 'd', 'y', 'h', 'shots', 'stand', 'rock'],
   deco: ['model', 'h', 'y', 'r', 'colH'], prop: ['type'], spawn: ['y'], heal: ['name', 'y'], bounds: ['w', 'd'],
 };
 // Stable pretty JSON for layout.json: one entry per line, keys in a fixed order, numbers to 4 decimals (0.1 mm), so a
@@ -398,7 +399,7 @@ export const SCATTER_SETTINGS = {}, ARENA_BOUNDS = {};
 export const PROP_SPAWNS = [], SPAWN_POINTS = [], HEAL_SPOTS = [], COLLIDERS = [], LOS_VOLUMES = [], KIT_PIECES = [], FLOORS = [], DECOS = [], RUNE_CIRCLES = [];
 // Round 22: RUNE_SPAWNS { id, x, y, z, type (null: random) }, JUMP_PADS { id, x, y, z, r, target: [x, y, z], h, yaw (facing the
 // target) }, PORTALS { id, x, y, z, r, link, yaw (facing the other end) }.
-export const RUNE_SPAWNS = [], JUMP_PADS = [], PORTALS = [];
+export const RUNE_SPAWNS = [], JUMP_PADS = [], PORTALS = [], ISLANDS = [];   // ISLANDS: { id, x, z, w, d, yaw, top, bottom } (blocks with rock: 1)
 // A jump pad's arc for a point mass under `gravity` (JUMP.gravity on both the server and the client, so both compute the
 // same flight): up to the apex `h` above the pad, then down to the target. Returns { v: [vx, vy, vz] (m/s), t (s), h }.
 export function padLaunch(pad, gravity) {
@@ -430,6 +431,7 @@ export function buildMap(L, name = ACTIVE_MAP.name) {
     out.SURFACES.push({ kind: 'box', x: e.x, z: e.z, w: e.w * k, d: e.d * k, yaw: e.rotY || 0, top: y + h, ...(y > 0.05 ? { thick: h } : {}),
       name: e.id, piece: e.id, style: 'block', ...(e.shots ? {} : { moveOnly: true }), ...(e.stand ? {} : { noStand: true }) });
   }
+  out.ISLANDS = of('block').filter(e => e.rock).map(e => ({ id: e.id, x: e.x, z: e.z, w: e.w * S_(e), d: e.d * S_(e), yaw: e.rotY || 0, top: (e.y || 0) + (e.h ?? 3) * S_(e), bottom: e.y || 0 }));
   out.FLOORS = of('floor').map(e => ({ id: e.id, model: e.model, x: e.x, z: e.z, w: e.w * S_(e), d: e.d * S_(e), yaw: e.rotY || 0,
     mix: e.mix ? String(e.mix).split(',').map(s => s.trim()).filter(Boolean) : [], seed: e.seed ?? 1 }));
   out.RUNE_CIRCLES = of('circle').map(e => ({ id: e.id, x: e.x, z: e.z, y: e.y || 0, r: (e.r ?? 6) * S_(e), h: (e.h ?? 5) * S_(e) }));
@@ -471,7 +473,7 @@ export function buildMap(L, name = ACTIVE_MAP.name) {
 
 // Rebuild every export from `L` in place: arrays keep their identity (emptied and refilled), objects are cleared and
 // reassigned, so every module holding a reference sees the new layout.
-const EXPORTS = { SCATTER_SETTINGS, ARENA_BOUNDS, MAP_INFO, PROP_SPAWNS, SPAWN_POINTS, HEAL_SPOTS, COLLIDERS, LOS_VOLUMES, KIT_PIECES, FLOORS, DECOS, RUNE_CIRCLES, RUNE_SPAWNS, JUMP_PADS, PORTALS, SURFACES };
+const EXPORTS = { SCATTER_SETTINGS, ARENA_BOUNDS, MAP_INFO, PROP_SPAWNS, SPAWN_POINTS, HEAL_SPOTS, COLLIDERS, LOS_VOLUMES, KIT_PIECES, FLOORS, DECOS, RUNE_CIRCLES, RUNE_SPAWNS, JUMP_PADS, PORTALS, ISLANDS, SURFACES };
 function assignExports(m) {
   for (const [k, target] of Object.entries(EXPORTS)) {
     const v = m[k];

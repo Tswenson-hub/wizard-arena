@@ -11,6 +11,54 @@ import * as Q from './quality.js';   // round 20: the graphics tier (spells)
 
 const flat = (color, extra = {}) => new THREE.MeshStandardMaterial({ color, flatShading: true, roughness: 0.9, metalness: 0.0, ...extra });
 
+// ------------------------------------------------------------ round 22: more than one map
+// Everything this module puts in the scene is tagged (addW), so switchMap can take it out again and build the next map while the
+// wizards, props and effects stay. GLBs are fetched once per page (glbs): preloadMap warms the next map's models in the background,
+// and a switch then takes well under a second. A map's layout block (map.js MAP_INFO) says how the world looks: `ground: 'none'`
+// (Sky Ruins) draws clouds under the islands instead of the grass and the hills, and no trees.
+const addW = (scene, ...objs) => { for (const o of objs) o.userData.world = true; scene.add(...objs); };
+const glbs = new Map();   // url -> Promise<gltf>
+const loadGlb = (loader, url) => glbs.get(url) ?? glbs.set(url, new Promise((res, rej) => loader.load(url, res, undefined, (err) => { glbs.delete(url); rej(err); }))).get(url);
+const skyMap = () => C.MAP_INFO?.ground === 'none';
+function clearWorld(scene) {
+  const keep = new Set(Object.values(kitGeo).flat().map(([g]) => g));   // the kit geometries are cached for the next build
+  for (const o of [...scene.children]) {
+    if (!o.userData.world) continue;
+    scene.remove(o);
+    o.traverse(m => { if ((m.isMesh || m.isPoints || m.isSprite || m.isLine) && m.geometry && !keep.has(m.geometry)) m.geometry.dispose(); });
+  }
+  spinners.length = 0; lodSets.length = 0; torchLights.length = 0; flameItems.length = 0;
+  camGrid = null; sun = null; followShadow = false;
+  scene.onBeforeRender = () => {};
+}
+// The models a map's layout places (its kit pieces, floor tiles and decos), for preloading.
+function mapModels(layout) {
+  const out = new Set();
+  for (const e of layout?.entries || []) {
+    if (e.kind === 'kit' && e.model in C.KIT_MODELS) out.add(e.model);
+    else if (e.kind === 'floor') { out.add(e.model); for (const m of String(e.mix || '').split(',')) if (m.trim()) out.add(m.trim()); }
+    else if (e.kind === 'deco' && e.model) out.add(e.model);
+  }
+  return [...out];
+}
+// Fetch a map's layout and its models now, so a later switchMap to it is quick (nothing changes on screen).
+export async function preloadMap(loader, name) {
+  const M = await C.loadMap(name);
+  loader.setMeshoptDecoder?.(MeshoptDecoder);
+  await Promise.all(mapModels(M.layout).map(m => loadGlb(loader, `./models/${m}.glb`).catch(() => {})));
+  return M;
+}
+// Take the current map's world out of the scene and build `name`'s in its place (the map data switches too: map.js setActiveMap).
+// Resolves when the new world is loaded. Call it under a fade; the camera grid, torches and LODs are rebuilt for the new map.
+export async function switchMap(loader, scene, name) {
+  await C.loadMap(name);
+  clearWorld(scene);
+  C.setActiveMap(name);
+  buildWorld(scene);
+  await loadModels(loader, scene);
+  return C.ACTIVE_MAP.name;
+}
+
 export function groundHeight(x, z) {
   const r = Math.hypot(x, z);
   const rise = Math.max(0, r - C.ARENA_RADIUS - 2);
@@ -117,7 +165,7 @@ export function buildWorld(scene) {
 
   // a cool blue sky light and warm sunbeams, as in the painting
   const hemi = new THREE.HemisphereLight(0xd6efff, 0x6a6a58, 1.15);
-  scene.add(hemi);
+  addW(scene, hemi);
   sun = new THREE.DirectionalLight(0xffe9c4, 2.3);
   sun.position.copy(SUN_DIR).multiplyScalar(SUN_DIST);
   sun.castShadow = Q.boot.shadows !== 'off';   // (from the start: a light that stops casting later recompiles every lit shader)
@@ -128,9 +176,15 @@ export function buildWorld(scene) {
   sun.shadow.camera.near = 10; sun.shadow.camera.far = 130;
   sun.shadow.bias = -0.0005;
   sun.shadow.normalBias = 0.02;
-  scene.add(sun, sun.target);
+  addW(scene, sun, sun.target);
   followShadow = false;
 
+  if (skyMap()) {   // round 22, Sky Ruins: a cloud sea below the islands, the peaks poking through it far off
+    scene.fog = new THREE.Fog(SKY.fog, 70, 230);
+    const vista = mountainVista(VISTA_SKY); vista.userData.cat = 'mountains'; addW(scene, vista);
+    addW(scene, ...cloudLayers());
+    return { sun };
+  }
   // Ground: a big grid, flat inside the arena and rising into rolling hills outside it, all Ty's grass. The courtyard's
   // stone floor is drawn over it (layout 'floor' entries, see loadModels).
   // (round 20: its grid follows the boot tier; the hills are gentle and the fog takes their far side)
@@ -145,11 +199,11 @@ export function buildWorld(scene) {
   const ground = new THREE.Mesh(groundGeo, grassGround());
   ground.receiveShadow = true;
   ground.userData.cat = 'ground';
-  scene.add(ground);
+  addW(scene, ground);
 
   const vista = mountainVista();
   vista.userData.cat = 'mountains';
-  scene.add(vista);
+  addW(scene, vista);
   return { sun };
 }
 
@@ -160,7 +214,8 @@ export function buildWorld(scene) {
 // The cylinder's foot hides behind the hills (they top out about 23 m up at the ground's edge, 120 m out); the haze
 // toward its foot is the fog's colour. Turned so the paintings' warm, lit flank faces the sun.
 const VISTA = { r: 160, y0: 24, h: 44, tiles: 6 };
-function mountainVista() {
+const VISTA_SKY = { ...VISTA, y0: -48 };   // Sky Ruins: the same peaks seen from above, their tops just out of the cloud sea
+function mountainVista(V = VISTA) {
   const tex = new THREE.TextureLoader().load('./textures/sky/mountain_vista.webp');
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.wrapS = THREE.MirroredRepeatWrapping; tex.wrapT = THREE.ClampToEdgeWrapping;
@@ -181,7 +236,7 @@ function mountainVista() {
         texel.a *= smoothstep(0.0, 0.08, vMapUv.y);
         diffuseColor *= texel;`);
   };
-  const geo = new THREE.CylinderGeometry(VISTA.r, VISTA.r, VISTA.h, 160, 1, true).translate(0, VISTA.y0 + VISTA.h / 2, 0);
+  const geo = new THREE.CylinderGeometry(V.r, V.r, V.h, 160, 1, true).translate(0, V.y0 + V.h / 2, 0);
   const m = new THREE.Mesh(geo, mat);
   m.rotation.y = 0.35;
   m.renderOrder = -1; m.frustumCulled = false;
@@ -189,6 +244,68 @@ function mountainVista() {
 }
 
 export const spinners = [];
+
+// ------------------------------------------------------------ Sky Ruins (round 22): the cloud sea and the islands' rock
+// Two wide translucent planes under the islands, their cover a drifting value noise (the one shader program this map adds; the
+// courtyard's grass program isn't compiled here). Where the cover thins the lowered peaks show through.
+const CLOUDS = { y: [-7, -16], size: 700, scale: [0.013, 0.02], speed: 0.0045 };
+function cloudLayers() {
+  const out = [];
+  CLOUDS.y.forEach((y, i) => {
+    const mat = new THREE.MeshBasicMaterial({ color: i ? 0xd9e6f2 : 0xffffff, transparent: true, depthWrite: false, side: THREE.DoubleSide });
+    mat.customProgramCacheKey = () => 'clouds';
+    mat.onBeforeCompile = (sh) => {
+      sh.uniforms.uTime = torchTime; sh.uniforms.uScale = { value: CLOUDS.scale[i] }; sh.uniforms.uSeed = { value: 17.0 * i + 3.0 };
+      worldPosVarying(sh);
+      sh.fragmentShader = sh.fragmentShader.replace('void main() {', `varying vec3 vGPos; uniform float uTime, uScale, uSeed;${NOISE_GLSL}
+        float cloudFbm(vec2 p) { return 0.5 * gNoise(p) + 0.25 * gNoise(p * 2.03 + 1.7) + 0.125 * gNoise(p * 4.1 + 3.1) + 0.0625 * gNoise(p * 8.3 + 5.0); }
+        void main() {`)
+        .replace('#include <color_fragment>', `#include <color_fragment>
+          vec2 cp = vGPos.xz * uScale + vec2(uTime * ${CLOUDS.speed.toFixed(4)}, uSeed);
+          float cover = cloudFbm(cp) + 0.08 * gNoise(vGPos.xz * 0.0025 + uSeed);
+          float a = smoothstep(0.40, 0.62, cover);
+          diffuseColor.rgb *= 0.82 + 0.28 * smoothstep(0.45, 0.85, cover);   // thicker cloud is brighter on top
+          diffuseColor.a *= a * 0.96;`);
+    };
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(CLOUDS.size, CLOUDS.size, 1, 1).rotateX(-Math.PI / 2), mat);
+    m.position.y = y; m.renderOrder = -1 + i; m.frustumCulled = false; m.userData.cat = 'clouds';
+    out.push(m);
+  });
+  return out;
+}
+// Each island block (map.js ISLANDS: its footprint and top) hangs a lump of rock: rings of its square outline shrinking down to a
+// point about as deep as the island is wide, every vertex pushed in or out by a hash so it reads as cliff, flat-shaded (per-face
+// normals), drawn with the castle stone's material on a grey texel of its palette: no shader program of its own.
+const ROCK_UV = [664.5 / 1024, 130.5 / 1024];   // a warm grey stone swatch
+function islandRock(I) {
+  const rings = [[0, 1.04], [0.12, 1.0], [0.3, 0.86], [0.55, 0.6], [0.8, 0.3], [1, 0.0]], N = 20;
+  const depth = 0.75 * Math.max(I.w, I.d) + 3, hash = (a, b) => { const v = Math.sin(a * 127.1 + b * 311.7 + I.x * 3.1 + I.z * 1.7) * 43758.5453; return v - Math.floor(v); };
+  const c = Math.cos(I.yaw), sn = Math.sin(I.yaw);
+  const ringPts = rings.map(([down, k], ri) => Array.from({ length: N }, (_, i) => {
+    const a = (i + 0.5 * (ri % 2)) / N * Math.PI * 2, ca = Math.cos(a), sa = Math.sin(a);
+    const r = ri === rings.length - 1 ? 0 : Math.min(I.w / 2 / Math.max(1e-3, Math.abs(ca)), I.d / 2 / Math.max(1e-3, Math.abs(sa))) * k * (0.86 + 0.28 * hash(ri, i));
+    const lx = ca * r, lz = sa * r, y = I.top - 0.08 - down * depth * (0.92 + 0.16 * hash(i, ri));
+    return [I.x + lx * c + lz * sn, y, I.z - lx * sn + lz * c];
+  }));
+  const pos = [];
+  for (let r = 0; r + 1 < rings.length; r++) for (let i = 0; i < N; i++) {
+    const a = ringPts[r][i], b = ringPts[r][(i + 1) % N], c2 = ringPts[r + 1][i], d = ringPts[r + 1][(i + 1) % N];
+    pos.push(...a, ...c2, ...b, ...b, ...c2, ...d);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(Array.from({ length: pos.length / 3 }, () => ROCK_UV).flat(), 2));
+  geo.computeVertexNormals();   // non-indexed: one normal per face
+  return geo;
+}
+function buildIslands(scene) {
+  if (!C.ISLANDS?.length) return;
+  const geos = C.ISLANDS.map(islandRock);
+  const mesh = new THREE.Mesh(mergeGeometries(geos), kitMaterial('castle/rock', null));
+  for (const g of geos) g.dispose();
+  mesh.castShadow = true; mesh.receiveShadow = true; mesh.userData.cat = 'islands'; mesh.userData.cam = 'solid';
+  addW(scene, mesh);
+}
 
 // ------------------------------------------------------------ models
 // Optimised copies (see tools/optimize-models.sh). `models` holds the ones other modules clone: the potion barrel and the
@@ -296,7 +413,7 @@ function treeMatrix([x, z, yaw, h]) {
 }
 function treeLod(scene, name, group, items) {
   const hi = group ? [...group.children] : [], lo = [new THREE.InstancedMesh(impostorUnit(IMPOSTOR.cells.indexOf(name)), impostorMaterial(), items.length)];
-  for (const im of [...hi, ...lo]) { im.userData.cat = 'trees'; scene.add(im); }
+  for (const im of [...hi, ...lo]) { im.userData.cat = 'trees'; addW(scene, im); }
   lodSet('tree', items.map(it => ({ x: it[0], z: it[1], m: treeMatrix(it) })), hi, lo);
 }
 // Kit pieces (KIT_LOD.models): the real piece near, past LOD_DIST.kit a box of up to five quads textured with its own
@@ -327,7 +444,7 @@ function kitLod(scene, model, meshes, items, faces, { cat, solid }) {
   const mk = (geo, mat) => {
     const im = new THREE.InstancedMesh(geo, mat, items.length);
     im.castShadow = false; im.receiveShadow = true; im.userData.cat = cat;
-    scene.add(im);
+    addW(scene, im);
     return im;
   };
   // the real piece near: the stone's settings, alpha-tested too (the palette is opaque, nothing is cut) so the near pieces
@@ -597,7 +714,7 @@ function addTorchFlames(scene, model, items) {
       .replace('gl_PointSize = size;', 'gl_PointSize = size * (0.85 + 0.15 * sin(uTime * 11.0 + position.x * 3.1 + position.z * 1.7) * sin(uTime * 6.7 + position.x));');
   };
   const pts = new THREE.Points(geo, mat); pts.frustumCulled = false; pts.renderOrder = 5; pts.userData.cat = 'torches';
-  scene.add(pts);
+  addW(scene, pts);
   // the flame itself (KayKit's mounted torch is an unlit holder): a small bright cone in each, one draw call. Round 20:
   // drawn with the torches' own material on a flame-coloured texel of the palette (FLAME_UV), which its shader makes
   // glow, so the cones need no shader program of their own.
@@ -610,13 +727,13 @@ function addTorchFlames(scene, model, items) {
   const cone = new THREE.Mesh(mergeGeometries(cones), kitMaterial(model, null));
   for (const c of cones) c.dispose();
   cone.userData.cat = 'torches';
-  scene.add(cone);
+  addW(scene, cone);
   const pick = [...flameItems].sort((a, b) => (b.light - a.light) || (Math.hypot(a.p[0], a.p[2]) - Math.hypot(b.p[0], b.p[2])));
   for (const fl of pick) {
     const at = new THREE.Vector3(...fl.p);
     if (torchLights.length >= TORCH_LIGHTS || torchLights.some(l => l.position.distanceTo(at) < 8)) continue;
     const L = new THREE.PointLight(0xff9a48, 6, 9, 1.6); L.position.copy(at); L.userData.base = 6; L.userData.ph = torchLights.length * 1.7;
-    torchLights.push(L); scene.add(L);
+    torchLights.push(L); addW(scene, L);
   }
 }
 function torchTick() {
@@ -654,7 +771,7 @@ function buildRunes(scene) {
     halo.scale.setScalar(3.2); halo.position.y = R.h;
     g.add(ring, crystal, halo); g.position.set(R.x, R.y || 0, R.z); g.userData.cat = 'runes';
     spinners.push(crystal);
-    scene.add(g);
+    addW(scene, g);
   }
 }
 
@@ -664,7 +781,7 @@ export function loadModels(loader, scene, { cameraGrid = true, merge = cameraGri
   const buckets = new Map(), proxyGeos = [];
   const shadowsOn = Q.boot.shadows !== 'off';
   loader.setMeshoptDecoder?.(MeshoptDecoder);   // the map's models are meshopt-compressed (tools/optimize-models.sh)
-  const load = (url) => new Promise((res, rej) => loader.load(url, res, undefined, rej));
+  const load = (url) => loadGlb(loader, url);   // (round 22: fetched once per page; preloadMap warms the next map's)
   const solid = (o) => { o.userData.cam = 'solid'; return o; };   // the camera boom stops at it (see cameraClearance)
   // every kit model the layout places (pieces and floor tiles), each loaded once
   const placed = new Map();   // model -> [{ x, y, z, yaw, s, floor }]
@@ -676,6 +793,7 @@ export function loadModels(loader, scene, { cameraGrid = true, merge = cameraGri
   lodSets.length = 0;
   const lodData = merge ? fetch(KIT_LOD.json).then(r => r.json()).catch(() => null) : Promise.resolve(null);
   buildRunes(scene);
+  buildIslands(scene);
   const propModels = Object.entries(C.PROP_TYPES).filter(([, T]) => T.model);
   return Promise.all([
     load('./models/potion.glb').then(g => { models.potion = fitModel(g, C.PROP_TYPES.potion.h); }, () => {}),
@@ -683,14 +801,14 @@ export function loadModels(loader, scene, { cameraGrid = true, merge = cameraGri
       for (const o of g.scene.children) o.traverse(m => { if (m.isMesh) m.material = kitMaterial(T.model, m.material); });
       models.props[type] = fitModel(g, T.h);
     }, () => {})),
-    ...[...placed].map(([model, items]) => Promise.all([load(`./models/${model}.glb`), lodData]).then(([g, lod]) => {
-      const meshes = kitMeshes(model, g), faces = merge && lod?.models?.[model]?.faces;
+    ...[...placed].map(([model, items]) => Promise.all([kitGeo[model] ? null : load(`./models/${model}.glb`), lodData]).then(([g, lod]) => {
+      const meshes = kitGeo[model] || kitMeshes(model, g), faces = merge && lod?.models?.[model]?.faces;
       let floors = items.filter(it => it.floor), pieces = items.filter(it => !it.floor);
       // ground tiles: no shadows cast, not in the camera grid; pieces: solid to the camera, one set per tint (an
       // element-coloured banner); torches aren't solid to the camera and get a flame glow. A model with a baked far box
       // (KIT_LOD) is drawn by its LOD set instead of the merge (its tinted pieces, if any, still merge).
       if (faces && floors.length) { kitLod(scene, model, meshes, floors, faces, { cat: 'floors', solid: false }); floors = []; }
-      if (floors.length) { if (merge) bucketPieces(buckets, model, meshes, floors, { shadows: false, solid: false, cat: 'floors' }); else scene.add(kitInstances(model, meshes, floors, { shadows: false })); }
+      if (floors.length) { if (merge) bucketPieces(buckets, model, meshes, floors, { shadows: false, solid: false, cat: 'floors' }); else addW(scene, kitInstances(model, meshes, floors, { shadows: false })); }
       // (booted without shadows: no proxies, and casters merge with the rest, fewer draw calls)
       const proxy = merge && shadowsOn && pieces.length && castsShadow(model) && SHADOW_PROXY.models.test(model) && C.KIT_MODELS[model];
       if (proxy) proxyGeos.push(...shadowProxyGeometry(model, pieces));
@@ -702,7 +820,7 @@ export function loadModels(loader, scene, { cameraGrid = true, merge = cameraGri
       for (const tint of new Set(pieces.map(it => it.tint ?? null))) {
         const set = pieces.filter(it => (it.tint ?? null) === tint), torch = KIT_TORCH.test(model);
         if (merge) bucketPieces(buckets, model, meshes, set, { tint, solid: !torch, shadows, cat });
-        else { const inst = kitInstances(model, meshes, set, { tint, shadows }); scene.add(torch ? inst : solid(inst)); }
+        else { const inst = kitInstances(model, meshes, set, { tint, shadows }); addW(scene, torch ? inst : solid(inst)); }
       }
       if (KIT_TORCH.test(model) && pieces.length) addTorchFlames(scene, model, pieces);   // (torches never take the LOD)
     }, (err) => console.warn(`kit model ${model} failed to load`, err))),
@@ -714,18 +832,25 @@ export function loadModels(loader, scene, { cameraGrid = true, merge = cameraGri
     }, () => {})),
     // decoration placed in the map editor (layout kind 'deco'): any other model, fitted to its height
     ...[...new Set(C.DECOS.map(d => d.model))].map(name => load(`./models/${name}.glb`).then(g => {
+      // round 22: a low-poly *_far tree placed as a deco (a planter's tree) is drawn like the near trees outside, instanced on
+      // the model's own material (no see-through): the same shader program they already use, not a new one
+      if (/_far$/.test(name)) {
+        const items = C.DECOS.filter(q => q.model === name).map(d => [d.x, d.z, d.yaw, d.h, 0, 0, groundHeight(d.x, d.z) - 0.05 * d.h - d.y]);
+        const grp = instanced(g, items, false); grp.userData.cat = 'trees'; addW(scene, grp);
+        return;
+      }
       const unit = fitModel(g, 1), tree = TREE_MODEL.test(name);
       if (tree) seeThrough(g.scene);
       for (const d of C.DECOS.filter(q => q.model === name)) {
         const holder = new THREE.Group(); holder.add(unit.clone());
         if (!tree) solid(holder);
         holder.position.set(d.x, d.y, d.z); holder.rotation.y = d.yaw; holder.scale.setScalar(d.h);
-        scene.add(holder);
+        addW(scene, holder);
       }
     }, () => {})),
   ]).then(() => {
-    if (merge) scene.add(mergedPieces(buckets));
-    if (proxyGeos.length) scene.add(shadowProxies(proxyGeos));
+    if (merge) addW(scene, mergedPieces(buckets));
+    if (proxyGeos.length) addW(scene, shadowProxies(proxyGeos));
     followShadow = cameraGrid;   // the game's shadow follows the view; the editor's stays wide and static
     applyQuality();
     scene.onBeforeRender = (renderer, sc, camera) => { cutawayTick(); torchTick(); shadowFollow(camera); lodTick(camera); };
