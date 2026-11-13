@@ -54,11 +54,16 @@ the 95aca29 build on 4198, the `8a6e855` build on 4199; everything headless on t
   line with the frame budget untouched; **the coordinator's call** (posted in requests.md). Sky Ruins went 62 → 58 programs with `8476562`.
   One `b003200` courtyard run at 200 ms read 28 reversals/min for the remote wizards (0–5 in every other run): bots turning on pads and
   runes rather than the netcode, I think; a check to watch.
+- **Re-run at `a7d177c` and `1d192c5`** (spells' Sky Ruins bot fixes and the map-change physics hold): `smoke.py` PASS, `subpath_test.py` PASS
+  (9.2 MB in 402 responses), `legacy_test.py --fast` PASS, `perf_test --map sky` PASS (60 fps, 49.9k triangles, 83 calls, 58 programs;
+  `/tmp/wa-deploy/r22/perf5-sky-0.json`). `c6e313a` (bots' ranges and pad use, `server/bots.js` only) landed after those runs; the zip is
+  built from it and its client is `1d192c5`'s.
 - **Not done here:** the live smoke after the push (the coordinator's, with Ty's go-ahead); a real-browser look at Sky Ruins (the headless
   mid-match shot `perf-sky-0.png` has the camera inside an island's rock for a frame: worth a glance on localhost:3000).
 - **If a newer commit is the one pushed:** `git -C /tmp/wa-deploy/wt checkout --detach <sha>` and restart 4105 from it, then the three
   quick runs above (`smoke.py`, `subpath_test.py` on a `--ref <sha>` build, `legacy_test.py --fast`) take about 5 minutes, and
-  `npm run build:crazygames -- --ref <sha>` remakes the zip. The worktree and the ports 4105 / 4196–4199 are stopped at the end of this round.
+  `npm run build:crazygames -- --ref <sha>` remakes the zip. The worktree is removed and the ports 4105 / 4196–4199 are stopped; `dist/crazygames-legacy`
+  (the 95aca29 build pointed at 4105) and `dist/crazygames-local` (the `1d192c5` build) are left for the next run.
 
 ## Round 18: saves (deploy's part)
 - `8b425e8` **platform.js:** `getUserToken()` → the `IN_GAME_AUTH` JWT, or null (guest: `getUser()` null; no SDK; any error, e.g.
@@ -148,10 +153,10 @@ python3 deploy/subpath_test.py http://localhost:4199/game/ /tmp/wa-deploy/subpat
 ## CrazyGames submission checklist (round 17)
 Sources: docs.crazygames.com, "Technical requirements", "Gameplay requirements", "Game covers" and "Multiplayer" (read 2026-10-30).
 
-### What to upload (zip from `8a6e855`, round 22; rebuild from the commit that's pushed to Render)
+### What to upload (zip from `c6e313a`, round 22; rebuild from the commit that's pushed to Render)
 | What | Path | Notes |
 |---|---|---|
-| **Game zip** | `dist/crazygames.zip` (gitignored; rebuild with `npm run build:crazygames -- --ref <sha>`) | **built from `8a6e855`** (round 22: first to 10, runes, jump pads, the dressed courtyard, Sky Ruins in rotation; rounds 19–21 stats, perf, first visit): **445 files, 10.4 MB unzipped, 7.1 MB zip**, sha256 `08fae6edb4092fd1…`, no secrets (the build checks); talks to `wss://wizard-arena-76od.onrender.com`. **Round 22 is backward-compatible:** the server keeps the live build (`95aca29`, no `proto`) playing in legacy rooms, so Render can be pushed before the new zip is approved; players on the old version just don't see runes, pads or Sky Ruins until it is |
+| **Game zip** | `dist/crazygames.zip` (gitignored; rebuild with `npm run build:crazygames -- --ref <sha>`) | **built from `c6e313a`** (round 22: first to 10, runes, jump pads, the dressed courtyard, Sky Ruins in rotation; rounds 19–21 stats, perf, first visit; its `public/` is `1d192c5`'s, the commit the quick set and a Sky Ruins perf run passed on; `c6e313a` itself changes `server/bots.js` only): **445 files, 10.4 MB unzipped, 7.1 MB zip**, sha256 `66223536280e56d0…`, no secrets (the build checks); talks to `wss://wizard-arena-76od.onrender.com`. **Round 22 is backward-compatible:** the server keeps the live build (`95aca29`, no `proto`) playing in legacy rooms, so Render can be pushed before the new zip is approved; players on the old version just don't see runes, pads or Sky Ruins until it is |
 | **Cover, landscape 1920×1080** | `deploy/crazygames/store/covers/cover-hero-landscape-1920x1080.jpg` | recommended: the Mage up close in the courtyard |
 | **Cover, portrait 800×1200** | `deploy/crazygames/store/covers/cover-hero-portrait-800x1200.jpg` | same frame, cropped |
 | **Cover, square 800×800** | `deploy/crazygames/store/covers/cover-hero-square-800x800.jpg` | same frame, cropped |
@@ -164,7 +169,7 @@ rules). The three covers in each set are crops of one 2400×2400 frame, so they 
 picked by eye from four runs at `04fd64b` (round 16 changed spells and balance, not the castle or the bodies, so they still show the game as it is); the raw renders are in `dist/store-r3`, `-r4`, `-r5` until `dist/` is cleaned.
 
 ### 1. Build and server
-- `npm run build:crazygames -- --ref <approved sha>` (no `--allow-abs`; it must exit 0). The zip above is from `8a6e855`; rebuild it
+- `npm run build:crazygames -- --ref <approved sha>` (no `--allow-abs`; it must exit 0). The zip above is from `c6e313a`; rebuild it
   from whatever is pushed, so the client and the server match (from round 22 on, an older client still plays, in a legacy room).
 - Render must run the **same commit's** server (the protocol changes between rounds): the coordinator pushes it to `main` (Ty's go-ahead)
   before or with the upload. Then `python3 deploy/smoke.py https://wizard-arena-76od.onrender.com`.
