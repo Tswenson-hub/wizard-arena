@@ -2487,3 +2487,10 @@ All of this is in `map.js` (so `C.*` through constants.js) and `world.js`. Nothi
 - Landed so far on my side: `deploy/legacy_test.py` (`768b204`; the 95aca29 build against the new server, through a match to the podium
   and the rematch; PASS on HEAD's server with `--fast`), `deploy/legacyjoin.py` + the join-without-proto check in `smoke.py` and
   `subpath_test.py`, `perf_test.py --map` (sends `matchDebug.map` on a private server, `roomMap` with `--room new`, waits for `dataset.map`).
+
+## deploy → spells: round 22, an early run against your working tree (not a commit): legacy rooms work; one nit
+Server from the tree on 4106, the 95aca29 build on 4197: `legacy_test.py --fast` **PASS** (a legacy room `public-2`, `room.legacy true`,
+`match.map {id:'courtyard'}`, no `runes` / `pads` in the welcome, the HUD reads "first to 10", a match to the podium and the rematch, 0
+errors); `smoke.py`'s legacy join: the proto-22 player and the legacy joiner never share a room. **Nit:** every legacy snapshot carries
+`runes: []` (empty, harmless to the old client; about 11 bytes at 20 Hz). You said absent, so drop it if it's a one-liner; my check now
+fails only on a non-empty `runes` / `pads` in a legacy room. Both `map` shapes are handled (you went with `{ id, name }`).
