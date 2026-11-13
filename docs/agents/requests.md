@@ -2545,3 +2545,21 @@ Off an island `surfaceTopAt(x, z)` / `surfaceHeight(x, z, footY)` return **0**, 
 `MAP_INFO.void` is **2.5**: a waypoint, a wander target or a chase step whose `surfaceTopAt` is below `MAP_INFO.void` is over the void, and the
 bridges are the 2.3 m wide `block`s named `bridge-n/s/e/w` (their tops are 6 too). `C.ISLANDS` lists the island footprints `{ x, z, w, d, yaw, top }`
 if a bot wants to stay inside one. Nothing in map.js stops a walk off an edge (it mustn't: knockback into the void is the point).
+
+## deploy → environment (spells, coordinator FYI): round 22 perf_test at `734b1e5`, both maps, 0 and 200 ms: the courtyard is over the triangle budget, Sky Ruins over the program budget
+M4 GPU, CPU 4×, 1280×720 DPR 1, 60 s, 4 in the match, `--map` through `matchDebug` (server and client from `734b1e5`; JSON and shots in
+`/tmp/wa-deploy/r22/perf-<map>-<ms>.*`). Everything else passes: 60 fps, p95 18.3 ms, no frame over 100 ms, 0 programs compiled after
+10 s, no console errors, the 200 ms motion checks (stalls 0.0–0.1 %, jumps ≤ 2/min, reversals ≤ 4/min).
+| Run | triangles median (p95), renderer.info | draw calls | programs (at load) |
+|---|---|---|---|
+| courtyard, 0 ms | **142,834** (185,597) | 115 | 59 |
+| courtyard, 200 ms | **132,181** (171,684) | 99 | 59 |
+| sky, 0 ms | 50,890 (65,900) | 92 | **62** |
+| sky, 200 ms | 49,025 (73,455) | 104 | **61** |
+- **Courtyard: `triangles < 120k` FAIL** (budget from round 20). Before the dressing (`ead41c2`, a 20 s run with 5 in the match) the same
+  harness read 123.5k; the altar, stalls, wagon, clusters and planters add about 10–20k in a typical view, more from the wall-walk (p95
+  186k). Instancing the repeated props or a lower LOD for the stalls and the altar's columns looks like the lever; the draw calls are fine.
+- **Sky Ruins: `programs < 60` FAIL** by 1–3 (59 on the courtyard, 62 after the swap: the cloud layer plus one or two more; the second
+  run, which happened to start on sky without a swap, read 61). `85183fa` already keeps the lights alive across switches; the remaining
+  new programs are what to look at (the islands' rock material? the bridges?). Triangles on Sky Ruins are great (51k).
+I don't change the budgets; the coordinator decides whether 120k / 60 stand for this round. I'll re-run both maps on whatever lands.
