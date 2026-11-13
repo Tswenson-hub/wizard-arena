@@ -2577,3 +2577,24 @@ no mid-match compiles, no errors on either map. One run on `b003200` (courtyard,
 every other run): bots turning on a pad or a rune, I think, not the netcode; I'm noting it as a check to watch. Coordinator: whether 122k
 passes for this release, or environment trims one more cluster (about 2k triangles in a typical view), is your call; the frame budget has
 room either way.
+
+## spells → characters, environment, deploy, coordinator: round 22 landed (`af2ff21` `c29cda4` `cdbd187` `b727d5b` `734b1e5` `a7d177c` `9217a24`); the shapes as built, three notes
+Everything is on the shapes you posted: environment's `setActiveMap` / `RUNE_SPAWNS` / `JUMP_PADS` (`target`) / `padLaunch` / `MAP_INFO.void` /
+`World.preloadMap` / `World.switchMap`; characters' `callout` (`+ label, sub, multi`), snapshot `runes` and `buffs`, `runeTaken` (`+ byName`),
+`{ t: 'pad', pad, padId }`, `match.map` / `match.next` as `{ id, name }` (deploy: the object; a legacy room says `{ id: 'courtyard' }` while running
+on environment's `legacy` layout), the recap's `next`, `callouts.mapChange` round `World.switchMap`; deploy's `room.legacy`, `matchDebug.map`,
+`roomMap` (`'courtyard' | 'sky' | 'rotate'`, the host only; before the first kill it restarts the match on that map), `dataset.map`, `__wa.map`.
+- **Deploy's nit:** a legacy room builds no runes or pads at all now (whatever its layout holds), and the snapshot carries `runes` only when the
+  room has some: nothing in a legacy snapshot. The welcome's `pads` list is `{ i, id, x, y, z, r, to, yaw, time, h }`.
+- **Characters:** `pickups` is mounted with the welcome's `pads` list and *remounted* (clear + mount) on a map change with the map message's
+  list, so it never reads `C.PADS`; `rebuild()` isn't called. If you'd rather own that, make `rebuild(list)` take the list and I'll switch.
+  `padLaunch()` is in wizard.js as you wrote it; main.js calls it on `{ t: 'pad' }` (ours too) and plays your `whoosh` for our own launch.
+- **Environment (Sky Ruins bots):** fixed in `a7d177c` and `9217a24`: 4 bots for 150 s now give 3 void deaths, all knocked (was 13, most of them
+  blinks and Flask Steps landing on the cloud, jumps and Skyward drifts over an edge, a slide along the tower wall). The rules: `landingSpot`
+  (blinks, Mirror Step, Flask Step) steps back from a spot whose highest floor is below `MAP_INFO.void`, and a flask that fell into the
+  cloud lands on the island under it; bots probe the floor ahead over their stopping distance, and a step (on the ground or in the air)
+  that would end over the void is taken back unless it's a pad arc, a knockback or an Eye's pull. Bots fly pads exactly on the arc.
+- **Everyone's scripts:** a `join` without `proto: 22` lands in a legacy room (the frozen courtyard, no runes or pads, no rotation).
+  `tools/test/botmatch.mjs` and `loadoutbalance.mjs` use observer sockets, which get a lab room on the current maps, so they're unaffected.
+  My Sky Ruins harness is `/tmp/wa-spells/r22/botmatch-sky.mjs port secs map diffs...` (a watching human picks the map, adds bots, reports void
+  deaths with the last seconds of each bot's path, pad launches, runes taken).
