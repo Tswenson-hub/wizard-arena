@@ -2512,3 +2512,28 @@ rune and get buffed, or the room simulates pickups nobody sees: legacy rooms sho
 room with `legacy`, whichever map it's on; `room.map` reads `'courtyard'` there, with environment's `legacy` layout holding no rune or pad
 entries, if that's the lever). Everything else passed: `roomError.reason = 'version'` for an old join with a new room's code (seated in
 a legacy public room), the proto-22 player and the legacy joiner never share a room, `legacy_test.py --fast` to the podium.
+
+## environment → spells, characters, deploy (coordinator FYI): round 22 landed so far (`89f67e7` `a406a7c` `bf01e07`), the names you call, and the asset wish-list for Ty
+- **Map data** as posted (`setActiveMap`, `ACTIVE_MAP`, `MAPS`, `MAP_ORDER`, `RUNE_SPAWNS`, `JUMP_PADS` with `target`, `padLaunch`, `MAP_INFO.void`): in.
+  Spells' room.js and constants.js already read them, good. `MAPS.legacy` is the frozen courtyard; `MAP_ORDER` is `['courtyard', 'sky']`.
+- **Courtyard** (`a406a7c`): runes `rune-centre` (the new altar's top, 1.67 m), `rune-gatehouse` (0, −25, the deck), `rune-ne-tower`, `rune-sw-tower`
+  (the tower tops, 6.67 m); pads `pad-1` (17.5, 0 → the east walk), `pad-2` (−13.8, 2.2 → the hall balcony), `pad-3` / `pad-4` (±13.2 → the NE / SW
+  towers), `pad-5` / `pad-6` (across the altar, (−10, 13) ↔ (10, −11.5) and (10, −14) ↔ (−10, 11.5)). The gatehouse flask moved to (−9, −24.65).
+  The middle is a 5 m platform 1.67 m up with stairs on four sides: bots reach it by the ramps (`rampFoot`) or a jump plus a grab.
+- **Sky Ruins** (`bf01e07`, `layout-sky.json`): 46 m bounds, islands with floors at **6 m** (the tower deck 8.5 m), **`MAP_INFO.void = 2.5`**.
+  Off an island `surfaceTopAt` / `surfaceHeight` return 0 (the cloud floor), so a point whose floor is below `MAP_INFO.void` is off the map: bots
+  should never walk toward one, and a knocked-off wizard falls past 2.5 and dies before touching 0. 8 spawns (one on each outer island's far edge,
+  four on the lower deck's corners), flasks `north-shrine`, `south-shrine`, `east-stairs`, `west-stairs`, runes `rune-centre` (the tower, 8.5 m),
+  `rune-east`, `rune-west`, `rune-south-bridge` (on the bridge: knockback bait), pads `pad-1`..`pad-4` (a ring between the outer islands, over the
+  void) and `pad-5` / `pad-6` (the lower deck over the tower to the north / south islands). The tower is entered by gaps on its east and west sides.
+- **world.js:** **`World.preloadMap(loader, name)`** (fetches the layout and its models; nothing changes on screen) and
+  **`World.switchMap(loader, scene, name)`** (removes everything world.js added, `setActiveMap`, rebuilds; resolves when loaded). Spells: call
+  `preloadMap(loader, 'sky')` once the first match is live and `switchMap` under characters' fade; `setActiveMap` is done inside it, so call
+  `pickups.rebuild()` after it. The loader is main.js's GLTFLoader (world.js keeps its own fetched-once cache now).
+- **Perf** (normal, 1280×720, CPU 4×, `perf_test.py --seconds 30`, this tree with your uncommitted files in it): the dressed courtyard reads
+  120–134k triangles median across runs against the same harness's 1xx k on the frozen legacy layout (numbers in my hand-off when the
+  comparison finishes); programs 59 (the deco trees are instanced on the far trees' program). Sky Ruins is far lighter (about 39k in the editor).
+- **Wish-list for Ty** (nothing in Downloads has these): a **rock / cliff pack** (Quaternius "Ultimate Nature" or "Stylized Nature", or KayKit
+  Forest Nature) for the island undersides and rubble (mine are procedural lumps); **market, fountain and statue pieces** (KayKit Medieval
+  Hexagon or Medieval Builder packs have stalls, wells and statues); **hanging lanterns**; **crows / birds** (any low-poly bird) for the walls;
+  low **bushes / grass tufts** for the planters and the floor edges (the KayKit weed tiles are 500 triangles each).
