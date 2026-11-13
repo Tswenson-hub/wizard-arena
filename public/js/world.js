@@ -110,6 +110,7 @@ function grassGround() {
 // background with the horizon at the middle row, its sunbeams rolled to the sun's bearing. The fog fades the
 // hills and mountains into its horizon colour.
 export const SKY = { horizon: 0x48d7f2, fog: 0x7cc9de };
+let skyTex = null;
 
 // ------------------------------------------------------------ quality tiers (round 20)
 // quality.js (spells) owns the tier; world.js follows it (onQuality): the sun's shadow map (quality.js's shadowSize, and
@@ -156,12 +157,15 @@ export function buildWorld(scene) {
   // a fresh build (the editor builds again after every change): scatter the trees outside the walls for this layout
   spinners.length = 0;
   computeScatter();
-  scene.background = new THREE.Color(SKY.horizon);
-  new THREE.TextureLoader().load('./textures/sky.jpg', (tex) => {
-    tex.mapping = THREE.EquirectangularReflectionMapping;
-    tex.colorSpace = THREE.SRGBColorSpace;
-    scene.background = tex;
-  });
+  if (skyTex) scene.background = skyTex;   // (round 22: the one texture for every build; a fresh one compiled another background program)
+  else {
+    scene.background = new THREE.Color(SKY.horizon);
+    new THREE.TextureLoader().load('./textures/sky.jpg', (tex) => {
+      tex.mapping = THREE.EquirectangularReflectionMapping;
+      tex.colorSpace = THREE.SRGBColorSpace;
+      scene.background = skyTex = tex;
+    });
+  }
   scene.fog = new THREE.Fog(SKY.fog, 60, 175);
 
   // a cool blue sky light and warm sunbeams, as in the painting. Round 22: the lights are made once per scene and kept through a
@@ -253,30 +257,36 @@ export const spinners = [];
 // ------------------------------------------------------------ Sky Ruins (round 22): the cloud sea and the islands' rock
 // Two wide translucent planes under the islands, their cover a drifting value noise (the one shader program this map adds; the
 // courtyard's grass program isn't compiled here). Where the cover thins the lowered peaks show through.
-const CLOUDS = { y: [-7, -16], size: 700, scale: [0.013, 0.02], speed: 0.0045 };
+const CLOUDS = { y: [-7, -16], size: 700, speed: 0.0045 };
+let cloudMat = null;
 function cloudLayers() {
-  const out = [];
-  CLOUDS.y.forEach((y, i) => {
-    const mat = new THREE.MeshBasicMaterial({ color: i ? 0xd9e6f2 : 0xffffff, transparent: true, depthWrite: false, side: THREE.DoubleSide });
+  cloudMat ??= (() => {
+    // (forceSinglePass: three draws a transparent double-sided material in two passes, back faces then front, each its own program)
+    const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true });
     mat.customProgramCacheKey = () => 'clouds';
     mat.onBeforeCompile = (sh) => {
-      sh.uniforms.uTime = torchTime; sh.uniforms.uScale = { value: CLOUDS.scale[i] }; sh.uniforms.uSeed = { value: 17.0 * i + 3.0 };
+      sh.uniforms.uTime = torchTime;
       worldPosVarying(sh);
-      sh.fragmentShader = sh.fragmentShader.replace('void main() {', `varying vec3 vGPos; uniform float uTime, uScale, uSeed;${NOISE_GLSL}
+      sh.fragmentShader = sh.fragmentShader.replace('void main() {', `varying vec3 vGPos; uniform float uTime;${NOISE_GLSL}
         float cloudFbm(vec2 p) { return 0.5 * gNoise(p) + 0.25 * gNoise(p * 2.03 + 1.7) + 0.125 * gNoise(p * 4.1 + 3.1) + 0.0625 * gNoise(p * 8.3 + 5.0); }
         void main() {`)
         .replace('#include <color_fragment>', `#include <color_fragment>
-          vec2 cp = vGPos.xz * uScale + vec2(uTime * ${CLOUDS.speed.toFixed(4)}, uSeed);
-          float cover = cloudFbm(cp) + 0.08 * gNoise(vGPos.xz * 0.0025 + uSeed);
+          float lower = step(vGPos.y, -11.0);                                   // the deeper layer: a finer, greyer sea
+          vec2 cp = vGPos.xz * mix(0.013, 0.02, lower) + vec2(uTime * ${CLOUDS.speed.toFixed(4)}, 3.0 + 17.0 * lower);
+          float cover = cloudFbm(cp) + 0.08 * gNoise(vGPos.xz * 0.0025 + 17.0 * lower);
           float a = smoothstep(0.40, 0.62, cover);
-          diffuseColor.rgb *= 0.82 + 0.28 * smoothstep(0.45, 0.85, cover);   // thicker cloud is brighter on top
+          diffuseColor.rgb *= (0.82 + 0.28 * smoothstep(0.45, 0.85, cover)) * mix(vec3(1.0), vec3(0.85, 0.9, 0.95), lower);
           diffuseColor.a *= a * 0.96;`);
     };
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(CLOUDS.size, CLOUDS.size, 1, 1).rotateX(-Math.PI / 2), mat);
-    m.position.y = y; m.renderOrder = -1 + i; m.frustumCulled = false; m.userData.cat = 'clouds';
-    out.push(m);
-  });
-  return out;
+    return mat;
+  })();
+  // both layers in one mesh (two meshes of the one material still compiled the program twice): the deeper plane first in the
+  // geometry, so it draws first
+  const planes = [...CLOUDS.y].sort((a, b) => a - b).map(y => new THREE.PlaneGeometry(CLOUDS.size, CLOUDS.size, 1, 1).rotateX(-Math.PI / 2).translate(0, y, 0));
+  const m = new THREE.Mesh(mergeGeometries(planes), cloudMat);
+  for (const g of planes) g.dispose();
+  m.renderOrder = -1; m.frustumCulled = false; m.userData.cat = 'clouds';
+  return [m];
 }
 // Each island block (map.js ISLANDS: its footprint and top) hangs a lump of rock: rings of its square outline shrinking down to a
 // point about as deep as the island is wide, every vertex pushed in or out by a hash so it reads as cliff, flat-shaded (per-face
@@ -539,7 +549,7 @@ function kitMaterial(model, original, tint = null) {
   return kitMats[`${kit}:${name}`] ??= (() => {
     const V = VILLAGE_MAT[name] || {};
     return new THREE.MeshStandardMaterial({ color: V.color ?? 0xffffff, roughness: V.roughness ?? 0.88, metalness: V.metalness ?? 0, side: THREE.DoubleSide,
-      map: V.tex ? kitTexture(`./models/village/${V.tex}.webp`, true) : null, alphaTest: V.alphaTest ?? 0, transparent: !!V.opacity, opacity: V.opacity ?? 1 });
+      map: V.tex ? kitTexture(`./models/village/${V.tex}.webp`, true) : null, alphaTest: V.alphaTest ?? 0, transparent: !!V.opacity, opacity: V.opacity ?? 1, forceSinglePass: true });
   })();
 }
 // Quaternius material name -> how it's drawn (the pack's 2048 PBR base colours shrunk to 512 px webp, no other maps)
@@ -756,7 +766,7 @@ function buildRunes(scene) {
   for (const R of C.RUNE_CIRCLES) {
     const g = new THREE.Group();
     const ringMat = new THREE.MeshBasicMaterial({ color: 0xa070ff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
-      polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
+      polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8, forceSinglePass: true });   // (round 22: one program, not a back- and a front-face one)
     ringMat.onBeforeCompile = (sh) => {
       sh.uniforms.uTime = torchTime;
       sh.vertexShader = sh.vertexShader.replace('void main() {', 'varying vec2 vRp;\nvoid main() {\n  vRp = position.xz;');
@@ -773,11 +783,12 @@ function buildRunes(scene) {
     // flat-shaded material of its own: one shader program fewer. A detail-0 octahedron's normals are already per face.)
     const crystalGeo = new THREE.OctahedronGeometry(0.55, 0).scale(0.75, 1.5, 0.75);
     crystalGeo.setAttribute('uv', new THREE.Float32BufferAttribute(Array.from({ length: crystalGeo.attributes.position.count }, () => CRYSTAL_UV).flat(), 2));
-    const crystal = new THREE.Mesh(crystalGeo, new THREE.MeshStandardMaterial({ map: kitTexture('./models/castle/dungeon_texture.webp'), roughness: 0.25, metalness: 0,
-      color: 0xc4a4ff, emissive: 0x7a40ff, emissiveIntensity: 1.4 }));
+    // (round 22: drawn with the tinted-banner material on that white texel, the halo carrying the glow: one program fewer than its
+    // own emissive material; the two maps together must stay under the 60-program budget)
+    const crystal = new THREE.Mesh(crystalGeo, kitMaterial('castle/crystal', null, '#c9a6ff'));
     crystal.position.y = R.h; crystal.castShadow = true;
     const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0xb080ff, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
-    halo.scale.setScalar(3.2); halo.position.y = R.h;
+    halo.scale.setScalar(3.6); halo.position.y = R.h;
     g.add(ring, crystal, halo); g.position.set(R.x, R.y || 0, R.z); g.userData.cat = 'runes';
     spinners.push(crystal);
     addW(scene, g);
