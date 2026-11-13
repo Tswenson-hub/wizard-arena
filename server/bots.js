@@ -350,7 +350,7 @@ function think(me, world, t) {
     }
     if (best?.id !== b.targetId) b.decoyId = null;
     b.targetId = best ? best.id : null;
-    b.retargetAt = t + rand(1.5, 3);
+    b.retargetAt = t + rand(1.0, 2.2);   // round 22 (pace): was 1.5-3 s
   }
   if (b.targetId != null && !foe(me, world.players.get(b.targetId))) b.targetId = null;   // gone, or the intermission
   let target = world.players.get(b.targetId) || null;
@@ -1065,8 +1065,14 @@ function pickProp(me, target, world, t) {
 
 // A prop for a Trapped Relic, on a path the target is likely to take: between them and us (they come for us), by cover,
 // a spawn or a heal spot; not right under their feet (they'd see it flare and step back) and not next to our other trap.
-const HOT_SPOTS = [...(C.HEAL_SPOTS || []).map(h => [h.x, h.z]), ...C.SPAWN_POINTS.map(s => [s[0], s[2]])];
-const TALL_COVER = C.COLLIDERS.filter(c => c.h >= C.LOS_HEIGHT);
+// Round 22: per map (the server runs rooms on different maps; C.ACTIVE_MAP.name says which is live this tick), built on first use
+const mapLists = new Map();
+function mapList() {
+  const key = C.ACTIVE_MAP?.name ?? 'map';
+  let m = mapLists.get(key);
+  if (!m) mapLists.set(key, m = { hot: [...(C.HEAL_SPOTS || []).map(h => [h.x, h.z]), ...C.SPAWN_POINTS.map(s => [s[0], s[2]])], tall: C.COLLIDERS.filter(c => c.h >= C.LOS_HEIGHT) });
+  return m;
+}
 function curseCandidate(me, target, world, mine = []) {
   let best = null, bs = Infinity;
   for (const prop of world.props.values()) {
@@ -1076,6 +1082,7 @@ function curseCandidate(me, target, world, mine = []) {
     if (dm > C.TK.range - 1 || dm < 3 || dt > 16 || dt < RELIC.trigger + 1 || !hasLOS(me.p, pp)) continue;
     if (mine.some(pr => Math.hypot(pr.x - prop.x, pr.z - prop.z) < 5)) continue;
     const lane = segDist(target.p, me.p, { x: prop.x, z: prop.z });
+    const { hot: HOT_SPOTS, tall: TALL_COVER } = mapList();
     const hot = Math.min(...HOT_SPOTS.map(h => Math.hypot(h[0] - prop.x, h[1] - prop.z)));
     const cover = TALL_COVER.some(c => Math.hypot(c.x - prop.x, c.z - prop.z) < c.r + 2);
     const score = lane + dt * 0.25 - (hot < 4 ? 3 : 0) - (cover ? 1.5 : 0);
@@ -1321,15 +1328,16 @@ function moveBot(me, dt, world, t) {
   }
   if (me.ride) { b.vel = [0, 0]; me.anim = 'idle'; return; }   // getting on or off
   if (me.grab) { b.vel = [0, 0]; me.anim = 'idle'; return; }   // pulling up onto a ledge: the server moves us
+  if (me.pad) { me.anim = 'jump'; return; }                     // round 22: a jump pad's arc: the server flies us along it
   let wx = 0, wz = 0;
-  const goal = potionGoal(me, world, t, target);
+  const goal = potionGoal(me, world, t, target) || runeGoal(me, world, t, target);
   if (b.dash) { /* the dash carries us */ }
   else if (!stunned) {
     if (t < b.dodgeUntil && b.dodgeVec) { wx = b.dodgeVec[0]; wz = b.dodgeVec[1]; }
     else if (goal && !me.eye) {
-      // a potion we're walking to; fight from wherever we are on the way
+      // a potion or a rune we're walking to; fight from wherever we are on the way (round 22: by a jump pad when that's the way)
       const gTop = C.surfaceTopAt(goal[0], goal[1]);
-      const wp = gTop > 0.5 ? rampWaypoint(me, goal, gTop) : null;
+      const wp = padWaypoint(me, world, goal, gTop, t) || (gTop > me.p[1] + C.STEP_UP ? rampWaypoint(me, goal, gTop) : null);
       const gx = (wp ? wp[0] : goal[0]) - me.p[0], gz = (wp ? wp[1] : goal[1]) - me.p[2], gl = Math.hypot(gx, gz) || 1;
       wx = gx / gl; wz = gz / gl;
       if (target && !target.dead && hasLOS(me.p, target.p)) me.yaw = yawTo(me.p, target.p);
@@ -1367,9 +1375,11 @@ function moveBot(me, dt, world, t) {
         const lx = me.p[0] - thrower.p[0], lz = me.p[2] - thrower.p[2], ll = Math.hypot(lx, lz) || 1;
         wx = -lz / ll * b.strafe + lx / ll * 0.2; wz = lx / ll * b.strafe + lz / ll * 0.2;
       }
-      // the target is up on a platform: take the ramp (unless we can shoot them from here)
+      // the target is up on a platform: take the ramp (unless we can shoot them from here); round 22: or a jump pad, when it's
+      // the quicker way or the only one (across the void)
       if (!me.eye && !airborne(target, t)) {
-        const wp = (!los || kit(me).primary === 'gale_shear' || d > range[1]) ? rampWaypoint(me, [target.p[0], target.p[2]], target.p[1]) : null;
+        const want = !los || kit(me).primary === 'gale_shear' || d > range[1];
+        const wp = (want ? padWaypoint(me, world, [target.p[0], target.p[2]], target.p[1], t) : null) || (want ? rampWaypoint(me, [target.p[0], target.p[2]], target.p[1]) : null);
         if (wp) { const px = wp[0] - me.p[0], pz = wp[1] - me.p[2], pl = Math.hypot(px, pz) || 1; wx = px / pl; wz = pz / pl; b.rampUntil = t + 0.5; }
         // just came up: keep going onto their platform instead of strafing off the stairs
         else if (t < (b.rampUntil || 0) + 1.5 && d > 1.8) { wx = fx; wz = fz; }
@@ -1421,6 +1431,21 @@ function moveBot(me, dt, world, t) {
     // keep off the edge
     const r = Math.hypot(me.p[0], me.p[2]);
     if (r > C.ARENA_RADIUS - 5) { wx -= me.p[0] / r * 1.5; wz -= me.p[2] / r * 1.5; }
+    // round 22 (Sky Ruins): never walk off an island. If the floor a step ahead is below the void, turn along the edge
+    // (the least turn that keeps a floor under us), else stop
+    if (C.voidY() != null && !me.jump && !flying && (wx || wz)) {
+      const safe = (dx, dz) => floorUnder([me.p[0] + dx * 1.4, me.p[1], me.p[2] + dz * 1.4]) >= C.voidY() - 0.01 && floorUnder([me.p[0] + dx * 0.7, me.p[1], me.p[2] + dz * 0.7]) >= C.voidY() - 0.01;
+      const l0 = Math.hypot(wx, wz) || 1, ux = wx / l0, uz = wz / l0;
+      if (!safe(ux, uz)) {
+        let found = false;
+        for (const a of [0.9, -0.9, 1.6, -1.6, 2.3, -2.3, Math.PI]) {
+          const c = Math.cos(a), n = Math.sin(a), rx = ux * c - uz * n, rz = ux * n + uz * c;
+          if (safe(rx, rz)) { wx = rx * l0; wz = rz * l0; found = true; break; }
+        }
+        if (!found) { wx = 0; wz = 0; }
+        b.dodgeUntil = Math.min(b.dodgeUntil, t);   // (a dodge into the void is no dodge)
+      }
+    }
   }
   const wl = Math.hypot(wx, wz);
   const run = C.speedOf();
@@ -1428,7 +1453,8 @@ function moveBot(me, dt, world, t) {
   // stamina for the ward. A sprinting bot faces where it runs (the server only grants a forward sprint).
   {
     const tg = target && !target.dead ? target : null, dT = tg ? dist2D(me.p, tg.p) : 0;
-    const far = goal ? Math.hypot(goal[0] - me.p[0], goal[1] - me.p[2]) > 6 : !!tg && (dT > (kit(me).primary === 'gale_shear' ? SHEAR_RANGE + 1.5 : prefRange(me, cfg)[1] + 5) || (dT > 8 && !hasLOS(me.p, tg.p)));   // (sprint is free: close in on one we can't see)
+    // round 22 (pace): sprint to anything past the preferred range (was +5 m), or out of sight past 5 m (was 8): fights start sooner
+    const far = goal ? Math.hypot(goal[0] - me.p[0], goal[1] - me.p[2]) > 5 : !!tg && (dT > (kit(me).primary === 'gale_shear' ? SHEAR_RANGE + 1.5 : prefRange(me, cfg)[1] + 1.5) || (dT > 5 && !hasLOS(me.p, tg.p)) || !!b.padWp);   // (sprint is free: close in on one we can't see)
     const fleeing = me.hp < 35 && !!tg && dT < 14;
     const threatened = [...b.threats.values()].some(r => !r.handled && !r.ignore) || t < (b.ramDanger || 0);
     const keep = false;   // round 10: sprint is free, nothing to save stamina for
@@ -1449,6 +1475,7 @@ function moveBot(me, dt, world, t) {
   }
   let speed = run * cfg.speed;
   if (me.sprinting) speed = C.sprintOf() * cfg.speed;
+  if (me.hasteUntil > t) speed *= C.RUNES.types.haste.speedMul;   // round 22: the Haste rune
   if (me.eye) speed = run * EYE.speedMul;
   else if (me.blocking) speed = C.blockSpeedOf();
   else if (flying) speed = SKY.airSpeed;
@@ -1527,6 +1554,56 @@ function potionGoal(me, world, t, target) {
     const d = Math.hypot(sp.x - me.p[0], sp.z - me.p[2]) + Math.max(0, y - me.p[1]) * 2;
     if (d < bd) { bd = d; best = [sp.x, sp.z]; }
   }
+  return best;
+}
+
+// Round 22: a rune worth walking to: one that's up within 18 m, when the fight isn't right on top of us (or we're hurt and it's an
+// Aegis). Haste and Fury when we have a target to use them on; Surge when our ultimate isn't charged.
+function runeGoal(me, world, t, target) {
+  if (!world.runes?.length || me.eye || me.ride || me.pad) return null;
+  const near = target && !target.dead && dist2D(me.p, target.p) < 6;
+  let best = null, bs = 18;
+  for (const r of world.runes) {
+    if (r.taken) continue;
+    const sp = r.spot, y = sp.y ?? 0;
+    const worth = r.type === 'aegis' ? me.hp < 80 || !near : r.type === 'surge' ? me.ult < C.ULT_CHARGE.max - 20 : !!target && !near;
+    if (!worth) continue;
+    const d = Math.hypot(sp.x - me.p[0], sp.z - me.p[2]) + Math.max(0, y - me.p[1]) * 2 - (r.type === 'aegis' && me.hp < 50 ? 4 : 0);
+    if (d < bs) { bs = d; best = [sp.x, sp.z]; }
+  }
+  return best;
+}
+// Does the straight line from `a` to `b` ([x, z]) cross the void (Sky Ruins: the floor below MAP_INFO.void)?
+function crossesVoid(a, b) {
+  const vy = C.voidY();
+  if (vy == null) return false;
+  const dx = b[0] - a[0], dz = b[1] - a[1], l = Math.hypot(dx, dz), n = Math.max(1, Math.ceil(l / 1.5));
+  for (let i = 1; i <= n; i++) { const k = i / n; if (C.surfaceTopAt(a[0] + dx * k, a[1] + dz * k) < vy) return true; }
+  return false;
+}
+// Round 22: a jump pad on the way to `dest` ([x, z], its floor destY): the pad to walk onto when its landing is nearer the
+// destination than we are by a good margin, or when the direct way crosses the void (then any pad whose landing is on the
+// destination's side). Checked every 0.3 s (the probes cost), kept for a moment so the bot doesn't dither.
+function padWaypoint(me, world, dest, destY, t) {
+  const b = me.bot;
+  if (!world.pads?.length || me.pad) return null;
+  if (b.padWp && t < b.padWpUntil && (b.padWpDest && Math.hypot(b.padWpDest[0] - dest[0], b.padWpDest[1] - dest[1]) < 4)) return b.padWp;
+  if (t < (b.padCheckAt || 0)) return b.padWp && t < b.padWpUntil ? b.padWp : null;
+  b.padCheckAt = t + 0.3;
+  const me2 = [me.p[0], me.p[2]], direct = Math.hypot(dest[0] - me2[0], dest[1] - me2[1]);
+  const gap = crossesVoid(me2, dest), up = destY > me.p[1] + C.STEP_UP + 0.5;
+  let best = null, bc = gap ? Infinity : direct - 6;
+  for (const pd of world.pads) {
+    const toPad = Math.hypot(pd.x - me2[0], pd.z - me2[1]);
+    if (toPad > 30 || Math.abs(pd.y - me.p[1]) > 3 || (t < (me.padUntil || 0) && toPad < 2)) continue;
+    const land = [pd.tx, pd.tz], after = Math.hypot(dest[0] - land[0], dest[1] - land[1]);
+    if (up && pd.ty < destY - 3) continue;   // doesn't go up far enough
+    if (gap && crossesVoid(land, dest)) continue;   // lands on the wrong island
+    if (crossesVoid(me2, [pd.x, pd.z])) continue;    // can't reach the pad
+    const cost = toPad + after * 0.6;
+    if (cost < bc) { bc = cost; best = [pd.x, pd.z]; }
+  }
+  b.padWp = best; b.padWpDest = dest.slice(); b.padWpUntil = t + 1.2;
   return best;
 }
 
