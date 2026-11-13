@@ -441,3 +441,9 @@ body.wa-try #clickToPlay .pause-top #resumeBtn { background: transparent; color:
   .sb-join .sb-presets .sb-chip[data-preset] { font-size: 13px; padding: 5px 13px; }
   .spell-builder .sb-extra #joinBtn { font-size: 16px; padding: 9px 30px; }
 }
+
+/* round 22: the how-to card's runes, pads and maps line */
+.htp .htp-arena { margin: 8px 0 2px; font-size: 13.5px; line-height: 1.45; color: rgba(244, 236, 216, 0.85); }
+.htp .htp-arena b { color: #f4ecd8; }
+.htp .htp-arena i { font-style: normal; font-weight: 700; }
+.htp .rn-haste { color: #6fd0ff; } .htp .rn-fury { color: #ff7a4a; } .htp .rn-aegis { color: #ffd36a; } .htp .rn-surge { color: #c98bff; }

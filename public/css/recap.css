@@ -59,3 +59,11 @@ body.recap-on .htp-float, body.recap-on .htp-back { visibility: hidden !importan
 .rc-try span { display: block; font-size: 12px; font-weight: 600; color: rgba(42, 29, 5, 0.75); margin-top: 2px; }
 .rc-try:hover { background: #ffd77f; }
 @keyframes rcTry { 0%, 100% { box-shadow: 0 0 16px rgba(255, 200, 87, 0.3), 0 6px 20px rgba(0, 0, 0, 0.45); } 50% { box-shadow: 0 0 34px rgba(255, 200, 87, 0.65), 0 6px 20px rgba(0, 0, 0, 0.45); } }
+/* round 22: the map rotation's "Next map: Sky Ruins", bottom left (the winner's name plate uses the bottom centre during the close-up) */
+.rc-next {
+  position: absolute; left: 18px; bottom: 28px; padding: 8px 16px; border-radius: 999px; white-space: nowrap; font-size: 13px; letter-spacing: 1px; text-transform: uppercase;
+  background: rgba(18, 12, 26, 0.75); border: 1px solid rgba(255, 200, 87, 0.45); color: rgba(244, 236, 216, 0.8); animation: rcNext 0.6s ease-out 0.8s both;
+}
+.rc-next b { color: #ffc857; text-transform: none; letter-spacing: 0; font-size: 16px; margin-left: 4px; }
+@keyframes rcNext { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (max-width: 720px) { .rc-next { bottom: 10px; left: 10px; padding: 6px 12px; } }

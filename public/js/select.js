@@ -414,7 +414,7 @@ const KEYS = {
 const MORE_KEYS = [['T', 'Reload early'], ['M', 'Mute'], ['Esc', 'Menu and your loadout']];
 // The kill target for the join header and the how-to-play texts. The server's FFA.target (server/match.js) is the truth; this is its
 // client copy until the match tells us (setMatchTarget(match.target) from main.js on a match state).
-let matchTarget = 15;
+let matchTarget = 10;   // round 22: first to 10 (was 15)
 const JOIN_SUB = (n) => `Build your wizard from any spells: one per slot. Four wizards, first to ${n} kills.`;
 export function setMatchTarget(n) {
   if (!(n > 0) || n === matchTarget) return;
@@ -437,6 +437,9 @@ export function openHowToPlay() {
   back.innerHTML = `<div class="htp" role="dialog" aria-modal="true" aria-labelledby="htpTitle">
       <h2 id="htpTitle">How to play</h2>
       <div class="htp-goal"><b>Free-for-all, four wizards.</b> The first to <b><span data-kill-target>${matchTarget}</span> kills</b> wins.</div>
+      <div class="htp-arena"><b>Runes and jump pads.</b> Grab a glowing rune for <i class="rn-haste">Haste</i>, <i class="rn-fury">Fury</i>,
+        an <i class="rn-aegis">Aegis</i> shield or an ultimate <i class="rn-surge">Surge</i>; they return after 25 s. Jump pads fling you up to the
+        walls. The arenas take turns: the <b>Courtyard</b>, then the <b>Sky Ruins</b>, where a fall into the clouds is fatal.</div>
       <div class="htp-build"><b>Build your wizard: one spell per slot.</b> Each row of cards is a slot with its own key.
         Hover a card for its full stats; cards tagged <i class="combo">Combo</i> work together.
         <div class="sb-legend">${STATS.map(([k, t]) => `<span class="st-${k}">${t}</span>`).join('')}</div></div>

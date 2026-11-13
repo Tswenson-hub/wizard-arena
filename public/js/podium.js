@@ -11,7 +11,8 @@
 //   Podium.warm(renderer, scene, camera)        round 20: compile the recap's shaders behind the loading screen (awaits preload)
 //   Podium.stop()                               end it now (the rematch countdown started, the player left); calls onEnd once
 // The message: { t: 'recap', duration?: 10, top: [{ name, place, body, loadout, color, kills, deaths, accolades: [{ icon, title,
-// value }] }, ...], rest: [{ name, place, kills, deaths }] }. Missing fields fall back (no accolades, the Mage, the default loadout).
+// value }] }, ...], rest: [{ name, place, kills, deaths }], next?: { id, name } }. Missing fields fall back (no accolades, the Mage,
+// the default loadout). Round 22: `next` (the map rotation) shows "Next map: Sky Ruins" at the bottom of the overlay.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
@@ -216,7 +217,7 @@ export function start(msg, { renderer, scene: arena, onEnd } = {}) {
   const dur = msg.duration || DURATION;
   const { scene, bodies, ticks } = build(top, arena);
   const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 200);
-  const ui = overlay(top, msg.rest || [], dur, () => stop());
+  const ui = overlay(top, msg.rest || [], dur, () => stop(), msg.next);
   cur = { scene, camera, renderer, bodies, ticks, ui, t: 0, dur, onEnd };
   frame(0);
   return true;
@@ -303,7 +304,7 @@ const one = (v) => String(v).replace(/(^|\D)1 (\w+?)s\b/g, '$11 $2');
 const ICONS = { kills: '✷', damage: '✷', streak: '🔥', heal: '✚', healing: '✚', survivor: '⛨', blocks: '⛨', accuracy: '◎', props: '⬢', mvp: '★' };
 const iconOf = (a) => (a.icon && [...a.icon].length <= 2) ? a.icon : ICONS[a.icon || a.id] || '★';
 
-function overlay(top, rest, dur, onSkip) {
+function overlay(top, rest, dur, onSkip, next = null) {
   if (!document.querySelector('link[data-recap-css]')) {
     const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = './css/recap.css'; l.dataset.recapCss = '1';
     document.head.appendChild(l);
@@ -322,6 +323,7 @@ function overlay(top, rest, dur, onSkip) {
     ${rest.length ? `<div class="rc-rest">${rest.map(r => `<span>${PLACE[r.place] || `${r.place}th`} <b>${esc(r.name)}</b> ${r.kills ?? 0}/${r.deaths ?? 0}</span>`).join('')}</div>` : ''}
     ${hasProfile() ? '<div class="rc-saved">✓ Saved to your profile</div>' : ''}
     ${firstVisitUI() ? '<button type="button" class="rc-try">Try another wizard <span>Six ready-made wizards, or build your own</span></button>' : ''}
+    ${next?.name ? `<div class="rc-next">Next map <b>${esc(next.name)}</b></div>` : ''}
     <div class="rc-bar"><i></i></div>`;
   document.body.appendChild(el);
   document.body.classList.add('recap-on');
