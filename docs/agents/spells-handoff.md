@@ -1,5 +1,101 @@
 # Spells hand-off
 
+## Round 22: pace, runes and jump pads, void deaths, map rotation, legacy rooms
+Commits: `819bf42` (the interface post), `af2ff21` (pace constants, match.js rotation), `c29cda4` (room.js and server.js: maps, legacy
+rooms, runes, pads, the void, callouts), `cdbd187` + `a7d177c` + `c6e313a` (bots), `b727d5b` + `9217a24` (the client), `734b1e5` + `db5ccba`
+(unit checks), `1d192c5` (the landed note).
+
+**Pace (constants.js, match.js):** first to **10**, a **5-minute** cap, respawn **1.5 s** (spawn protection 1.5 s kept), the spawn band
+**14-22 m** from the nearest enemy, walk **3.5** / sprint **6.5**, the air jump 1.2 → **1.0 m** (its arc 0.09 s shorter), passive ult
+**1.4 %/s**. The legacy client runs at 3.0 / 5.5 under the 3.5 / 6.5 budget: slower, never refused.
+
+**Streaks and callouts (room.js `noteStreaks`):** `{ t: 'callout', kind, id, name, label, sub?, victim?, victimName?, streak?, multi? }`:
+First Blood (once per live match), Double / Triple / Multi Kill (kills within `STREAKS.multiWindow` 4 s), streak banners at 3 / 5 / 8 (On
+Fire! / Unstoppable! / Archmage!), Shutdown for ending a streak of 3 or more; a 3-streak gives +10 % ult. `streak` rides in the snapshot;
+clearStats resets it between matches. Characters' callouts.js draws them and makes the sting.
+
+**Runes (`C.RUNES`, room.js):** one per map.js `RUNE_SPAWNS` spot (environment placed 4 per map), server-authoritative like potions:
+touch within 1.0 m (feet within 1.2 m of its floor) → Haste +35 % speed 8 s, Fury ×1.4 damage 8 s, Aegis a 40 HP shield for 10 s (soaks
+damage first; the stun, slow, bind and knockback still land; `hit.shield` says how much), Surge +35 % ult at once. Back 25 s later with a
+fresh random type (a spot's own `type` pins it). The snapshot carries `runes: [{ i, id, x, y, z, type, up, in? }]` and each player's
+`buffs: { haste?: 1, fury?: 1, aegis?: HP }`; a pickup broadcasts `{ t: 'runeTaken', i, id, by, byName, type, p }`. The speed check allows
+haste (with 0.3 s of grace at its end), the bots run and fight with it, the client speeds itself up from `me.buffs.haste`.
+
+**Jump pads (`C.PAD`, `padArc` / `padAt`, room.js):** one per map.js `JUMP_PADS` pad. `padArc(pad)` is the one arc for everyone: a map pad
+(`target`, `h`) goes through environment's `padLaunch(pad, JUMP.gravity)`; a test pad (`tx, ty, tz, strength`) the same maths here. The
+server launches whoever stands inside the ring (`updatePads`, or the client's own `{ t: 'pad', pad }` a little early): a snap to the pad's
+centre (the next report starts a fresh budget), `{ t: 'pad', id, pad, padId, from, to, time }` to everyone, `pad: true` in the snapshot.
+Bots are flown exactly along the arc; a human's client flies itself (main.js `startPadFlight`: the arc's velocity plus steering at
+`PAD.airControl` 0.35 of the usual, casts allowed, the air jump out of it keeps the speed) and the state check lets the arc through (`own`
+= the arc's horizontal speed + a little steering; y up to the apex + 0.3). 0.6 s before the same wizard can be launched again.
+
+**The void (`C.VOID`, `C.voidY()` = map.js `MAP_INFO.void`, room.js `updateVoid`):** below it you die, `cause` / `kind` `'void'`, credited to
+whoever hurt you (a shielded hit counts) within 5 s, else nobody; the feed says "knocked into the void" / "fell into the void". 2 s of grace
+after a map switch (a report against the old map's floors). `landingSpot` (blinks, Mirror Step, Flask Step) never lands over the void: it
+steps back along the way it came, and a flask that fell into the cloud lands on the island under it.
+
+**Maps and rotation (match.js, room.js, server.js):** a room keeps its own map and calls `C.setActiveMap(mapId)` at every entry point
+(simulate, message, join, snapshot, an observer's message), so rooms on different maps share one process. A room's first match is the
+courtyard; every rematch moves to the next of `C.MAP_ORDER` (`courtyard`, `sky`) unless the private host locked one (`{ t: 'roomMap', map:
+'courtyard' | 'sky' | 'rotate' }`; a lock during the countdown, or live before the first kill, restarts the match on it now) or a test picked
+one (`matchDebug.map`, the same rule). The switch happens at the countdown: `setMap` ends every projectile, decoy, wall, pool, cloud and
+cage, rebuilds the props, potions, runes and pads from the new map, broadcasts `{ t: 'map', map: { id, name }, props, potions, runes, pads }`,
+then everyone respawns on the new spawns. `match.map` and (from the end of a match) `match.next` are `{ id, name }` in every match message
+and the recap; `room.map`, `room.lock`, `room.maps` in `info()`. An emptied room goes back to the courtyard; a first visit prefers a
+public room on the courtyard. The client (`onMapChange`): the map's data at once (its physics held meanwhile), then characters'
+`callouts.mapChange` fade round `World.switchMap`, the props, potions and runes replaced, pickups remounted with the new pads,
+`dataset.map` / `__wa.map`; the other map is preloaded (`World.preloadMap`) once the first match is live.
+
+**Legacy rooms (server.js, room.js):** the join carries `proto: 22` (net.js). A join without it (the live CrazyGames build) goes to a legacy
+room: environment's frozen `legacy` layout (what that build bundles), shown as `{ id: 'courtyard' }`, no runes, pads or rotation (none are
+built, so nothing in its snapshots), `room.legacy: true`. Public legacy rooms match only legacy joins; a private code of the other kind is
+refused with `roomError.reason = 'version'` and a public room of the joiner's own kind. The old client reads the target from the match
+messages, so it plays first to 10.
+
+**Bots (bots.js):** retarget every 1-2.2 s (was 1.5-3), sprint at anything past the preferred range + 1.5 m or out of sight past 5 m,
+closer ranges (easy 6-11, normal 6.5-11.5, hard 7-12.5), haste speed; runes within 12 m when no enemy is inside 10 m (Aegis when hurt, Surge
+when the ult isn't near full); a pad as the way to a target up on high ground or across the void (`padWaypoint`, `crossesVoid`); on a void
+map the floor is probed over the stopping distance and the wish turned along the edge, no dash, hop or ride into it, and a last-word guard
+after the collisions takes back any step (on the ground or in the air) that ends over the void unless it's a pad arc, a knockback or an
+Eye's pull. Hot spots and cover are per map.
+
+**Tests:** `debugMap { runes, pads, void }` (WA_DEBUG) sets a room's spots and void height. `MATCH_DEBUG=1 node tools/test/modematch-unit.mjs`:
+**ALL PASS, 242 checks**, new ones for first to 10 and the 5-minute cap, the rotation (courtyard, sky, courtyard; next in the recap), locks and
+`matchDebug.map` (now before the first kill, else the next match), a rune pickup with its buff and respawn timer, Haste accepted by the speed
+check (1.35× passes, the same reports without it are held), Aegis soaking a Spark, Fury ×1.4, Surge, a pad launch and the reported arc
+accepted to the target, void deaths with and without credit, the switch to Sky Ruins and back, legacy rooms (no runes or pads, never shared,
+`version` errors both ways), `roomMap` (the host locks Sky Ruins, a guest can't, a legacy room can't).
+
+**Verified (ports 4101 / 4112; shots and logs in `/tmp/wa-spells/r22/`):**
+- `deploy/smoke.py` (with deploy's legacy-join check): **PASS**. My `mapswap.py` (Playwright, GPU): **ALL PASS, 10 checks**: a private room on
+  the courtyard with its 6 pads known to the client, stepping on pad-5 launches us and lands 0.6 m from its target, the host's lock moves the
+  room to Sky Ruins in 0.4 s (fade, `World.switchMap`, `dataset.map`, 65k triangles drawn, we stand on an island, no void death), 'rotate'
+  lifts the lock, no console errors, programs 54 → 55. Shots `courtyard.png`, `pad-flight.png`, `sky.png`, `sky-down.png`.
+- `deploy/perf_test.py --seconds 30` on this (loaded) machine: Sky Ruins **PASS** (60 fps, max 18.7 ms, 52k triangles, 58 programs, 0 compiled
+  in the match); the courtyard misses only `triangles < 120k` (134k here; deploy's 60 s run on `8a6e855` read 122k), 57 programs, 0 compiled.
+- Sky Ruins bots (`botmatch-sky.mjs`, 4 bots, 120-150 s): void deaths **13 → 3 → 1**, the ones left all knocked; 24-37 pad launches and
+  13-21 runes taken per run.
+- Pace against the brief's targets (3 kills per player per minute, about 4 s to first damage, a median match under 5 minutes):
+
+  | Harness | Before the bot tuning | After (`c6e313a`) |
+  |---|---|---|
+  | `pace.mjs` (a watching human, the match running, 4 normal bots, 6-12 × 75 s): kills / player / min | 0.91 | **1.85** |
+  | the same: respawn → first damage, median | 5.1 s | **4.4 s** |
+  | `pace.mjs`, 2 × 420 s, 4 normal bots: kills / player / min, first damage, matches finished (lengths) | 1.33, 6.3 s, 2 (239, **300** s) | **1.67, 5.2 s, 3 (287, 244, 108 s: median 244 s)** |
+  | `loadoutbalance` normal, 12 × 75 s, fully random loadouts: kills (per player per minute) | 61 (1.0) | **88 (1.5)** |
+  | `loadoutbalance` hard, 12 × 75 s: kills (per player per minute) | 71 (1.2) | **74 (1.2)**, no dominant spell |
+
+  No spell dominates a slot in the tuned runs beyond small-sample flags (Meteor Rain at half the ultimates' 8-10 killing blows). The
+  `loadoutbalance` runs sit in a paused lab match (no humans), the `pace.mjs` ones in a live one; the machine ran several agents' tests
+  throughout.
+
+**Known issues / for others:**
+- **The 3 kills per player per minute target isn't met** by bots alone (1.85 on normal with the running-match harness; random-loadout bots
+  lower). The levers left are in bots.js (aggression, less dodging) and would also make them harder for humans; I'd rather Ty's play decides.
+- Characters' `pickups.rebuild()` isn't used: main.js remounts pickups with the map message's pads (it reads `C.PADS`, which doesn't exist).
+- Deploy's note of 28 reversals/min in one courtyard run is probably bots turning on pads and runes; the netcode is unchanged.
+- The courtyard's triangle count is environment's and the coordinator's call (122k in deploy's run).
+
 ## Round 21: the first visit drops into a match (conversion)
 Commits: `90ad317` (requests.md post), `c6c2412` (main.js, net.js, room.js), `4dce87f` (unit checks), `fc7b98a` + `e15e1fa` (smoke, subpath, perf tests).
 
