@@ -13,9 +13,21 @@ const norm3 = (v) => { const l = len3(v) || 1; return [v[0] / l, v[1] / l, v[2] 
 const dist2D = (a, b) => Math.hypot(a[0] - b[0], a[2] - b[2]);
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 
-// opts: { id, kind: 'public' | 'private' | 'lab', code, allocId() (player ids, unique across rooms), canAddBot() (the server-wide bot cap) }
+// opts: { id, kind: 'public' | 'private' | 'lab', code, allocId() (player ids, unique across rooms), canAddBot() (the server-wide bot cap),
+//   legacy (round 22: a room for clients without `proto` (the live CrazyGames build): the courtyard only, no runes, pads or rotation) }
+// Round 22: the room keeps its own map (`mapId`), and because other rooms may be on another map in the same tick, every entry point
+// (simulate, message, join, snapshot, an observer's message) first makes map.js read this room's map (C.useMap, environment's).
 export function createRoom(opts) {
   const { allocId } = opts;
+  const LEGACY = !!opts.legacy;
+  // a legacy room runs on map.js's frozen copy of the courtyard ('legacy': what the live build bundles), shown to clients as 'courtyard'
+  let mapId = LEGACY && C.MAPS?.legacy ? 'legacy' : 'courtyard';
+  const useMap = () => { if (typeof C.setActiveMap === 'function' && C.ACTIVE_MAP?.name !== mapId) C.setActiveMap(mapId); };
+  useMap();
+  // the maps this room rotates through (a legacy room: the courtyard only); map.js lists only the maps it could load
+  const mapsAvail = () => LEGACY ? [mapId] : (Array.isArray(C.MAP_ORDER) && C.MAP_ORDER.length ? C.MAP_ORDER.slice() : ['courtyard']);
+  const pubMapId = (id) => (id === 'legacy' ? 'courtyard' : id);
+  const pubMap = (id) => ({ id: pubMapId(id), name: C.MAPS?.[id]?.title ?? (id === 'legacy' ? 'The Courtyard' : id) });
   const players = new Map();   // id -> player
   const sockets = new Map();   // id -> ws
   const observers = new Set();  // sockets that watch without a player (botmatch.mjs adds bots and reads the broadcasts)
@@ -31,11 +43,15 @@ export function createRoom(opts) {
   let nextFxId = 1;            // ids for decoys and walls
 
   // ---------------------------------------------------------------- props
-  C.PROP_SPAWNS.forEach(([type, x, z], i) => {
-    const id = i + 1;
-    if (!C.PROP_TYPES[type]) { console.warn(`[props] spawn ${id}: unknown type '${type}', skipped`); return; }   // (a layout mid-edit)
-    props.set(id, { id, type, x, z, state: 'idle', carrier: null, respawnAt: 0, liftUntil: 0 });
-  });
+  function buildProps() {
+    props.clear();
+    C.PROP_SPAWNS.forEach(([type, x, z], i) => {
+      const id = i + 1;
+      if (!C.PROP_TYPES[type]) { console.warn(`[props] spawn ${id}: unknown type '${type}', skipped`); return; }   // (a layout mid-edit)
+      props.set(id, { id, type, x, z, state: 'idle', carrier: null, respawnAt: 0, liftUntil: 0 });
+    });
+  }
+  buildProps();
 
   function propPublic(p) {
     return { id: p.id, type: p.type, x: p.x, y: p.y || 0, z: p.z, state: p.state, carrier: p.carrier };
@@ -79,6 +95,8 @@ export function createRoom(opts) {
       carrying: null,
       lastHitBy: null,
       lastStateAt: 0,
+      // round 22: rune buffs (haste, fury, the Aegis shield), a jump-pad flight, the kill streak
+      hasteUntil: 0, furyUntil: 0, shield: 0, shieldUntil: 0, pad: null, padUntil: 0, streak: 0, killTimes: [],
     };
   }
 
@@ -105,9 +123,18 @@ export function createRoom(opts) {
       ramGuard: p.ramGuardUntil > now(),
       prot: p.protUntil > now(),   // round 14: spawn protection
       bot: p.bot ? p.bot.difficulty : undefined,
+      // round 22: rune buffs (characters' auras: { haste?: 1, fury?: 1, aegis?: shield HP }), a pad flight (the launch pose), the streak
+      buffs: buffsOf(p), pad: p.pad ? true : undefined, streak: p.streak > 0 ? p.streak : undefined,
     };
   }
 
+  const buffsOf = (p) => {
+    const t = now(), b = {};
+    if (p.hasteUntil > t) b.haste = 1;
+    if (p.furyUntil > t) b.fury = 1;
+    if (p.shield > 0) b.aegis = Math.round(p.shield);
+    return b.haste || b.fury || b.aegis ? b : undefined;
+  };
   const isStunned = (p) => p.stunUntil > now();
   const isBound = (p) => p.silenceUntil > now();     // no spells, ward or telekinesis
   const isRooted = (p) => p.rootUntil > now();       // no movement, knockback included
@@ -124,7 +151,7 @@ export function createRoom(opts) {
   };
   const aboveFloor = (q) => q.p[1] - groundAt(q.p[0], q.p[2], q.p[1]);   // height over what's under them (a ledge counts as floor)
   // Round 13: everything casts in the air (a jump, a fall, an air jump). Up there means any of these:
-  const inAir = (p) => !!(p.jump || p.fall || p.hover) || isAirborne(p) || aboveFloor(p) > 0.05;
+  const inAir = (p) => !!(p.jump || p.fall || p.hover || p.pad) || isAirborne(p) || aboveFloor(p) > 0.05;
   // Winding up the Battering Ram: nothing else
   const RAMWIND_LOCKED = new Set(['chargeStart', 'cyclone', 'siphonStart', 'frostfall', 'ult', 'veil', 'bulwark', 'smokeFlask', 'ramGuard', 'firewall', 'block', 'toxic', 'curse', 'pickup', 'throw', 'ram', 'ride',
     'cast', 'jump', 'teleport', 'skyward', 'smoke', 'mirror', 'flaskStep', 'roll']);
@@ -263,6 +290,7 @@ export function createRoom(opts) {
 
     let dmg = Math.round((proj.dmg ?? spec.damage) * C.DAMAGE_SCALE);   // round 10: +30% on every damage source, tuned in one place
     if (attacker?.brewUntil > t && !spec.ult) dmg = Math.round(dmg * C.SPELLBOOK.berserker_brew.damageMul);   // Berserker Brew (round 16 review: every spell, not only potions and pools)
+    if (attacker?.furyUntil > t && !spec.ult) dmg = Math.round(dmg * C.RUNES.types.fury.damageMul);   // round 22: the Fury rune
     let absorbedAmt = 0;   // what a block soaked (the BLOCKED number)
     if (blocked) {
       const cost = spec.staminaCost * (C.SPELLBOOK[kit(target).guard]?.hitCostMul ?? 1);
@@ -313,6 +341,10 @@ export function createRoom(opts) {
       }
     }
 
+    // round 22: an Aegis rune's shield soaks the damage first (the stun, slow, bind and knockback still land)
+    let shielded = 0;
+    if (dmg > 0 && target.shield > 0) { shielded = Math.min(target.shield, dmg); target.shield -= shielded; dmg -= shielded; }
+    if (shielded > 0) { target.lastDamagedAt = t; target.lastHitBy = proj.owner; }
     target.hp -= dmg;
     if (dmg > 0) {
       target.lastDamagedAt = t;   // round 10: any damage resets the out-of-combat regen timer
@@ -339,6 +371,7 @@ export function createRoom(opts) {
       ...(proj.fin ? { fin: true } : {}), ...(spec.ult ? { ult: true } : {}), ...(proj.long ? { long: true } : {}),   // (combat feedback: bigger numbers)
       ...(knock ? { knockdown: C.KNOCKDOWN.total } : {}),
       ...(blocked ? { absorbed: absorbedAmt } : {}),
+      ...(shielded ? { shield: shielded } : {}),
       ...(!blocked && spec.slow ? { slow: spec.slowTime } : {}),
       ...(!blocked && !steady && spec.bind ? { bind: spec.bind } : {}),
       ...(freeze ? { freeze: true } : {}),
@@ -382,15 +415,41 @@ export function createRoom(opts) {
     target.brewUntil = 0;
     if (target.veilUntil) { target.veilUntil = 0; broadcast({ t: 'veilEnd', id: target.id }); }
     for (const d of [...decoys.values()]) if (d.owner === target.id) endDecoy(d, false);
-    target.flightUntil = 0; target.p[1] = 0;
+    target.flightUntil = 0; target.p[1] = Math.max(target.p[1], 0);
     target.blocking = false;
     target.protUntil = 0;
+    target.hasteUntil = target.furyUntil = target.shieldUntil = 0; target.shield = 0; target.pad = null;   // round 22
     target.deaths++;
     target.respawnAt = now() + C.RESPAWN_TIME;
     if (target.carrying) dropProp(target, true);
     if (attacker && attacker.id !== target.id) { attacker.kills++; addUltCharge(attacker, C.ULT_CHARGE.kill); }
+    noteStreaks(target, attacker, now());
     match.onKill(target, attacker, cause);
     broadcast({ t: 'death', id: target.id, killer: attacker ? attacker.id : null, cause, kind, ...(spell ? { spell } : {}) });
+  }
+  // Round 22: streaks and callouts ({ t: 'callout' }: characters draws the banner, audio.js the sting). Live matches only. First Blood
+  // once per match; Double / Triple Kill for kills within STREAKS.multiWindow s; a banner at each STREAKS.steps streak (+ult at 3);
+  // Shutdown for ending a streak of STREAKS.shutdownAt or more.
+  let firstBloodLive = null;
+  const STREAK_SUB = { 3: (n) => `${n} is on fire`, 5: (n) => `${n} is unstoppable`, 8: (n) => `${n} is an Archmage` };
+  function callout(kind, p, label, sub = null, extra = {}) {
+    broadcast({ t: 'callout', kind, id: p.id, label, ...(sub ? { sub } : {}), ...extra });
+  }
+  function noteStreaks(target, attacker, t) {
+    const live = match.state().phase === 'live';
+    const ended = target.streak || 0;
+    target.streak = 0; target.killTimes = [];
+    if (!live || !attacker || attacker === target) return;
+    attacker.streak = (attacker.streak || 0) + 1;
+    const ks = (attacker.killTimes ??= []);
+    ks.push(t); while (ks.length && t - ks[0] > C.STREAKS.multiWindow) ks.shift();
+    if (firstBloodLive !== match.state().liveAt) { firstBloodLive = match.state().liveAt; callout('first_blood', attacker, 'First Blood!', `${attacker.name} draws first blood`); }
+    if (ks.length === 2) callout('double', attacker, 'Double Kill!', null, { multi: 2 });
+    else if (ks.length >= 3) callout('triple', attacker, ks.length === 3 ? 'Triple Kill!' : 'Multi Kill!', null, { multi: ks.length });
+    const label = C.STREAKS.steps[attacker.streak];
+    if (label) callout('streak', attacker, label, STREAK_SUB[attacker.streak]?.(attacker.name) ?? `${attacker.name} is on a ${attacker.streak}-kill streak`, { streak: attacker.streak });
+    if (attacker.streak === C.STREAKS.ultBonusAt) addUltCharge(attacker, C.STREAKS.ultBonus);
+    if (ended >= C.STREAKS.shutdownAt) callout('shutdown', attacker, 'Shutdown!', `${attacker.name} ended ${target.name}'s ${ended}-kill streak`, { victim: target.id, streak: ended });
   }
 
   function respawn(p) {
@@ -402,6 +461,7 @@ export function createRoom(opts) {
     p.slowUntil = p.rootUntil = p.silenceUntil = p.frozenUntil = 0;
     p.ammo = C.primaryMag(kit(p).primary).magazine; p.reloadUntil = 0;
     p.rollImmuneUntil = 0;
+    p.pad = null; p.padUntil = 0; p.hasteUntil = p.furyUntil = p.shieldUntil = 0; p.shield = 0;   // round 22
     p.protUntil = now() + C.SPAWN_PROTECT.time;
     endUltimates(p);
     endRide(p);
@@ -471,7 +531,7 @@ export function createRoom(opts) {
     // the client is maybe a little higher than our last report (a jump rises about 0.45 m in 50 ms): allow up to the apex
     const cap = p.jump ? Math.max(p.p[1], C.jumpApex(p.jump)) + 0.2 : p.p[1] + 0.1;
     p.hover = { y: p.p[1], cap, until: t + secs };
-    p.jump = null; p.fall = null; p.flightUntil = 0;
+    p.jump = null; p.fall = null; p.flightUntil = 0; p.pad = null;
     if (p.bot) p.vy = 0;
   }
   function updateHover(p, t) {
@@ -485,7 +545,7 @@ export function createRoom(opts) {
     if (!inAir(p) || isAirborne(p)) return false;
     const top = p.jump ? Math.max(p.p[1], C.jumpApex(p.jump)) + 0.2 : p.hover ? p.hover.cap : p.p[1] + 0.1;
     const y0 = clamp(Number.isFinite(y) ? y : p.p[1], groundAt(p.p[0], p.p[2], p.p[1]), top);
-    p.jump = null; p.hover = null;
+    p.jump = null; p.hover = null; p.pad = null;
     p.fall = { start: t + secs, y0, air: true };
     if (p.bot) { p.p[1] = y0; p.vy = 0; p.airDashUntil = t + secs; }
     return y0;
@@ -565,7 +625,9 @@ export function createRoom(opts) {
 
   // ---------------------------------------------------------------- health potions (round 10)
   // One flask per map.js HEAL_SPOTS spot. A hurt wizard who touches it drinks it (POTION.heal); it's back POTION.respawn s later.
-  const potions = (C.HEAL_SPOTS || []).map(sp => ({ id: sp.id, spot: sp, readyAt: 0 }));
+  const potions = [];
+  function buildPotions() { potions.length = 0; for (const sp of C.HEAL_SPOTS || []) potions.push({ id: sp.id, spot: sp, readyAt: 0 }); }
+  buildPotions();
   const potionPublic = (pt) => ({ id: pt.id, p: [pt.spot.x, pt.spot.y, pt.spot.z], ready: now() >= pt.readyAt, left: Math.max(0, +(pt.readyAt - now()).toFixed(1)) });
   function updatePotions(t) {
     for (const pt of potions) {
@@ -580,6 +642,99 @@ export function createRoom(opts) {
         broadcast({ t: 'potion', ...potionPublic(pt), by: q.id });
         break;
       }
+    }
+  }
+
+  // ---------------------------------------------------------------- rune pickups and jump pads (round 22)
+  // Runes (C.RUNES): one per map.js RUNE_SPOTS spot (or a test's debugMap list), server-authoritative like potions. A living wizard
+  // touching one takes its effect; it's back RUNES.respawn s later with a fresh random type (a spot's own `type` pins it).
+  const runes = [], pads = [];
+  let debugSpots = null;   // WA_DEBUG: { runes, pads } set by a test, instead of the map's
+  const runeType = (sp) => (sp.type && C.RUNES.types[sp.type] ? sp.type : C.randomRuneType());
+  function buildRunes() {
+    runes.length = 0;
+    if (LEGACY) return;   // (a legacy room: the live build knows no runes or pads)
+    (debugSpots?.runes ?? C.RUNE_SPAWNS ?? []).forEach((sp, i) => runes.push({ i, id: sp.id ?? i, spot: sp, readyAt: 0, taken: false, type: runeType(sp) }));
+  }
+  function buildPads() {
+    pads.length = 0;
+    if (LEGACY) return;
+    (debugSpots?.pads ?? C.JUMP_PADS ?? []).forEach((pd, i) => {
+      const to = Array.isArray(pd.target) ? pd.target : [pd.tx ?? pd.x, pd.ty ?? pd.y, pd.tz ?? pd.z];
+      pads.push({ ...pd, i, id: pd.id ?? i, r: pd.r ?? C.PAD.radius, tx: to[0], ty: to[1], tz: to[2], arc: C.padArc(pd) });
+    });
+  }
+  buildRunes(); buildPads();
+  // the snapshot's runes (characters' shape: { i, x, y, z, type, up, in }) and the welcome's pads ({ id, x, y, z, r, to, yaw, time })
+  const runePublic = (r) => ({ i: r.i, id: r.id, x: r.spot.x, y: r.spot.y ?? 0, z: r.spot.z, type: r.type, up: !r.taken, ...(r.taken ? { in: Math.max(0, +(r.readyAt - now()).toFixed(1)) } : {}) });
+  const padPublic = (pd) => ({ i: pd.i, id: pd.id, x: pd.x, y: pd.y, z: pd.z, r: pd.r, to: [pd.tx, pd.ty, pd.tz], yaw: pd.yaw ?? Math.atan2(pd.tx - pd.x, pd.tz - pd.z), time: +pd.arc.time.toFixed(3) });
+  function applyRune(q, type, t) {
+    const R = C.RUNES.types[type];
+    if (type === 'haste') q.hasteUntil = t + R.time;
+    else if (type === 'fury') q.furyUntil = t + R.time;
+    else if (type === 'aegis') { q.shield = R.shield; q.shieldUntil = t + R.time; }
+    else if (type === 'surge') addUltCharge(q, R.ult);
+    match.onRune?.(q, type);
+  }
+  function updateRunes(t) {
+    for (const r of runes) {
+      if (r.taken && t >= r.readyAt) { r.taken = false; r.type = runeType(r.spot); }   // (the next snapshot shows it up again)
+      if (r.taken) continue;
+      const sp = r.spot, y = sp.y ?? 0;
+      for (const q of players.values()) {
+        if (q.dead || q.spectator || q.mrain || Math.hypot(q.p[0] - sp.x, q.p[2] - sp.z) > C.RUNES.radius + C.PLAYER_RADIUS || Math.abs(q.p[1] - y) > C.RUNES.height) continue;
+        applyRune(q, r.type, t);
+        r.taken = true; r.readyAt = t + C.RUNES.respawn;
+        broadcast({ t: 'runeTaken', i: r.i, id: r.id, by: q.id, byName: q.name, type: r.type, p: [sp.x, y, sp.z] });
+        break;
+      }
+    }
+  }
+  // Pads (C.PAD): stepping on one launches the wizard on its fixed arc (C.padArc, shared with the client and the bots). The server
+  // flies bots along it; a human's client flies itself and reports (the state check allows the arc). A launch snaps to the pad's
+  // centre so the landing is the pad's target.
+  const padUnder = (q, slack = 0.2) => pads.find(pd => Math.hypot(q.p[0] - pd.x, q.p[2] - pd.z) <= pd.r + slack && Math.abs(q.p[1] - pd.y) <= C.PAD.height) || null;
+  const canLaunch = (q, t) => !q.dead && !q.spectator && !q.pad && t >= (q.padUntil || 0) && !q.mrain && !q.mrainFall && !q.ride && !q.grab && !q.hover && !isAirborne(q) && !q.eye && !isRooted(q) && !castRooted(q, t) && !q.blizz;
+  function launchPad(q, pd, t) {
+    q.pad = { id: pd.id, pd, start: t, arc: pd.arc };
+    q.padUntil = t + pd.arc.time + C.PAD.cooldown;
+    q.jump = null; q.fall = null; q.hover = null; q.airJumped = false; q.jumpSpeed = Math.hypot(pd.arc.v[0], pd.arc.v[2]);
+    q.p = [pd.x, pd.y, pd.z]; q.justTeleported = true;   // (the snap to the centre: the next report starts a fresh budget)
+    if (q.sprinting) setSprint(q, false, t);
+    q.crouch = false;
+    if (q.blocking) { q.blocking = false; q.blockReleasedAt = t; }
+    if (q.bot) { q.bot.vel = [pd.arc.v[0], pd.arc.v[2]]; q.vy = 0; }
+    broadcast({ t: 'pad', id: q.id, pad: pd.i, padId: pd.id, from: [pd.x, pd.y, pd.z], to: [pd.tx, pd.ty, pd.tz], time: +pd.arc.time.toFixed(3) });
+  }
+  function updatePads(t, dt) {
+    if (!pads.length) return;
+    for (const q of players.values()) {
+      if (q.dead) continue;
+      if (q.pad) {
+        if (!q.bot) { if (t - q.pad.start > q.pad.arc.time + 1.0) q.pad = null; continue; }   // (a human's landing comes in its report)
+        // a bot: along the arc, steered a little by its own wish (bots.js keeps b.vel at the arc's speed plus the steer)
+        const e = t - q.pad.start, at = C.padAt(q.pad.arc, q.pad.pd, e);
+        const sx = q.bot.vel[0] - q.pad.arc.v[0], sz = q.bot.vel[1] - q.pad.arc.v[2];
+        q.p[0] = at[0] + sx * e; q.p[2] = at[2] + sz * e;
+        const fl = groundAt(q.p[0], q.p[2], at[1] + 0.3);
+        if (e > 0.15 && at[1] <= fl + 0.01) { q.p[1] = fl; q.pad = null; q.vy = 0; q.bot.vel = [0, 0]; touchedDown(q); }
+        else if (e > q.pad.arc.time + 1.0) { q.pad = null; q.vy = 0; }
+        else q.p[1] = Math.max(fl, at[1]);
+        continue;
+      }
+      if (!canLaunch(q, t)) continue;
+      const pd = padUnder(q);
+      if (pd) launchPad(q, pd, t);
+    }
+  }
+  // The void (C.VOID, map.js VOID_Y: Sky Ruins): below it you're dead, credited to the last one who hurt you within VOID.credit s
+  function updateVoid(t) {
+    const vy = debugSpots?.void ?? C.voidY();   // (WA_DEBUG: debugMap's own void height, so the rule is tested on any map)
+    if (vy == null) return;
+    for (const q of players.values()) {
+      if (q.dead || q.spectator || q.p[1] >= vy) continue;
+      const by = players.get(q.lastHitBy);
+      killPlayer(q, by && by !== q && t - (q.lastDamagedAt ?? -1e9) <= C.VOID.credit ? by : null, 'void', 'void');
     }
   }
 
@@ -1457,11 +1612,15 @@ export function createRoom(opts) {
   }
 
   function simulate(dt) {
+    useMap();
     const t = now();
     checkIdle(t);
     updateBots(dt, world);
     match.tick(dt);
     updatePotions(t);
+    updateRunes(t);   // round 22
+    updatePads(t, dt);
+    updateVoid(t);
     updateDecoys(dt, t);
     for (const w of [...walls.values()]) if (t >= w.until) wallDown(w, true);
     for (const f of [...frostfalls.values()]) if (t >= f.at) frostfallImpact(f);
@@ -1481,6 +1640,7 @@ export function createRoom(opts) {
       }
       // ultimates: the passive charge, and whichever one is running
       p.ult = Math.min(C.ULT_CHARGE.max, p.ult + C.ULT_CHARGE.passive * dt);
+      if (p.shield > 0 && t >= p.shieldUntil) p.shield = 0;   // round 22: the Aegis wears off
       if (p.eye) updateEye(p, t);
       if (p.ride) updateRide(p, t);
       if (p.ultWind) updateUltWindup(p, t);
@@ -1539,7 +1699,7 @@ export function createRoom(opts) {
         } else if (e > C.JUMP.airTime + 0.6) p.jump = null;
       }
       // bots off an edge fall, and step up ramps and stairs (humans report their own height); an air dash holds the height
-      if (p.bot && !p.jump && !p.grab && !p.hover && !p.dead && !isAirborne(p) && !p.mrain && !p.mrainFall && !(p.airDashUntil > t)) {
+      if (p.bot && !p.jump && !p.grab && !p.hover && !p.pad && !p.dead && !isAirborne(p) && !p.mrain && !p.mrainFall && !(p.airDashUntil > t)) {
         const fl = groundAt(p.p[0], p.p[2], p.p[1]);
         if (p.p[1] > fl + 0.01) { if (!p.vy && !p.jumpSpeed) p.jumpSpeed = takeoffSpeed(p, t); p.vy = (p.vy || 0) - C.JUMP.gravity * dt; p.p[1] = Math.max(fl, p.p[1] + p.vy * dt); if (p.p[1] <= fl) { p.vy = 0; touchedDown(p); } }
         else { p.p[1] = fl; p.vy = 0; if (p.airJumped || p.rideQueued || p.jumpSpeed) touchedDown(p); }
@@ -1726,6 +1886,24 @@ export function createRoom(opts) {
         mrainDive(p);
         break;
       }
+      case 'pad': {
+        // round 22: the client stepped on a jump pad (it flies itself at once); the server launches it if it is on (or just past) it.
+        // The tick's own check (updatePads) covers a client that doesn't ask.
+        const pd = pads.find(q => q.i === msg.pad || q.id === msg.id);
+        if (!pd || !canLaunch(p, t)) break;
+        if (Math.hypot(p.p[0] - pd.x, p.p[2] - pd.z) > pd.r + 1.2 || Math.abs(p.p[1] - pd.y) > C.PAD.height + 0.5) break;
+        launchPad(p, pd, t);
+        break;
+      }
+      case 'debugMap': {
+        // tests only (WA_DEBUG=1): this room's rune spots and pads ({ runes: [{ id, x, y, z, type? }], pads: [{ id, x, y, z, tx, ty, tz, strength?, r? }] })
+        // instead of the map's, until the next map switch
+        if (!process.env.WA_DEBUG) break;
+        debugSpots = { runes: Array.isArray(msg.runes) ? msg.runes : [], pads: Array.isArray(msg.pads) ? msg.pads : [], void: Number.isFinite(msg.void) ? msg.void : null };
+        buildRunes(); buildPads();
+        broadcast({ t: 'map', map: pubMap(mapId), props: [...props.values()].map(propPublic), potions: potions.map(potionPublic), runes: runes.map(runePublic), pads: pads.map(padPublic) });
+        break;
+      }
       case 'debugCharge': {
         // tests only (WA_DEBUG=1): a full ultimate charge
         if (process.env.WA_DEBUG) p.ult = C.ULT_CHARGE.max;
@@ -1770,6 +1948,12 @@ export function createRoom(opts) {
           // says where that was, within what the client could have reached; from then on it holds there)
           y = clamp(msg.p[1], y, Math.max(y, p.hover.cap));
           if (!p.hover.locked) { p.hover.locked = true; p.hover.y = y; p.hover.cap = y + 0.05; }
+        } else if (p.pad) {
+          // round 22: a jump-pad flight: between the floor and the arc's apex; it ends when we report landing
+          const e = t - p.pad.start, fl = y;
+          y = clamp(msg.p[1], y, Math.max(y, p.pad.arc.apex + 0.3));
+          if (e > 0.15 && msg.p[1] <= fl + 0.02) { p.pad = null; touchedDown(p); }
+          else if (e > p.pad.arc.time + 1.0) p.pad = null;
         } else if (p.jump) {
           // a jump: anywhere between the floor and the apex (plus a little); it ends when we report landing
           // (round 13: landing is a report at the floor; it used to compare with the clamped height, which ended every jump
@@ -1802,18 +1986,20 @@ export function createRoom(opts) {
         setSprint(p, !!msg.sprint && fwdOk && !p.crouch, t);
         const d = dist2D(np, p.p);
         // the fastest this wizard can go this way: its run speed, the backpedal cap against its facing, or a dash
-        const run = C.backpedalSpeed(C.speedOf() * (p.eye ? EYE.speedMul : 1), np[0] - p.p[0], np[2] - p.p[2], Number.isFinite(msg.yaw) ? msg.yaw : p.yaw)
+        const haste = p.hasteUntil > t - 0.3 ? C.RUNES.types.haste.speedMul : 1;   // round 22: the Haste rune (a moment's grace: the client learns it ends from a snapshot)
+        const run = C.backpedalSpeed(C.speedOf() * haste * (p.eye ? EYE.speedMul : 1), np[0] - p.p[0], np[2] - p.p[2], Number.isFinite(msg.yaw) ? msg.yaw : p.yaw)
           + (p.pulledUntil > t ? Math.max(EYE.pull, BLIZ.push) : 0);   // dragged by an Eye of the Storm, pushed by a Blizzard
         // (knockback only counts for a moment after one actually landed; it used to be allowed all the time, which with
         // 0.6 m of slack per update let a client run about 20 m/s faster than its walk)
         let own = dashing ? p.dashSpeed || SMOKE.distance / SMOKE.dashTime : galloping(p, t) ? RIDE.speed * 1.1 : isAirborne(p) ? Math.max(run, SKY.airSpeed)
+          : p.pad ? Math.hypot(p.pad.arc.v[0], p.pad.arc.v[2]) + run * C.PAD.airControl + 0.5   // round 22: a pad's arc, plus the little steering it allows
           : castRooted(p, t) ? 0   // a rooting wind-up: no translation (the budget's small burst covers latency)
           : p.crouch && !(p.sprintEndedAt > t - 0.3) ? Math.min(run, C.CROUCH.speed)
-          : p.sprinting || p.sprintEndedAt > t - 0.3 ? Math.max(run, C.sprintOf() * (p.slowUntil > t ? 1 - C.SPELLS.skim.slow : 1))
+          : p.sprinting || p.sprintEndedAt > t - 0.3 ? Math.max(run, C.sprintOf() * haste * (p.slowUntil > t ? 1 - C.SPELLS.skim.slow : 1))
           : p.blocking && !(p.blockReleasedAt > t - 0.3) ? Math.min(run, C.BLOCK_MOVE_SPEED)   // a held shield
           : run;
         // round 13: in the air, the speed taken off with (a sprint-jump carries 5.5 m/s); a cast slows to CAST_SLOW.mult
-        if (!dashing && !galloping(p, t) && !isAirborne(p) && own > 0) {
+        if (!dashing && !galloping(p, t) && !isAirborne(p) && !p.pad && own > 0) {
           if (p.jump || p.fall) own = Math.max(own, p.jumpSpeed || 0);
           if (castSlowed(p, t)) own *= C.CAST_SLOW.mult;
         }
@@ -1855,14 +2041,15 @@ export function createRoom(opts) {
         // riding; each costs stamina. The client says which (msg.n) and from what height (msg.y0, bounded here).
         const fl = groundAt(p.p[0], p.p[2], p.p[1]);
         const coyote = p.fall && !p.fall.air && t - p.fall.start < C.JUMP.coyote + 0.15;   // (+ latency: our fall began on its report)
-        const grounded = !p.jump && !p.hover && (coyote || (!p.fall && p.p[1] <= fl + 0.05));
+        const grounded = !p.jump && !p.hover && !p.pad && (coyote || (!p.fall && p.p[1] <= fl + 0.05));
         const air = msg.n === 2 && !grounded;
         const cost = air ? C.AIR_JUMP.stamina : C.JUMP.stamina;
         if (p.dead || isAirborne(p) || isRooted(p) || isStunned(p) || castRooted(p, t) || p.blocking || p.ride || p.mrain || p.mrainFall || p.eye || p.hover || p.grab
           || p.flaskWind || p.st < cost || (air ? p.airJumped || !(inAir(p) || msg.y0 > fl + 0.05) : !grounded)) { send(p.id, { t: 'jumpRefused', n: msg.n === 2 ? 2 : 1 }); break; }
         // the height it starts from: the client's, within what it could have reached since its last report
-        const top = p.jump ? Math.max(p.p[1], C.jumpApex(p.jump)) + 0.2 : p.fall ? Math.max(p.p[1], p.fall.y0) + 0.05 : p.p[1] + 0.1;
-        const y0 = clamp(Number.isFinite(msg.y0) ? msg.y0 : p.p[1], fl, Math.max(fl, Math.min(top, p.p[1] + 0.8)));
+        const top = p.pad ? p.pad.arc.apex + 0.3 : p.jump ? Math.max(p.p[1], C.jumpApex(p.jump)) + 0.2 : p.fall ? Math.max(p.p[1], p.fall.y0) + 0.05 : p.p[1] + 0.1;
+        const y0 = clamp(Number.isFinite(msg.y0) ? msg.y0 : p.p[1], fl, Math.max(fl, Math.min(top, p.pad ? top : p.p[1] + 0.8)));
+        if (p.pad) p.pad = null;   // round 22: the air jump out of a pad's arc (its speed carries: jumpSpeed was set at the launch)
         p.st -= cost; p.blockReleasedAt = t;   // stamina regen waits, as after a ward
         p.crouch = false;
         p.jumpSpeed = Math.max(air ? p.jumpSpeed || 0 : 0, takeoffSpeed(p, t));
@@ -2338,7 +2525,7 @@ export function createRoom(opts) {
   }
 
   // cycloneStopsRams: a cyclone knocks a charging ram dizzy (bots answer a charge with one)
-  const world = { players, potions, props, projectiles, decoys, walls, frostfalls, smokes, cages, firewalls, rams, stampedes, pools, smokeFlasks, handle, now, cycloneStopsRams: true };
+  const world = { players, potions, runes, pads, props, projectiles, decoys, walls, frostfalls, smokes, cages, firewalls, rams, stampedes, pools, smokeFlasks, handle, now, cycloneStopsRams: true };
   // Game modes (server/match.js, modes agent). addUltCharge is the spells agent's to implement.
   const match = createMatch({
     players, props, now, broadcast, send, propPublic,
@@ -2348,8 +2535,35 @@ export function createRoom(opts) {
     resetUlt: (p) => { p.ult = 0; },
     // between matches: every ram goes
     resetRams: () => { for (const r of [...rams]) despawnRam(r); },
+    // round 22: the map rotation (match.js): the maps this room plays, and the switch to another one
+    maps: () => mapsAvail(),
+    setMap: (id) => setMap(id),
+    pubMap: (id) => pubMap(id),
   });
   world.match = match;
+  // Round 22: the room moves to another map (the rotation, at a countdown): map.js reads it, the props, potions, runes and pads are
+  // rebuilt from it, everything a spell left behind goes (it would hang in the air over the other map), and everyone hears
+  // { t: 'map', ... } (the client swaps its world, then the respawns put everyone on the new spawns).
+  function setMap(id) {
+    if (id === mapId) return;
+    mapId = id;
+    useMap();
+    debugSpots = null;
+    for (const proj of [...projectiles.values()]) endProjectile(proj, false);
+    for (const d of [...decoys.values()]) endDecoy(d, false);
+    for (const w of [...walls.values()]) wallDown(w, false);
+    for (const f of [...frostfalls.values()]) { frostfalls.delete(f.id); broadcast({ t: 'frostfallHit', id: f.id, p: [f.x, f.y, f.z], hits: [] }); }
+    for (const c of [...smokes.values()]) smokes.delete(c.id);
+    for (const c of [...cages.values()]) { cages.delete(c.id); broadcast({ t: 'cageEnd', id: c.id }); }
+    for (const w of [...firewalls.values()]) { firewalls.delete(w.id); broadcast({ t: 'firewallEnd', id: w.id }); }
+    for (const pl of [...pools.values()]) { pools.delete(pl.id); broadcast({ t: 'poolEnd', id: pl.id }); }
+    for (const c of [...smokeFlasks.values()]) { smokeFlasks.delete(c.id); broadcast({ t: 'smokeFlaskEnd', id: c.id }); }
+    for (const q of players.values()) { q.carrying = null; q.pad = null; q.grab = null; q.fall = null; q.jump = null; q.hover = null; }
+    buildProps(); buildPotions(); buildRunes(); buildPads();
+    broadcast({ t: 'map', map: pubMap(mapId), props: [...props.values()].map(propPublic), potions: potions.map(potionPublic), runes: runes.map(runePublic), pads: pads.map(padPublic) });
+    roomChanged();
+    console.log(`[room] ${room.id} is on ${mapId}`);
+  }
   const validVec = (v) => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite);
 
   // The idle prop a telekinesis cast grabs: the one closest to the aim ray within range and cone,
@@ -2406,7 +2620,8 @@ export function createRoom(opts) {
   function info() {
     const n = humans().length;
     return { id: room.id, code: room.code, private: room.kind === 'private', humans: n, max: MAX_HUMANS, joinable: n < MAX_HUMANS,
-      host: room.kind === 'private' ? room.host : null, bots: match.state().botDiff };
+      host: room.kind === 'private' ? room.host : null, bots: match.state().botDiff,
+      map: pubMapId(mapId), lock: match.mapLock(), maps: mapsAvail().map(pubMapId), ...(LEGACY ? { legacy: true } : {}) };   // round 22
   }
   let lastInfo = '';
   function roomChanged() {
@@ -2425,12 +2640,14 @@ export function createRoom(opts) {
 
   // A human arrives: `msg` is their join ({ name, loadout, voice, difficulty }); `extra` is merged into the welcome (roomError).
   function join(ws, msg, extra = {}) {
+    useMap();
     const id = allocId();
     if (ws.account?.username) msg = { ...msg, name: ws.account.username };   // round 18: a verified CrazyGames name
     let name = String(msg.name || 'Wizard').replace(/[^\w \-'!?.]/g, '').trim().slice(0, C.MAX_NAME_LEN) || `Wizard${id}`;
     if (rudeName(name)) name = `Wizard${id}`;   // round 15 (CrazyGames: a profanity filter on names other players see)
     const lo = C.sanitizeLoadout(msg.loadout);
     const p = newPlayer(id, name, lo || C.DEFAULT_LOADOUT, msg.voice);
+    p.proto = Number.isFinite(msg.proto) ? msg.proto : 0;   // round 22: 0 = the live CrazyGames build (server.js put it in a legacy room)
     if (room.kind === 'private' && room.host == null) room.host = id;   // the creator (or the first in after everyone left)
     // fill bots play at this difficulty (a private room: the host's choice only). Round 21: a first-timer (the client's
     // `firstVisit`) alone in a public room gets Easy bots, so they can win their first fights; one joining other humans
@@ -2458,6 +2675,8 @@ export function createRoom(opts) {
       firewalls: [...firewalls.values()].map(firewallPublic),
       pools: [...pools.values()].map(poolPublic),
       potions: potions.map(potionPublic),
+      ...(LEGACY ? {} : { runes: runes.map(runePublic), pads: pads.map(padPublic) }),   // round 22 (a legacy room has none, and sends none)
+      map: pubMap(mapId),
       smokeFlasks: [...smokeFlasks.values()].map(c => ({ id: c.id, owner: c.owner, p: [c.x, c.y, c.z], left: Math.max(0, c.until - now()) })),
       decoys: [...decoys.values()].map(decoyPublic),
       ...match.welcomeExtras(p),
@@ -2474,6 +2693,7 @@ export function createRoom(opts) {
   function message(id, msg) {
     const p = players.get(id);
     if (!p) return;
+    useMap();
     noteInput(p, msg);
     if (msg.t === 'debugIdle') {   // tests only (WA_DEBUG=1): shorter idle times for this room
       if (process.env.WA_DEBUG) for (const k of ['spectate', 'waiting', 'kick']) if (Number.isFinite(msg[k])) idleCfg[k] = msg[k];
@@ -2481,6 +2701,7 @@ export function createRoom(opts) {
     }
     if (msg.t === 'menu' || msg.t === 'activity') return;
     if (msg.t === 'roomBots') { if (room.kind !== 'private' || room.host === id) setBots(msg.difficulty); return; }
+    if (msg.t === 'roomMap') { if (!LEGACY && (room.kind !== 'private' || room.host === id) && match.setMapLock(msg.map)) roomChanged(); return; }   // round 22: the host locks a map ('rotate' lifts it)
     handle(p, msg);
   }
 
@@ -2506,8 +2727,10 @@ export function createRoom(opts) {
   }
   function snapshot() {
     if (players.size === 0) return;
+    useMap();
     sendGlyphs();
-    broadcast({ t: 'snap', time: now(), players: [...players.values()].map(playerPublic), rams: rams.map(ramPublic), decoys: [...decoys.values()].map(decoyPublic), ...match.snapshotExtras() });
+    broadcast({ t: 'snap', time: now(), players: [...players.values()].map(playerPublic), rams: rams.map(ramPublic), decoys: [...decoys.values()].map(decoyPublic),
+      ...(runes.length ? { runes: runes.map(runePublic) } : {}), ...match.snapshotExtras() });
   }
   // the room is going away (empty for a while): drop whatever is left
   function close() {
@@ -2523,6 +2746,7 @@ export function createRoom(opts) {
     observe(ws) { observers.add(ws); room.emptySince = null; },
     unobserve(ws) { observers.delete(ws); if (!observers.size && !humans().length) room.emptySince ??= now(); },
     observerCount: () => observers.size,
-    observerMessage(msg) { if (msg.t === 'addBot' || msg.t === 'removeBots') handle({ bot: null }, msg); },
+    observerMessage(msg) { if (msg.t === 'addBot' || msg.t === 'removeBots') { useMap(); handle({ bot: null }, msg); } },
+    legacy: LEGACY, map: () => pubMapId(mapId),
   });
 }
