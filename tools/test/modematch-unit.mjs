@@ -19,7 +19,10 @@ const ctx = {
   addUltCharge: (p, pct) => ult.set(p.id, Math.max(0, Math.min(100, (ult.get(p.id) || 0) + pct))),
   addBot: (difficulty) => { const p = mk(true, difficulty); match.onJoin(p); },
   removePlayer: (id) => { const p = players.get(id); if (p) { match.onLeave(p); players.delete(id); } },
+  // round 22: the map rotation (the room's maps, and the switches the match asks for)
+  maps: () => ['courtyard', 'sky'], setMap: (id) => mapSwitches.push(id),
 };
+const mapSwitches = [];
 function mk(bot, difficulty = 'normal') {
   const id = nextId++;
   const p = { id, name: (bot ? 'B' : 'H') + id, p: [0, 0, 0], yaw: 0, hp: 100, dead: false, kills: 0, deaths: 0, carrying: null,
@@ -90,7 +93,8 @@ const [b1, b2] = bots();
 ok(match.isEnemy(h, b1) && match.isEnemy(b1, b2) && !match.isEnemy(h, h), 'everyone else is an enemy, never yourself');
 run(1);
 ok(S.phase === 'live', 'the countdown (3 s) → live');
-ok(match.matchPublic().target === 15 && match.matchPublic().mode === 'ffa', 'first to 15, mode ffa');
+ok(match.matchPublic().target === 10 && match.matchPublic().mode === 'ffa', 'first to 10 (round 22), mode ffa');
+ok(match.matchPublic().map?.id === 'courtyard' && match.matchPublic().next === null && mapSwitches.length === 0, `a room's first match is on the courtyard, no switch (${JSON.stringify(match.matchPublic().map)})`);
 
 // ---- a 2nd human takes a bot's place; 3rd and 4th too; a 5th spectates
 const h2 = join(mk(false)); run(0.1);
@@ -129,9 +133,10 @@ for (const p of players.values()) { p.kills = 0; p.deaths = 0; }
   ok(c.ms.healed === 25 && c.ms.potions === 2 && b.ms.airJumps === 3 && a.ms.traps === 1, 'healing, potions, double jumps and traps sprung count');
   b.hp = 100;
 }
-h.kills = 14; match.onKill(b1, h); ok(S.phase === 'live', '14 kills: still live');
-h.kills = 15; h2.kills = 4; match.onKill(h2, h);
-ok(S.phase === 'end' && S.results.winner === h.id && S.results.reason === 'target', 'the 15th kill ends the match, the leader wins');
+h.kills = 9; match.onKill(b1, h); ok(S.phase === 'live', '9 kills: still live');
+h.kills = 10; h2.kills = 4; match.onKill(h2, h);
+ok(S.phase === 'end' && S.results.winner === h.id && S.results.reason === 'target', 'the 10th kill ends the match, the leader wins');
+ok(match.matchPublic().next?.id === 'sky' && match.matchPublic().next.name === 'Sky Ruins', `from the end of the match, next = Sky Ruins (${JSON.stringify(match.matchPublic().next)})`);
 ok(S.results.players[0].id === h.id && S.results.players.length === 4 && S.results.players[0].loadout, 'results list the 4 fighters, best first, with loadouts');
 ok(!match.isEnemy(h, h2), 'no fighting on the results screen');
 ok(sent.some(m => m.t === 'matchEnd'), 'matchEnd broadcast');
@@ -144,21 +149,48 @@ ok(recap?.podium.length === 3 && recap.podium.map(p => p.id).join() === [h, h2, 
   && recap.everyone.length === 1 && recap.everyone[0].place === 4, `a podium of 3 by kills, deaths, damage (${recap?.podium.map(p => p.name).join(', ')}), a row for 4th`);
 const accs = recap?.podium.flatMap(p => p.accolades.map(a => a.id)) || [];
 ok(accs.length === new Set(accs).size && recap.podium.every(p => p.accolades.length >= 1 && p.accolades.length <= 2), `each on the podium has 1–2 accolades, none repeated (${recap?.podium.map(p => p.accolades.map(a => `${a.label}: ${a.value}`).join(' + ')).join(' | ')})`);
-ok(recap?.podium[0].accolades[0].id === 'kills' && recap.podium[0].accolades[0].value === '15 kills', 'the winner is Most Kills, with the value');
+ok(recap?.podium[0].accolades[0].id === 'kills' && recap.podium[0].accolades[0].value === '10 kills', 'the winner is Most Kills, with the value');
+ok(recap?.next?.id === 'sky', 'the recap message carries the next map (the podium\'s "Next map: Sky Ruins")');
 ok(!match.isEnemy(h, h2), 'no fighting during the recap');
 run(9.95);   // (to 0.05 s past the recap's 11.5 s, so the 7-minute check below starts on time)
 ok(S.phase === 'countdown' && !sent.some(m => m.t === 'matchMode' || m.t === 'matchVotes'), 'after the recap: an immediate rematch (the 3 s countdown), no vote');
 ok(fighters().every(p => p.kills === 0 && p.deaths === 0), 'the rematch starts from 0');
 ok(fighters().every(p => (ult.get(p.id) || 0) === 0), 'ultimate charge reset');
+ok(mapSwitches.join() === 'sky' && match.matchPublic().map.id === 'sky' && match.matchPublic().next === null, `the rematch's countdown switched the room to Sky Ruins (${mapSwitches.join()})`);
 run(3.1); ok(S.phase === 'live', 'rematch goes live after the 3 s countdown');
 
-// ---- the 7-minute cap
-ok(Math.abs(S.phaseEnd - clock - 420) < 0.2, 'the live phase lasts 7 minutes');
+// ---- the 5-minute cap (round 22; was 7)
+ok(Math.abs(S.phaseEnd - clock - 300) < 0.2, 'the live phase lasts 5 minutes');
 h.kills = 3; h2.kills = 5; clock = S.phaseEnd - 0.01; run(0.1);
 ok(S.phase === 'end' && S.results.reason === 'time' && S.results.winner === h2.id, 'at the cap the most kills wins');
 run(1.6); run(10.1); run(3.1);
 h.kills = 2; h2.kills = 2; clock = S.phaseEnd - 0.01; run(0.1);
 ok(S.phase === 'end' && S.results.winner === null, 'a tie at the cap: no winner');
+ok(mapSwitches.join() === 'sky,courtyard' && match.matchPublic().map.id === 'courtyard' && match.matchPublic().next?.id === 'sky', `the rotation alternates: courtyard, sky, courtyard (${mapSwitches.join()}); next sky again`);
+
+// ---- round 22: the host's lock and a test's pick
+{
+  run(1.6); run(10.1);   // the gap, the recap: into the next countdown (sky)
+  ok(S.phase === 'countdown' && match.matchPublic().map.id === 'sky', 'the next countdown is on Sky Ruins');
+  ok(match.setMapLock('courtyard') && mapSwitches.at(-1) === 'courtyard' && S.phase === 'countdown' && match.matchPublic().map.id === 'courtyard' && match.mapLock() === 'courtyard',
+    'a lock on the courtyard during the countdown restarts it on the courtyard at once');
+  run(3.1); ok(S.phase === 'live', 'live again');
+  const n0 = mapSwitches.length;
+  ok(match.setMapLock('sky') && mapSwitches.length === n0 + 1 && S.phase === 'countdown' && match.matchPublic().map.id === 'sky', 'a lock while live with no kills yet restarts on the new map');
+  run(3.1); h.kills = 1; match.onKill(h2, h);
+  ok(match.setMapLock('courtyard') && mapSwitches.length === n0 + 1 && S.phase === 'live' && match.matchPublic().map.id === 'sky', 'a lock after the first kill waits for the next match');
+  h.kills = 10; match.onKill(h2, h);
+  ok(match.matchPublic().next?.id === 'courtyard', 'next is the locked map');
+  ok(match.setMapLock('rotate') && match.mapLock() === null && match.matchPublic().next?.id === 'courtyard', "'rotate' lifts the lock: next is the courtyard (the rotation)");
+  ok(!match.setMapLock('moon'), 'an unknown map is refused');
+  run(1.6); run(10.1);
+  ok(S.phase === 'countdown' && match.matchPublic().map.id === 'courtyard', 'the rematch rotated to the courtyard');
+  match.handle(h, { t: 'matchDebug', map: 'sky' });
+  ok(S.phase === 'countdown' && match.matchPublic().map.id === 'sky', 'matchDebug.map during the countdown restarts on that map');
+  run(3.1); h.kills = 10; match.onKill(h2, h); run(1.6); run(10.1);
+  ok(S.phase === 'countdown' && match.matchPublic().map.id === 'courtyard', 'the rotation carries on from the pick');
+  match.handle(h, { t: 'matchDebug', map: 'courtyard' }); run(3.1);
+}
 
 // ---- spawns (round 14): the farthest spawn in C.SPAWN_CHOICE's band from the nearest enemy, else the 2nd-farthest overall
 {
@@ -187,6 +219,7 @@ ok(S.paused && S.phase === 'countdown', 'the last human leaving pauses the match
 for (const q of [...players.values()]) players.delete(q.id);
 const h6 = join(mk(false)); run(2);
 ok(!S.paused && S.phase === 'countdown' && fighters().length === 4, 'the next arrival starts a fresh countdown with 3 bots');
+ok(match.matchPublic().map.id === 'courtyard', 'an emptied room starts again on the courtyard');
 ok(match.canThrow(h6, props.get(1)), 'telekinesis throws normally');
 ok(!('vote' in match.matchPublic()) && !('zone' in match.matchPublic()) && !('scores' in match.matchPublic()), 'no vote, zone or team scores in the match state');
 
@@ -215,7 +248,7 @@ async function serverChecks() {
         if (m.id === c.id && typeof m.seq === 'number' && ['respawn', 'flaskArrive', 'mirror', 'mrainLand'].includes(m.t)) c.tp = m.seq;
         c.msgs.push(m); });
       await new Promise(r => ws.on('open', r));
-      c.send({ t: 'join', name, loadout: { ...C.DEFAULT_LOADOUT, primary: 'spark', ...lo } });
+      c.send({ t: 'join', proto: 22, name, loadout: { ...C.DEFAULT_LOADOUT, primary: 'spark', ...lo } });   // (round 22: a current client, not a legacy room)
       while (c.id == null) await wait(10);
       return c;
     };
@@ -370,6 +403,118 @@ async function serverChecks() {
       R.send({ t: 'roll', dir: [0, 0, 1] }); await wait(200);
       ok(since(R, n, m => m.t === 'roll' && m.id === R.id).length === 1, `two charges, then wait (${ROLL.cooldown} s)`);
     }
+    // ---- round 22: rune pickups, jump pads and the void (debugMap sets this room's spots, so no layout is needed)
+    {
+      const spot = spots[7], far = spots[8];
+      const runeAt = (x, z, type) => ({ id: 'r' + type, x, y: 0, z, type });
+      // the landing: another open spot with nothing tall on the straight path from the pad (an arc skimming a wall top lands on it)
+      const lowPath = (a, b) => { for (let i = 0; i <= 30; i++) { const x = a[0] + (b[0] - a[0]) * i / 30, z = a[1] + (b[1] - a[1]) * i / 30; if (C.surfaceTopAt(x, z) > 0.8) return false; } return true; };
+      const land = spots.find((q, i) => i !== 7 && i !== 8 && lowPath(far, q)) || spots[6];
+      const pad = { id: 'pad-t', x: far[0], y: 0, z: far[1], tx: land[0], ty: 0, tz: land[1], strength: 2.5 };
+      A.send({ t: 'debugMap', runes: [runeAt(spot[0], spot[1], 'haste'), runeAt(spot[0] + 5, spot[1], 'aegis'), runeAt(spot[0] - 5, spot[1], 'surge'), runeAt(spot[0], spot[1] + 5, 'fury')], pads: [pad] });
+      await wait(200);
+      const mapMsg = A.msgs.filter(m => m.t === 'map').pop();
+      ok(mapMsg?.runes?.length === 4 && mapMsg.runes.every(r => r.up && r.type) && mapMsg.pads?.length === 1 && Math.abs(mapMsg.pads[0].to[0] - pad.tx) < 0.01,
+        `debugMap: 4 runes up with their types and a pad with its target (${mapMsg?.runes?.map(r => r.type).join(' ')}, pad to ${mapMsg?.pads?.[0]?.to})`);
+      const snapRunes = () => A.msgs.filter(m => m.t === 'snap' && m.runes).pop()?.runes || [];
+      const meIn = (c) => A.msgs.filter(m => m.t === 'snap').pop()?.players.find(q => q.id === c.id);
+      [A, B, V, R].forEach(park);
+      let n = A.msgs.length;
+      place(V, [spot[0], spot[1]]); await wait(250);
+      const taken = since(A, n, m => m.t === 'runeTaken')[0];
+      ok(taken?.by === V.id && taken.type === 'haste' && taken.i === 0, `walking onto a rune takes it: runeTaken by the walker, its type (${JSON.stringify(taken)})`);
+      ok(meIn(V)?.buffs?.haste === 1 && !meIn(V)?.buffs?.fury, `the snapshot shows the Haste buff (${JSON.stringify(meIn(V)?.buffs)})`);
+      ok(snapRunes()[0]?.up === false && snapRunes()[0].in > 20 && snapRunes()[0].in <= C.RUNES.respawn, `the rune is down, back in ${snapRunes()[0]?.in} s`);
+      // haste: a report 1.3x the walk is accepted (no overspeed drag); the same without haste is dragged
+      const walkTest = async (c, fast) => {
+        const start = [c === V ? spot[0] : far[0], c === V ? spot[1] + 2 : far[1] + 2];
+        c.send({ t: 'debugPlace', p: [start[0], 0, start[1]] }); await wait(100);
+        const v = C.speedOf() * (fast ? C.RUNES.types.haste.speedMul : 1) * 0.97;
+        for (let i = 1; i <= 20; i++) { c.send({ t: 'state', p: [start[0] + v * 0.05 * i, 0, start[1]], yaw: Math.PI / 2 }); await wait(50); }
+        await wait(100);
+        return meIn(c).p[0] - start[0];
+      };
+      const dHaste = await walkTest(V, true);
+      ok(dHaste > C.speedOf() * C.RUNES.types.haste.speedMul * 0.9, `with Haste the server accepts 1.35x the walk (${dHaste.toFixed(2)} m in 1 s)`);
+      park(V, 2);
+      place(B, [far[0], far[1] + 6]); await wait(100);
+      const dPlain = await walkTest(B, false);
+      ok(dPlain < C.speedOf() * 1.2, `without it the same reports are held to the walk (${dPlain.toFixed(2)} m in 1 s)`);
+      park(B, 1); await wait(200);
+      // aegis: a 40 HP shield soaks a Spark (hit.shield, no hp lost)
+      n = A.msgs.length;
+      place(V, [spot[0] + 5, spot[1]]); await wait(250);
+      ok(since(A, n, m => m.t === 'runeTaken' && m.type === 'aegis' && m.by === V.id).length === 1 && meIn(V)?.buffs?.aegis === C.RUNES.types.aegis.shield, `the Aegis rune: a ${C.RUNES.types.aegis.shield} HP shield in the snapshot (${JSON.stringify(meIn(V)?.buffs)})`);
+      const from = [spot[0] + 5 - 4.5, spot[1]]; place(B, from, Math.PI / 2); B.send({ t: 'debugPlace', p: [from[0], 0, from[1]], resetCd: true }); await wait(100);
+      const hpBefore = meIn(V).hp; n = A.msgs.length;
+      B.send({ t: 'cast', kind: 'fast', origin: [from[0], 1.3, from[1]], dir: [1, (C.HIT_CENTER_Y - 1.3) / 4.5, 0] }); await wait(500);
+      const sh = since(A, n, m => m.t === 'hit' && m.target === V.id)[0];
+      ok(sh && sh.shield > 0 && sh.dmg === 0 && meIn(V).hp >= hpBefore && meIn(V).buffs.aegis === C.RUNES.types.aegis.shield - sh.shield,
+        `a Spark into the shield: ${sh?.shield} soaked, 0 damage, the shield down to ${meIn(V).buffs?.aegis}`);
+      park(B, 1); park(V, 2); await wait(200);
+      // surge: +35% ult at once
+      const ultBefore = meIn(R).ult; n = A.msgs.length;
+      place(R, [spot[0] - 5, spot[1]]); await wait(250);
+      ok(since(A, n, m => m.t === 'runeTaken' && m.type === 'surge').length === 1 && meIn(R).ult >= ultBefore + C.RUNES.types.surge.ult - 1, `the Surge rune: ult ${ultBefore} -> ${meIn(R).ult}`);
+      park(R, 3);
+      // fury: x1.4 damage
+      n = A.msgs.length; place(A, [spot[0], spot[1] + 5]); await wait(250);
+      ok(since(A, n, m => m.t === 'runeTaken' && m.type === 'fury' && m.by === A.id).length === 1 && meIn(A)?.buffs?.fury === 1, 'the Fury rune: the fury buff');
+      const f2 = [spot[0], spot[1] + 5 - 4.5]; place(A, f2, 0); A.send({ t: 'debugPlace', p: [f2[0], 0, f2[1]], resetCd: true }); place(B, [spot[0], spot[1] + 5]); await wait(150);   // (B: no shield left on V)
+      n = A.msgs.length; A.send({ t: 'cast', kind: 'fast', origin: [f2[0], 1.3, f2[1]], dir: [0, (C.HIT_CENTER_Y - 1.3) / 4.5, 1] }); await wait(500);
+      const fh = since(A, n, m => m.t === 'hit' && m.target === B.id && m.attacker === A.id)[0];
+      ok(fh && fh.dmg === Math.round(Math.round(C.SPELLS.fast.damage * C.DAMAGE_SCALE) * C.RUNES.types.fury.damageMul), `a Spark with Fury does x1.4 (${fh?.dmg}, plain ${Math.round(C.SPELLS.fast.damage * C.DAMAGE_SCALE)})`);
+      park(A, 0); park(B, 1); await wait(200);
+      // the pad: stepping on it launches (a pad message), the client flying C.padAt's arc is accepted, and lands at the target
+      const arc = C.padArc(pad);
+      n = R.msgs.length;
+      R.send({ t: 'debugPlace', p: [pad.x - 0.3, 0, pad.z] }); await wait(120);
+      const launch = since(R, n, m => m.t === 'pad' && m.id === R.id)[0];
+      ok(launch && launch.pad === 0 && Math.abs(launch.time - arc.time) < 0.01 && Math.abs(launch.to[0] - pad.tx) < 0.01, `standing on a pad launches: { t: 'pad' } with the arc's time ${launch?.time} s to ${launch?.to}`);
+      ok(meIn(R).pad === true, 'the snapshot shows the pad flight');
+      const t0 = Date.now();
+      for (let e = 0.05; e < arc.time + 0.2; e += 0.05) {
+        const at = C.padAt(arc, pad, Math.min(e, arc.time)); if (e >= arc.time) at[1] = 0;
+        R.send({ t: 'state', p: at, yaw: 0, tp: R.tp });
+        await new Promise(r => setTimeout(r, Math.max(0, t0 + e * 1000 - Date.now())));
+      }
+      await wait(150);
+      const landed = meIn(R);
+      ok(Math.abs(landed.p[0] - pad.tx) < 0.3 && Math.abs(landed.p[2] - pad.tz) < 0.3 && landed.p[1] < 0.05 && !landed.pad, `the reported arc is accepted: landed at (${landed.p.map(v => v.toFixed(2))}), target (${pad.tx}, 0, ${pad.tz}); the flight is over`);
+      ok(Math.abs(C.padAt(arc, pad, arc.time)[0] - pad.tx) < 0.01 && Math.abs(C.padAt(arc, pad, arc.time)[1] - pad.ty) < 0.01 && Math.abs(arc.apex - pad.y - 2.5) < 0.01, 'padArc lands on the target, its apex `strength` above the pad');
+      park(R, 3); await wait(300);
+      // the void: below the map's void height (Sky Ruins' MAP_INFO.void; here debugMap's own, so the rule is checked on any map) you
+      // die, credited to whoever hurt you within VOID.credit s
+      {
+        A.send({ t: 'debugMap', runes: [], pads: [], void: -1 }); await wait(200);
+        const vs = [spot[0], spot[1]], as = [spot[0] + 4.5, spot[1]];
+        place(V, vs); place(A, as, Math.atan2(-1, 0)); A.send({ t: 'debugPlace', p: [as[0], 0, as[1]], resetCd: true }); await wait(300);
+        n = A.msgs.length;
+        A.send({ t: 'cast', kind: 'fast', origin: [as[0], 1.3, as[1]], dir: [-1, (C.HIT_CENTER_Y - 1.3) / 4.5, 0] }); await wait(400);
+        const hitV = since(A, n, m => m.t === 'hit' && m.target === V.id && (m.dmg > 0 || m.shield > 0)).length;   // (V may still carry the Aegis: a soaked hit counts as being hurt)
+        V.send({ t: 'debugPlace', p: [vs[0], -2, vs[1]] }); await wait(300);
+        const d = since(A, n, m => m.t === 'death' && m.id === V.id)[0];
+        ok(hitV === 1 && d && d.cause === 'void' && d.kind === 'void' && d.killer === A.id, `below the void: a 'void' death credited to who hit them 0.4 s ago (${JSON.stringify(d)})`);
+        await wait(C.RESPAWN_TIME * 1000 + 300);
+        park(A, 0); await wait(5000);
+        n = A.msgs.length;
+        V.send({ t: 'debugPlace', p: [vs[0], -2, vs[1]] }); await wait(300);
+        const d2 = since(A, n, m => m.t === 'death' && m.id === V.id)[0];
+        ok(d2?.cause === 'void' && d2.killer === null, `more than 5 s after the last hit: nobody is credited (${JSON.stringify(d2)})`);
+        await wait(C.RESPAWN_TIME * 1000 + 300);
+        park(V, 2);
+        A.send({ t: 'debugMap', runes: [], pads: [] }); await wait(200);
+      }
+      // the second map (environment's layout-sky.json), when the server has it: a test's pick switches the room there and back
+      if (C.MAPS?.sky) {
+        // (the match has had kills: the pick applies to the next match, so end this one: a short gap and recap, then the countdown)
+        A.send({ t: 'matchDebug', map: 'sky', endTime: 0.3, recapTime: 0.3 }); A.send({ t: 'matchDebug', skip: true }); await wait(1800);
+        ok(A.msgs.filter(m => m.t === 'map').pop()?.map?.id === 'sky' && A.msgs.filter(m => m.t === 'matchPhase').pop()?.match.map.id === 'sky', 'matchDebug.map sky, the match ended: the rematch is on Sky Ruins (a map message, matchPhase on sky)');
+        ok(Number.isFinite(C.MAPS.sky.layout?.map?.void), `Sky Ruins has a void height (${C.MAPS.sky.layout?.map?.void})`);
+        A.send({ t: 'matchDebug', map: 'courtyard' }); A.send({ t: 'matchDebug', skip: true }); await wait(1800);
+        ok(A.msgs.filter(m => m.t === 'map').pop()?.map?.id === 'courtyard', 'and back to the courtyard the same way');
+      }
+    }
     for (const c of [A, B, V, R]) c.ws.close();
     await wait(300);
     await agilityChecks(join, since, spots);
@@ -384,8 +529,9 @@ async function agilityChecks(join, since, spots) {
   {
     let top = 0;
     for (let e = 0; e < 1; e += 0.001) top = Math.max(top, C.jumpAt({ y0: C.JUMP.height, n: 2 }, e));
-    ok(Math.abs(top - C.JUMP.height - 1.2) < 0.02 && Math.abs(C.jumpApex({ y0: C.JUMP.height, n: 2 }) - 2.65) < 0.01,
-      `the air jump from the first apex peaks about 1.2 m higher (${top.toFixed(2)} m, 2.65 expected)`);
+    const H = C.AIR_JUMP.height;   // (round 22: 1.0 m, was 1.2)
+    ok(Math.abs(top - C.JUMP.height - H) < 0.02 && Math.abs(C.jumpApex({ y0: C.JUMP.height, n: 2 }) - (C.JUMP.height + H)) < 0.01,
+      `the air jump from the first apex peaks about ${H} m higher (${top.toFixed(2)} m, ${(C.JUMP.height + H).toFixed(2)} expected)`);
   }
   const J = await join('Jumper', { primary: 'spark', power: 'meteor', mobility: 'blink', utility: 'telekinesis' });
   const F = await join('Floater', { primary: 'spark', power: 'frostfall', guard: 'firewall', ultimate: 'berserker_brew', utility: 'telekinesis' });
@@ -1102,6 +1248,32 @@ async function roomChecks() {
       const F3 = await joinAs('Vet', { difficulty: 'hard' });
       ok(F3.room.id === F1.room.id && F3.room.bots === 'hard', `a plain join still sets the room's difficulty (bots ${F3.room.bots})`);
       await close(F1, F2, F3);
+      // round 22: a join without `proto` (the live CrazyGames build) goes to a legacy room: the courtyard only, no runes or pads,
+      // never shared with a current client; private codes of the other kind are refused
+      await wait(2500);
+      const L1 = await joinAs('OldBuild', { difficulty: 'normal' });
+      const w1 = L1.msgs.find(m => m.t === 'welcome');
+      ok(L1.room.legacy === true && w1.match.map.id === 'courtyard' && w1.runes === undefined && w1.pads === undefined, `a join without proto: a legacy room on the courtyard, no runes or pads (${JSON.stringify(L1.room)})`);
+      const N1 = await joinAs('NewBuild', { proto: 22, difficulty: 'normal' });
+      ok(N1.room.id !== L1.room.id && !N1.room.legacy, `a proto-22 join never shares it (${N1.room.id} vs ${L1.room.id})`);
+      const L2 = await joinAs('OldBuild2', {});
+      ok(L2.room.id === L1.room.id, 'a second legacy join shares the legacy room');
+      await wait(1500);
+      ok(!L1.msgs.some(m => m.t === 'snap' && m.runes) && !L1.msgs.some(m => m.t === 'snap' && m.players.some(q => q.id === N1.id)), 'its snapshots carry no runes and never the new client');
+      const LP = await joinAs('OldHost', { room: 'new' }), NP = await joinAs('NewHost', { proto: 22, room: 'new' });
+      const toL = await joinAs('NewGuest', { proto: 22, room: LP.room.code }), toN = await joinAs('OldGuest', { room: NP.room.code });
+      const errL = toL.msgs.find(m => m.t === 'welcome')?.roomError, errN = toN.msgs.find(m => m.t === 'welcome')?.roomError;
+      ok(errL?.reason === 'version' && !toL.room.private && !toL.room.legacy, `a new client at a legacy code: 'version', a public room of its own kind (${errL?.text})`);
+      ok(errN?.reason === 'version' && !toN.room.private && toN.room.legacy === true, `an old client at a new code: 'version', a legacy public room (${errN?.text})`);
+      // the private host's map lock (roomMap) and the first-visit routing
+      NP.send({ t: 'roomMap', map: 'sky' }); await wait(400);
+      const locked = NP.msgs.filter(m => m.t === 'room').pop()?.room;
+      ok(!C.MAPS?.sky || (locked?.lock === 'sky' && locked.map === 'sky' && NP.msgs.some(m => m.t === 'map' && m.map.id === 'sky')), `the host locks Sky Ruins during the countdown: the room switches now (${JSON.stringify({ lock: locked?.lock, map: locked?.map })})`);
+      toN.send({ t: 'roomMap', map: 'courtyard' }); await wait(300);
+      ok(NP.msgs.filter(m => m.t === 'room').pop()?.room.lock === (C.MAPS?.sky ? 'sky' : null), 'a guest (in another room) can\'t change it');
+      LP.send({ t: 'roomMap', map: 'sky' }); await wait(300);
+      ok(LP.msgs.filter(m => m.t === 'room').pop()?.room.map === 'courtyard', 'a legacy room has no other map to lock');
+      await close(L1, L2, N1, LP, NP, toL, toN);
     }
   } catch (e) { ok(false, `room checks: ${e.message}`); }
   finally { if (srv.exitCode === null) { srv.kill(); await new Promise(r => srv.once('exit', r)); } }
