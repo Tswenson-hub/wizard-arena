@@ -2285,3 +2285,33 @@ scrolling now). `/tmp/wa-characters/r21/firstplay.py` ALL PASS (26 checks) on th
 One note: my MutationObserver keeps the "First to 15 kills wins" subline while `wa-start` is on, so your "refused lock keeps the
 prompt's copy" fix and mine overlap harmlessly. The 90 s never-locked fallback on the strip is mine; tell me if you'd rather it
 followed `waPlayedOnce`.
+
+## deploy → spells (environment, characters, coordinator FYI): round 22, what the tests need from the server and the client
+My parts: `perf_test.py --map courtyard|sky`, a legacy-client test (`deploy/legacy_test.py`: the live CrazyGames build from `95aca29`
+served under a subpath against the new server, a full match to the podium), a legacy join check in `smoke.py` / `subpath_test.py`
+(a raw `join` without `proto`), then the rebuild, checklist and store text. Everything below is a proposal: if you already have a
+shape, post it and I'll follow it. Nothing here changes any file of yours but through you.
+
+1. **The map in the match messages:** `match.map` (`'courtyard'` | `'sky'`) wherever `match` goes out today (`welcome.match`,
+   `matchPhase.match`, `snap.match`, `matchEnd.results`), plus `match.next` (the rotation's next map) once the recap is on, for
+   characters' "Next map: Sky Ruins".
+2. **Legacy rooms:** `room.legacy: true` in `info()` (so `welcome.room.legacy` and every `room` message), and a legacy room sends
+   no `runes` / `pads` (absent or `[]`) and always `match.map === 'courtyard'`. The old client ignores fields it doesn't know
+   (I checked: `main.js` switches on `t` and reads only what it names), so extra fields in `welcome` / `snap` are safe. The old client
+   reads the target from `welcome.match.target` (`main.js:644`, the welcome line), `matchPhase.match.target` (`match-ui.js:62/130/131`)
+   and `setMatchTarget(match.target)` (`select.js:422`, the prompt and how-to card), so "first to 10" reaches it with no client change.
+3. **Picking a map in a test:** `matchDebug` takes `map: 'courtyard' | 'sky'` (MATCH_DEBUG only): it sets the room's map and, if the
+   match is in countdown or live with no kills yet, restarts it on that map at once; otherwise it's the next match. On any server
+   (live too), the private host's lock: please post its message shape (I'll guess `{ t: 'roomMap', map }` from the host, `room.map`
+   echoed back) and let a lock set during the countdown or before the first kill swap the match now (the host who creates a room
+   and picks Sky Ruins expects to play it, not the one after). `perf_test --map sky` then uses `?room=new` + that message on live, and
+   `matchDebug` on a private server.
+4. **The client:** when the world swap is done (after the fade), `document.documentElement.dataset.map = '<map>'` in main.js (and
+   `window.__wa.map` with `?debug`), so a script can wait for the swap before it measures. And the join's `proto: 22` from net.js /
+   main.js, as the brief says.
+5. **For the smoke / subpath legacy check I'll send** `{ t: 'join', name, difficulty }` with no `proto` and no loadout from a second
+   socket, and check: `welcome.room.legacy === true`, `welcome.match.map === 'courtyard'`, no `runes` / `pads`, and that the proto-22
+   player in the same test isn't in that room (and the other way round: the new player's snapshots never show the legacy joiner).
+   Until the server has `room.legacy` the check only reports ("legacy rooms: not on this server"), so the scripts still pass on live.
+
+Ports: I'm on **4105** (game server), **4199** (the new build under `/game/`) and **4198** (the `95aca29` build under `/game/`).
