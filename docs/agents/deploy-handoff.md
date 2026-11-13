@@ -8,33 +8,57 @@
 - **Live commit:** `e416f68` (rounds 12b-13: Roll on F, the map editor, Ty's assets, mountains, ground textures,
   jeb2 animations), pushed by the coordinator with Ty's approval. Earlier: `29602cc` (deploy took ~45 s).
 
-## Round 22: pace, runes, pads, two maps (deploy's part; in progress)
-**Scripts (all deploy-owned, round 22):**
-- `863ec00` `e53b49a` requests.md: the interfaces the tests need, taken up by spells as posted: `match.map` (a string, or characters'
-  `{ id, name }`: my scripts take either) and `match.next`; `room.legacy: true` on legacy rooms (which run on environment's frozen
-  `legacy` map, byte-identical to the layout the live build bundles); `matchDebug.map` (MATCH_DEBUG) and the host's `{ t: 'roomMap', map }`
-  to pick a map; `<html data-map>` / `__wa.map` after the client's swap.
-- `768b204` **`deploy/legacy_test.py`**: the live CrazyGames build (built with `--ref 95aca29 --server ws://localhost:4105 --out
-  dist/crazygames-legacy --no-zip`: identical to `dist/crazygames` but for config.js) served under `/game/` on 4198 and played against
-  the new server on 4105, with the perf driver, through a whole match to the podium and the rematch countdown. `--fast` (MATCH_DEBUG on the
-  server) plays to 3 kills with a 4 s recap, about 2 minutes; without it the real target or the 5-minute cap. Checks the HUD's "first to N"
-  and the prompt read the server's target, the legacy room once `room.legacy` exists (courtyard or legacy map, no runes or pads, no rune
-  or pad fields in its snapshots), the socket stays open, the SDK shim's gameplayStart, no failed requests, no console or page errors, and
-  lists any field the old client never knew that it was sent.
-- `2311dbb` **`deploy/legacyjoin.py`**: a join without `proto` from the test's own browser (on the game server's origin: Chromium refuses
-  the socket from about:blank), used by **`smoke.py`** (next to `smoketest`) and **`subpath_test.py`** (next to `subpath`, against the
-  build's `WA_SERVER`): the server welcomes the old join; with legacy rooms, the joiner is in one, the proto-22 player isn't, and neither
-  ever sees the other in its snapshots. On a server without `room.legacy` (live today) it only reports.
-- `2311dbb` **`perf_test.py --map courtyard|sky`**: sends `matchDebug.map` (or `roomMap` with `--room new`, for live), waits up to 90 s for
-  `data-map`, settles 3 s, then measures; reports `map` and adds the target "on the <map> map". JSON gets `map` and `map_wanted`.
-**Verified at `2311dbb`** (my server from a worktree at `ead41c2` on 4105, so others' live edits don't move under the runs; the 95aca29
-build on 4198, HEAD's build on 4199): `legacy_test.py --fast` PASS (phases countdown → live → end → recap → countdown, 3 on the podium,
-the podium scene on the old client, 0 errors; `/tmp/wa-deploy/r22/legacy-fast.png`, `-recap.png`); `smoke.py` PASS with the legacy join
-(a pre-22 note); `subpath_test.py --max-mb 20 --site` PASS, 8.9 MB initial in 380 responses, rooms 13/13, the legacy join noted;
-`perf_test --map sky --seconds 20` ran the flow on the pre-22 server (asked, waited 90 s, "the swap never came", the map target FAIL
-as it should; 60 fps, 107 calls, 59 programs; triangles 123.5k with 5 in the match, a leftover from the run before: re-measure at the end).
-**Left:** the legacy-room and both-map runs once spells' server lands (0 and 200 ms latency on both maps), `roomError.reason = 'version'`
-in the subpath rooms check, the final rebuild of `dist/crazygames`, the checklist (below, text ready) and the live smoke after the push.
+## Round 22: pace, runes, pads, two maps (deploy's part)
+**Scripts (deploy-owned):**
+- `863ec00` `e53b49a` `7476208` `d2f4467` `b003200` `636b439` requests.md: the interfaces the tests need, taken up by spells as posted:
+  `match.map` (`{ id, name }`; my scripts also take a string) and `match.next`; `room.legacy: true` on legacy rooms (the frozen `legacy`
+  layout, byte-identical to what the live build bundles); `matchDebug.map` (MATCH_DEBUG) and the host's `{ t: 'roomMap', map }`;
+  `<html data-map>` / `__wa.map` after the client's swap; `roomError.reason = 'version'`. Two findings from runs against spells' working
+  tree went there too (an empty, then a non-empty `runes` in legacy snapshots: both fixed before `c29cda4`), and the perf numbers below.
+- `768b204` **`deploy/legacy_test.py`**: the live CrazyGames build (`--ref 95aca29 --server ws://localhost:4105 --out
+  dist/crazygames-legacy --no-zip`: identical to the live `dist/crazygames` but for config.js) served under `/game/` on 4198 and played
+  against the new server on 4105 with the perf driver, through a whole match to the podium and the rematch countdown. `--fast` (MATCH_DEBUG
+  on the server) plays to 3 kills with a 4 s recap, about a minute; without it the real target or the 5-minute cap. Checks: the HUD's
+  "first to N" and the prompt read the server's target; a legacy room (`room.legacy`, the courtyard, no runes or pads in the welcome or the
+  snapshots); the socket stays open; the SDK shim's gameplayStart; no failed requests, no console or page errors; and it lists every field
+  the old client never knew that it was sent. `--first` takes the first-visit path instead of the builder.
+- `2311dbb` `e4514db` `ce3d65c` **`deploy/legacyjoin.py`**: a join without `proto` from the test's own browser (on the game server's origin:
+  Chromium refuses the socket from about:blank), used by **`smoke.py`** (next to `smoketest`) and **`subpath_test.py`** (next to `subpath`,
+  against the build's `WA_SERVER`, and in the rooms check with the new room's code): the server welcomes the old join; the joiner is in a
+  legacy room, the proto-22 player isn't, neither ever sees the other in its snapshots, no runes or pads reach the legacy room; an old join
+  with a current room's code gets `roomError 'version'` and a legacy public room. On a server without `room.legacy` (live today) it only
+  reports, so the live smoke keeps passing.
+- `2311dbb` **`perf_test.py --map courtyard|sky`**: sends `matchDebug.map` (or `roomMap` with `--room new`, for live), waits up to 90 s
+  for `data-map`, settles 3 s, then measures; reports `map` and adds the target "on the <map> map"; JSON gets `map`, `map_wanted`.
+
+**Verified at `8a6e855`** (the server from a detached worktree at that commit on 4105, so the others' live edits never moved under a run;
+the 95aca29 build on 4198, the `8a6e855` build on 4199; everything headless on the M4 GPU):
+- `legacy_test.py` **full length** (`734b1e5`, no `--fast`): a real first-to-10 match in a legacy room ended at the target after 187 s of
+  play, 3 on the podium, the podium scene on the old client, the rematch countdown, the socket open, 0 errors
+  (`/tmp/wa-deploy/r22/legacy-full.png`, `-recap.png`). The only unknown fields the old client was sent: `match.map` and the new `callout`
+  message, both ignored. `--fast` at `8a6e855`: PASS (`legacy-8a6e855.png`).
+- `smoke.py` PASS with the legacy join (`smoke-8a6e855.png`); the first visit in a match in 0.7 s with Easy bots.
+- `subpath_test.py --max-mb 20 --site http://localhost:4105/` PASS: **9.2 MB initial in 402 responses**, nothing outside `/game/`, no
+  failures, rooms 14/14 including the `version` refusal, no console errors (`subpath-8a6e855.png`: the dressed courtyard).
+- `perf_test.py`, both maps, 0 and 200 ms (CPU 4×, 1280×720, 60 s, 4 in the match; JSON and shots `/tmp/wa-deploy/r22/perf2-sky-*`,
+  `perf3-courtyard-*`):
+
+  | Run | fps | p95 / max after 10 s | triangles median (p95) | draw calls | programs (after 10 s) | result |
+  |---|---|---|---|---|---|---|
+  | sky, 0 ms (`b003200`) | 60.0 | 18.3 / 18.8 | 50,734 (93,494) | 98 | 58 (0) | **PASS** |
+  | sky, 200 ms | 60.0 | 18.3 / 18.8 | 52,668 (76,012) | 107 | 58 (0) | **PASS** (stalls 0 %, jumps 0, reversals 3/min) |
+  | courtyard, 0 ms (`8a6e855`) | 60.0 | 18.3 / 18.7 | **121,880** (181,049) | 86 | 57 (0) | FAIL only `triangles < 120k` |
+  | courtyard, 200 ms | 60.0 | 18.3 / 18.8 | **122,190** (185,490) | 92 | 57 (0) | FAIL only `triangles < 120k` (stalls 0 %, 0 jumps, 0 reversals) |
+
+  The courtyard went 142.8k (`734b1e5`, dressed) → 139k (`b003200`) → 122k after environment's trim (`8a6e855`): 2 % over the round-20
+  line with the frame budget untouched; **the coordinator's call** (posted in requests.md). Sky Ruins went 62 → 58 programs with `8476562`.
+  One `b003200` courtyard run at 200 ms read 28 reversals/min for the remote wizards (0–5 in every other run): bots turning on pads and
+  runes rather than the netcode, I think; a check to watch.
+- **Not done here:** the live smoke after the push (the coordinator's, with Ty's go-ahead); a real-browser look at Sky Ruins (the headless
+  mid-match shot `perf-sky-0.png` has the camera inside an island's rock for a frame: worth a glance on localhost:3000).
+- **If a newer commit is the one pushed:** `git -C /tmp/wa-deploy/wt checkout --detach <sha>` and restart 4105 from it, then the three
+  quick runs above (`smoke.py`, `subpath_test.py` on a `--ref <sha>` build, `legacy_test.py --fast`) take about 5 minutes, and
+  `npm run build:crazygames -- --ref <sha>` remakes the zip. The worktree and the ports 4105 / 4196–4199 are stopped at the end of this round.
 
 ## Round 18: saves (deploy's part)
 - `8b425e8` **platform.js:** `getUserToken()` → the `IN_GAME_AUTH` JWT, or null (guest: `getUser()` null; no SDK; any error, e.g.
@@ -124,10 +148,10 @@ python3 deploy/subpath_test.py http://localhost:4199/game/ /tmp/wa-deploy/subpat
 ## CrazyGames submission checklist (round 17)
 Sources: docs.crazygames.com, "Technical requirements", "Gameplay requirements", "Game covers" and "Multiplayer" (read 2026-10-30).
 
-### What to upload (zip from `ff8a877`, rounds 17–18; rebuild from the commit that's pushed to Render)
+### What to upload (zip from `8a6e855`, round 22; rebuild from the commit that's pushed to Render)
 | What | Path | Notes |
 |---|---|---|
-| **Game zip** | `dist/crazygames.zip` (gitignored; rebuild with `npm run build:crazygames -- --ref <sha>`) | **built from `ff8a877`** (round 17 rooms, invites, usernames, mute; round 18 auth and saves): 380 files, 9.5 MB unzipped, 6.6 MB zip, sha256 `a64f533f…927a22`, no secrets (the build checks); talks to `wss://wizard-arena-76od.onrender.com`. The protocol changed: **Render must run the same commit**, so rebuild from whatever sha is pushed |
+| **Game zip** | `dist/crazygames.zip` (gitignored; rebuild with `npm run build:crazygames -- --ref <sha>`) | **built from `8a6e855`** (round 22: first to 10, runes, jump pads, the dressed courtyard, Sky Ruins in rotation; rounds 19–21 stats, perf, first visit): **445 files, 10.4 MB unzipped, 7.1 MB zip**, sha256 `08fae6edb4092fd1…`, no secrets (the build checks); talks to `wss://wizard-arena-76od.onrender.com`. **Round 22 is backward-compatible:** the server keeps the live build (`95aca29`, no `proto`) playing in legacy rooms, so Render can be pushed before the new zip is approved; players on the old version just don't see runes, pads or Sky Ruins until it is |
 | **Cover, landscape 1920×1080** | `deploy/crazygames/store/covers/cover-hero-landscape-1920x1080.jpg` | recommended: the Mage up close in the courtyard |
 | **Cover, portrait 800×1200** | `deploy/crazygames/store/covers/cover-hero-portrait-800x1200.jpg` | same frame, cropped |
 | **Cover, square 800×800** | `deploy/crazygames/store/covers/cover-hero-square-800x800.jpg` | same frame, cropped |
@@ -140,13 +164,14 @@ rules). The three covers in each set are crops of one 2400×2400 frame, so they 
 picked by eye from four runs at `04fd64b` (round 16 changed spells and balance, not the castle or the bodies, so they still show the game as it is); the raw renders are in `dist/store-r3`, `-r4`, `-r5` until `dist/` is cleaned.
 
 ### 1. Build and server
-- `npm run build:crazygames -- --ref <approved sha>` (no `--allow-abs`; it must exit 0). The zip above is from `6d08eea`, which Render
-  runs now; rebuild it whenever a newer commit is pushed, so the client and the server match.
+- `npm run build:crazygames -- --ref <approved sha>` (no `--allow-abs`; it must exit 0). The zip above is from `8a6e855`; rebuild it
+  from whatever is pushed, so the client and the server match (from round 22 on, an older client still plays, in a legacy room).
 - Render must run the **same commit's** server (the protocol changes between rounds): the coordinator pushes it to `main` (Ty's go-ahead)
   before or with the upload. Then `python3 deploy/smoke.py https://wizard-arena-76od.onrender.com`.
 - Upload `dist/crazygames.zip` as HTML5 (index.html at the zip's root).
-- Limits: 250 MB total, 1,500 files, initial download 50 MB desktop / 20 MB mobile homepage, relative paths only. We're at 377 files,
-  **7.7 MB initial**.
+- Limits: 250 MB total, 1,500 files, initial download 50 MB desktop / 20 MB mobile homepage, relative paths only. We're at 445 files,
+  **9.2 MB initial** (round 22; 7.7 MB in round 15). Sky Ruins' layout and its extra pieces load in the background after the first match
+  starts, so they're not in the initial download.
 
 ### 2. The form (ready to paste)
 **Title:** `Wizard Arena`
@@ -227,7 +252,8 @@ look at them and keep the best of each.
 
 ### 5. How invites work (paste into the form's notes for QA)
 ```
-Wizard Arena is a 4-player free-for-all; skeleton bots fill every empty seat, so a match starts at once with 1 player.
+Wizard Arena is a 4-player free-for-all, first to 10 kills or 5 minutes; skeleton bots fill every empty seat, so a match starts at once
+with 1 player. Matches alternate between two arenas (the courtyard, then the Sky Ruins); a private room's host can lock one.
 - Play: joins a public match (the fullest public room with a free seat).
 - Create private match: makes a private room with a short code (shown in the corner and in the Esc menu). "Invite friends"
   copies the CrazyGames invite link; friends who open it land straight in that room, with no extra click. Up to 4 friends
