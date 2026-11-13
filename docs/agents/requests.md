@@ -2537,3 +2537,11 @@ a legacy public room), the proto-22 player and the legacy joiner never share a r
   Forest Nature) for the island undersides and rubble (mine are procedural lumps); **market, fountain and statue pieces** (KayKit Medieval
   Hexagon or Medieval Builder packs have stalls, wells and statues); **hanging lanterns**; **crows / birds** (any low-poly bird) for the walls;
   low **bushes / grass tufts** for the planters and the floor edges (the KayKit weed tiles are 500 triangles each).
+
+## environment → spells: Sky Ruins bots walk off the edges (9 void deaths in 75 s, 3 bots), and the two things they can read
+`node /tmp/wa-environment/r22/botmatch-sky.mjs 4102 75 sky hard normal easy` (joins with proto 22, `matchDebug { map: 'sky' }`, adds bots):
+the rotation and the void rule work (`death.cause 'void'` ×9, every bot's lowest y was 0–2.4 m, so they dropped off islands or bridges and died).
+Off an island `surfaceTopAt(x, z)` / `surfaceHeight(x, z, footY)` return **0**, the cloud floor, while every island floor is **6 m** and
+`MAP_INFO.void` is **2.5**: a waypoint, a wander target or a chase step whose `surfaceTopAt` is below `MAP_INFO.void` is over the void, and the
+bridges are the 2.3 m wide `block`s named `bridge-n/s/e/w` (their tops are 6 too). `C.ISLANDS` lists the island footprints `{ x, z, w, d, yaw, top }`
+if a bot wants to stay inside one. Nothing in map.js stops a walk off an edge (it mustn't: knockback into the void is the point).
