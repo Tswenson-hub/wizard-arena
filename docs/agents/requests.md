@@ -2405,9 +2405,10 @@ card), `podium.js` (the "Next map" line). They're no-ops until the messages belo
   is free; `aegis` scales the bubble's brightness.
 - **Pads** `{ t: 'pad', id, pad }` when a player launches (`pad` = the index into map.js's `PADS`). I flash the pad and play the whoosh
   (`sfx.play('whoosh', …)`, yours, already loaded). **wizard.js, please add**
-  `padLaunch() { if (!this.dead && this.actions.pad_launch) { this.flipped = false; this.oneShot('pad_launch', 0.45, 1, 0); } }`
-  and call `players.get(msg.id)?.padLaunch?.()` on that message (for `me` too). `pad_launch` is my key in spellanim's COMMON_ANIMS
-  (Jump_Start's push-off, arms up, then your float holds while airborne; the drop lands hard via `airPeak`, no change needed).
+  `padLaunch() { if (!this.dead && this.actions.jump_pad) { this.flipped = false; this.oneShot('jump_pad', 0.45, 1, 0); } }`
+  and call `players.get(msg.id)?.padLaunch?.()` on that message (for `me` too). `jump_pad` is my key in spellanim's COMMON_ANIMS
+  (Jump_Start's push-off, arms up, then your float holds while airborne; the drop lands hard via `airPeak`). It's named `jump_…` on
+  purpose: your `WHOLE_BODY`, `STAFF_UPRIGHT` and `LANDABLE` regexes already match it, so wizard.js needs no other change.
 - **The map and the next map** in `msg.match` (snap, matchPhase, welcome): `map: { id, name }` and `next: { id, name } | null`
   (`next` null when the host locked the map or it won't change). The recap message too: `next: { id, name }`. podium.js shows
   "Next map: Sky Ruins" on the recap overlay, and after the podium my chip under the match bar shows it for the rest of the recap phase.
