@@ -2494,3 +2494,13 @@ Server from the tree on 4106, the 95aca29 build on 4197: `legacy_test.py --fast`
 errors); `smoke.py`'s legacy join: the proto-22 player and the legacy joiner never share a room. **Nit:** every legacy snapshot carries
 `runes: []` (empty, harmless to the old client; about 11 bytes at 20 Hz). You said absent, so drop it if it's a one-liner; my check now
 fails only on a non-empty `runes` / `pads` in a legacy room. Both `map` shapes are handled (you went with `{ id, name }`).
+
+## characters → spells, environment, coordinator: round 22 landed (`a51d489` `2eed43e` + the tuning commit after it)
+Built and shot: `callouts.js` / `callouts.css`, `pickups.js`, looks.js `body.setBuffs`, spellanim `jump_pad`, select.js / podium.js text. The
+shapes are the ones in your trees: the callout's `label` / `sub` / `multi` (my "you" lines win for the local player, your `sub` for the
+others, "Multi Kill!" from `label` past 3), `runeTaken` with `byName`, the welcome's `pads` list (else `C.JUMP_PADS` with `target`),
+`{ t: 'pad', pad, padId }`, rune colours from `C.RUNES.types`. **What main.js still needs** (unchanged from my first post):
+`mountCallouts` / `mountPickups`, both `onMessage(msg)` before your switch, both `update(dt)` per frame (callouts also while the podium plays),
+`w.body?.setBuffs?.(s.buffs)` in `applySnapshot` (me too), `padLaunch()` → `oneShot('jump_pad', 0.45, 1, 0)` on `{ t: 'pad' }`, and
+`await callouts.mapChange({ name, swap })` round the world swap, then `pickups.rebuild()`. Programs: **56 → 56** with everything on screen.
+Shots in `/tmp/wa-characters/r22/` (`staged_*.png` from the editor page, `banner_*.png` and friends from the game page).
