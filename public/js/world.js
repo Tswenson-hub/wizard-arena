@@ -28,7 +28,8 @@ function clearWorld(scene) {
     o.traverse(m => { if ((m.isMesh || m.isPoints || m.isSprite || m.isLine) && m.geometry && !keep.has(m.geometry)) m.geometry.dispose(); });
   }
   spinners.length = 0; lodSets.length = 0; torchLights.length = 0; flameItems.length = 0;
-  camGrid = null; sun = null; followShadow = false;
+  for (const L of scene.userData.torchPool || []) { L.userData.base = 0; L.intensity = 0; }
+  camGrid = null; followShadow = false;
   scene.onBeforeRender = () => {};
 }
 // The models a map's layout places (its kit pieces, floor tiles and decos), for preloading.
@@ -163,11 +164,16 @@ export function buildWorld(scene) {
   });
   scene.fog = new THREE.Fog(SKY.fog, 60, 175);
 
-  // a cool blue sky light and warm sunbeams, as in the painting
-  const hemi = new THREE.HemisphereLight(0xd6efff, 0x6a6a58, 1.15);
-  addW(scene, hemi);
-  sun = new THREE.DirectionalLight(0xffe9c4, 2.3);
-  sun.position.copy(SUN_DIR).multiplyScalar(SUN_DIST);
+  // a cool blue sky light and warm sunbeams, as in the painting. Round 22: the lights are made once per scene and kept through a
+  // map switch (they aren't tagged world): a frame with fewer lights would recompile every lit shader, and again when they came back.
+  if (!scene.userData.worldLights) {
+    const hemi = new THREE.HemisphereLight(0xd6efff, 0x6a6a58, 1.15);
+    const sunLight = new THREE.DirectionalLight(0xffe9c4, 2.3);
+    scene.add(hemi, sunLight, sunLight.target);
+    scene.userData.worldLights = { hemi, sun: sunLight };
+  }
+  sun = scene.userData.worldLights.sun;
+  sun.position.copy(SUN_DIR).multiplyScalar(SUN_DIST); sun.target.position.set(0, 0, 0);
   sun.castShadow = Q.boot.shadows !== 'off';   // (from the start: a light that stops casting later recompiles every lit shader)
   sun.shadow.mapSize.set(2048, 2048);
   // the editor's static shadow covers the castle and the trees round it; the game's follows the view (applyQuality)
@@ -176,7 +182,6 @@ export function buildWorld(scene) {
   sun.shadow.camera.near = 10; sun.shadow.camera.far = 130;
   sun.shadow.bias = -0.0005;
   sun.shadow.normalBias = 0.02;
-  addW(scene, sun, sun.target);
   followShadow = false;
 
   if (skyMap()) {   // round 22, Sky Ruins: a cloud sea below the islands, the peaks poking through it far off
@@ -729,12 +734,16 @@ function addTorchFlames(scene, model, items) {
   cone.userData.cat = 'torches';
   addW(scene, cone);
   const pick = [...flameItems].sort((a, b) => (b.light - a.light) || (Math.hypot(a.p[0], a.p[2]) - Math.hypot(b.p[0], b.p[2])));
+  const pool = scene.userData.torchPool ??= Array.from({ length: TORCH_LIGHTS }, (_, i) => { const L = new THREE.PointLight(0xff9a48, 0, 9, 1.6); L.userData.base = 0; L.userData.ph = i * 1.7; scene.add(L); return L; });
+  const used = torchLights.length ? torchLights : [];   // (several torch models a map: the pool fills across the calls)
   for (const fl of pick) {
     const at = new THREE.Vector3(...fl.p);
-    if (torchLights.length >= TORCH_LIGHTS || torchLights.some(l => l.position.distanceTo(at) < 8)) continue;
-    const L = new THREE.PointLight(0xff9a48, 6, 9, 1.6); L.position.copy(at); L.userData.base = 6; L.userData.ph = torchLights.length * 1.7;
-    torchLights.push(L); addW(scene, L);
+    if (used.length >= pool.length || used.some(l => l.position.distanceTo(at) < 8)) continue;
+    const L = pool[used.length]; L.position.copy(at); L.userData.base = 6; L.intensity = 6;
+    used.push(L);
   }
+  torchLights.length = 0; torchLights.push(...used);
+  for (const L of pool) if (!used.includes(L)) { L.userData.base = 0; L.intensity = 0; L.position.set(0, -50, 0); }
 }
 function torchTick() {
   const t = performance.now() / 1000;
