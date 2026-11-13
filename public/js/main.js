@@ -95,6 +95,7 @@ const local = {
   slowUntil: 0,                // Glacial Skim slow
   rootUntil: 0,                // bound (Frostfall, Blizzard, a Bulwark's freeze)
   silenceUntil: 0,             // bound: no spells, ward or telekinesis
+  pad: null, padUntil: 0, padSteer: new THREE.Vector2(),   // round 22: our jump-pad flight { start, y0, arc, pad } and its small steering
   dash: null,                  // { start, time, dist } during our own Smoke Screen or Roll dash (along lastDashDir)
   rollCharges: null, rollUntil: 0,   // Roll: when each charge is back (predicted), and the current roll's end
   liftCdUntil: 0, wasHolding: false,       // telekinesis: no new lift for a while after letting go
@@ -615,6 +616,54 @@ if (typeof Select.setStatsFetcher === 'function') Select.setStatsFetcher(() => w
 // ---------------------------------------------------------------- network handlers
 // Game modes UI (public/js/match-ui.js, modes agent)
 const matchUI = mountMatchUI({ scene, camera, net, players, props, myId: () => myId });
+// Round 22: characters' banners, rune line, "Next map" chip and the map fade (callouts.js), and the rune and pad visuals
+// (pickups.js). Loaded by name, so main.js runs without them.
+let callouts = null, pickups = null, pickupsMod = null;
+import('./callouts.js').then(m => { callouts = m.mountCallouts({ sfx, players, myId: () => myId }); }).catch(e => console.warn('[callouts] not loaded', e?.message));
+import('./pickups.js').then(m => { pickupsMod = m; mountPickupsFor(serverPads); }).catch(e => console.warn('[pickups] not loaded', e?.message));
+let serverPads = [];   // the room's pads from the welcome / map message: { i, id, x, y, z, r, to, yaw, time, h }
+let padArcs = [];      // the same with their arcs (C.padArc: the server's maths), for our own launch
+function mountPickupsFor(pads) {
+  serverPads = pads || [];
+  padArcs = serverPads.map(pd => ({ ...pd, arc: C.padArc({ x: pd.x, y: pd.y, z: pd.z, target: pd.to, h: pd.h }) }));
+  if (!pickupsMod) return;
+  try { pickups?.clear?.(); } catch {}
+  pickups = pickupsMod.mountPickups({ scene, sfx, players, myId: () => myId, pads: serverPads.map(pd => ({ id: pd.id, x: pd.x, y: pd.y, z: pd.z, r: pd.r, to: pd.to, yaw: pd.yaw })) });
+}
+let mapId = 'courtyard', preloaded = new Set();
+function noteMap(m) {
+  mapId = m?.id || m || 'courtyard';
+  document.documentElement.dataset.map = mapId;
+  if (window.__wa) window.__wa.map = mapId;
+}
+// The server moved the room to another map (the rotation, at a rematch's countdown): under characters' fade, environment's
+// world.js rebuilds the arena (map.js switches its data), then the props, potions, runes and pads are the new map's.
+async function onMapChange(msg) {
+  const id = msg.map?.id || msg.map, name = msg.map?.name || C.MAPS?.[id]?.title || id;
+  const swap = async () => {
+    try {
+      if (typeof World.switchMap === 'function') await World.switchMap(loader, scene, id);
+      else { if (typeof C.loadMap === 'function') await C.loadMap(id); C.setActiveMap?.(id); }
+    } catch (e) { console.warn('[map] switch', e); }
+    for (const [id_, entry] of props) if (!(msg.props || []).some(pr => pr.id === id_)) { scene.remove(entry.mesh); props.delete(id_); }
+    for (const pr of msg.props || []) setProp(pr, true);
+    for (const [id_, v] of potionViews) if (!(msg.potions || []).some(pt => pt.id === id_)) { scene.remove(v.group); v.marker?.remove(); potionViews.delete(id_); }
+    for (const pt of msg.potions || []) setPotion(pt);
+    mountPickupsFor(msg.pads || []);
+    pickups?.onMessage?.({ t: 'snap', runes: msg.runes || [] });
+    local.pad = null; local.fall = null; local.jump = null;
+    noteMap(msg.map);
+  };
+  if (callouts?.mapChange) await callouts.mapChange({ name, swap }); else await swap();
+}
+// the other maps of the room are fetched in the background once the first match is live (the first load stays small)
+function preloadOtherMaps() {
+  for (const id of currentRoom?.maps || []) {
+    if (id === mapId || preloaded.has(id)) continue;
+    preloaded.add(id);
+    try { World.preloadMap?.(loader, id)?.catch?.(e => console.warn('[map] preload', id, e)); } catch (e) { console.warn('[map] preload', id, e); }
+  }
+}
 
 function onWelcome(msg) {
   myId = msg.id; local.tpSeq = 0;
@@ -632,6 +681,9 @@ function onWelcome(msg) {
   for (const c of msg.smokeFlasks || []) effects.smokeFlask(c.p, c.left);
   for (const c of msg.cages || []) cages.set(c.id, { ...c, x: c.p[0], z: c.p[2], fx: effects.nightCage(c.p, c.left) });
   for (const pt of msg.potions || []) setPotion(pt);
+  noteMap(msg.map);   // round 22
+  mountPickupsFor(msg.pads || []);
+  callouts?.onMessage(msg); pickups?.onMessage(msg);
   me = players.get(myId);
   for (const d of msg.decoys || []) spawnDecoy(d);
   local.pos.set(me.targetPos.x, me.targetPos.y, me.targetPos.z);
@@ -732,6 +784,7 @@ function applySnapshot(w, s) {
   w.riding = !!s.ride; w.ramGuard = !!s.ramGuard;
   w.brewing = !!s.brew;
   w.regen = !!s.regen;   // out-of-combat regen: our HP bar pulses green
+  w.buffs = s.buffs || null; w.body?.setBuffs?.(s.buffs);   // round 22: the rune buffs (characters' auras); me.buffs.haste speeds us up
   w.healing = !!s.heal;   // Night Cage or Sanguine Aegis healing: the crimson shimmer (per frame)
   if (!s.brew && w.brewFx) { effects.stopAura(w.brewFx); w.brewFx = null; }
   if (w !== me) { w.sprinting = !!s.sprint; w.castRooted = !!s.castRoot; w.crouch = !!s.crouch; w.jumping = !!s.jump || s.hover != null; hoverFx(w, s.hover != null); }
@@ -926,7 +979,16 @@ function predictedCast(msg) {
 function wpos(w) { return w.group.position.clone().setY(w.group.position.y + 1.1); }
 
 function handleMessage(msg) {
+  callouts?.onMessage(msg); pickups?.onMessage(msg);   // round 22 (both ignore what isn't theirs)
   switch (msg.t) {
+    case 'map': onMapChange(msg); break;   // round 22: the rotation moved the room to another map
+    case 'pad': {   // round 22: someone (maybe us) stepped on a jump pad
+      const w = players.get(msg.id);
+      w?.padLaunch?.();
+      if (w === me && !local.pad) { const pd = padArcs.find(q => q.i === msg.pad) ; if (pd) startPadFlight(pd, false); }
+      break;
+    }
+    case 'callout': if (msg.id === myId && msg.kind === 'streak') killMarker(); break;   // (the banner and sting are callouts.js's)
     case 'snap':
       netClock(msg);
       for (const s of msg.players) {
@@ -1299,7 +1361,7 @@ function handleMessage(msg) {
       effects.death([w.group.position.x, 0, w.group.position.z]);
       sfx.voice(w, w === me ? null : wpos(w), true);
       if (w === me) {
-        ui.death.querySelector('.big').textContent = msg.cause === 'ram' ? 'Flattened by a ram' : msg.cause === 'respawn' ? 'Respawning' : 'You were vanquished';
+        ui.death.querySelector('.big').textContent = msg.cause === 'ram' ? 'Flattened by a ram' : msg.cause === 'respawn' ? 'Respawning' : msg.cause === 'void' ? 'Knocked into the void' : 'You were vanquished';
         ui.death.classList.remove('hidden'); local.charging = false; local.blocking = false;
         local.cyclone = null; local.flight = null; local.pos.y = 0; local.siphon = null; local.fHold = null;
         local.slowUntil = local.rootUntil = local.silenceUntil = local.frozenUntil = 0; local.frostAim = false;
@@ -1309,6 +1371,7 @@ function handleMessage(msg) {
       if (msg.killer === myId && msg.id !== myId) sfx.killSting();   // our kill (a ram's kills are its summoner's)
       killFeed(k && k !== w ? k : null, w, msg.kind || msg.cause);
       if (msg.cause === 'respawn') feed(k && k !== w ? `<b>${esc(k.name)}</b> finished <b>${esc(w.name)}</b>` : `<b>${esc(w.name)}</b> respawned`);   // (round 16: the menu's Respawn while hurt)
+      if (msg.cause === 'void') feed(k && k !== w ? `<b>${esc(k.name)}</b> knocked <b>${esc(w.name)}</b> into the void` : `<b>${esc(w.name)}</b> fell into the void`);   // round 22
       if (msg.killer === myId && msg.id !== myId) killMarker();
       if (w === me) showKilledBy(k && k !== w ? k : null, msg.kind || msg.cause);
       if (w === me && msg.cause !== 'respawn') changeWizardHint('death');   // round 21: our first death (not the menu's own Respawn)
@@ -1704,7 +1767,7 @@ let slowMo = 1;   // the time scale for others' animations and the effects (the 
 let lastGuardBreak = 0, lastGuardBleat = 0;
 // (lastGuardBreak: the guard's rams go together, one break sound)
 function matchSounds(msg) {
-  if (msg.t === 'matchPhase' && msg.match.phase === 'live' && lastMatch?.phase === 'countdown') sfx.ui('fight_start', 0.8);
+  if (msg.t === 'matchPhase' && msg.match.phase === 'live' && lastMatch?.phase === 'countdown') { sfx.ui('fight_start', 0.8); preloadOtherMaps(); }   // (round 22: the other map loads behind the first match)
   if (msg.t === 'matchEnd') {
     const w = msg.results?.winner;
     if (w != null) sfx.ui(w === myId ? 'victory' : 'defeat', 0.75);
@@ -1893,7 +1956,7 @@ const KIND_ICON = { fireball: 'fireball', heavy: 'heavy', meteor_rain_hit: 'mete
 const KIND_NAME = { heavy: 'Meteor', fast: 'Spark', shear: 'Gale Shear', hex: 'Hex Shards', skim: 'Glacial Skim', siphon: 'Blood Siphon', sling: "Shepherd's Sling",
   potion: 'Potion Toss', potion_splash: 'Potion Toss', toxic: 'Toxic Flask', toxic_pool: 'Toxic Flask', prop: 'a thrown object',
   ram: 'a ram', battering_ram: 'Battering Ram', ram_charge: 'a charging ram', ram_shove: 'Ram Ride', meteor_rain_hit: 'Meteor Rain', meteor_rain_splash: 'Meteor Rain', firewall_burn: 'Firewall', eye_burst: 'Eye of the Storm', blizzard_chip: 'Blizzard', cage_burn: 'Night Cage',
-  blizzard_freeze: 'Blizzard', bulwark_frost: 'Glacial Bulwark', flaskstep: 'Flask Step' };
+  blizzard_freeze: 'Blizzard', bulwark_frost: 'Glacial Bulwark', flaskstep: 'Flask Step', void: 'the void' };
 const iconFor = (kind) => `./textures/icons/${KIND_ICON[kind] || 'skull'}.png`;
 const kindName = (kind) => KIND_NAME[kind] || C.SPELLBOOK[kind]?.name || C.SPELLS[kind]?.name || (kind ? kind.replace(/_/g, ' ') : 'something');
 const heroHex = (w) => '#' + ((w?.color ?? 0xdddddd).toString(16).padStart(6, '0'));
@@ -1905,6 +1968,20 @@ let killedBy = null;
 // Floating numbers: pooled DOM labels pinned to a world point, drifting up and fading; several on one target stack.
 const dmgLayer = document.createElement('div'); dmgLayer.id = 'dmgLayer'; $('#hud').appendChild(dmgLayer);
 const floats = [];
+// Round 22: our launch from a jump pad (C.padArc, the server's arc). `tell`: we found it ourselves (the server is told); false:
+// the server's { t: 'pad' } reached us first.
+function startPadFlight(pd, tell) {
+  const now = performance.now() / 1000;
+  local.pad = { start: now, y0: pd.y, arc: pd.arc, pad: pd };
+  local.padUntil = now + pd.arc.time + C.PAD.cooldown;
+  local.pos.set(pd.x, pd.y, pd.z);
+  local.padSteer.set(0, 0);
+  local.vel.set(pd.arc.v[0], 0, pd.arc.v[2]);
+  local.jumpSpeed = Math.hypot(pd.arc.v[0], pd.arc.v[2]);
+  local.jump = null; local.fall = null; local.airDash = null; local.airJumped = false; local.sprinting = false; local.crouchToggle = false;
+  if (tell) net.send({ t: 'pad', pad: pd.i, id: pd.id });
+  if (me) { me.padLaunch?.(); if (tell) sfx.play('whoosh', { pos: [pd.x, pd.y + 1, pd.z], vol: 0.7, jitter: 0.08 }); }
+}
 function floatNumber(w, text, cls) {
   const el = document.createElement('div');
   el.className = 'dn ' + cls; el.textContent = text;
@@ -1976,6 +2053,7 @@ function combatFeedbackHit(msg, target) {
   if (msg.attacker === myId && target !== me) {
     if (msg.blocked) floatNumber(target, 'BLOCKED', 'blocked');
     else if (msg.dmg > 0) floatNumber(target, String(Math.round(msg.dmg)), 'dmg' + big);
+    if (msg.shield > 0 && !msg.blocked) floatNumber(target, `${Math.round(msg.shield)} AEGIS`, 'shield');   // round 22: the rune's shield soaked it
   }
   if (target === me) {
     if (msg.blocked) hudNumber('BLOCKED', 'blocked');
@@ -2540,7 +2618,7 @@ function updateLocal(dt) {
   const floor = groundAt(local.pos.x, local.pos.z, local.pos.y);
   // Round 13: from the floor (or within JUMP.coyote of walking off an edge) the jump; in the air, once, the air jump: a
   // fresh, lower arc from this height (AIR_JUMP), steered at once toward the movement keys. The server checks the same.
-  const onFloor = !local.jump && !local.hover && !local.airDash && !local.flight && local.pos.y <= floor + 0.05;
+  const onFloor = !local.jump && !local.hover && !local.airDash && !local.flight && !local.pad && local.pos.y <= floor + 0.05;
   if (onFloor) local.edgeAt = now;
   const coyote = !onFloor && local.fall && !local.fall.air && now - local.edgeAt < C.JUMP.coyote;
   if (input.justPressed('Space') && canAct && !rooted && !local.flight && !local.ride && !local.mrain && now >= local.eyeUntil && !local.blocking
@@ -2551,7 +2629,7 @@ function updateLocal(dt) {
       const hv = Math.hypot(local.vel.x, local.vel.z);
       local.jumpSpeed = Math.max(air ? local.jumpSpeed : 0, local.sprinting ? C.sprintOf() : C.speedOf(), Math.min(hv, C.sprintOf()));
       local.jump = { start: now, y0, n: air ? 2 : 1 };
-      local.fall = null; local.airDash = null;
+      local.fall = null; local.airDash = null; local.pad = null;   // (round 22: the air jump out of a pad's arc keeps its speed)
       local.crouchToggle = false;
       if (air) {
         local.airJumped = true;
@@ -2566,7 +2644,7 @@ function updateLocal(dt) {
       net.send(air ? { t: 'jump', n: 2, y0 } : { t: 'jump', y0 });
     }
   }
-  local.crouch = (local.crouchToggle || ctrl) && !local.jump && !local.fall && !local.hover && !local.airDash && !local.flight && !local.ride && !local.mrain && now >= local.eyeUntil && !me.dead;
+  local.crouch = (local.crouchToggle || ctrl) && !local.jump && !local.fall && !local.hover && !local.airDash && !local.pad && !local.flight && !local.ride && !local.mrain && now >= local.eyeUntil && !me.dead;
   if (local.crouch) local.sprinting = false;
 
   // ---- movement (camera-relative); a bound wizard can't move, a silenced one still can
@@ -2597,11 +2675,12 @@ function updateLocal(dt) {
     && !me.carrying && now >= local.blizzUntil && now >= local.eyeUntil;
   const wantSprint = (input.down('ShiftLeft') || input.down('ShiftRight')) && sprintAllowed;
   local.sprinting = wantSprint;   // round 10: unlimited (no stamina); round 13: a cast only slows it; not crouching or carrying
-  const inAirNow = !!(local.jump || local.fall || local.airDash);
+  const inAirNow = !!(local.jump || local.fall || local.airDash || local.pad);
   let speed = C.speedOf();
   if (local.blocking) speed = C.blockSpeedOf();   // a held shield
   else if (local.flight) speed = SKY.airSpeed;
   if (local.sprinting) speed = C.sprintOf();
+  if (me.buffs?.haste) speed *= C.RUNES.types.haste.speedMul;   // round 22: the Haste rune (the server allows the same)
   if (inAirNow && !local.flight) speed = Math.max(speed, local.jumpSpeed);   // a sprint-jump carries its speed
   if (local.crouch) speed = Math.min(speed, C.CROUCH.speed);   // crouched: a slow creep
   if (castSlowed && !local.flight) speed *= C.CAST_SLOW.mult;   // a cast (the server allows the same)
@@ -2618,8 +2697,15 @@ function updateLocal(dt) {
   const A = C.MOVE_ACCEL;
   const rate = inAirNow ? (moving ? A.accel * C.JUMP.airControl : A.airDrag) : moving ? A.accel : A.stop;
   const accel = Math.min(1, dt * rate);
-  local.vel.x += (wish.x - local.vel.x) * accel;
-  local.vel.z += (wish.z - local.vel.z) * accel;
+  if (local.pad && !me.dead) {
+    // round 22: a jump pad's arc carries us (the server flies the same one); the keys steer a little (PAD.airControl)
+    const st = local.padSteer, k = Math.min(1, dt * A.accel * C.PAD.airControl);
+    st.x += (wish.x * C.PAD.airControl - st.x) * k; st.y += (wish.z * C.PAD.airControl - st.y) * k;
+    local.vel.x = local.pad.arc.v[0] + st.x; local.vel.z = local.pad.arc.v[2] + st.y;
+  } else {
+    local.vel.x += (wish.x - local.vel.x) * accel;
+    local.vel.z += (wish.z - local.vel.z) * accel;
+  }
   // Smoke Screen / Roll dash: along lastDashDir, covering the distance over its time in real time (so a slow
   // frame rate doesn't shorten it), in small steps that collide like walking
   let dashMove = 0;
@@ -2692,6 +2778,12 @@ function updateLocal(dt) {
     // round 13: a dash in the air holds its height, then we fall
     local.pos.y = Math.max(groundAt(local.pos.x, local.pos.z, local.airDash.y), local.airDash.y);
     if (now >= local.airDash.until || me.dead) { local.airDash = null; local.fall = { start: now, y0: local.pos.y, air: true }; }
+  } else if (local.pad) {
+    // round 22: the pad's arc (C.padAt's height; the x/z came from the velocity above), until we touch a floor
+    const e = now - local.pad.start;
+    const fl = groundAt(local.pos.x, local.pos.z, local.pos.y);
+    local.pos.y = Math.max(fl, local.pad.y0 + local.pad.arc.v[1] * e - C.JUMP.gravity * e * e / 2);
+    if ((e > 0.15 && local.pos.y <= fl + 0.001) || me.dead || e > local.pad.arc.time + 1) { local.pos.y = fl; local.pad = null; local.fall = null; if (!me.dead) landed(); }
   } else if (local.jump) {
     const e = now - local.jump.start;
     const fl = groundAt(local.pos.x, local.pos.z, local.pos.y);
@@ -2758,6 +2850,12 @@ function updateLocal(dt) {
   me.updateAnimation(!!moving, dt);
   local.anim = me.dead ? 'dead' : local.charging || winding ? 'charge' : local.blocking ? 'block' : moving ? 'run' : 'idle';
 
+  // round 22: on a jump pad (feet on its floor, inside its ring): off we go, and the server is told (it launches us the same way)
+  if (padArcs.length && !local.pad && !local.jump && !local.fall && !local.flight && !local.hover && !local.airDash && !local.grab && !local.ride && !local.mrain
+      && !me.dead && now >= local.padUntil && !castRooted && now >= local.eyeUntil && now >= local.blizzUntil) {
+    const pd = padArcs.find(q => Math.abs(local.pos.y - q.y) <= C.PAD.height && Math.hypot(local.pos.x - q.x, local.pos.z - q.z) <= q.r);
+    if (pd) startPadFlight(pd, true);
+  }
   // ---- send state (20 Hz)
   if (now - local.lastSend > 1 / 20) {
     local.lastSend = now;
@@ -3086,7 +3184,7 @@ function frame(t) {
   if (me) {
     for (const msg of net.drain()) handleMessage(msg);
     if (Podium.active()) {   // the podium recap: its own stage and camera; the game waits (no input, nothing else drawn)
-      matchUI.update(dt); updateMusic(); Podium.frame(dt); input.endFrame();
+      matchUI.update(dt); callouts?.update(dt); updateMusic(); Podium.frame(dt); input.endFrame();
       return;
     }
     // round 16: the end's 1.5 s gap plays the others' animations and the effects in slow motion (the last kill sinking in)
@@ -3115,6 +3213,7 @@ function frame(t) {
     for (const w of players.values()) { w.faceCamera(camera); capPlate(w); effects.lights.feed(w.chargeLight); }
     updateHud(dt);
     matchUI.update(dt);
+    callouts?.update(dt); pickups?.update(dt, camera);   // round 22
     if (input.justPressed('KeyM')) toggleMute();
     sfx.setListener(camera);
     updateMusic();
@@ -3159,4 +3258,4 @@ requestAnimationFrame(frame);
 // Debug handle for the automated tests (round 14: off unless asked for, with ?debug in the URL or localStorage waDebug = 1).
 const DEBUG = (() => { try { return new URLSearchParams(location.search).has('debug') || localStorage.getItem('waDebug') === '1'; } catch { return false; } })();
 if (DEBUG) window.__wa = { renderer, input, net, local, players, props, rams, effects, scene, camera, sfx, decoys, walls, frosts, frostMark, mrainMark, flaskMark, cageMark, laneMark, cages, firewalls, stampedeFx, C, get cursedProps() { return cursedProps; }, get seenTraps() { return seenTraps; }, get quality() { return Q.debug(); }, Q, NET, netBuf,
-  get first() { return { firstVisit, visitNo, playT, hintShown, playedOnce, menuEverOpened, cfg: FIRST }; } };
+  get first() { return { firstVisit, visitNo, playT, hintShown, playedOnce, menuEverOpened, cfg: FIRST }; }, get map() { return mapId; }, set map(v) {}, get pads() { return padArcs; }, get pickups() { return pickups; }, get callouts() { return callouts; } };

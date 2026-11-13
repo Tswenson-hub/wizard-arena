@@ -450,6 +450,8 @@ export class Wizard {
   }
 
   inOneShot() { return performance.now() / 1000 < this.oneShotUntil; }
+  // Round 22: a jump pad launched us (main.js, on { t: 'pad' }): characters' Jump_Start push-off, then the float holds while airborne
+  padLaunch() { if (!this.dead && this.actions.jump_pad) { this.flipped = false; this.oneShot('jump_pad', 0.45, 1, 0); } }
 
   // Round 10: knocked down by a thrown object: fall, lie there, get up. The characters agent's knockdown / getup clips
   // (each death clip's first part, and reversed) when this body has them, else a long stun.
