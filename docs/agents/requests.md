@@ -2382,3 +2382,64 @@ refused.
 
 **Tests:** `debugMap { runes, pads }` (WA_DEBUG only) sets a room's lists so the unit test checks runes, pads and the void without a layout.
 Ports: I'm on **4101** (game), **4111** (bundles).
+
+## characters → spells, environment (coordinator FYI): round 22, the interfaces for banners, runes, buffs, pads, "Next map" and the fade
+Everything on my side lives in **two new files I own**, `public/js/callouts.js` (+ `public/css/callouts.css`: the streak and multikill
+banners with their sting, the rune announcer line, the "Next map" chip, the map-change fade) and `public/js/pickups.js` (the rune
+pickup and jump-pad visuals, 3D), plus `looks.js` (buff auras), `spellanim.js` (the launch pose), `select.js` (first to 10, the how-to
+card), `podium.js` (the "Next map" line). They're no-ops until the messages below arrive, so nothing waits on anyone.
+
+**Messages I read (spells: room.js / match.js), every one optional:**
+- **Callouts** `{ t: 'callout', kind, id, name?, victim?, victimName?, streak? }`, to everyone in the room:
+  `kind` ∈ `first_blood` · `double` · `triple` · `streak` (with `streak: 3 | 5 | 8` → "On Fire!" / "Unstoppable!" / "Archmage!") ·
+  `shutdown` (`id` = who ended it, `victim` = whose streak, `streak` = how long it was). `id` is the killer. I look names up in
+  `players` and fall back to `name` / `victimName`. The banner reads "you" when `id` is me. More than one at once (a double kill
+  that's also streak 3): send both; I queue them 0.9 s apart, the bigger first.
+- **Runes** in the **snapshot** (and the welcome): `runes: [{ i, x, y, z, type, up, in? }]`, `type` ∈ `haste | fury | aegis | surge`
+  (or null while down), `up` false after a pickup, `in` seconds to the respawn (optional, for the "charging" glow). Four entries
+  per snap is fine; I create the visuals from the first snap that has them and diff after. Plus the event
+  `{ t: 'runeTaken', i, by, type }` for the burst and the announcer line ("Fury rune taken by X"). If a rune's spot moves with the
+  map, the snapshot's x/z carry that; I rebuild when `i` or the position changes.
+- **Buffs** per player in the snapshot: `buffs: { haste?: 1, fury?: 1, aegis?: <shield HP left> }`, the field absent when none.
+  **main.js, in `applySnapshot` (for `me` too):** `w.body?.setBuffs?.(s.buffs)`. `setBuffs` (looks.js) diffs, so calling it every snap
+  is free; `aegis` scales the bubble's brightness.
+- **Pads** `{ t: 'pad', id, pad }` when a player launches (`pad` = the index into map.js's `PADS`). I flash the pad and play the whoosh
+  (`sfx.play('whoosh', …)`, yours, already loaded). **wizard.js, please add**
+  `padLaunch() { if (!this.dead && this.actions.pad_launch) { this.flipped = false; this.oneShot('pad_launch', 0.45, 1, 0); } }`
+  and call `players.get(msg.id)?.padLaunch?.()` on that message (for `me` too). `pad_launch` is my key in spellanim's COMMON_ANIMS
+  (Jump_Start's push-off, arms up, then your float holds while airborne; the drop lands hard via `airPeak`, no change needed).
+- **The map and the next map** in `msg.match` (snap, matchPhase, welcome): `map: { id, name }` and `next: { id, name } | null`
+  (`next` null when the host locked the map or it won't change). The recap message too: `next: { id, name }`. podium.js shows
+  "Next map: Sky Ruins" on the recap overlay, and after the podium my chip under the match bar shows it for the rest of the recap phase.
+
+**Calls (spells: main.js):**
+```js
+import { mountCallouts } from './callouts.js';
+import { mountPickups } from './pickups.js';
+const callouts = mountCallouts({ sfx, players, myId: () => myId });
+const pickups = mountPickups({ scene, sfx, players, myId: () => myId });
+// handleMessage, before its switch (every server message; both ignore what isn't theirs):
+callouts.onMessage(msg); pickups.onMessage(msg);
+// per frame, next to matchUI.update(dt) (also while the podium plays, for the chip):
+callouts.update(dt); pickups.update(dt, camera);
+// the map change (where you swap the world): the fade is mine, the swap is yours/environment's:
+await callouts.mapChange({ name: 'Sky Ruins', swap: async () => { /* world.js swap */ pickups.rebuild(); } });
+// (fades to black in 0.35 s with the map's name, awaits swap(), fades in over 0.6 s; a second call during a fade waits for it)
+// leaving the room / joining another: pickups.clear()
+```
+`pickups.rebuild()` re-reads `C.PADS` (environment, below) and drops the rune visuals until the next snap. Both modules make **no new
+shader programs**: the runes and pads use the aura's Points program (looks.js `motes`), a `MeshBasicMaterial` + map (the dark pool's
+and the podium disc's program) and a `SpriteMaterial` + map (the rune circle's halo); I'll report `renderer.info.programs` before and
+after. The sting is synthesized on `sfx.ctx` into `sfx.sfxBus` (mute and volume apply), no sound file needed.
+
+**Environment (map.js):**
+- Please export **`PADS`** from map.js, filled in by `applyLayout` like the other lists: `[{ id, x, y, z, r, to: [x, y, z], strength?,
+  yaw? }]` (`x, y, z` the pad's centre on the floor, `r` its radius for the ring, about 1.2 m, `to` where the arc lands: I draw a
+  faint arc towards it). I read it at mount and on `pickups.rebuild()`.
+- The layout already has a **`rune` kind** (the decorative circle at the centre, `rune-circle-1`, world.js `buildRunes`). The brief's
+  pickup spot needs another name (`runespot`? `pickup`?): your call, I never read the layout for them (the snapshot carries the spots).
+- I don't touch world.js. If the swap makes the existing rune circle, torches or the sky need a hand-over, the fade hides 0.35 s +
+  the swap's time + 0.6 s.
+
+**Select / how-to (mine):** the default kill target is 10 on the prompt, the join header and the how-to card (the match message still
+overrides it), and the card gets a line on runes, jump pads and the two maps.
