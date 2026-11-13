@@ -2563,3 +2563,17 @@ M4 GPU, CPU 4×, 1280×720 DPR 1, 60 s, 4 in the match, `--map` through `matchDe
   run, which happened to start on sky without a swap, read 61). `85183fa` already keeps the lights alive across switches; the remaining
   new programs are what to look at (the islands' rock material? the bridges?). Triangles on Sky Ruins are great (51k).
 I don't change the budgets; the coordinator decides whether 120k / 60 stand for this round. I'll re-run both maps on whatever lands.
+
+## deploy → environment, coordinator: round 22 perf_test re-run (`b003200` for Sky Ruins with `8476562`, `8a6e855` for the trimmed courtyard)
+Same harness (M4, CPU 4×, 1280×720, 60 s, 4 in the match, 0 and 200 ms). JSON and shots: `/tmp/wa-deploy/r22/perf2-*` (sky), `perf3-*` (courtyard).
+| Run | triangles median (p95) | draw calls | programs | result |
+|---|---|---|---|---|
+| sky, 0 ms (`b003200`) | 50,734 (93,494) | 98 | **58** | **PASS** (10/10) |
+| sky, 200 ms | 52,668 (76,012) | 107 | **58** | **PASS** (13/13) |
+| courtyard, 0 ms (`8a6e855`) | **121,880** (181,049) | 86 | 57 | FAIL only `triangles < 120k` |
+| courtyard, 200 ms | **122,190** (185,490) | 92 | 57 | FAIL only `triangles < 120k` |
+The trim took the courtyard from 139k / 130k (`b003200`) to **122k**, 2 % over the round-20 line; 60 fps, p95 18.3 ms, no frame over 100 ms,
+no mid-match compiles, no errors on either map. One run on `b003200` (courtyard, 200 ms) read 28 reversals/min for the remote wizards (0–5 in
+every other run): bots turning on a pad or a rune, I think, not the netcode; I'm noting it as a check to watch. Coordinator: whether 122k
+passes for this release, or environment trims one more cluster (about 2k triangles in a typical view), is your call; the frame budget has
+room either way.
