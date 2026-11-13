@@ -10,13 +10,13 @@
 import json
 
 JOIN_JS = r"""
-async ({ url, name, seconds }) => new Promise((resolve) => {
-  const out = { welcome: null, names: [], bots: [], snaps: 0, keys: [], filled: [], msgs: [], closed: false, error: null, players: [] };
+async ({ url, name, seconds, room }) => new Promise((resolve) => {
+  const out = { welcome: null, roomError: null, names: [], bots: [], snaps: 0, keys: [], filled: [], msgs: [], closed: false, error: null, players: [] };
   const names = new Set(), bots = new Set(), keys = new Set(), filled = new Set(), msgs = new Set();
   const fin = () => { out.names = [...names]; out.bots = [...bots]; out.keys = [...keys]; out.filled = [...filled]; out.msgs = [...msgs]; resolve(out); };
   let ws;
   try { ws = new WebSocket(url); } catch (e) { out.error = String(e); return fin(); }
-  ws.onopen = () => ws.send(JSON.stringify({ t: 'join', name, difficulty: 'normal' }));   // the old build's join: no proto, no map
+  ws.onopen = () => ws.send(JSON.stringify({ t: 'join', name, difficulty: 'normal', ...(room ? { room } : {}) }));   // the old build's join: no proto, no map
   ws.onerror = () => { out.error = 'socket error'; };
   ws.onclose = () => { out.closed = true; };
   ws.onmessage = (e) => {
@@ -24,6 +24,7 @@ async ({ url, name, seconds }) => new Promise((resolve) => {
     let m; try { m = JSON.parse(e.data); } catch { return; }
     msgs.add(m.t);
     if (m.t === 'welcome') { out.welcome = m; for (const k of Object.keys(m)) keys.add(k); }
+    if (m.t === 'roomError') out.roomError = m;
     if (m.t === 'snap') {
       out.snaps++;
       for (const k of Object.keys(m)) { keys.add('snap.' + k); if (Array.isArray(m[k]) ? m[k].length : m[k]) filled.add('snap.' + k); }
@@ -38,14 +39,26 @@ def map_id(m):
     """match.map as a string (spells) or { id, name } (characters' shape): the id, or None."""
     return m.get('id') if isinstance(m, dict) else m
 
-async def legacy_join(browser, ws_url, name='legacyjoin', seconds=6):
+async def legacy_join(browser, ws_url, name='legacyjoin', seconds=6, room=None):
+    """`room`: a code to ask for (the old client's invite / code box); a current room's code must be refused with reason 'version'."""
     # from the game server's own origin (Chromium refuses the socket from about:blank's opaque origin)
     ctx = await browser.new_context()
     pg = await ctx.new_page()
     await pg.goto(ws_url.replace('wss://', 'https://', 1).replace('ws://', 'http://', 1).rstrip('/') + '/healthz')
-    res = await pg.evaluate(JOIN_JS, {'url': ws_url, 'name': name, 'seconds': seconds})
+    res = await pg.evaluate(JOIN_JS, {'url': ws_url, 'name': name, 'seconds': seconds, 'room': room})
     await ctx.close()
     return res
+
+def report_code(res, code):
+    """The old client asked for a current room's code: refused ('version'), and seated in a legacy public room instead.
+    Returns True when it passes, or when the server has no legacy rooms yet."""
+    w = res.get('welcome') or {}
+    room, err = w.get('room') or {}, res.get('roomError') or {}
+    if 'legacy' not in room:
+        print(f'  note: legacy join with code {code}: no room.legacy on this server (pre-round-22), skipped'); return True
+    ok = err.get('reason') == 'version' and room.get('legacy') is True and room.get('code') != code and not room.get('private')
+    print(('  ok   ' if ok else '  FAIL ') + f"an old client's join with the new room's code {code}: roomError {err.get('reason')!r} ({err.get('text', '')[:60]!r}), landed in {room.get('id')} (legacy {room.get('legacy')}, private {room.get('private')})")
+    return ok
 
 def report(res, current_name, current_saw, name='legacyjoin'):
     """Prints the checks; returns True when they pass (or the server has no legacy rooms yet)."""

@@ -19,7 +19,7 @@ import asyncio, os, re, sys, time
 from urllib.parse import urlparse
 from playwright.async_api import async_playwright
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from legacyjoin import legacy_join, report as legacy_report   # round 22: a join without `proto` (the live CrazyGames build)
+from legacyjoin import legacy_join, report as legacy_report, report_code as legacy_report_code   # round 22: a join without `proto` (the live CrazyGames build)
 
 # GPU by default (ANGLE on Metal: macOS); --swiftshader for software GL (slow: it can stall several seconds compiling the castle's shaders)
 GL_ARGS = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] if '--swiftshader' in sys.argv else ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist']
@@ -71,7 +71,7 @@ async def chip(pg, timeout=15000):
         return None
     return await pg.evaluate("({ code: document.querySelector('#roomChip .wr-code').textContent.trim(), n: document.querySelector('#roomChip .wr-n').textContent.trim() })")
 
-async def rooms(b):
+async def rooms(b, server=None):
     ok, errs = True, []
     def check(cond, label):
         nonlocal ok
@@ -100,6 +100,9 @@ async def rooms(b):
     await bp.click('.sb-room-go'); await in_game(bp)
     rb = await chip(bp)
     check(rb and rb['code'] == code, f'B joined by code: {rb}')
+    # round 22: the live CrazyGames build (no proto) asking for this room's code is refused ('version') and seated in a legacy public room
+    if server:
+        check(legacy_report_code(await legacy_join(b, server, 'legacyold', seconds=3, room=code), code), 'legacy join by a current code')
     pages = [('A', a, sa), ('B', bp, sb)]
     # C: our own site with ?room=CODE joins at once, no click
     if SITE:
@@ -241,7 +244,7 @@ async def main():
             legacy_ok = legacy_report(lj, 'subpath', seen_names)
         rooms_ok = True
         await pg.close()   # (round 21: out of its public room, so the rooms' first-visit player can start an empty one)
-        if ROOMS: rooms_ok, _ = await rooms(b)
+        if ROOMS: rooms_ok, _ = await rooms(b, cfg.get('server'))
         await b.close()
     print(f'requests to the page host: {own}, outside {folder}: {escaped or "none"}')
     print('failed requests:', failed or 'none')
