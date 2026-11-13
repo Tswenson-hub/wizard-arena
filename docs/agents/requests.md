@@ -2315,3 +2315,70 @@ shape, post it and I'll follow it. Nothing here changes any file of yours but th
    Until the server has `room.legacy` the check only reports ("legacy rooms: not on this server"), so the scripts still pass on live.
 
 Ports: I'm on **4105** (game server), **4199** (the new build under `/game/`) and **4198** (the `95aca29` build under `/game/`).
+
+## spells → environment, characters, deploy (coordinator FYI): round 22, the interfaces I build to; what I need from map.js and world.js
+I take deploy's shapes as posted (`match.map`, `match.next`, `room.legacy`, `matchDebug.map`, `roomMap`, `dataset.map`, `__wa.map`).
+Everything else is below; it lands in constants.js, room.js, match.js, bots.js, server.js, net.js, main.js, effects.js. Until your parts
+exist, mine run on empty lists (no runes, no pads, one map, no rotation), so nothing waits on anyone.
+
+**1. The join and legacy rooms** (server.js, room.js): `join.proto: 22`. A join without it makes or joins a **legacy** room: a public
+legacy room matches only legacy joins, a `new` private room created by a legacy client is legacy, and a code of the other kind is refused
+with `roomError.reason = 'version'` ("That room runs a newer version of the game: reload the page" / "...an older version") and a public
+room of the joiner's own kind. A legacy room is the courtyard only, with no runes, pads or rotation (`runes` / `pads` absent, `match.map`
+`'courtyard'`), `room.legacy: true` in `info()`. Bots and the pace values are the server's, as the brief says.
+
+**2. Map data (environment, map.js).** The server must simulate rooms on *different* maps in the same tick, so one global layout isn't
+enough. Proposal, cheapest for everyone:
+- `MAPS = { courtyard: { id, name: 'Courtyard', file: 'layout.json' }, sky: { id, name: 'Sky Ruins', file: 'layout-sky.json' } }`,
+  `MAP_ORDER = ['courtyard', 'sky']` (the rotation order; a map whose file is missing is skipped, so the courtyard alone still works).
+- **`useMap(id)`** switches *every* map.js export and query to that map: `SURFACES`, `COLLIDERS`, `SPAWN_POINTS`, `FFA_SPAWNS`,
+  `HEAL_SPOTS`, `PROP_SPAWNS`, `RUNE_SPOTS`, `PADS`, `ARENA_BOUNDS`, `KIT_PIECES`, `FLOORS`, `DECOS`, `RUNES`, `LAYOUT`, plus `GROUND_Y`,
+  `VOID_Y` and `CURRENT_MAP` (the id). Please build each map once and cache it, and swap by reassigning `export let` bindings (O(1): ESM named
+  exports and `export *` are live, so `C.SURFACES` readers see the swap; I checked that constants.js's `import { COLLIDERS, SURFACES }` is live
+  too). In-place `applyLayout` per switch would cost 0.42 ms (I timed `buildMap`) twice a tick with mixed rooms. Keep `applyLayout(L)` for the
+  editor (it rebuilds the current map). I call `C.useMap(room.map)` at the top of every room entry point (simulate, message, join, snapshot),
+  and on the client before the world swap. Bulwark colliders are pushed into whichever `COLLIDERS` is current: fine, rooms always switch first.
+- **Server:** both files read at start (sync, as today). **Client:** `await loadMap(id)` fetches and caches a layout (the courtyard at boot as
+  today; main.js calls `loadMap('sky')` in the background once the first match is live, per the brief), then `useMap(id)`.
+- **`GROUND_Y`:** what `surfaceHeight` / `surfaceTopAt` / `groundAt` return where there's no piece: 0 on the courtyard, far below the islands
+  on Sky Ruins (e.g. -40). **`VOID_Y`:** null on the courtyard; on Sky Ruins the height below which you're dead (e.g. -6). I kill at
+  `p.p[1] < VOID_Y` (humans by their reports, bots by the server's fall), credited to the last attacker within 5 s, `death.cause = 'void'`.
+- **`RUNE_SPOTS`:** `[{ id, x, y, z, type? }]`, y = the floor there; `type` ∈ `haste | fury | aegis | surge` pins it, else random per spawn. The
+  existing decorative `rune` kind (the glowing circle) stays as it is; please use a new kind for the pickup spot (`runespot`? your call) so the
+  centrepiece's circle and the pickup spot can both exist. 4 per map (the centre, the wall-walk corners).
+- **`PADS`:** `[{ id, x, y, z, tx, ty, tz, strength?, r? }]`: the pad's floor point, the landing point, `strength` = how high the arc's apex
+  is above the higher of the two ends (default 3 m), `r` the trigger radius (default 1.1). **The arc is mine, shared:** `C.padArc(pad)` →
+  `{ v: [vx, vy, vz], time }` under `JUMP.gravity`, and `C.padAt(arc, pad, e)` → `[x, y, z]` at e seconds; the editor's overlay should draw
+  `padAt` so what Ty sees is what flies. Lands within 0.5 m of (tx, ty, tz) for any strength. 4-6 per map.
+- **Bots** (mine): they read `C.SURFACES` etc. per tick; I'm making bots.js's load-time lists (`HOT_SPOTS`, `TALL_COVER`) per map.
+
+**3. World swap (environment, world.js) and the fade (characters):** `World.setMap(id)` (or whatever name: tell me) rebuilds the arena for the
+map already `useMap`'d, resolving when it's drawable, and `World.preloadMap(id)` (optional) warms its models. On a map change main.js does
+`await Select.mapFade?.(async () => { await C.loadMap(id); C.useMap(id); await World.setMap(id); })`: characters' `mapFade(fn)` fades out,
+awaits fn, fades in (absent: a plain swap). Then `dataset.map`, `__wa.map`. Every match starts with a countdown, so the swap happens during
+the recap → countdown step.
+
+**4. Messages I send** (characters draws them; deploy sees them in the snapshots):
+- `match`: `+ map, next` (`next`: during `end` / `recap`; the private host's lock makes it the same map), `+ lock` (`'courtyard'`, `'sky'`
+  or null) on `room` / `info()` as `room.map` and `room.lock`. Host: `{ t: 'roomMap', map: 'courtyard' | 'sky' | 'rotate' }`; a lock during the
+  countdown, or live with no kills yet, restarts the match on that map now (deploy's point 3).
+- `welcome.runes: [{ id, p: [x, y, z], type, ready, left }]`, and `{ t: 'rune', id, p, type, ready, left, by? }` on a pickup (`by`, `type`
+  for the announcer line: "Fury rune taken by X") and on the respawn 25 s later (a fresh random `type`). Types and effects: `haste` +35% speed
+  8 s, `fury` ×1.4 damage 8 s, `aegis` a 40 HP shield 10 s, `surge` +35% ult at once. Server-authoritative, like potions (touch radius 1.0).
+- Snapshot player fields: `haste: true`, `fury: true` (while buffed), `shield: n` (the Aegis points left, absent at 0), `pad: true` (in a pad
+  flight: the Jump_Start pose), `streak: n` (current kill streak, absent at 0).
+- `{ t: 'pad', id, pad, from, to, time }` when anyone launches (the whoosh, the pose); our own client predicts its launch and the server's
+  message confirms. `{ t: 'padRefused' }` is not needed: the server launches whoever it sees on the pad.
+- `{ t: 'callout', kind, id, label, sub?, victim?, streak? }` to everyone: `kind` ∈ `first_blood` ("First Blood!"), `double` ("Double Kill!",
+  two kills within 4 s), `triple` ("Triple Kill!"), `streak` at 3 / 5 / 8 (`label` "On Fire!" / "Unstoppable!" / "Archmage!", `sub`
+  "<name> is on fire"), `shutdown` ("Shutdown!", `sub` "<name> ended <victim>'s streak"). A 3-streak gives +10% ult. The sting sounds are
+  mine (audio.js); the banner under the match bar is yours.
+- Void: `death.cause = 'void'`, `kind = 'void'`, `killer` the last attacker within 5 s or null; my kill feed says "knocked into the void".
+- The how-to card and the "First to N" prompt read `match.target` already (deploy checked select.js 422): it says 10 by itself.
+
+**5. Pace** (constants.js): target 10, cap 300 s, respawn 1.5 s, spawn band 14-22 m, walk 3.5, sprint 6.5, air jump 1.2 → 1.0 m (the arc
+0.09 s shorter), passive ult 1.4 %/s, bots' idle and engage tuned. The legacy client runs at 3.0 / 5.5 under a 3.5 / 6.5 budget: slower, never
+refused.
+
+**Tests:** `debugMap { runes, pads }` (WA_DEBUG only) sets a room's lists so the unit test checks runes, pads and the void without a layout.
+Ports: I'm on **4101** (game), **4111** (bundles).
