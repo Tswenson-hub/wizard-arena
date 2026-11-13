@@ -8,6 +8,34 @@
 - **Live commit:** `e416f68` (rounds 12b-13: Roll on F, the map editor, Ty's assets, mountains, ground textures,
   jeb2 animations), pushed by the coordinator with Ty's approval. Earlier: `29602cc` (deploy took ~45 s).
 
+## Round 22: pace, runes, pads, two maps (deploy's part; in progress)
+**Scripts (all deploy-owned, round 22):**
+- `863ec00` `e53b49a` requests.md: the interfaces the tests need, taken up by spells as posted: `match.map` (a string, or characters'
+  `{ id, name }`: my scripts take either) and `match.next`; `room.legacy: true` on legacy rooms (which run on environment's frozen
+  `legacy` map, byte-identical to the layout the live build bundles); `matchDebug.map` (MATCH_DEBUG) and the host's `{ t: 'roomMap', map }`
+  to pick a map; `<html data-map>` / `__wa.map` after the client's swap.
+- `768b204` **`deploy/legacy_test.py`**: the live CrazyGames build (built with `--ref 95aca29 --server ws://localhost:4105 --out
+  dist/crazygames-legacy --no-zip`: identical to `dist/crazygames` but for config.js) served under `/game/` on 4198 and played against
+  the new server on 4105, with the perf driver, through a whole match to the podium and the rematch countdown. `--fast` (MATCH_DEBUG on the
+  server) plays to 3 kills with a 4 s recap, about 2 minutes; without it the real target or the 5-minute cap. Checks the HUD's "first to N"
+  and the prompt read the server's target, the legacy room once `room.legacy` exists (courtyard or legacy map, no runes or pads, no rune
+  or pad fields in its snapshots), the socket stays open, the SDK shim's gameplayStart, no failed requests, no console or page errors, and
+  lists any field the old client never knew that it was sent.
+- `2311dbb` **`deploy/legacyjoin.py`**: a join without `proto` from the test's own browser (on the game server's origin: Chromium refuses
+  the socket from about:blank), used by **`smoke.py`** (next to `smoketest`) and **`subpath_test.py`** (next to `subpath`, against the
+  build's `WA_SERVER`): the server welcomes the old join; with legacy rooms, the joiner is in one, the proto-22 player isn't, and neither
+  ever sees the other in its snapshots. On a server without `room.legacy` (live today) it only reports.
+- `2311dbb` **`perf_test.py --map courtyard|sky`**: sends `matchDebug.map` (or `roomMap` with `--room new`, for live), waits up to 90 s for
+  `data-map`, settles 3 s, then measures; reports `map` and adds the target "on the <map> map". JSON gets `map` and `map_wanted`.
+**Verified at `2311dbb`** (my server from a worktree at `ead41c2` on 4105, so others' live edits don't move under the runs; the 95aca29
+build on 4198, HEAD's build on 4199): `legacy_test.py --fast` PASS (phases countdown → live → end → recap → countdown, 3 on the podium,
+the podium scene on the old client, 0 errors; `/tmp/wa-deploy/r22/legacy-fast.png`, `-recap.png`); `smoke.py` PASS with the legacy join
+(a pre-22 note); `subpath_test.py --max-mb 20 --site` PASS, 8.9 MB initial in 380 responses, rooms 13/13, the legacy join noted;
+`perf_test --map sky --seconds 20` ran the flow on the pre-22 server (asked, waited 90 s, "the swap never came", the map target FAIL
+as it should; 60 fps, 107 calls, 59 programs; triangles 123.5k with 5 in the match, a leftover from the run before: re-measure at the end).
+**Left:** the legacy-room and both-map runs once spells' server lands (0 and 200 ms latency on both maps), `roomError.reason = 'version'`
+in the subpath rooms check, the final rebuild of `dist/crazygames`, the checklist (below, text ready) and the live smoke after the push.
+
 ## Round 18: saves (deploy's part)
 - `8b425e8` **platform.js:** `getUserToken()` → the `IN_GAME_AUTH` JWT, or null (guest: `getUser()` null; no SDK; any error, e.g.
   `userNotAuthenticated`); `onAuthChange(fn)` wraps `user.addAuthListener` (CrazyGames reloads on logout). Spells' main.js already
@@ -123,19 +151,22 @@ picked by eye from four runs at `04fd64b` (round 16 changed spells and balance, 
 ### 2. The form (ready to paste)
 **Title:** `Wizard Arena`
 
-**Short description:**
+**Short description** (round 22):
 ```
-Build your own wizard from 35 spells and duel three rivals in a castle courtyard free-for-all.
+Build your own wizard from 35 spells and duel three rivals in fast free-for-alls across two arenas: a castle courtyard and the Sky Ruins.
 ```
 
-**Description:**
+**Description** (round 22: first to 10, the 5-minute cap, runes, jump pads, two maps in rotation, streak call-outs):
 ```
-Build your wizard, then prove it in the courtyard. Pick one spell for each of six slots (primary, power, shield, mobility, utility and ultimate) from a spellbook of 35, across fire, ice, wind, earth, blood, alchemy and arcane. Every combination plays differently: lob fireballs from the wall-walk, freeze a rival mid-dash, drain a rival with Blood Siphon to heal yourself, wrap yourself in Sanguine Aegis, lift a crate with telekinesis and hurl it, or curse a barrel and wait.
+Build your wizard, then prove it in the arena. Pick one spell for each of six slots (primary, power, shield, mobility, utility and ultimate) from a spellbook of 35, across fire, ice, wind, earth, blood, alchemy and arcane. Every combination plays differently: lob fireballs from the wall-walk, freeze a rival mid-dash, drain a rival with Blood Siphon to heal yourself, wrap yourself in Sanguine Aegis, lift a crate with telekinesis and hurl it, or curse a barrel and wait.
 
-Matches are four-wizard free-for-alls, first to 15 kills, after a three-second countdown. Skeleton bots fill any empty seat instantly, so there is always a fight, on easy, normal or hard. Dodge, double-jump, roll, climb the towers for high ground and time your shield to turn the duel.
+Matches are four-wizard free-for-alls, first to 10 kills or the most kills in five minutes, after a three-second countdown. Skeleton bots fill any empty seat instantly, so there is always a fight, on easy, normal or hard. Grab the runes that spawn at the contested spots (Haste, Arcane Fury, Aegis and Surge), ride the jump pads onto the towers and across the courtyard, and chain kills for First Blood, Double Kill and streak call-outs.
+
+Two arenas take turns: the castle courtyard, and the Sky Ruins, a broken mage tower on floating islands where a knockback spell can send a rival into the void. Dodge, double-jump, roll, take the high ground and time your shield to turn the duel.
 
 Want a different build? Change your spells from the menu and respawn at once.
 ```
+The previous text (first to 15, the courtyard only) is in git history (`95aca29`).
 
 **Controls** (matches the in-game how-to-play card, select.js `KEYS`):
 ```
