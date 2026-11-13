@@ -731,7 +731,7 @@ export function createRoom(opts) {
     const vy = debugSpots?.void ?? C.voidY();   // (WA_DEBUG: debugMap's own void height, so the rule is tested on any map)
     if (vy == null) return;
     for (const q of players.values()) {
-      if (q.dead || q.spectator || q.p[1] >= vy) continue;
+      if (q.dead || q.spectator || q.p[1] >= vy || q.swapGraceUntil > t) continue;
       const by = players.get(q.lastHitBy);
       killPlayer(q, by && by !== q && t - (q.lastDamagedAt ?? -1e9) <= C.VOID.credit ? by : null, 'void', 'void');
     }
@@ -2557,7 +2557,7 @@ export function createRoom(opts) {
     for (const w of [...firewalls.values()]) { firewalls.delete(w.id); broadcast({ t: 'firewallEnd', id: w.id }); }
     for (const pl of [...pools.values()]) { pools.delete(pl.id); broadcast({ t: 'poolEnd', id: pl.id }); }
     for (const c of [...smokeFlasks.values()]) { smokeFlasks.delete(c.id); broadcast({ t: 'smokeFlaskEnd', id: c.id }); }
-    for (const q of players.values()) { q.carrying = null; q.pad = null; q.grab = null; q.fall = null; q.jump = null; q.hover = null; }
+    for (const q of players.values()) { q.carrying = null; q.pad = null; q.grab = null; q.fall = null; q.jump = null; q.hover = null; q.swapGraceUntil = now() + 2; }   // (the grace: a client's report against the old map's floors mustn't drop it into the void)
     buildProps(); buildPotions(); buildRunes(); buildPads();
     broadcast({ t: 'map', map: pubMap(mapId), props: [...props.values()].map(propPublic), potions: potions.map(potionPublic), runes: runes.map(runePublic), pads: pads.map(padPublic) });
     roomChanged();

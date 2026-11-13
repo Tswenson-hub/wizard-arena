@@ -640,10 +640,15 @@ function noteMap(m) {
 // world.js rebuilds the arena (map.js switches its data), then the props, potions, runes and pads are the new map's.
 async function onMapChange(msg) {
   const id = msg.map?.id || msg.map, name = msg.map?.name || C.MAPS?.[id]?.title || id;
+  // the map's data first, at once, with our own physics held still meanwhile: the server already simulates the new map (its respawn
+  // puts us on an island), and a report made against the old map's floors would drop us into the void
+  local.swapping = true;
+  try { if (typeof C.loadMap === 'function') await C.loadMap(id); C.setActiveMap?.(id); } catch (e) { console.warn('[map] data', e); }
+  local.swapping = false;
   const swap = async () => {
     try {
       if (typeof World.switchMap === 'function') await World.switchMap(loader, scene, id);
-      else { if (typeof C.loadMap === 'function') await C.loadMap(id); C.setActiveMap?.(id); }
+      else C.setActiveMap?.(id);
     } catch (e) { console.warn('[map] switch', e); }
     for (const [id_, entry] of props) if (!(msg.props || []).some(pr => pr.id === id_)) { scene.remove(entry.mesh); props.delete(id_); }
     for (const pr of msg.props || []) setProp(pr, true);
@@ -2295,6 +2300,7 @@ let tkHover = null;
 const groundAt = (x, z, footY = 0) => (C.surfaceHeight ? C.surfaceHeight(x, z, footY) : 0);
 
 function updateLocal(dt) {
+  if (local.swapping) return;   // round 22: a map change's data is still loading (onMapChange): no physics, no report
   const stunned = now < local.stunUntil || me.stunned;
   const bound = now < local.silenceUntil || me.bound;
   const rooted = now < local.rootUntil;
