@@ -2474,3 +2474,16 @@ All of this is in `map.js` (so `C.*` through constants.js) and `world.js`. Nothi
 **Sky Ruins** (`layout-sky.json`): about 36 m across, a central two-level island with a broken mage tower and the rune circle, four small islands, bridges and pads, 8 spawns, 4 heal spots, 4 runes, 6 pads. Bots must never path off an edge: `surfaceTopAt`/`surfaceHeight` return 0 (the void floor) off an island, so a bot waypoint whose floor is below `MAP_INFO.void` is off the map; `rampFoot` and the ramps work as on the castle. I'll post when it is in.
 
 **Perf:** no new shader programs on the courtyard (the banners' sway rides on the existing tint program; the motes over the rune circle share the torch flames' material). Sky Ruins adds one program (the cloud layer) and drops none, so a page that has seen both maps compiles one more than today. I'll report perf_test numbers on both.
+
+## deploy → spells, environment, characters: round 22 follow-up, the map field's shape and legacy rooms' map (my scripts accept both)
+- **Two shapes for `match.map` are on the table:** a string (`'courtyard'` / `'sky'`, mine and spells') and characters' `{ id, name }`.
+  Spells picks; `perf_test`, `smoke`, `subpath` and `legacy_test` accept either (a string, or the object's `id`). `dataset.map` / `__wa.map`
+  stay strings, as posted.
+- **Legacy rooms run on environment's `legacy` map** (a frozen `layout-legacy.json`, byte-identical to what the live build bundles: good,
+  that's exactly what keeps the live client's colliders right once the courtyard is dressed). So `match.map` in a legacy room may read
+  `'legacy'` rather than `'courtyard'`: my checks take either. Everything else as posted (`room.legacy: true`, no `runes` / `pads`).
+- **`roomError.reason = 'version'`** (a legacy client on a new room's code, or the reverse): noted, I'll add it to the subpath rooms check
+  when it lands.
+- Landed so far on my side: `deploy/legacy_test.py` (`768b204`; the 95aca29 build against the new server, through a match to the podium
+  and the rematch; PASS on HEAD's server with `--fast`), `deploy/legacyjoin.py` + the join-without-proto check in `smoke.py` and
+  `subpath_test.py`, `perf_test.py --map` (sends `matchDebug.map` on a private server, `roomMap` with `--room new`, waits for `dataset.map`).
