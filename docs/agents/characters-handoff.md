@@ -1,47 +1,68 @@
 # Characters hand-off
 
-## Round 22: banners, rune and pad visuals, buff auras, the launch pose, "Next map", the fade, first to 10 (IN PROGRESS: usage limit)
-Commits: `b98c395` `89f67e7`-adjacent `a51d489` (callouts.js, callouts.css, pickups.js, looks.js, spellanim.js), `2eed43e` (select.js,
-select.css, podium.js, recap.css). The interfaces are in requests.md ("characters → spells, environment: round 22"); spells' and
-environment's uncommitted work in the tree already matches them (callout `label`/`sub`, the welcome's `pads`, `JUMP_PADS` with `target`,
-`C.RUNES.types` colours), and my modules read those shapes.
+## Round 22: streak banners, rune and pad visuals, buff auras, the launch pose, "Next map", the map fade, first to 10
+Commits: `b98c395` `4ff…` requests.md (the interfaces, the jump_pad note, the landed note), `a51d489` callouts.js + callouts.css + pickups.js +
+looks.js + spellanim.js, `2eed43e` select.js + select.css + podium.js + recap.css, `cadb63d` the tuning from staged shots. Spells' main.js
+(uncommitted in the tree as I write) mounts both modules by dynamic import, calls `setBuffs`, `padLaunch`, `mapChange`; verified live below.
 
 ### What's built
-- **callouts.js / callouts.css** (`mountCallouts({ sfx, players, myId })`, `onMessage(msg)`, `update(dt)`, `mapChange({ name, swap })`,
-  `show(kind, opts)`): First Blood, Double/Triple (Multi) Kill, On Fire! / Unstoppable! / Archmage!, Shutdown; "you" lines for the local
-  player, the server's `sub` for others; two in one tick show bigger first, 0.9 s apart; a synthesized bell arpeggio sting on `sfx.sfxBus`
-  (mute and volume apply, no file). The rune line ("Fury rune taken by X", the type's colour, a soft chime). The "Next map: X" chip under
-  the match bar in the recap phase once the podium is over (`msg.match.next`). The fade: black in 0.36 s with the map's name, awaits
-  `swap()`, back in 0.62 s; calls queue.
-- **pickups.js** (`mountPickups({ scene, sfx, pads? })`): runes from the snapshot (`runes: [{ i, x, y, z, type, up, in }]`): a runic floor
-  ring, the type's glyph plane turning over it, a halo, orbiting motes and a rising pillar; dim and slowly brightening while down, pulsing
-  in the last 3 s; a burst on `runeTaken` (or a missed one). Pads from the welcome's `pads`, else `C.JUMP_PADS`: a mint chevron ring, an
-  updraft of motes, a dotted arc to the target; a flash and `sfx.play('whoosh')` on `{ t: 'pad' }`. **0 new shader programs** (measured:
-  56 → 56 on the game page with everything shown): the auras' Points program, MeshBasic+map, Sprite+map only (no DoubleSide: the glyph is
-  two front faces).
-- **looks.js**: `body.setBuffs({ haste?, fury?, aegis? })` (diffs; haste streaks, fury embers + chest glow, an Aegis bubble whose
-  brightness follows the shield HP + a belt of motes); `motes` and `dotTexture` exported. **spellanim.js**: `jump_pad` (Jump_Start 0.2–0.55
-  over 0.45 s; named `jump_` so wizard.js's regexes treat it as a jump).
-- **select.js**: default target 10; the how-to card's "Runes and jump pads" line (Haste/Fury/Aegis/Surge, 25 s, the two maps). **podium.js**:
-  `msg.next.name` → "Next map Sky Ruins" bottom left of the recap overlay (recap.css `.rc-next`).
+- **callouts.js / callouts.css** (`mountCallouts({ sfx, players, myId })`; `onMessage(msg)` for every server message, `update(dt)`,
+  `mapChange({ name, swap })`, `show(kind, opts)`, `setMatch(m)`):
+  - **Banners** under the match bar (96 px; 178 px while the controls strip is up): First Blood, Double Kill!, Triple Kill! (4+: the
+    server's "Multi Kill!" label), On Fire! / Unstoppable! / Archmage! (streak 3 / 5 / 8), Shutdown!. Each has its colour (`--c`), a pop
+    animation, 2.1 s; the local player's are bigger and white-gold with "you" lines; the others show room.js's `sub` ("X draws first
+    blood"). Two in one tick show bigger first, the next after 0.9 s (queued from `update()`). Hidden under the Esc menu, the recap, a clip.
+  - **The sting**: synthesized on `sfx.ctx` into `sfx.sfxBus` (so mute and the volume apply): a rising arpeggio of soft bell tones per
+    kind (shutdown's falls), a breath of filtered noise under the big streaks. No sound file.
+  - **The rune line** ("✶ Fury rune taken by X", the type's colour, a soft chime), 2.4 s, a chip under the banner's spot.
+  - **"Next map: Sky Ruins"** chip under the match bar while `match.phase === 'recap'` and `match.next` is set, hidden under the podium
+    (`body.recap-on`) and from the countdown on.
+  - **The fade**: `#callouts .co-fade` over everything (z 60): black in 0.36 s with "Next map / <name>", awaits `swap()`, holds so the
+    name reads at least 0.45 s, back in 0.62 s. A second call during one waits for it.
+- **pickups.js** (`mountPickups({ scene, sfx, pads? })`; `onMessage`, `update(dt)`, `rebuild()`, `clear()`):
+  - **Runes** from the snapshot (`runes: [{ i, x, y, z, type, up, in }]`): a runic floor ring (normal blending: additive washed to white on
+    the stone), the type's glyph (bolt, flame, shield, star; a 256 px canvas, two front faces so no DoubleSide program) turning 1.3 m up,
+    a halo sprite, 10 orbiting motes and a pillar of 8 rising motes seen from across the courtyard. Down: ring at 0.2–0.5 opacity growing
+    with the charge (`in`, or 25 s from when it went down), the pillar back and the ring pulsing in the last 3 s. `runeTaken` (or a missed
+    one): a 0.5 s burst (ring and halo expand and fade, the glyph flies up) and `tk_lift` at the spot. Colours from `C.RUNES.types`.
+  - **Pads** from the welcome's `pads` (else `C.JUMP_PADS` / `C.PADS`; `to`, `target` or `tx/ty/tz` accepted): a mint ring with four
+    inward chevrons, a soft additive disc, an updraft of 10 motes and 14 motes flowing along a parabola to the landing spot. `{ t: 'pad' }`:
+    a 0.4 s flash (ring 1.6×, disc brighter, the updraft 4× faster) and `whoosh` at 1.15× pitch.
+  - **Shader programs: none new.** The arena's Points program (looks.js `motes`, now exported with a `sphere` option for culling),
+    MeshBasic + map (the dark aura's pool) and Sprite + map (the rune circle's halo). Game page: 56 → 56 with everything shown; a live
+    match on spells' tree: 57.
+- **looks.js `body.setBuffs({ haste?, fury?, aegis? })`** (main.js calls it every snap; it diffs): Haste = 26 white-blue streaks whipping
+  up round the body; Fury = 28 big orange embers and a red chest glow sprite; Aegis = a golden additive bubble (plain MeshBasic: the player
+  ring's program) whose brightness follows the shield HP, and a belt of 14 motes. Shown on every tier (half the motes below 'full').
+- **spellanim.js `jump_pad`**: Jump_Start 0.2–0.55 stretched over 0.45 s (the crouch, then the push-off with the staff thrown up); named
+  `jump_…` so wizard.js's WHOLE_BODY / STAFF_UPRIGHT / LANDABLE regexes cover it; the float holds after, the landing is the hard one.
+- **select.js**: `matchTarget` defaults to 10 (prompt, join header, how-to card, the match message still overrides); the card's
+  "Runes and jump pads" line (Haste / Fury / Aegis / Surge in their colours, 25 s, pads to the walls, the Courtyard then the Sky Ruins
+  where a fall is fatal). It fits 720 px (688 px). **podium.js**: `msg.next.name` → "Next map Sky Ruins" bottom left of the recap (the
+  winner's plate uses the bottom centre during the close-up).
 
-### Verified (`/tmp/wa-characters/r22/visuals.py`, port 4103, GPU Chromium, first-visit page with my modules mounted by hand)
-PASS: the prompt "First to 10 kills"; First Blood (you) under the strip; banner 96 px under the match bar; each kind's text; the rune line;
-the chip shows in recap and hides in countdown; 4 runes + 1 pad built, down after the pickup; the three auras attach and clear; the
-`jump_pad` clip exists on the Mage; the fade completes and hides; the podium's "Next map Sky Ruins" at the bottom left; the how-to card
-reads first to 10 with runes/pads/maps and fits 720 px (688 px); programs 56 → 56; no page errors. Shots: `banner_*.png`, `rune_line.png`,
-`next_map_chip.png`, `podium_next_*.png`, `howto.png`, `buff_*.png`, `jump_pad_pose.png`.
+### Verified (`/tmp/wa-characters/r22/`, port 4103, GPU Chromium `--use-angle=metal`)
+- `visuals.py` (the game page, my modules mounted by the script; run before main.js mounted them): **ALL PASS (28 checks)**: First Blood
+  under the strip (178 px ≥ the strip's 167 px bottom), the banner 96 px under the bar (its bottom 83.6 px), Unstoppable! before the queued
+  Double Kill!, every kind's text, the rune line, the chip in recap and gone in countdown, 4 runes + 1 pad, down after a pickup, the three
+  auras attach and clear, `jump_pad` on the Mage, the fade black with the name and hidden after, the podium's line inside 720 px, the
+  how-to card, **programs 56 → 56**, no page errors. (It fails now that main.js mounts the modules itself: two instances; see realplay.)
+- `staged.py` (the editor page `?edit=1` with `MAP_EDIT=1`, no bots, a free camera): `staged_runes_pad.png` (the four runes and a pad in a
+  row), `staged_rune_close.png`, `staged_rune_burst.png`, `staged_rune_down.png`, `staged_rune_charging.png`, `staged_pad.png`,
+  `staged_pad_flash.png`, `staged_buffs.png` / `_close.png` (Haste, Fury, Aegis, all three), `staged_pose.png` (jump_pad at 0.38 s next to
+  the float). Looked at and tuned twice (the blending, the glyph size and strokes, the aura densities).
+- `realplay.py` (spells' main.js and room.js in the tree, a first-visit match, 75 s): banners seen **First Blood! / On Fire! / Shutdown!**
+  with room.js's sub lines, rune lines **Fury … Lady Tibia / Surge … Hollowjaw**, 4 rune visuals from the real snapshot, 6 pads from the
+  welcome, a buff aura on a bot, programs 57, no page errors. `real_callout_*.png`, `real_end.png` (the rune glyphs read from the wall-walk).
 
-### NOT verified / left (the usage limit cut this off)
-- After the last fixes (banner pumped from `update()` so the bigger of two shows first; the banner at 178 px under the strip; the fade test's
-  await bug) the script was **not re-run**. Re-run `visuals.py`: the four earlier FAILs should pass.
-- **No clean look at the 3D visuals yet**: the game-page shots had a wall in front and bots fighting; `staged.py` (editor page, no bots)
-  timed out waiting for `window.__edit` on `/?edit=1`. Next: find the editor's URL, run it, and look at the rune/pad/aura/pose shots. Tune
-  colours and sizes from those.
-- spells still has to call the hooks (requests.md) and `applySnapshot` `w.body?.setBuffs?.(s.buffs)`, `padLaunch()`; the sting's volume
-  should be checked by ear; the pad's whoosh needs the pad message's `from` when `pad` isn't an index (handled by `padId`).
-- Shader programs on **Sky Ruins** and the perf_test runs on both maps: not done.
-
+### Known issues and notes
+- The rune line while the strip is up (240 px) overlaps match-ui's "Fight!" banner (30 %) for the 2 s that shows; it's a one-off at the
+  start. The banners never do (no kills in the countdown).
+- The Fury chest glow sits inside the robe, so it reads as a halo round the body rather than a core; the embers carry it.
+- Spells: `realplay` ran against your uncommitted tree; `killMarker()` on your own streak callout is yours. The pad whoosh is played by
+  both of us when `tell` is on in main.js (yours at the launch, mine on the broadcast): drop one if it doubles.
+- Sky Ruins: not seen yet (the environment's map was a placeholder when I shot); the pads' `to` from the welcome handles any map.
+- Port 4103 is stopped.
 
 ## Round 21: first play (the "Click to start" prompt, the controls strip, the Esc hint, the first menu, the podium button, the lighter builder)
 Commits: `6ab3ee9` requests.md (the hooks), `ad18c44` select.js + select.css + index.html, `107324c` podium.js + recap.css.
