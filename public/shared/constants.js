@@ -58,7 +58,7 @@ JUMP.v0 = 4 * JUMP.height / JUMP.airTime; JUMP.gravity = 8 * JUMP.height / JUMP.
 export const jumpY = (e) => Math.max(0, JUMP.v0 * e - JUMP.gravity * e * e / 2);   // height above take-off, e s in
 // Round 13: the double jump. Space while airborne (a jump, a fall off an edge, a drop after a dash): one fresh arc from
 // the current height, `height` higher, same gravity. One per airtime; landing gives it back.
-export const AIR_JUMP = { height: 1.2, stamina: 10 };
+export const AIR_JUMP = { height: 1.0, stamina: 10 };   // round 22 (pace): 1.2 -> 1.0 m, the arc 0.09 s shorter
 AIR_JUMP.v0 = Math.sqrt(2 * JUMP.gravity * AIR_JUMP.height);
 // A jump record is { start, y0, n } (n 2 = the air jump). Its rise speed, apex and height e s in (server and client alike):
 export const jumpV0 = (J) => (J?.n === 2 ? AIR_JUMP.v0 : JUMP.v0);
@@ -73,7 +73,7 @@ export const CROUCH = { speed: 1.6, hitCenter: 0.5, hitRadius: 0.42 };   // top 
 export const hitCenterOf = (q) => (q?.crouch ? CROUCH.hitCenter : HIT_CENTER_Y);
 export const hitRadiusOf = (q) => (q?.crouch ? CROUCH.hitRadius : HIT_RADIUS);
 
-export const MOVE_SPEED = 3.0;        // m/s: everyone's walk (round 11: one generic wizard; Ty: normal movement is a walk)
+export const MOVE_SPEED = 3.5;        // m/s: everyone's walk (round 11: one generic wizard; Ty: normal movement is a walk; round 22 pace: 3.0 -> 3.5)
 export const CHARGE_MOVE_SPEED = MOVE_SPEED * 0.32;   // while winding up
 export const BLOCK_MOVE_SPEED = MOVE_SPEED * 0.42;    // while blocking
 
@@ -85,11 +85,51 @@ export const STAMINA_REGEN_DELAY = 0.8;     // seconds after block released
 export const BLOCK_CONE_DEG = 110;          // spells arriving inside this frontal cone are blockable
 export const BLOCK_BREAK_STUN = 1.1;        // stun when stamina runs out mid-block
 
-export const RESPAWN_TIME = 2.0;      // round 14 (pacing): was 3
+export const RESPAWN_TIME = 1.5;      // round 14 (pacing): was 3; round 22 (pace): 2.0 -> 1.5
 // Round 14: after a respawn, `time` s of no damage taken (ends early when you cast an attack). The respawn picks the
 // spawn farthest from enemies among those `min`–`max` m from the nearest one (else the 2nd-farthest overall).
 export const SPAWN_PROTECT = { time: 1.5 };
-export const SPAWN_CHOICE = { min: 18, max: 26 };   // the brief's 20–30 gave 29 m and 7.0 s to first damage on normal; this, 25 m and 6.1 s
+export const SPAWN_CHOICE = { min: 14, max: 22 };   // round 14: 18–26 gave 25 m and 6.1 s to first damage; round 22 (pace): 14–22, about 4 s
+// ---------------------------------------------------------------- round 22: pace (streaks), rune pickups, jump pads, the void
+// Streaks and callouts (room.js broadcasts { t: 'callout', kind, id, label, sub?, victim?, streak? }): First Blood; a Double / Triple
+// Kill is kills within `multiWindow` s of each other; a streak banner at each of `steps`; ending someone's streak of at least
+// `shutdownAt` is a Shutdown; reaching `ultBonusAt` gives `ultBonus` % of ultimate charge.
+export const STREAKS = { multiWindow: 4, steps: { 3: 'On Fire!', 5: 'Unstoppable!', 8: 'Archmage!' }, shutdownAt: 3, ultBonusAt: 3, ultBonus: 10 };
+// Rune pickups (map.js RUNE_SPOTS; server-authoritative, like potions): touched within `radius` (and `height` of its floor), back
+// `respawn` s later with a fresh random type. Types: Haste (+35% speed), Arcane Fury (x1.4 damage), Aegis (a 40 HP shield that soaks
+// damage first), Surge (+35% ultimate charge at once). `color` is the UI and glow colour.
+export const RUNES = {
+  radius: 1.0, height: 1.2, respawn: 25,
+  types: {
+    haste: { id: 'haste', name: 'Haste', color: 0x4fe0ff, time: 8, speedMul: 1.35 },
+    fury:  { id: 'fury',  name: 'Fury',  color: 0xff4f7a, time: 8, damageMul: 1.4 },
+    aegis: { id: 'aegis', name: 'Aegis', color: 0xffd24f, time: 10, shield: 40 },
+    surge: { id: 'surge', name: 'Surge', color: 0xb46cff, ult: 35 },
+  },
+};
+export const RUNE_TYPES = Object.keys(RUNES.types);
+export const randomRuneType = () => RUNE_TYPES[Math.floor(Math.random() * RUNE_TYPES.length)];
+// Jump pads (map.js PADS: { id, x, y, z, tx, ty, tz, strength?, r? }): stepping on one (within `r` of it, feet within `height` of
+// its floor) launches you on a fixed arc under the jump's gravity, its apex `strength` m above the higher of its two ends, landing
+// on (tx, ty, tz). padArc gives the launch velocity and the flight time, padAt the position e s in: client, server and bots fly the
+// same arc. In the arc you steer at `airControl` of the usual air control and may cast; `cooldown` s before the same wizard can be
+// launched again (so a landing on a pad doesn't bounce at once).
+export const PAD = { radius: 1.1, strength: 3, airControl: 0.35, height: 1.0, cooldown: 0.6 };
+// A map.js JUMP_PADS pad ({ x, y, z, target: [tx, ty, tz], h }) flies map.js's own padLaunch (the editor's overlay draws that arc);
+// a pad given as { tx, ty, tz, strength } (the tests) flies the same maths here.
+export function padArc(pad) {
+  const g = JUMP.gravity;
+  if (Array.isArray(pad.target) && typeof MAPNS.padLaunch === 'function') { const a = MAPNS.padLaunch(pad, g); return { v: a.v, time: a.t, apex: pad.y + a.h }; }
+  const dy = (pad.ty ?? pad.y) - pad.y, H = Math.max(0, dy) + (pad.strength ?? PAD.strength);
+  const vy = Math.sqrt(2 * g * H), time = (vy + Math.sqrt(Math.max(0, vy * vy - 2 * g * dy))) / g;
+  return { v: [((pad.tx ?? pad.x) - pad.x) / time, vy, ((pad.tz ?? pad.z) - pad.z) / time], time, apex: pad.y + H };
+}
+export const padAt = (arc, pad, e) => [pad.x + arc.v[0] * e, pad.y + arc.v[1] * e - JUMP.gravity * e * e / 2, pad.z + arc.v[2] * e];
+// The map's void height (map.js MAP_INFO.void: Sky Ruins), or null: below it you're dead.
+export const voidY = () => { const v = MAPNS.MAP_INFO?.void; return Number.isFinite(v) ? v : null; };
+// The void (Sky Ruins): below map.js VOID_Y you're dead, credited to whoever hurt you within `credit` s ("knocked into the void").
+export const VOID = { credit: 5 };
+
 // Round 14: every primary's magazine reloads in this long (was 1.5 s).
 export const PRIMARY_RELOAD = 1.2;
 
@@ -399,7 +439,7 @@ export const SLOT_INFO = {
 export const ULT_CHARGE = {
   max: 100,
   perDamage: 1 / 3,    // % per point of damage dealt to an enemy
-  passive: 1.0,        // % per second while alive (round 14: 0.5)
+  passive: 1.4,        // % per second while alive (round 14: 0.5; round 22 pace: 1.0 -> 1.4, an ultimate about every 30 s)
   kill: 10,            // % per kill (round 14: 5): an ultimate about every 40 s
   windup: 1.3,         // every ultimate: a readable 1.3 s cast first, interrupted like any wind-up...
   fizzleKeep: 50,      // ...and an interrupted one fizzles, keeping this much charge
@@ -799,7 +839,7 @@ export const speedOf = () => MOVE_SPEED;
 export const CAST_SLOW = { mult: 0.6, time: 0.3 };
 
 // Sprint (Shift): a run at SPRINT.speed.
-export const SPRINT = { speed: 5.5, drain: 0, restart: 0 };   // m/s default. Round 10 (Ty): unlimited, no stamina. Round 13: a cast no longer ends it
+export const SPRINT = { speed: 6.5, drain: 0, restart: 0 };   // m/s default. Round 10 (Ty): unlimited, no stamina. Round 13: a cast no longer ends it. Round 22 (pace): 5.5 -> 6.5
 export const sprintOf = () => SPRINT.speed;
 export const chargeSpeedOf = () => CHARGE_MOVE_SPEED;
 export const blockSpeedOf = () => BLOCK_MOVE_SPEED;

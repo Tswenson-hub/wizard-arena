@@ -20,13 +20,17 @@
 //   welcomeExtras(p)         merged into the 'welcome' message
 //
 // ctx (from server.js): { players, props, now, broadcast, send, addBot, removePlayer, respawn, propPublic,
-//   addUltCharge(p, pct) }, plus optional resetRams() and resetUlt(p).
+//   addUltCharge(p, pct) }, plus optional resetRams(), resetUlt(p), maps() (round 22: the map ids this room may play, in
+//   rotation order; a legacy room has the courtyard only) and setMap(id) (the room switches its arena to that map).
+// Round 22: map rotation. A room's first match is the courtyard; every rematch moves to the next map in ctx.maps() unless the
+// private room's host locked one (setMapLock) or a test picked one (matchDebug.map). matchPublic carries `map` and, from the
+// end of a match, `next`. The rotation's switch happens at the countdown (setMap, then everyone respawns on the new map).
 // Debug (only with MATCH_DEBUG=1 in the server's environment): { t: 'matchDebug', target, cap, countdown (or warmup), endTime, recapTime,
 // botDiff, skip: true, spectate: true, pinBots: true | false, size }.
 
 import * as C from '../public/shared/constants.js';
 
-export const FFA = { name: 'Free-for-all', size: 4, target: 15, cap: 420 };   // round 14 (pacing): 10 / 480
+export const FFA = { name: 'Free-for-all', size: 4, target: 10, cap: 300 };   // round 14 (pacing): 10 / 480; round 15-21: 15 / 420; round 22 (pace): 10 / 300
 const TIMES = { countdown: 3, end: 1.5, recap: 10 };   // round 16 (Ty): a 3 s countdown, then go (was a 10 s warm-up); the end's gap, then the recap
 const ASSIST_WINDOW = 10;   // s: damage this recent to the victim, by someone other than the killer, is an assist
 // Round 16 (Ty): the recap's accolades. stat(p) -> the number; low: fewer is better; min: the least that earns it; text: the value shown;
@@ -84,6 +88,7 @@ export function createMatch(ctx) {
     filling: false,                                // ctx.addBot is adding a fill bot right now
     fillCheckAt: 0, graceUntil: 0,
     matches: 0,                                    // finished matches (for the harness)
+    map: 'courtyard', next: null, lock: null, forceMap: null, rotateNext: false,   // round 22: the map rotation
   };
   const t = () => ctx.now();
   const target = () => S.target ?? FFA.target;
@@ -91,6 +96,22 @@ export function createMatch(ctx) {
   const fighters = () => [...players.values()].filter(p => !p.spectator);
   const pub = (p) => ({ id: p.id, name: p.name, bot: !!p.bot, loadout: p.loadout,
     kills: p.kills, deaths: p.deaths, dmg: Math.round(p.mDmg || 0) });
+  // ------------------------------------------------------------ maps (round 22)
+  const maps = () => { const m = ctx.maps?.(); return Array.isArray(m) && m.length ? m : ['courtyard']; };
+  const pubMap = (id) => (id == null ? null : ctx.pubMap ? ctx.pubMap(id) : { id, name: C.MAPS?.[id]?.title ?? id });
+  const rotated = (id) => { const m = maps(); return m[(Math.max(0, m.indexOf(id)) + 1) % m.length]; };
+  // the map the next countdown starts on: a test's pick, the host's lock, or the rotation (only after a finished match)
+  const nextMap = () => (S.forceMap && maps().includes(S.forceMap) ? S.forceMap : S.lock && maps().includes(S.lock) ? S.lock : S.rotateNext ? rotated(S.map) : maps().includes(S.map) ? S.map : maps()[0]);
+  function switchMap(id) {
+    if (id === S.map) return;
+    S.map = id;
+    ctx.setMap?.(id);
+  }
+  // a pick or a lock made during the countdown, or live before the first kill, starts the match on that map now
+  function restartIfFresh() {
+    if (S.paused || nextMap() === S.map) return;
+    if (S.phase === 'countdown' || (S.phase === 'live' && !fighters().some(p => p.kills > 0))) startCountdown();
+  }
 
   // ------------------------------------------------------------ seats and bot fill
   // Up to S.size fighters. Humans outrank bots: a human arriving at a full match takes a bot's place; with no bot
@@ -141,7 +162,7 @@ export function createMatch(ctx) {
     ctx.broadcast({ t: 'matchPhase', match: matchPublic() });
   }
   function clearStats() {
-    for (const p of players.values()) { p.kills = 0; p.deaths = 0; p.mDmg = 0; p.ms = freshStats(); p.assistBy = new Map(); }
+    for (const p of players.values()) { p.kills = 0; p.deaths = 0; p.mDmg = 0; p.ms = freshStats(); p.assistBy = new Map(); p.streak = 0; p.killTimes = []; }   // (round 22: streaks too)
   }
   function resetUlt(p) { if (ctx.resetUlt) ctx.resetUlt(p); else ctx.addUltCharge(p, -1000); }
   // Between matches: everyone respawns, props back where they started, rams gone, ultimate charge 0.
@@ -161,6 +182,8 @@ export function createMatch(ctx) {
   }
   function startCountdown() {
     S.results = null; S.recap = null;
+    switchMap(nextMap());   // round 22: the rotation (then everyone respawns on the new map)
+    S.forceMap = null; S.rotateNext = false; S.next = null;
     resetArena();
     setPhase('countdown', S.times.countdown);
   }
@@ -181,6 +204,7 @@ export function createMatch(ctx) {
       players: list.map(pub).sort((a, b) => b.kills - a.kills || a.deaths - b.deaths || b.dmg - a.dmg),
     };
     S.matches++;
+    S.rotateNext = true; S.next = nextMap();   // round 22: the rematch's map ("Next map: Sky Ruins")
     console.log(`[match] over (${reason}): winner ${players.get(winner)?.name ?? 'none (a tie)'}, mvp ${mvp?.name}`);
     ctx.broadcast({ t: 'matchEnd', results: S.results });
     S.recap = recapOf(list);   // (built now: the gap shouldn't change who placed where)
@@ -200,7 +224,7 @@ export function createMatch(ctx) {
   }
   function startRecap() {
     setPhase('recap', S.times.recap);
-    if (S.recap) ctx.broadcast({ ...S.recap, duration: S.times.recap });
+    if (S.recap) ctx.broadcast({ ...S.recap, duration: S.times.recap, next: matchPublic().next });   // (round 22: "Next map: Sky Ruins" on the podium)
   }
   function checkWin() {
     if (S.phase === 'live' && fighters().some(p => p.kills >= target())) endMatch('target');
@@ -211,6 +235,7 @@ export function createMatch(ctx) {
       mode: 'ffa', name: FFA.name, phase: S.phase, left: S.paused ? null : Math.max(0, +(S.phaseEnd - t()).toFixed(1)),
       target: target(), size: S.size,
       leader: S.phase === 'live' || S.phase === 'end' || S.phase === 'recap' ? leader() : null,
+      map: pubMap(S.map), next: (S.phase === 'end' || S.phase === 'recap') && S.next && S.next !== S.map ? pubMap(S.next) : null,   // round 22: { id, name }
     };
   }
   // The current leader: { id, kills } (null when nobody has a kill, or two share the lead).
@@ -292,8 +317,9 @@ export function createMatch(ctx) {
       ctx.send(p.id, { t: 'idle', on: idle });
     },
     onLeave(p) {
-      // last human gone: server.js clears the bots; wait for the next arrival
-      if (!p.bot && !humans().some(q => q !== p)) { S.paused = true; S.phase = 'countdown'; S.results = null; S.recap = null; }
+      // last human gone: server.js clears the bots; wait for the next arrival (round 22: back on the courtyard, where every
+      // room starts; a first visit always lands there)
+      if (!p.bot && !humans().some(q => q !== p)) { S.paused = true; S.phase = 'countdown'; S.results = null; S.recap = null; S.rotateNext = false; S.forceMap = maps()[0]; }
       else S.fillCheckAt = 0;   // a place may have opened for a spectator
     },
     // (the stats count in the live phase only; damage past what the target had left doesn't count)
@@ -359,6 +385,7 @@ export function createMatch(ctx) {
         // pinBots: every bot frozen where it stands (rooted and silenced), for UI tests; false lets them go
         if (msg.pinBots !== undefined) for (const q of players.values()) if (q.bot) q.pin = msg.pinBots ? { x: q.p[0], z: q.p[2] } : null;
         if (DIFFS.includes(msg.botDiff)) S.botDiff = msg.botDiff;
+        if (typeof msg.map === 'string' && maps().includes(msg.map)) { S.forceMap = msg.map; restartIfFresh(); }   // round 22: the next match's map (now, when nothing has happened yet; a legacy room has only its own)
         if (msg.spectate) { p.watchOnly = true; spectate(p); S.fillCheckAt = 0; }   // a test observer: never seated
         if (msg.skip) {
           if (S.phase === 'live') endMatch('skip');
@@ -374,10 +401,19 @@ export function createMatch(ctx) {
     },
     // round 17: a private room's host picks the fill bots' difficulty (room.js swaps the bots' brains)
     setBotDiff(d) { if (DIFFS.includes(d)) S.botDiff = d; },
+    // round 22: a private room's host locks a map ('rotate' lifts the lock); a lock made before the first kill applies at once
+    setMapLock(m) {
+      if (m === 'rotate' || m == null) S.lock = null;
+      else if (typeof m === 'string' && maps().includes(m)) S.lock = m;
+      else return false;
+      restartIfFresh();
+      return true;
+    },
+    map: () => S.map, mapLock: () => S.lock,
     playerExtras(p) {
       return { dmg: Math.round(p.mDmg || 0), spectator: p.spectator || undefined };
     },
     snapshotExtras() { return { match: matchPublic() }; },
-    welcomeExtras() { return { match: matchPublic(), results: S.phase === 'end' || S.phase === 'recap' ? S.results : null, recap: S.phase === 'recap' ? S.recap : null }; },
+    welcomeExtras() { return { match: matchPublic(), results: S.phase === 'end' || S.phase === 'recap' ? S.results : null, recap: S.phase === 'recap' ? { ...S.recap, next: matchPublic().next } : null }; },
   };
 }
