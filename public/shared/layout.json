@@ -358,7 +358,7 @@
     {"id":"floor_tile_extralarge_grates-1","kind":"kit","model":"castle/floor_tile_extralarge_grates","x":0,"y":0.01,"z":0},
     {"id":"pillar_decorated-1","kind":"kit","model":"castle/pillar_decorated","x":0,"z":0},
     {"id":"column-1","kind":"kit","model":"castle/column","x":0,"y":3.3333,"z":0,"rotY":0.7854},
-    {"id":"rune-circle-1","kind":"rune","x":0,"z":0,"h":6.1,"r":9},
+    {"id":"rune-circle-1","kind":"circle","x":0,"z":0,"h":6.1,"r":9},
     {"id":"pillar-5","kind":"kit","model":"castle/pillar","x":8.5,"z":8.5},
     {"id":"rubble_half-1","kind":"kit","model":"castle/rubble_half","x":9.4,"z":7.3},
     {"id":"column-2","kind":"kit","model":"castle/column","x":6.2,"z":9.8},

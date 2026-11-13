@@ -77,6 +77,7 @@ function toggleTop() {
   else if (cam.saved) Object.assign(cam, { pos: cam.saved.pos, yaw: cam.saved.yaw, pitch: cam.saved.pitch });
   $('topBtn').classList.toggle('on', cam.top);
 }
+$('topBtn').onclick = toggleTop;   // (round 22: the button never had its handler; only the T key worked)
 function moveCamera(dt) {
   if (!looking) return;
   const v = (keys.has('shift') ? 30 : 10) * dt, fwd = cam.top ? new THREE.Vector3(0, 0, -1) : camDir(), right = new THREE.Vector3(-Math.cos(cam.yaw), 0, Math.sin(cam.yaw));
@@ -618,7 +619,7 @@ function frame(now) {
   if (scene) renderer.render(scene, camera);
   requestAnimationFrame(frame);
 }
-window.__edit = { L, C, select: (ids) => setSelection(ids), commit, save, runChecks, cam, gizmo, proxy, get scene() { return scene; }, get selection() { return selection; }, rebuild, status: () => $('status').textContent };
+window.__edit = { L, C, select: (ids) => setSelection(ids), commit, save, runChecks, cam, toggleTop, gizmo, proxy, get scene() { return scene; }, get selection() { return selection; }, rebuild, status: () => $('status').textContent };
 status('Loading the map…');
 drawOverlays(); runChecks(); buildPalette();
 requestAnimationFrame(frame);

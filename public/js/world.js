@@ -627,7 +627,7 @@ function torchTick() {
 // Rune circles (layout kind 'rune'): a glowing ring of runes on the floor, `r` m across, slowly pulsing, and a crystal
 // hovering `h` m up over it, turning.
 function buildRunes(scene) {
-  for (const R of C.RUNES) {
+  for (const R of C.RUNE_CIRCLES) {
     const g = new THREE.Group();
     const ringMat = new THREE.MeshBasicMaterial({ color: 0xa070ff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
       polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
@@ -652,7 +652,7 @@ function buildRunes(scene) {
     crystal.position.y = R.h; crystal.castShadow = true;
     const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0xb080ff, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
     halo.scale.setScalar(3.2); halo.position.y = R.h;
-    g.add(ring, crystal, halo); g.position.set(R.x, 0, R.z); g.userData.cat = 'runes';
+    g.add(ring, crystal, halo); g.position.set(R.x, R.y || 0, R.z); g.userData.cat = 'runes';
     spinners.push(crystal);
     scene.add(g);
   }

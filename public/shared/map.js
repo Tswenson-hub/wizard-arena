@@ -8,6 +8,11 @@
 // square curtain wall with a wall-walk round it, stair towers up to it, a gatehouse to the south and a hall with a
 // balcony; grass, trees and the mountains outside. Nothing here names a particular piece of the castle: everything
 // comes from layout.json, which Ty edits in the map editor (?edit=1).
+//
+// Round 22: more than one map. MAPS lists the layouts (the courtyard, Sky Ruins, and a frozen copy of the courtyard for
+// the live CrazyGames build's legacy rooms); setActiveMap(name) swaps every export below in place, so the server runs
+// rooms on different maps by switching before each room's tick, and the client switches when the match changes map.
+// New kinds: rune (a power-up spawn), pad (a jump pad with a fixed arc, padLaunch), portal (a linked pair).
 import { KIT_MODELS } from './kit-models.js';
 export { KIT_MODELS };
 
@@ -203,23 +208,58 @@ export const rampFoot = (s) => sWorld(s, 0, (s.y1 >= s.y0 ? -1 : 1) * (s.d / 2 +
 // turns and scales with it. The server reads the file synchronously at start; the browser fetches it (uncached) before
 // anything builds. applyLayout() rebuilds every export in place (same arrays and objects), for the editor.
 const IS_NODE = typeof process !== 'undefined' && !!process.versions?.node && typeof window === 'undefined';
+// The maps. Each has a layout file next to this module; `legacy` is a frozen copy of the courtyard as the live CrazyGames
+// build bundles it (its clients collide against their own copy, so legacy rooms must run on exactly that), not in the
+// rotation. The server reads every file at start; the browser fetches the default map now and the others on demand
+// (loadMap), so the first load stays small.
+export const MAPS = {
+  courtyard: { name: 'courtyard', title: 'The Courtyard', file: 'layout.json' },
+  sky: { name: 'sky', title: 'Sky Ruins', file: 'layout-sky.json' },
+  legacy: { name: 'legacy', title: 'The Courtyard', file: 'layout-legacy.json', hidden: true },
+};
+export const MAP_ORDER = ['courtyard', 'sky'];   // the rotation, in order
+export const DEFAULT_MAP = 'courtyard';
 export const LAYOUT_URL = new URL('./layout.json', import.meta.url);
-async function readLayout() {
+const layoutURL = (file) => new URL('./' + file, import.meta.url);
+async function readLayout(file) {
   if (IS_NODE) {
     const { readFileSync } = await import('node:fs');
-    return JSON.parse(readFileSync(LAYOUT_URL, 'utf8'));
+    return JSON.parse(readFileSync(layoutURL(file), 'utf8'));
   }
-  const res = await fetch(LAYOUT_URL, { cache: 'no-store' });
+  const res = await fetch(layoutURL(file), { cache: 'no-store' });
+  if (!res.ok) throw new Error(`${file}: ${res.status}`);
   return res.json();
 }
-export const LAYOUT = await readLayout();
+// Fetch a map's layout (once) so setActiveMap can switch to it; resolves to its MAPS entry.
+export async function loadMap(name) {
+  const M = MAPS[name];
+  if (!M) throw new Error(`no map ${name}`);
+  if (!M.layout) M.layout = await (M.loading ??= readLayout(M.file));
+  return M;
+}
+// The live map's layout (the editor edits its entries) and name; MAP_INFO is its settings (the file's `map` block).
+export const LAYOUT = { entries: [], scatter: {}, version: 2, map: {} };
+export const ACTIVE_MAP = { name: null };
+export const MAP_INFO = {};
+if (IS_NODE) {
+  for (const name of Object.keys(MAPS)) {
+    try { await loadMap(name); }
+    catch (err) { console.warn(`[map] ${MAPS[name].file} not loaded (${err.message}); map '${name}' is off`); delete MAPS[name]; const i = MAP_ORDER.indexOf(name); if (i >= 0) MAP_ORDER.splice(i, 1); }
+  }
+} else {
+  await loadMap(new URLSearchParams(location.search).get('map') in MAPS ? new URLSearchParams(location.search).get('map') : DEFAULT_MAP);
+}
 
 // The kinds an entry may have, and the fields the editor shows for each (x, z, rotY and scale are common to all).
 //   kit     a kit piece (`model` 'castle/wall', 'village/Roof_RoundTiles_4x4', ...) at KIT_SCALE x `scale`; `y` lifts it
 //           (stacking: wall-walk floors, a wall on a wall); `solid: 0` makes it decoration only; `tint` ('#b46cff')
 //           recolours its near-white parts (a white banner in an element's colour); `light: 1` on a torch asks for one
 //           of the few real flickering lights
-//   rune    a glowing rune circle on the floor, `r` m across, with a crystal hovering `h` m up (drawn only)
+//   circle  a glowing rune circle on the floor, `r` m across, with a crystal hovering `h` m up (drawn only)
+//   rune    a power-up spawn (round 22): `type` one of RUNE_TYPES, or none for random; stands on the floor there unless `y`
+//   pad     a jump pad (round 22): steps onto it throw you to the target (`tx`, `ty`, `tz`; `ty` the floor there unless
+//           given) on a fixed arc `h` m high over the pad (raised to clear the target), triggered within `r` m
+//   portal  one end of a linked pair (round 22): `link` is the other end's id, `r` the trigger radius
 //   floor   a rectangle of ground tiles (`model`, `w` x `d` m), drawn only: the ground is at 0 under it. `mix`: other tile
 //           models sprinkled in ('castle/a,castle/b'), `seed` for where
 //   block   an invisible box (`w` x `d`, from `y` up `h`): blocks movement only (an edge you can't walk or jump off),
@@ -228,8 +268,9 @@ export const LAYOUT = await readLayout();
 //   prop    a throwable (PROP_TYPES `type`; its id is its index + 1 among the props), spawn (facing rotY), heal (named spot);
 //           a spawn or heal spot stands on top of what's there unless its `y` says otherwise (under a deck, inside the hall)
 //   bounds  the playable rectangle (`w` x `d`): blinks and thrown wizards are kept inside it (ARENA_BOUNDS)
+export const RUNE_TYPES = ['haste', 'fury', 'aegis', 'surge'];
 export const LAYOUT_KINDS = {
-  kit: ['model', 'y', 'solid', 'tint', 'light'], rune: ['r', 'h'], floor: ['model', 'w', 'd', 'mix', 'seed'], block: ['w', 'd', 'y', 'h', 'shots', 'stand'],
+  kit: ['model', 'y', 'solid', 'tint', 'light'], circle: ['r', 'h'], rune: ['type', 'y'], pad: ['tx', 'ty', 'tz', 'h', 'r', 'y'], portal: ['link', 'r', 'y'], floor: ['model', 'w', 'd', 'mix', 'seed'], block: ['w', 'd', 'y', 'h', 'shots', 'stand'],
   deco: ['model', 'h', 'y', 'r', 'colH'], prop: ['type'], spawn: ['y'], heal: ['name', 'y'], bounds: ['w', 'd'],
 };
 // Stable pretty JSON for layout.json: one entry per line, keys in a fixed order, numbers to 4 decimals (0.1 mm), so a
@@ -263,6 +304,9 @@ export function validateLayout(L) {
     if (!(e.kind in LAYOUT_KINDS)) bad.push(`${e.id}: unknown kind ${e.kind}`);
     if (e.kind === 'kit' && !(e.model in KIT_MODELS)) bad.push(`${e.id}: unknown kit model ${e.model}`);
     if (e.kind === 'prop' && !(e.type in PROP_TYPES)) bad.push(`${e.id}: unknown prop type ${e.type}`);
+    if (e.kind === 'rune' && e.type != null && e.type !== '' && !RUNE_TYPES.includes(e.type)) bad.push(`${e.id}: unknown rune type ${e.type}`);
+    if (e.kind === 'pad') for (const k of ['tx', 'tz']) if (typeof e[k] !== 'number') bad.push(`${e.id}: ${k} missing (the pad's target)`);
+    if (e.kind === 'portal' && !L.entries.some(q => q !== e && q.kind === 'portal' && q.id === e.link)) bad.push(`${e.id}: link ${e.link} is not another portal`);
     for (const k of ['x', 'z']) if (typeof e[k] !== 'number') bad.push(`${e.id}: ${k} missing`);
     finite(e, e.id || `entry ${i}`);
   });
@@ -351,7 +395,22 @@ function buildKit(out, e) {
 // mix, seed }; DECOS: editor-placed models; ARENA_BOUNDS: { x0, x1, z0, z1 } (the whole arena circle's square when the
 // layout has no bounds entry).
 export const SCATTER_SETTINGS = {}, ARENA_BOUNDS = {};
-export const PROP_SPAWNS = [], SPAWN_POINTS = [], HEAL_SPOTS = [], COLLIDERS = [], LOS_VOLUMES = [], KIT_PIECES = [], FLOORS = [], DECOS = [], RUNES = [];
+export const PROP_SPAWNS = [], SPAWN_POINTS = [], HEAL_SPOTS = [], COLLIDERS = [], LOS_VOLUMES = [], KIT_PIECES = [], FLOORS = [], DECOS = [], RUNE_CIRCLES = [];
+// Round 22: RUNE_SPAWNS { id, x, y, z, type (null: random) }, JUMP_PADS { id, x, y, z, r, target: [x, y, z], h, yaw (facing the
+// target) }, PORTALS { id, x, y, z, r, link, yaw (facing the other end) }.
+export const RUNE_SPAWNS = [], JUMP_PADS = [], PORTALS = [];
+// A jump pad's arc for a point mass under `gravity` (JUMP.gravity on both the server and the client, so both compute the
+// same flight): up to the apex `h` above the pad, then down to the target. Returns { v: [vx, vy, vz] (m/s), t (s), h }.
+export function padLaunch(pad, gravity) {
+  const [tx, ty, tz] = pad.target, rise = ty - pad.y, h = Math.max(pad.h ?? 4, rise + 0.5);
+  const vy = Math.sqrt(2 * gravity * h), t = vy / gravity + Math.sqrt(2 * (h - rise) / gravity);
+  return { v: [(tx - pad.x) / t, vy, (tz - pad.z) / t], t, h };
+}
+// The point on the arc at fraction `u` (0..1) of the flight: [x, y, z].
+export function padArcPoint(pad, gravity, u) {
+  const { v, t } = padLaunch(pad, gravity), e = Math.max(0, Math.min(1, u)) * t;
+  return [pad.x + v[0] * e, pad.y + v[1] * e - gravity * e * e / 2, pad.z + v[2] * e];
+}
 // Keep a point inside ARENA_BOUNDS, `margin` m in from its edges (for blinks, thrown wizards, landings).
 export function clampToArena(x, z, margin = 0.5) {
   const B = ARENA_BOUNDS;
@@ -362,7 +421,7 @@ export const insideArena = (x, z, margin = 0) => x > ARENA_BOUNDS.x0 + margin &&
 export function losVolumeBlocks(a, b) { return false; }
 
 // Build every export from a layout into a fresh object (nothing global is touched).
-export function buildMap(L) {
+export function buildMap(L, name = ACTIVE_MAP.name) {
   const out = { SURFACES: [], KIT_PIECES: [], LOS_VOLUMES: [] };
   const of = (kind) => L.entries.filter(e => e.kind === kind);
   for (const e of L.entries) if (e.kind === 'kit' && e.model in KIT_MODELS) buildKit(out, e);
@@ -373,7 +432,7 @@ export function buildMap(L) {
   }
   out.FLOORS = of('floor').map(e => ({ id: e.id, model: e.model, x: e.x, z: e.z, w: e.w * S_(e), d: e.d * S_(e), yaw: e.rotY || 0,
     mix: e.mix ? String(e.mix).split(',').map(s => s.trim()).filter(Boolean) : [], seed: e.seed ?? 1 }));
-  out.RUNES = of('rune').map(e => ({ id: e.id, x: e.x, z: e.z, r: (e.r ?? 6) * S_(e), h: (e.h ?? 5) * S_(e) }));
+  out.RUNE_CIRCLES = of('circle').map(e => ({ id: e.id, x: e.x, z: e.z, y: e.y || 0, r: (e.r ?? 6) * S_(e), h: (e.h ?? 5) * S_(e) }));
   const bo = of('bounds')[0];
   out.ARENA_BOUNDS = bo ? { x0: bo.x - bo.w / 2, x1: bo.x + bo.w / 2, z0: bo.z - bo.d / 2, z1: bo.z + bo.d / 2 }
     : { x0: -ARENA_RADIUS, x1: ARENA_RADIUS, z0: -ARENA_RADIUS, z1: ARENA_RADIUS };
@@ -384,7 +443,20 @@ export function buildMap(L) {
   out.PROP_SPAWNS = of('prop').map(e => [e.type, e.x, e.z]);
   out.SPAWN_POINTS = of('spawn').map(e => [e.x, e.y ?? surfaceTopAt(e.x, e.z, out.SURFACES), e.z, e.rotY || 0]);
   // (y: the floor under the spot, looked up once: applyLayout rebuilds the spots whenever the pieces change)
-  out.HEAL_SPOTS = of('heal').map(e => { const { name: id, x, z } = e, y0 = e.y; let under; return { id, x, z, get y() { return y0 ?? (under ??= surfaceHeight(x, z, 99)); } }; });
+  out.HEAL_SPOTS = of('heal').map(e => { const { name: id, x, z } = e, y0 = e.y, list = out.SURFACES; let under; return { id, x, z, get y() { return y0 ?? (under ??= surfaceHeight(x, z, 99, list)); } }; });
+  // round 22: power-up spawns, jump pads and portals stand on the floor there (an entry's own `y` wins)
+  const floorAt = (x, z) => surfaceHeight(x, z, 99, out.SURFACES);
+  const facing = (x, z, tx, tz) => Math.atan2(tx - x, tz - z);
+  out.RUNE_SPAWNS = of('rune').map(e => ({ id: e.id, x: e.x, y: e.y ?? floorAt(e.x, e.z), z: e.z, type: RUNE_TYPES.includes(e.type) ? e.type : null }));
+  out.JUMP_PADS = of('pad').map(e => {
+    const y = e.y ?? floorAt(e.x, e.z), tx = e.tx ?? e.x, tz = e.tz ?? e.z, ty = e.ty ?? floorAt(tx, tz), h = Math.max(e.h ?? 4, ty - y + 0.5);
+    return { id: e.id, x: e.x, y, z: e.z, r: (e.r ?? 1.1) * S_(e), target: [tx, ty, tz], h, yaw: facing(e.x, e.z, tx, tz) };
+  });
+  out.PORTALS = of('portal').map(e => {
+    const o = of('portal').find(q => q.id === e.link);
+    return { id: e.id, x: e.x, y: e.y ?? floorAt(e.x, e.z), z: e.z, r: (e.r ?? 1.1) * S_(e), link: e.link ?? null, yaw: o ? facing(e.x, e.z, o.x, o.z) : (e.rotY || 0) };
+  });
+  out.MAP_INFO = { name, title: MAPS[name]?.title ?? name, void: null, ...(L.map || {}) };
   out.SCATTER_SETTINGS = { ...(L.scatter || {}) };
   // decoration placed in the editor: any model, optionally solid
   out.DECOS = of('deco').map(e => ({ id: e.id, model: e.model, x: e.x, z: e.z, yaw: e.rotY || 0, h: (e.h || 2) * S_(e), y: e.y || 0,
@@ -399,14 +471,36 @@ export function buildMap(L) {
 
 // Rebuild every export from `L` in place: arrays keep their identity (emptied and refilled), objects are cleared and
 // reassigned, so every module holding a reference sees the new layout.
-const EXPORTS = { SCATTER_SETTINGS, ARENA_BOUNDS, PROP_SPAWNS, SPAWN_POINTS, HEAL_SPOTS, COLLIDERS, LOS_VOLUMES, KIT_PIECES, FLOORS, DECOS, RUNES, SURFACES };
-export function applyLayout(L) {
-  const m = buildMap(L);
+const EXPORTS = { SCATTER_SETTINGS, ARENA_BOUNDS, MAP_INFO, PROP_SPAWNS, SPAWN_POINTS, HEAL_SPOTS, COLLIDERS, LOS_VOLUMES, KIT_PIECES, FLOORS, DECOS, RUNE_CIRCLES, RUNE_SPAWNS, JUMP_PADS, PORTALS, SURFACES };
+function assignExports(m) {
   for (const [k, target] of Object.entries(EXPORTS)) {
     const v = m[k];
     if (Array.isArray(target)) { target.length = 0; target.push(...v); }
     else { for (const q of Object.keys(target)) delete target[q]; Object.assign(target, v); }
   }
-  if (L !== LAYOUT) { LAYOUT.entries = L.entries; LAYOUT.scatter = L.scatter; LAYOUT.version = L.version; }
 }
-applyLayout(LAYOUT);
+const LAYOUT_FIELDS = ['entries', 'scatter', 'version', 'map'];
+const takeLayout = (L) => { for (const k of LAYOUT_FIELDS) if (L[k] !== undefined) LAYOUT[k] = L[k]; else delete LAYOUT[k]; };
+// The editor: rebuild the live map from an edited layout (its entries, scatter and map block); the map keeps the edit.
+export function applyLayout(L, name = ACTIVE_MAP.name) {
+  const m = buildMap(L, name);
+  assignExports(m);
+  if (L !== LAYOUT) takeLayout(L);
+  const M = MAPS[name];
+  if (M) { M.layout = { entries: LAYOUT.entries, scatter: LAYOUT.scatter, version: LAYOUT.version, map: LAYOUT.map }; M.built = m; }
+}
+// Make `name` the live map (round 22): every export above now describes it. The server calls this before each room's tick
+// and message (rooms on different maps); the client when the match moves to another map (after loadMap). A map not loaded
+// yet (the browser, before loadMap) or unknown is refused: returns false and nothing changes.
+export function setActiveMap(name) {
+  if (name === ACTIVE_MAP.name) return true;
+  const M = MAPS[name];
+  if (!M?.layout) return false;
+  M.built ??= buildMap(M.layout, name);
+  assignExports(M.built);
+  takeLayout(M.layout);
+  ACTIVE_MAP.name = name;
+  return true;
+}
+export const activeMap = () => MAPS[ACTIVE_MAP.name];
+setActiveMap(Object.keys(MAPS).find(n => MAPS[n].layout));

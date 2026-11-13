@@ -1,0 +1,11 @@
+{
+  "map": {"title":"Sky Ruins","void":1.5},
+  "scatter": {"farTrees":{"count":0,"near":0,"seed":7}},
+  "version": 2,
+  "entries": [
+    {"id":"bounds-1","kind":"bounds","x":0,"z":0,"d":40,"w":40},
+    {"id":"island-floor-1","kind":"floor","model":"castle/floor_tile_large","x":0,"z":0,"d":13.3333,"seed":5,"w":13.3333},
+    {"id":"spawn-1","kind":"spawn","x":0,"z":-5},
+    {"id":"spawn-2","kind":"spawn","x":0,"z":5,"rotY":3.1416}
+  ]
+}
