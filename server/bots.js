@@ -22,7 +22,7 @@ const DIFFICULTY = {
     blinkDodge: false,
     think: 1 / 1.5,     // seconds between offensive decisions
     speed: 0.8,         // fraction of full run speed
-    range: [7, 13],     // preferred distance to its target
+    range: [6, 11],     // preferred distance to its target (round 22 pace: 7-13 -> 6-11: closer fights, more hits)
     aggression: 0.55,   // chance per decision to attack when it can
     tk: 0.06,           // chance per decision to lift a prop when one is handy
     punish: 0.25,       // chance it spots and punishes a meteor wind-up
@@ -36,12 +36,12 @@ const DIFFICULTY = {
   },
   normal: {
     react: 0.25, aimErr: 7, posErr: 0.75, airErr: 9, leadJitter: 0.5, placeErr: 1.4, lead: 0.6, dodge: 0.6, blinkDodge: true,   // (round 15: aimErr 3.5)
-    think: 1 / 3, speed: 0.95, range: [8, 14], aggression: 0.8, tk: 0.12, punish: 0.7,
+    think: 1 / 3, speed: 0.95, range: [6.5, 11.5], aggression: 0.85, tk: 0.12, punish: 0.7,   // (round 22 pace: range 8-14, aggression 0.8)
     fooled: 0.3, relicMemory: false, saveFinisher: 0.5, jump: 0.5, crouch: 0.5, airCast: 0.08, airJump: 0.5,
   },
   hard: {
     react: 0.12, aimErr: 3.5, posErr: 0.5, airErr: 6, leadJitter: 0.3, placeErr: 0.9, lead: 1, dodge: 0.9, blinkDodge: true,   // (round 15: aimErr 1.2)
-    think: 1 / 6, speed: 1, range: [9, 15], aggression: 0.95, tk: 0.1, punish: 1,
+    think: 1 / 6, speed: 1, range: [7, 12.5], aggression: 0.95, tk: 0.1, punish: 1,   // (round 22 pace: range 9-15)
     fooled: 0.15, relicMemory: true, saveFinisher: 0.9, jump: 0.85, crouch: 0.8, airCast: 0.16, airJump: 0.8,
   },
 };
@@ -1392,7 +1392,9 @@ function moveBot(me, dt, world, t) {
       // the quicker way or the only one (across the void)
       if (!me.eye && !airborne(target, t)) {
         const want = !los || kit(me).primary === 'gale_shear' || d > range[1];
-        const wp = (want ? padWaypoint(me, world, [target.p[0], target.p[2]], target.p[1], t) : null) || (want ? rampWaypoint(me, [target.p[0], target.p[2]], target.p[1]) : null);
+        // (a pad only for a target up on high ground or across the void: the courtyard's pads lead away from a fight on the floor)
+        const padWant = want && (target.p[1] > me.p[1] + C.STEP_UP + 0.5 || (C.voidY() != null && d > 8));
+        const wp = (padWant ? padWaypoint(me, world, [target.p[0], target.p[2]], target.p[1], t) : null) || (want ? rampWaypoint(me, [target.p[0], target.p[2]], target.p[1]) : null);
         if (wp) { const px = wp[0] - me.p[0], pz = wp[1] - me.p[2], pl = Math.hypot(px, pz) || 1; wx = px / pl; wz = pz / pl; b.rampUntil = t + 0.5; }
         // just came up: keep going onto their platform instead of strafing off the stairs
         else if (t < (b.rampUntil || 0) + 1.5 && d > 1.8) { wx = fx; wz = fz; }
@@ -1588,8 +1590,8 @@ function potionGoal(me, world, t, target) {
 // Aegis). Haste and Fury when we have a target to use them on; Surge when our ultimate isn't charged.
 function runeGoal(me, world, t, target) {
   if (!world.runes?.length || me.eye || me.ride || me.pad) return null;
-  const near = target && !target.dead && dist2D(me.p, target.p) < 6;
-  let best = null, bs = 18;
+  const near = target && !target.dead && dist2D(me.p, target.p) < 10;
+  let best = null, bs = 12;   // (round 22 pace: 18 m and a 6 m "near" sent bots up the towers mid-fight)
   for (const r of world.runes) {
     if (r.taken) continue;
     const sp = r.spot, y = sp.y ?? 0;
