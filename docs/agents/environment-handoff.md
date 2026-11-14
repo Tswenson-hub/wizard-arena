@@ -13,7 +13,8 @@
   off the deck; `pad-6` from the lower ring's south-east corner out to the west island.
 - **Less cramped:** the outer islands are 12 m squares at ±20 (were 9 m at ±17.5), a fifth island `isle-ne` (8 m at (15, 15)) joins the north
   and east islands by two more plank bridges, so the upper ring has no single choke point; bounds 56 m. 8 spawns (spawn 5 on the new island),
-  4 flasks, 4 runes, 6 pads kept. **`map.void` is −1.5** (the lower floor must stay well above it).
+  4 flasks, 4 runes, 6 pads kept. **`map.void` is 1.0** (22c): a fall stops on the cloud floor at 0 (`surfaceHeight` off an island), so a void
+  below 0 could never be reached; 1.0 is a metre under the undercroft floor at 2.
 - **Shots:** `/tmp/wa-environment/r22/sky22b-overhead.png`, `sky22b-sky-undercroft.png` and `sky22b-sky-undercroft2.png` (the lower passage at
   ground level), `sky22b-sky-newbridge.png` (the north → north-east bridge), `sky22b-sky-stairs.png`, `sky22b-sky-oblique.png`, and the
   harness's `perf-sky-22b.png`.
@@ -22,10 +23,12 @@
 126k: the deck tiles are kit pieces on this map (the courtyard's are the `floor` kind) and cast shadows; `castsShadow` now skips floor and ceiling
 tiles and the island rock (`f84f995`). The editor's checks: only the 13.6 m warning for spawn 6 (deck) over spawns 7 and 8 (undercroft), different
 planes. No console errors.
-- **Bot match on Sky Ruins, 150 s, hard/normal/easy** (`/tmp/wa-environment/r22/botmatch-sky.mjs 4102 150 sky hard normal easy`, the watcher
-  now reports a turning position so it isn't kicked for idling): **13 kills, 0 void deaths**, no server errors; all three bots ended the run in
-  the undercroft (y 2), so they path through the lower level. Log: `/tmp/wa-environment/r22/botmatch-sky-22b.log`. (Spells was running the same
-  harness on 4101 at the time.)
+- **Bot match on Sky Ruins with the void at 1.0, 150 s, hard/normal/easy** (`/tmp/wa-environment/r22/botmatch-sky.mjs 4102 150 sky hard normal
+  easy`): **12 kills, 0 void deaths, every bot's lowest y was 2.00** (the undercroft floor), no server errors. The earlier run at void −1.5 gave
+  13 kills and 0 void deaths too, but nobody could reach −1.5.
+- **A knocked-off wizard dies:** the harness's watcher walks a metre a report from where the server has it, off the lower ring's west edge
+  (it echoes the respawn's `seq` as `state.tp`, or its reports are ignored after a respawn): the server took it to x −11.3, then off the edge,
+  y 0 → `death.cause 'void'`, killer null (nobody had hit it), seven times over 45 s as it kept walking off after each respawn.
 
 ## Round 22: map data, the dressed courtyard with runes and pads, Sky Ruins, multi-map world.js (`89f67e7` `a406a7c` `bf01e07` `85183fa` `8476562`; notes `edb3293` `acd7b87` and the bots note)
 **Map data (map.js).** Kinds `rune` (a power-up spawn: `type` in `RUNE_TYPES` or random, `y` optional), `pad` (a jump pad: `tx ty tz`, `h` the

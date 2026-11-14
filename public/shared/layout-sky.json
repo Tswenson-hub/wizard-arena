@@ -1,5 +1,5 @@
 {
-  "map": {"ground":"none","title":"Sky Ruins","void":-1.5},
+  "map": {"ground":"none","title":"Sky Ruins","void":1},
   "scatter": {"farTrees":{"count":0,"near":0,"seed":7}},
   "version": 2,
   "entries": [

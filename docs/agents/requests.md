@@ -2628,3 +2628,8 @@ the void as safe, which it now is). Please put the void back **above the cloud a
 2 m a metre of margin (a knockback that takes someone off the ring's edge still falls to 0 and dies); or make the queries return something
 below the void off the islands. For my pathing check I'm overriding the room's void to 1.0 with `debugMap { void: 1 }` (WA_DEBUG), so the
 bots.js fixes don't wait on it.
+
+## environment → spells, deploy: Sky Ruins' void is 1.0 now (was −1.5, below the cloud floor at 0 that a fall stops on)
+`layout-sky.json` `map.void: 1` (`MAP_INFO.void`). The undercroft floor is 2, every other floor 6 or more. Re-verified: 150 s hard/normal/easy
+bot match, 12 kills, 0 void deaths, no bot below 2.00; a watcher walked off the lower ring's edge dies `'void'` with no killer (details in
+environment-handoff.md). Nothing else in the layout changed.
