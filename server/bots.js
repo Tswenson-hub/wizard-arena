@@ -67,6 +67,7 @@ function smokeFlaskInWay(me, world, from, to) {
   return false;
 }   // Jeb's Ram Guard: shots at him are absorbed and charged back
 let clouds = [];   // Smoke Screen clouds this tick: nobody sees into, out of or through them
+let VOID_Y = null;   // round 22: the live map's void height (world.voidY: the room's, a test may override it), set per tick
 let match = null;  // game modes (server/match.js): who is an enemy
 let players = null;
 // Game modes: may `a` hurt `b`? Bots never target, fear or dodge teammates.
@@ -152,6 +153,7 @@ export function updateBots(dt, world) {
   const t = world.now();
   clouds = [...(world.smokes?.values() || [])].filter(c => t < c.until);
   match = world.match || null; players = world.players; tracks = (world.tracks ??= new Map());
+  VOID_Y = world.voidY ?? C.voidY();
   losMemo.clear(); floorMemo.clear(); spotMemo.clear();   // (round 20: the per-tick answers, for this room's tick)
   let any = false;
   for (const p of world.players.values()) {
@@ -201,8 +203,8 @@ function rampWaypoint(me, dest, destY, depth = 0) {
     const hi = Math.max(s.y0, s.y1), lo = Math.min(s.y0, s.y1), top = rampHigh(s), foot = C.rampFoot(s);
     if (hi < destY - 0.3) continue;                               // doesn't get high enough
     const toDest = Math.hypot(top[0] - dest[0], top[1] - dest[1]);
-    if (toDest > 7) continue;                                     // not the way to this spot
-    const cost = Math.hypot(foot[0] - me.p[0], foot[1] - me.p[2]) + toDest + (lo > myFloor + C.STEP_UP ? 6 : 0);
+    if (toDest > 16) continue;                                    // not the way to this spot (round 22b: 7; a stair top can be far from the deck's middle)
+    const cost = Math.hypot(foot[0] - me.p[0], foot[1] - me.p[2]) + toDest * 1.5 + (lo > myFloor + C.STEP_UP ? 6 : 0);
     if (cost < bc) { bc = cost; best = { s, top, foot, lo }; }
   }
   if (!best) return null;
@@ -812,7 +814,8 @@ function flyMeteorRain(me, world, t, act) {
   const aim = [best.p[0] + (tr ? tr.v[0] : 0) * lj + b.mrainErr[0], best.p[2] + (tr ? tr.v[1] : 0) * lj + b.mrainErr[1]];
   const sw = C.meteorSway(M.seed ?? 0, t - M.start, dist2D([M.from[0], 0, M.from[1]], [aim[0], 0, aim[1]]));
   const correct = b.cfg === DIFFICULTY.hard ? 0.6 : b.cfg === DIFFICULTY.normal ? 0.4 : 0.15;
-  const at = [aim[0] + sw[0] * (1 - correct), aim[1] + sw[1] * (1 - correct)];
+  let at = [aim[0] + sw[0] * (1 - correct), aim[1] + sw[1] * (1 - correct)];
+  if (VOID_Y != null && C.surfaceTopAt(at[0], at[1]) < VOID_Y) at = [best.p[0], best.p[2]];   // round 22b: never dive into the void: onto the target itself
   act({ t: 'mrainAim', at });
   if (t >= b.mrainCommit || rooted(best, t) || isStunned(best, t)) { b.mrainCommit = null; b.mrainErr = null; act({ t: 'mrainDive', at }); }
 }
@@ -1093,7 +1096,7 @@ function curseCandidate(me, target, world, mine = []) {
 
 // Round 22 (Sky Ruins): would a dash of `dist` m along `dir` ([x, 0, z] or [x, z]) end over the void? (checked at the end and halfway)
 function dashOverVoid(me, dir, dist) {
-  const vy = C.voidY();
+  const vy = VOID_Y;
   if (vy == null) return false;
   const dx = dir[0], dz = dir.length === 3 ? dir[2] : dir[1], l = Math.hypot(dx, dz) || 1;
   for (const k of [1, 0.5]) if (C.surfaceHeight(me.p[0] + dx / l * dist * k, me.p[2] + dz / l * dist * k, Math.max(me.p[1], vy)) < vy) return true;
@@ -1109,7 +1112,7 @@ function blinkSideways(me, awayFrom, act, along = null) {
   let best = sides[0], bs = -Infinity;
   for (const s of sides) {
     const to = C.computeTeleport(me.p, s);
-    const score = -Math.hypot(to[0], to[2]) * 0.3 + dist2D(to, me.p) - (C.voidY() != null && to[1] < C.voidY() ? 100 : 0);   // (never into the void)   // stay central, go the full distance
+    const score = -Math.hypot(to[0], to[2]) * 0.3 + dist2D(to, me.p) - (VOID_Y != null && C.surfaceTopAt(to[0], to[2]) < VOID_Y ? 100 : 0);   // (never into the void)   // stay central, go the full distance
     if (score > bs) { bs = score; best = s; }
   }
   act({ t: 'teleport', dir: best, from: me.p.slice() });
@@ -1127,12 +1130,14 @@ function inward(me, dir) {
 // Mirror Step along `dir`.
 function mirrorStep(me, dir, act) {
   if (dashOverVoid(me, inward(me, dir), C.SPELLBOOK.mirror_step.distance ?? 7)) return;
+  if (VOID_Y != null) { const to = C.computeTeleport(me.p, inward(me, dir), C.SPELLBOOK.mirror_step.distance ?? 7); if (C.surfaceTopAt(to[0], to[2]) < VOID_Y) return; }
   act({ t: 'mirror', dir: inward(me, dir), from: me.p.slice() });
   me.bot.vel = [0, 0];
 }
 // Blink along `dir` (the bot turns that way first: a blink goes where you face).
 function blinkAway(me, dir, act) {
   const d = inward(me, dir);
+  if (VOID_Y != null) { const to = C.computeTeleport(me.p, d); if (C.surfaceTopAt(to[0], to[2]) < VOID_Y) return; }   // round 22b: not onto the cloud
   me.yaw = Math.atan2(d[0], d[2]);
   act({ t: 'teleport', dir: d, from: me.p.slice() });
   me.bot.vel = [0, 0];
@@ -1326,7 +1331,7 @@ function moveBot(me, dt, world, t) {
     me.ride.heading += clampAbs(Math.atan2(Math.sin(me.yaw - me.ride.heading), Math.cos(me.yaw - me.ride.heading)), RIDE.turnRate * dt);
     b.vel = [Math.sin(me.ride.heading) * RIDE.speed, Math.cos(me.ride.heading) * RIDE.speed];
     // round 22: the void ahead: off the ram now
-    if (C.voidY() != null && dashOverVoid(me, [Math.sin(me.ride.heading), 0, Math.cos(me.ride.heading)], RIDE.speed * 0.45 + 1)) { world.handle(me, { t: 'rideStop' }); b.rideGoal = null; }
+    if (VOID_Y != null && dashOverVoid(me, [Math.sin(me.ride.heading), 0, Math.cos(me.ride.heading)], RIDE.speed * 0.45 + 1)) { world.handle(me, { t: 'rideStop' }); b.rideGoal = null; }
     // ridden far enough (the target reached, or far enough away): get off early
     if (b.rideGoal) {
       me.yaw = Math.atan2(b.rideGoal[0] - me.p[0], b.rideGoal[1] - me.p[2]);
@@ -1350,7 +1355,7 @@ function moveBot(me, dt, world, t) {
     else if (goal && !me.eye) {
       // a potion or a rune we're walking to; fight from wherever we are on the way (round 22: by a jump pad when that's the way)
       const gTop = C.surfaceTopAt(goal[0], goal[1]);
-      const wp = padWaypoint(me, world, goal, gTop, t) || (gTop > me.p[1] + C.STEP_UP ? rampWaypoint(me, goal, gTop) : null);
+      const wp = routeWaypoint(me, world, goal, gTop, t) || (gTop > me.p[1] + C.STEP_UP ? rampWaypoint(me, goal, gTop) : null);
       const gx = (wp ? wp[0] : goal[0]) - me.p[0], gz = (wp ? wp[1] : goal[1]) - me.p[2], gl = Math.hypot(gx, gz) || 1;
       wx = gx / gl; wz = gz / gl;
       if (target && !target.dead && hasLOS(me.p, target.p)) me.yaw = yawTo(me.p, target.p);
@@ -1391,10 +1396,13 @@ function moveBot(me, dt, world, t) {
       // the target is up on a platform: take the ramp (unless we can shoot them from here); round 22: or a jump pad, when it's
       // the quicker way or the only one (across the void)
       if (!me.eye && !airborne(target, t)) {
-        const want = !los || kit(me).primary === 'gale_shear' || d > range[1];
-        // (a pad only for a target up on high ground or across the void: the courtyard's pads lead away from a fight on the floor)
-        const padWant = want && (target.p[1] > me.p[1] + C.STEP_UP + 0.5 || (C.voidY() != null && d > 8));
-        const wp = (padWant ? padWaypoint(me, world, [target.p[0], target.p[2]], target.p[1], t) : null) || (want ? rampWaypoint(me, [target.p[0], target.p[2]], target.p[1]) : null);
+        const want = !los || kit(me).primary === 'gale_shear' || d > range[1] || t - (b.lastDetourAt || -1e9) < 2;   // (round 22b: just stuck: the route, even with a line of sight)
+        // round 22b: on a map with gaps and planes, the route graph (bridges, stairs, pads); else a pad only for a target up on high
+        // ground (the courtyard's pads lead away from a fight on the floor), then the ramps
+        const planes = VOID_Y != null || Math.abs(target.p[1] - me.p[1]) > C.STEP_UP + 0.5;
+        const wp = (want && planes ? routeWaypoint(me, world, [target.p[0], target.p[2]], target.p[1], t) : null)
+          || (want && target.p[1] > me.p[1] + C.STEP_UP + 0.5 ? padWaypoint(me, world, [target.p[0], target.p[2]], target.p[1], t) : null)
+          || (want ? rampWaypoint(me, [target.p[0], target.p[2]], target.p[1]) : null);
         if (wp) { const px = wp[0] - me.p[0], pz = wp[1] - me.p[2], pl = Math.hypot(px, pz) || 1; wx = px / pl; wz = pz / pl; b.rampUntil = t + 0.5; }
         // just came up: keep going onto their platform instead of strafing off the stairs
         else if (t < (b.rampUntil || 0) + 1.5 && d > 1.8) { wx = fx; wz = fz; }
@@ -1446,12 +1454,14 @@ function moveBot(me, dt, world, t) {
     // keep off the edge
     const r = Math.hypot(me.p[0], me.p[2]);
     if (r > C.ARENA_RADIUS - 5) { wx -= me.p[0] / r * 1.5; wz -= me.p[2] / r * 1.5; }
+    // round 22b: stuck against something (a pillar, a low wall, a crate) for a moment: sidestep round it for 0.7 s, alternating sides
+    if (b.detour && t < b.detour.until) { wx = b.detour.dir[0]; wz = b.detour.dir[1]; }
     // round 22 (Sky Ruins): never walk off an island. If the floor a step ahead is below the void, turn along the edge
     // (the least turn that keeps a floor under us), else stop
-    if (C.voidY() != null && !flying) {
+    if (VOID_Y != null && !flying) {
       // the reach: how far the bot gets before it can turn (a sprint needs about 0.3 s), at least 1.4 m; three probes along it
       const reach = Math.max(1.4, Math.hypot(b.vel[0], b.vel[1]) * 0.35 + 0.6);
-      const safe = (dx, dz) => [1, 0.6, 0.3].every(k => floorUnder([me.p[0] + dx * reach * k, me.p[1], me.p[2] + dz * reach * k]) >= C.voidY() - 0.01);
+      const safe = (dx, dz) => [1, 0.6, 0.3].every(k => floorUnder([me.p[0] + dx * reach * k, me.p[1], me.p[2] + dz * reach * k]) >= VOID_Y - 0.01);
       const l0 = Math.hypot(wx, wz), ux = l0 > 1e-6 ? wx / l0 : 0, uz = l0 > 1e-6 ? wz / l0 : 0;
       // the way it's already going (momentum, a fall's drift, knockback): over the edge, stop dead (the server moves bots, so it can)
       const vl = Math.hypot(b.vel[0], b.vel[1]);
@@ -1540,8 +1550,8 @@ function moveBot(me, dt, world, t) {
   // round 22 (Sky Ruins): the last word. Sliding along a wall can carry a bot over an edge the probe above didn't look at, so a
   // step that ends over the void (and isn't a pad arc, a knockback or an Eye's pull; in the air too: a jump or a Skyward drift stays
   // over the island's edge) is taken back and the bot stops.
-  if (C.voidY() != null && !me.pad && !(me.kbUntil > t) && !(b.pull && t < b.pull.until) && b.lastPos
-      && floorUnder(me.p) < C.voidY() && floorUnder(b.lastPos) >= C.voidY()) {
+  if (VOID_Y != null && !me.pad && !(me.kbUntil > t) && !(b.pull && t < b.pull.until) && b.lastPos
+      && floorUnder(me.p) < VOID_Y && floorUnder(b.lastPos) >= VOID_Y) {
     me.p[0] = b.lastPos[0]; me.p[2] = b.lastPos[2];
     b.vel = [0, 0]; b.strafe *= -1; b.edgeStops = (b.edgeStops || 0) + 1;
   }
@@ -1557,7 +1567,14 @@ function moveBot(me, dt, world, t) {
     else if (b.stuckT > 0.25 && canJump(me, t) && hopSafe && C.ledgeTarget(me.p, [wx / (wl || 1), wz / (wl || 1)], me.p[1] + C.JUMP.height + C.AIR_JUMP.height)) {
       world.handle(me, { t: 'jump' }); b.stuckT = 0; b.ledgeAirJumpAt = t + C.JUMP.airTime * 0.45;
     }
-    else if (b.stuckT > 0.4) { b.strafe *= -1; b.stuckT = 0; }
+    else if (b.stuckT > 0.4) {
+      b.strafe *= -1; b.stuckT = 0;
+      // round 22b: a detour sideways (the side alternates), so a goal walk doesn't press into a pillar forever
+      const l = Math.hypot(wx, wz) || 1;
+      b.detourSide = -(b.detourSide || 1);
+      b.detour = { dir: [-wz / l * b.detourSide, wx / l * b.detourSide], until: t + 0.7 };
+      b.lastDetourAt = t;
+    }
   }
   else b.stuckT = 0;
   if (b.ledgeAirJumpAt && t >= b.ledgeAirJumpAt) { b.ledgeAirJumpAt = 0; if (canAirJump(me, t)) world.handle(me, { t: 'jump', n: 2, y0: me.p[1] }); }
@@ -1604,7 +1621,7 @@ function runeGoal(me, world, t, target) {
 }
 // Does the straight line from `a` to `b` ([x, z]) cross the void (Sky Ruins: the floor below MAP_INFO.void)?
 function crossesVoid(a, b) {
-  const vy = C.voidY();
+  const vy = VOID_Y;
   if (vy == null) return false;
   const dx = b[0] - a[0], dz = b[1] - a[1], l = Math.hypot(dx, dz), n = Math.max(1, Math.ceil(l / 1.5));
   for (let i = 1; i <= n; i++) { const k = i / n; if (C.surfaceTopAt(a[0] + dx * k, a[1] + dz * k) < vy) return true; }
@@ -1634,6 +1651,86 @@ function padWaypoint(me, world, dest, destY, t) {
   }
   b.padWp = best; b.padWpDest = dest.slice(); b.padWpUntil = t + 1.2;
   return best;
+}
+
+// Round 22b: a route graph for a map with gaps and planes (Sky Ruins): the ends of every bridge, the foot and top of every stair, and
+// each pad's launch and landing are nodes; two nodes are joined when the straight walk between them stays on a floor (no void, no step
+// up higher than STEP_UP; a drop is fine), a stair joins its two ends, a pad its launch to its landing (one way). Built once per map
+// (and the pad count), kept in mapList. routeWaypoint runs Dijkstra from the bot to the destination over it and hands back the first
+// node to walk to, or null when the straight walk is fine (or nothing connects). Checked every 0.3 s per bot (the probes cost).
+function lineOk(a, ay, b) {
+  const dx = b[0] - a[0], dz = b[1] - a[1], l = Math.hypot(dx, dz), n = Math.max(1, Math.ceil(l / 1.2));
+  let prev = ay, before = ay;
+  for (let i = 1; i <= n; i++) {
+    const k = i / n, f = C.surfaceHeight(a[0] + dx * k, a[1] + dz * k, prev);
+    if (VOID_Y != null && f < VOID_Y) return false;
+    if (f > prev + C.STEP_UP + 0.05) return false;   // a wall or a ledge in the way
+    before = prev; prev = f;
+  }
+  // a spot on a lower plane must be reached before the last stretch (a flask under the deck's edge: standing above it is no way down)
+  if (n > 1 && before > prev + 1.5) return false;
+  return true;
+}
+function routeGraph(world) {
+  const m = mapList();
+  const pads = world.pads || [];
+  if (m.graph && m.graph.padN === pads.length) return m.graph;
+  const nodes = [], edges = [];   // nodes: { p: [x, z], y }, edges: adjacency with costs
+  const add = (x, z, y) => { nodes.push({ p: [x, z], y }); return nodes.length - 1; };
+  for (const s of C.SURFACES) {
+    if (s.kind === 'box' && /^bridge/.test(s.name || '') && s.thick) {
+      const c = Math.cos(s.yaw || 0), n = Math.sin(s.yaw || 0), half = Math.max(s.w, s.d) / 2 + 0.8;
+      const along = s.d >= s.w ? [n, c] : [c, -n];   // the long axis in world space
+      const a = add(s.x + along[0] * half, s.z + along[1] * half, s.top), b = add(s.x - along[0] * half, s.z - along[1] * half, s.top);
+      edges.push([a, b, half * 2], [b, a, half * 2]);
+    } else if (s.kind === 'ramp' && s.w >= 0.7 && !s.noStand && !s.moveOnly) {
+      const foot = C.rampFoot(s), top = rampHigh(s), lo = Math.min(s.y0, s.y1), hi = Math.max(s.y0, s.y1);
+      const a = add(foot[0], foot[1], lo), b = add(top[0] + (top[0] - foot[0]) * 0.15, top[1] + (top[1] - foot[1]) * 0.15, hi);
+      nodes[a].ramp = s; nodes[b].ramp = s;
+      edges.push([a, b, s.d + 1], [b, a, s.d + 1]);
+    }
+  }
+  for (const pd of pads) { const a = add(pd.x, pd.z, pd.y), b = add(pd.tx, pd.tz, pd.ty); edges.push([a, b, Math.hypot(pd.tx - pd.x, pd.tz - pd.z) * 0.7 + 2]); }
+  // walks between nodes on a floor (a drop allowed, a rise not)
+  for (let i = 0; i < nodes.length; i++) for (let j = 0; j < nodes.length; j++) {
+    if (i === j) continue;
+    const a = nodes[i], b = nodes[j], d = Math.hypot(a.p[0] - b.p[0], a.p[1] - b.p[1]);
+    if (d > 30 || b.y > a.y + C.STEP_UP + 0.05) continue;
+    if (lineOk(a.p, a.y, b.p)) edges.push([i, j, d]);
+  }
+  const adj = nodes.map(() => []);
+  for (const [a, b, c] of edges) adj[a].push([b, c]);
+  return (m.graph = { nodes, adj, padN: pads.length });
+}
+function routeWaypoint(me, world, dest, destY, t) {
+  const b = me.bot;
+  if (b.routeWp !== undefined && t < (b.routeAt || 0) && b.routeDest && Math.hypot(b.routeDest[0] - dest[0], b.routeDest[1] - dest[1]) < 3) return b.routeWp;
+  b.routeAt = t + 0.3; b.routeDest = dest.slice();
+  const myFloor = floorUnder(me.p), me2 = [me.p[0], me.p[2]];
+  const destFloor = Number.isFinite(destY) ? destY : C.surfaceHeight(dest[0], dest[1], 99);
+  if (lineOk(me2, myFloor, dest) && destFloor <= myFloor + C.STEP_UP + 0.05) return (b.routeWp = null);   // straight there
+  const G = routeGraph(world);
+  if (!G.nodes.length) return (b.routeWp = null);
+  const n = G.nodes.length, dist = new Array(n).fill(Infinity), prev = new Array(n).fill(-1), done = new Array(n).fill(false);
+  for (let i = 0; i < n; i++) { const N = G.nodes[i]; if (N.y <= myFloor + C.STEP_UP + 0.05 && lineOk(me2, myFloor, N.p)) dist[i] = Math.hypot(N.p[0] - me2[0], N.p[1] - me2[1]); }
+  let bestEnd = -1, bestCost = Infinity;
+  for (let it = 0; it < n; it++) {
+    let u = -1;
+    for (let i = 0; i < n; i++) if (!done[i] && dist[i] < Infinity && (u < 0 || dist[i] < dist[u])) u = i;
+    if (u < 0) break;
+    done[u] = true;
+    const N = G.nodes[u];
+    if (destFloor <= N.y + C.STEP_UP + 0.05 && lineOk(N.p, N.y, dest)) { const c = dist[u] + Math.hypot(dest[0] - N.p[0], dest[1] - N.p[1]); if (c < bestCost) { bestCost = c; bestEnd = u; } }
+    for (const [v, c] of G.adj[u]) if (dist[u] + c < dist[v]) { dist[v] = dist[u] + c; prev[v] = u; }
+  }
+  if (bestEnd < 0) return (b.routeWp = null);
+  let first = bestEnd;
+  while (prev[first] >= 0) first = prev[first];
+  const N = G.nodes[first];
+  // already at the first node (or on the stair it is the foot of): the next one
+  const onIt = Math.hypot(N.p[0] - me2[0], N.p[1] - me2[1]) < 1.6 || (N.ramp && onRamp(me, N.ramp));
+  if (onIt) { let nxt = bestEnd; while (prev[nxt] >= 0 && prev[nxt] !== first) nxt = prev[nxt]; if (nxt !== first) return (b.routeWp = G.nodes[nxt].p.slice()); return (b.routeWp = null); }
+  return (b.routeWp = N.p.slice());
 }
 
 function coverPoint(me, target) {

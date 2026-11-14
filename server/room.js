@@ -1896,9 +1896,9 @@ export function createRoom(opts) {
       }
       case 'debugMap': {
         // tests only (WA_DEBUG=1): this room's rune spots and pads ({ runes: [{ id, x, y, z, type? }], pads: [{ id, x, y, z, tx, ty, tz, strength?, r? }] })
-        // instead of the map's, until the next map switch
+        // instead of the map's (a list left out keeps the map's), and `void` (a height) instead of MAP_INFO.void, until the next map switch
         if (!process.env.WA_DEBUG) break;
-        debugSpots = { runes: Array.isArray(msg.runes) ? msg.runes : [], pads: Array.isArray(msg.pads) ? msg.pads : [], void: Number.isFinite(msg.void) ? msg.void : null };
+        debugSpots = { runes: Array.isArray(msg.runes) ? msg.runes : undefined, pads: Array.isArray(msg.pads) ? msg.pads : undefined, void: Number.isFinite(msg.void) ? msg.void : null };   // (a list left out: the map's own stays)
         buildRunes(); buildPads();
         broadcast({ t: 'map', map: pubMap(mapId), props: [...props.values()].map(propPublic), potions: potions.map(potionPublic), runes: runes.map(runePublic), pads: pads.map(padPublic) });
         break;
@@ -2524,7 +2524,8 @@ export function createRoom(opts) {
   }
 
   // cycloneStopsRams: a cyclone knocks a charging ram dizzy (bots answer a charge with one)
-  const world = { players, potions, runes, pads, props, projectiles, decoys, walls, frostfalls, smokes, cages, firewalls, rams, stampedes, pools, smokeFlasks, handle, now, cycloneStopsRams: true };
+  const world = { players, potions, runes, pads, props, projectiles, decoys, walls, frostfalls, smokes, cages, firewalls, rams, stampedes, pools, smokeFlasks, handle, now, cycloneStopsRams: true,
+    get voidY() { return debugSpots?.void ?? C.voidY(); } };   // (round 22: the void the bots read; a test's debugMap may override it)
   // Game modes (server/match.js, modes agent). addUltCharge is the spells agent's to implement.
   const match = createMatch({
     players, props, now, broadcast, send, propPublic,
