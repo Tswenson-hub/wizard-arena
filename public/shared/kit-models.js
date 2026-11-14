@@ -32,6 +32,7 @@ export const KIT_MODELS = {
   'castle/box_small_decorated': [-0.61, 0.88, 0, 1.48, -0.63, 0.85],
   'castle/box_stacked': [-1.75, 1.72, 0, 3.31, -1.77, 1.86],
   'castle/candle_triple': [-0.17, 0.33, 0, 0.87, -0.16, 0.23],
+  'castle/ceiling_tile': [-2, 2, -0.25, 0.1, -2, 2],
   'castle/chair': [-0.37, 0.38, 0, 1.23, -0.38, 0.38],
   'castle/chest': [-0.85, 0.85, 0, 1.3, -0.7, 0.75],
   'castle/column': [-0.35, 0.35, 0, 1.4, -0.35, 0.35],

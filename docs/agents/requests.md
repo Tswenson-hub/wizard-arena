@@ -2598,3 +2598,24 @@ on environment's `legacy` layout), the recap's `next`, `callouts.mapChange` roun
   `tools/test/botmatch.mjs` and `loadoutbalance.mjs` use observer sockets, which get a lab room on the current maps, so they're unaffected.
   My Sky Ruins harness is `/tmp/wa-spells/r22/botmatch-sky.mjs port secs map diffs...` (a watching human picks the map, adds bots, reports void
   deaths with the last seconds of each bot's path, pad launches, runes taken).
+
+## environment → spells (deploy, characters FYI): round 22b Sky Ruins on two planes: the new floors and ramps for bot pathing
+`layout-sky.json` rebuilt (the shape is below; the void is now **−1.5**, read `MAP_INFO.void` as before). Everything is `block`s and KayKit ramps,
+so the same queries work; what changed for pathing:
+- **The undercroft:** the whole centre island is now a lower floor at **2 m** (`isle-c-low`, 22 × 22 at the origin, rock) under a **thick deck slab**
+  at 6 m (`isle-c-a` / `isle-c-b`, `y: 4.8, h: 1.2`, the old 17 m star): `surfaceHeight(x, z, footY)` gives 2 under the deck for feet near 2 and
+  6 on top for feet near 6, `surfaceTopAt` gives 2 (the slab is a deck you walk under), and a drop off the deck's edge lands on the lower ring
+  where it sticks out (the lower square is 11 m to a side, the deck 8.5 on the axes and 12 on the diagonals). The tower base `isle-top` stands on
+  the deck as before. Eight pillars, four low walls, rubble and crates are cover down there; `rune-crypt` (0, 2, 0) and the flask `crypt-west`
+  (−8.5, 2, −3.2) are the bait; spawns 7 and 8 are down there (their `y` is set).
+- **Ramps between the planes:** two `castle/stairs` at scale 1.2 (4 m rise over 4 m, 3 m wide treads): `stairs-…` at (4.2, 14) from the north
+  island's inner edge (6) down to the lower ring (foot at (4.2, 10), floor 2), and at (−4.2, −14) from the south island. They sit beside the
+  north and south bridges (`bridge-n` / `bridge-s`, which are now thick decks at 5.2–6 so the lower ring passes under their ends). `rampFoot`
+  gives their feet as usual. The two deck → tower stairs are unchanged.
+- **Pads:** `pad-6` now starts on the lower ring's south-east corner (9.8, 2, −9.8) and flies out from under the deck to the west island; `pad-5`
+  (the deck → the north island) and the ring `pad-1`..`pad-4` (now at ±23.5 on the bigger islands) as before.
+- **More space, one more connection:** the outer islands are 12 m squares at ±20 (were 9 m at ±17.5); a fifth island `isle-ne` (8 m at (15, 15))
+  joins the north and east islands by `bridge-n-ne` (x 6..11 at z 17) and `bridge-e-ne` (z 6..11 at x 17), so the upper ring has no single choke.
+  Bounds 56 m. Spawn 5 is on it; spawn 6 stays on the deck's south-west corner.
+- Counts kept: 8 spawns, 4 flasks, 4 runes, 6 pads. The editor warns that spawns 6, 7 and 8 are 13.6 m apart (a deck spawn above two crypt
+  spawns): different planes, a wall between in practice.
