@@ -318,7 +318,7 @@ function buildIslands(scene) {
   const geos = C.ISLANDS.map(islandRock);
   const mesh = new THREE.Mesh(mergeGeometries(geos), kitMaterial('castle/rock', null));
   for (const g of geos) g.dispose();
-  mesh.castShadow = true; mesh.receiveShadow = true; mesh.userData.cat = 'islands'; mesh.userData.cam = 'solid';
+  mesh.castShadow = false; mesh.receiveShadow = true; mesh.userData.cat = 'islands'; mesh.userData.cam = 'solid';   // (nothing below an island to shadow)
   addW(scene, mesh);
 }
 
@@ -612,6 +612,7 @@ function chunkGrid(items) {
 // columns, balconies, torches and banners don't.
 function castsShadow(model) {
   if (/torch|banner/.test(model)) return false;
+  if (/\/(floor_|ceiling_|Floor_)/.test(model)) return false;   // round 22b: floor and ceiling tiles placed as pieces (Sky Ruins' decks) cast nothing
   const b = C.KIT_MODELS[model], s = C.kitScale(model);
   return !b || (b[3] - b[2]) * s >= 2 || Math.max(b[1] - b[0], b[5] - b[4]) * s >= 3;
 }
