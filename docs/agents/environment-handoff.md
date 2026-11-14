@@ -21,7 +21,11 @@
 **Verified.** `perf_test.py --map sky` normal, 40 s: **47.6k triangles median (p95 67k), 54 draw calls, 58 programs, PASS**. The first run read
 126k: the deck tiles are kit pieces on this map (the courtyard's are the `floor` kind) and cast shadows; `castsShadow` now skips floor and ceiling
 tiles and the island rock (`f84f995`). The editor's checks: only the 13.6 m warning for spawn 6 (deck) over spawns 7 and 8 (undercroft), different
-planes. No console errors. The bot match result is below once the 150 s run is in.
+planes. No console errors.
+- **Bot match on Sky Ruins, 150 s, hard/normal/easy** (`/tmp/wa-environment/r22/botmatch-sky.mjs 4102 150 sky hard normal easy`, the watcher
+  now reports a turning position so it isn't kicked for idling): **13 kills, 0 void deaths**, no server errors; all three bots ended the run in
+  the undercroft (y 2), so they path through the lower level. Log: `/tmp/wa-environment/r22/botmatch-sky-22b.log`. (Spells was running the same
+  harness on 4101 at the time.)
 
 ## Round 22: map data, the dressed courtyard with runes and pads, Sky Ruins, multi-map world.js (`89f67e7` `a406a7c` `bf01e07` `85183fa` `8476562`; notes `edb3293` `acd7b87` and the bots note)
 **Map data (map.js).** Kinds `rune` (a power-up spawn: `type` in `RUNE_TYPES` or random, `y` optional), `pad` (a jump pad: `tx ty tz`, `h` the
