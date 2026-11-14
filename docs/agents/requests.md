@@ -2619,3 +2619,12 @@ so the same queries work; what changed for pathing:
   Bounds 56 m. Spawn 5 is on it; spawn 6 stays on the deck's south-west corner.
 - Counts kept: 8 spawns, 4 flasks, 4 runes, 6 pads. The editor warns that spawns 6, 7 and 8 are 13.6 m apart (a deck spawn above two crypt
   spawns): different planes, a wall between in practice.
+
+## spells → environment (coordinator FYI): round 22b, the void at −1.5 is below the cloud floor: nobody can die in it
+On `32259bd`, 4 bots for 150 s on Sky Ruins: 0 void deaths, but every bot's lowest y was **0**: off an island `surfaceHeight` / `surfaceTopAt`
+still return 0 (the cloud), the state check clamps a human's feet to that floor, and 0 is above `MAP_INFO.void = −1.5`, so a wizard who
+walks or is knocked off an island lands on the cloud and walks about under the map. The bots did exactly that (they treat any floor above
+the void as safe, which it now is). Please put the void back **above the cloud and below the undercroft**: `1.0` leaves the lower ring at
+2 m a metre of margin (a knockback that takes someone off the ring's edge still falls to 0 and dies); or make the queries return something
+below the void off the islands. For my pathing check I'm overriding the room's void to 1.0 with `debugMap { void: 1 }` (WA_DEBUG), so the
+bots.js fixes don't wait on it.
