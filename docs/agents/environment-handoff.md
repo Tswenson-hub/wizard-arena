@@ -1,5 +1,28 @@
 # Environment hand-off: the castle courtyard (round 15), then the farmstead (earlier rounds)
 
+## Round 22b: Sky Ruins on two planes (`32259bd` `f84f995`; the pathing note for spells is in requests.md)
+**What changed in `layout-sky.json`** (generator `/tmp/wa-environment/r22/sky.mjs`):
+- **The undercroft:** the whole centre island is a lower floor at **2 m** (`isle-c-low`, 22 × 22, rock) under a **thick deck slab** at 6 m
+  (`isle-c-a` / `isle-c-b`, `y: 4.8 h: 1.2`, the old 17 m star), so the map plays on two planes. Eight 4 m pillars hold the deck, with low walls,
+  rubble, crates, four wall torches (two real lights) and four brazier posts below; the slab's underside is lined with KayKit `ceiling_tile`
+  (imported; 60 triangles each) because the floor tiles have no underside. `rune-crypt` at (0, 2, 0) under the spire and the flask `crypt-west`
+  are the bait; spawns 7 and 8 are down there (`y: 2` on the entries, which `buildMap` honours). Where the lower square sticks out past the deck
+  (1.6 m at the dips, 2 m at the diagonals, with half parapets) a drop from the deck lands on the lower ring.
+- **Ways between the planes:** `castle/stairs` at scale 1.2 (4 m rise over 4 m, 3 m treads) from the north and south islands' inner edges
+  down to the lower ring, beside their bridges (the bridges are thick decks at 5.2–6 now, so the lower ring passes under their ends); drops
+  off the deck; `pad-6` from the lower ring's south-east corner out to the west island.
+- **Less cramped:** the outer islands are 12 m squares at ±20 (were 9 m at ±17.5), a fifth island `isle-ne` (8 m at (15, 15)) joins the north
+  and east islands by two more plank bridges, so the upper ring has no single choke point; bounds 56 m. 8 spawns (spawn 5 on the new island),
+  4 flasks, 4 runes, 6 pads kept. **`map.void` is −1.5** (the lower floor must stay well above it).
+- **Shots:** `/tmp/wa-environment/r22/sky22b-overhead.png`, `sky22b-sky-undercroft.png` and `sky22b-sky-undercroft2.png` (the lower passage at
+  ground level), `sky22b-sky-newbridge.png` (the north → north-east bridge), `sky22b-sky-stairs.png`, `sky22b-sky-oblique.png`, and the
+  harness's `perf-sky-22b.png`.
+
+**Verified.** `perf_test.py --map sky` normal, 40 s: **47.6k triangles median (p95 67k), 54 draw calls, 58 programs, PASS**. The first run read
+126k: the deck tiles are kit pieces on this map (the courtyard's are the `floor` kind) and cast shadows; `castsShadow` now skips floor and ceiling
+tiles and the island rock (`f84f995`). The editor's checks: only the 13.6 m warning for spawn 6 (deck) over spawns 7 and 8 (undercroft), different
+planes. No console errors. The bot match result is below once the 150 s run is in.
+
 ## Round 22: map data, the dressed courtyard with runes and pads, Sky Ruins, multi-map world.js (`89f67e7` `a406a7c` `bf01e07` `85183fa` `8476562`; notes `edb3293` `acd7b87` and the bots note)
 **Map data (map.js).** Kinds `rune` (a power-up spawn: `type` in `RUNE_TYPES` or random, `y` optional), `pad` (a jump pad: `tx ty tz`, `h` the
 apex above the pad, raised to clear the target by 0.5 m, `r`), `portal` (`link`), and the drawn rune circle is kind **`circle`** (export
