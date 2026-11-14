@@ -155,3 +155,27 @@ The brief goes in `docs/agents/round22-pace.md`. Coordinate the interfaces in re
   full match.
 - Ty plays it on localhost:3000, then the push (backward-compatible), the `dist/crazygames` rebuild, and Ty submits a
   new version.
+
+## Round 22b (Ty, after playing): Sky Ruins on two planes, less cramped
+- **The lower level under the spire:** players can walk **under the central tower**. Open a ground-level passage, or an
+  undercroft or crypt, through the centre island's base, connecting the islands around it beneath the tower. So the map
+  plays on **two planes**:
+  - the upper decks and bridges
+  - a lower ring and passage under the spire
+- **Reaching it:** stairs or ramps down from at least two islands, plus jump pads or drop-downs. The passage must
+  never put a floor near or below `MAP_INFO.void` (keep the void height consistent, or lower `void` with care).
+  Cover and sight-line breaks inside. Torches or a rune glow so it isn't a dark hole.
+- **Less cramped:**
+  - a bit more surface area: widen the outer islands and/or add one more island
+  - at least **one more connection** (a bridge or a pad) so there's no single choke point
+- **Keep:**
+  - 8 spawns and 4 flasks
+  - 4 runes; one could move to the lower level as bait
+  - the perf budget: under 120k triangles, under 60 programs
+- **Bots:** they must path through the lower level and the new bridge, and never walk into the void. A botmatch on
+  sky for 150 s should show void deaths only from knockback.
+- **Who:**
+  - the environment agent does the map (layout-sky.json, map.js, world.js)
+  - the spells agent checks and fixes bot pathing in bots.js once the map lands
+  - deploy runs perf_test on sky and the legacy, smoke and subpath tests, then rebuilds `dist/crazygames` from the final
+    commit
