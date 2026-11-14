@@ -1,5 +1,25 @@
 # Spells hand-off
 
+## Round 22b: bot pathing on the two-plane Sky Ruins
+**bots.js:** a route graph per map (`routeGraph`: the ends of every `bridge-*` deck, the foot and top of every stair, each pad's launch
+and landing; nodes joined when the straight walk stays on a floor with no step up, a stair joins its ends, a pad its launch to its
+landing) and `routeWaypoint` (Dijkstra from the bot to its target or goal; the first node to walk to, or the straight walk). A lower
+destination must be reached before the last stretch (standing on the deck above the crypt flask is no way down). A bot stuck for 0.4 s
+sidesteps for 0.7 s (the side alternates) and takes the route for 2 s even with a line of sight; `rampWaypoint` accepts a stair top up to
+16 m from the spot. The bots read the room's void (`world.voidY`, so a test's `debugMap { void }` reaches them); blinks, Mirror Steps and
+Meteor Rain dives never land on a floor below it. **room.js:** `debugMap` keeps the map's runes and pads when a list is left out.
+
+**Verified** (`/tmp/wa-spells/r22/botmatch-sky.mjs 4101 150 sky hard normal easy normal`, with the room's void overridden to 1.0 because
+the map's −1.5 sits below the cloud floor, see the requests.md note): **0 void deaths in 150 s** in the last two runs (1-5 earlier, all
+knockbacks or blinks onto the cloud that the map's own void allowed); every bot goes down and up by both stairs (3-15 stair descents each),
+crosses the old bridges and the new `bridge-n-ne` / `bridge-e-ne`, and drops from the deck to the lower ring; 12-16 runes taken, including
+the crypt's. Four-second stalls are still 15-20 per bot per run: mostly bots pressing at the south stair's rail or standing over the deck's
+edge while shooting a target on the other plane (a fight stance more than a pathing failure). `MATCH_DEBUG=1 node tools/test/modematch-unit.mjs`:
+ALL PASS, 242 checks.
+
+**For environment:** `MAP_INFO.void = −1.5` is below the cloud floor at 0, so nothing dies in the void on the committed map (and the
+bots' guard rightly treats the cloud as floor); 1.0 would do (posted in requests.md).
+
 ## Round 22: pace, runes and jump pads, void deaths, map rotation, legacy rooms
 Commits: `819bf42` (the interface post), `af2ff21` (pace constants, match.js rotation), `c29cda4` (room.js and server.js: maps, legacy
 rooms, runes, pads, the void, callouts), `cdbd187` + `a7d177c` + `c6e313a` (bots), `b727d5b` + `9217a24` (the client), `734b1e5` + `db5ccba`
