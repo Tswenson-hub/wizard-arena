@@ -8,25 +8,52 @@
 - **Live commit:** `e416f68` (rounds 12b-13: Roll on F, the map editor, Ty's assets, mountains, ground textures,
   jeb2 animations), pushed by the coordinator with Ty's approval. Earlier: `29602cc` (deploy took ~45 s).
 
-## Round 24: Sky Ruins rebuilt (deploy's part, in progress)
-**Posted** (`c72a8ac`, requests.md): the harness I run once environment and spells land, the ports (4105 server, 4198 the `95aca29` legacy
-build, 4199 the new build), the interfaces to keep stable (`matchDebug { map }`, `data-map` / `__wa.map`, `room.legacy`, `match.map`, the id `sky`),
-and the **store-build question**: a client fetches its *own bundled* `shared/layout-sky.json`, so a round 22/23 CrazyGames client (`proto: 22`)
-would collide against the old Sky Ruins while the server runs the new one. No issue if the store still runs `95aca29` (no `proto`); if a newer
-zip is live, spells should bump `PROTO` to 24 and put `proto` 22–23 joins in a courtyard-only current room (their courtyard, `layout.json`, is
-unchanged since `c6e313a`). Awaiting the coordinator's answer.
+## Round 24: Sky Ruins rebuilt (deploy's part)
+**Verified at `54d1a9a`** (the final round-24 commit: environment `bb8bd1f` `f1ebcf8`, spells `f6f05bf`…`2eb6321`, characters; the server from
+a detached worktree at that commit on 4105 with WA_DEBUG + MATCH_DEBUG; the `95aca29` no-proto build on 4198, the `21a31ef` round-23 build
+(proto 22, pending at CrazyGames) on 4197, the `54d1a9a` build on 4199; everything headless on the M4 GPU; logs, JSON and shots in
+`/tmp/wa-deploy/r24/`):
+- `MATCH_DEBUG=1 node tools/test/modematch-unit.mjs` at `54d1a9a`: **ALL PASS**.
+- `perf_test.py`, both maps, 0 and 200 ms (CPU 4×, 1280×720 DPR 1, 60 s, 4 in the match, `--map` through `matchDebug`; `perf1-<map>-<ms>.*`):
 
-**Baseline at `c0a4f41`** (today's HEAD before the rebuild; the server from a detached worktree `/tmp/wa-deploy/wt` on 4105 with MATCH_DEBUG,
-M4 GPU, CPU 4×, 1280×720 DPR 1, 60 s, 4 in the match, 0 ms; JSON, logs and shots in `/tmp/wa-deploy/r24/perf0-<map>-0.*`):
+  | Run | fps | p95 / max after 10 s | triangles median (p95) | draw calls | programs (after 10 s) | result |
+  |---|---|---|---|---|---|---|
+  | sky, 0 ms | 59.9 | 18.3 / 18.7 | 94,406 (107,480) | 58 | 58 (0) | **PASS** 10/10 |
+  | sky, 200 ms | 60.0 | 18.3 / 18.8 | 101,370 (118,210) | 85 | 58 (0) | **PASS** 13/13 (stalls 0 %, jumps 0, reversals 4/min) |
+  | courtyard, 0 ms | 60.0 | 18.3 / 50 | **123,481** (183,278) | 115 | 57 (0) | FAIL only `triangles < 120k` |
+  | courtyard, 200 ms | 60.0 | 18.3 / 18.7 | **124,912** (176,238) | 113 | 57 (0) | FAIL only `triangles < 120k` (stalls 0 %, 2 jumps, 1 reversal/min) |
 
-| Run | fps | p95 / max after 10 s | triangles median (p95) | draw calls | programs (after 10 s) | result |
-|---|---|---|---|---|---|---|
-| sky | 60.0 | 17.5 / 17.7 | 59,366 (101,602) | 94 | 58 (0) | **PASS** 10/10 |
-| courtyard | 60.0 | 17.5 / 17.7 | **127,366** (158,555) | 109 | 57 (0) | FAIL only `triangles < 120k` |
+  **Sky Ruins** went 59k (the old map, `c0a4f41`) → **94–101k with the keep**, under the 120k line, programs 58 as before and none compiled
+  mid-match, no console errors. **The courtyard** is where it was (127k at `c0a4f41`, 122k in round 22; `layout.json` unchanged): the
+  pre-existing overage, not this round's. Its draw calls are 113–115 against 120: environment's LOD trim brought them back under; worth watching.
+  The 0 ms sky shot has the driver's camera against our own hat at an island's edge (the headless driver, not the game).
+- `smoke.py http://localhost:4105` **PASS** (`smoke-54d1a9a.png`): 4 in the match, the no-proto join in a legacy room (`public-2`, `gen 'legacy'`,
+  the courtyard, no runes or pads), **the proto-22 join in a v22 room** (`public-3`, `gen 'v22'`, the courtyard, 4 runes and 6 pads in the welcome,
+  runes in its snapshots), neither seen by the proto-24 player; the first visit in a match in 1.0 s with Easy bots; no console errors.
+- `subpath_test.py http://localhost:4199/game/ --max-mb 20 --site http://localhost:4105/` **PASS** (`subpath-54d1a9a.png`): **9.2 MB initial in
+  402 responses**, 381 requests all under `/game/`, none failed, rooms 15/15 (the private room, the code box, the invite link on our site, the
+  `version` refusal for a no-proto join by a current code), SDK start/stop, no console errors.
+- `legacy_test.py http://localhost:4198/game/` **full length, no `--fast`** (`legacy-full.png`, `-recap.png`): the `95aca29` client played a real
+  first-to-10 in a legacy room to the target after 308 s, podium, rematch countdown, socket open, 0 failed requests, 0 errors; the only
+  field it never knew: `match.map`.
+- **`legacy_test.py http://localhost:4197/game/ --gen v22 --fast`** **PASS** (`v22-fast.png`, `-recap.png`): the round-23 build (`21a31ef`, proto 22)
+  landed in `public-3` (`gen 'v22'`, `maps ['courtyard']`), runes and pads in its welcome, the HUD read first to 10, the match (target 3)
+  ended at the target, podium, rematch, **the courtyard in every match message and no `map` message** (no rotation), 0 errors.
+- **The zip:** `npm run build:crazygames -- --ref 54d1a9a` exit 0, no warnings: **446 files, 10.5 MB unzipped, 7.1 MB zip**, sha256
+  `ed1d4a991b42e9df…`, `PROTO = 24`, talks to `wss://wizard-arena-76od.onrender.com`. (`dist/crazygames-r23` and `dist/crazygames-legacy` are
+  the 21a31ef and 95aca29 builds pointed at 4105, kept for the next run; `dist/crazygames-local` is the 54d1a9a build at 4105.)
 
-The courtyard was 122k in round 22 (`8a6e855`); `layout.json` hasn't changed since, so the 5k is the run (where the bots and the camera went),
-not a regression. It was over the line before this round; the Sky Ruins rebuild is what this round's budget is about.
-`dist/crazygames-legacy` was rebuilt from `95aca29` with `--server ws://localhost:4105` for `legacy_test.py`. 4105 is stopped between runs.
+**Scripts (deploy-owned, `990494c`):** `legacyjoin.py` takes `proto=` and gains `report_v22` (a proto-22 join: `room.gen 'v22'`, the courtyard,
+runes and pads in the welcome and the snapshots, apart from the proto-24 client); `smoke.py` runs it next to the no-proto join;
+`legacy_test.py --gen v22` plays the round-23 build through a match and the rematch and fails on any map other than the courtyard or any `map` message.
+
+**Push order (the coordinator):** the server is backward-compatible with both store builds (`95aca29` in legacy rooms, the pending `21a31ef`
+in v22 rooms), so Render can take `54d1a9a` before the new zip is approved; after the push, `python3 deploy/smoke.py https://wizard-arena-76od.onrender.com`
+(the live smoke now also checks the proto-22 path). Then the zip above to CrazyGames. Not done here: a real-browser look at the keep on
+localhost:3000 (Ty's), the push, the upload.
+
+**Baselines at `c0a4f41`** (before the rebuild), for the record: sky 59,366 triangles (p95 101,602) / 94 draw calls / 58 programs, PASS;
+courtyard 127,366 / 109 / 57, FAIL only triangles (`perf0-<map>-0.*`).
 
 ## Round 22: pace, runes, pads, two maps (deploy's part)
 **Scripts (deploy-owned):**
@@ -176,7 +203,7 @@ Sources: docs.crazygames.com, "Technical requirements", "Gameplay requirements",
 ### What to upload (zip from `c6e313a`, round 22; rebuild from the commit that's pushed to Render)
 | What | Path | Notes |
 |---|---|---|
-| **Game zip** | `dist/crazygames.zip` (gitignored; rebuild with `npm run build:crazygames -- --ref <sha>`) | **built from `c6e313a`** (round 22: first to 10, runes, jump pads, the dressed courtyard, Sky Ruins in rotation; rounds 19–21 stats, perf, first visit; its `public/` is `1d192c5`'s, the commit the quick set and a Sky Ruins perf run passed on; `c6e313a` itself changes `server/bots.js` only): **445 files, 10.4 MB unzipped, 7.1 MB zip**, sha256 `66223536280e56d0…`, no secrets (the build checks); talks to `wss://wizard-arena-76od.onrender.com`. **Round 22 is backward-compatible:** the server keeps the live build (`95aca29`, no `proto`) playing in legacy rooms, so Render can be pushed before the new zip is approved; players on the old version just don't see runes, pads or Sky Ruins until it is |
+| **Game zip** | `dist/crazygames.zip` (gitignored; rebuild with `npm run build:crazygames -- --ref <sha>`) | **built from `54d1a9a`** (round 24: the rebuilt Sky Ruins, PROTO 24; 446 files, 10.5 MB unzipped, 7.1 MB zip, sha256 `ed1d4a991b42e9df…`; the server keeps the `95aca29` and `21a31ef` store builds playing in legacy and v22 rooms). Previously: **built from `c6e313a`** (round 22: first to 10, runes, jump pads, the dressed courtyard, Sky Ruins in rotation; rounds 19–21 stats, perf, first visit; its `public/` is `1d192c5`'s, the commit the quick set and a Sky Ruins perf run passed on; `c6e313a` itself changes `server/bots.js` only): **445 files, 10.4 MB unzipped, 7.1 MB zip**, sha256 `66223536280e56d0…`, no secrets (the build checks); talks to `wss://wizard-arena-76od.onrender.com`. **Round 22 is backward-compatible:** the server keeps the live build (`95aca29`, no `proto`) playing in legacy rooms, so Render can be pushed before the new zip is approved; players on the old version just don't see runes, pads or Sky Ruins until it is |
 | **Cover, landscape 1920×1080** | `deploy/crazygames/store/covers/cover-hero-landscape-1920x1080.jpg` | recommended: the Mage up close in the courtyard |
 | **Cover, portrait 800×1200** | `deploy/crazygames/store/covers/cover-hero-portrait-800x1200.jpg` | same frame, cropped |
 | **Cover, square 800×800** | `deploy/crazygames/store/covers/cover-hero-square-800x800.jpg` | same frame, cropped |
