@@ -225,6 +225,85 @@ ok(!('vote' in match.matchPublic()) && !('zone' in match.matchPublic()) && !('sc
 
 // ---- round 12, against the real server (WA_DEBUG + MATCH_DEBUG, on a private port): only Telekinesis lifts, Trapped Relic
 // is traps only (2 per caster; an enemy close by, lifting it or breaking it sets it off), and Roll's charges and dodge window
+// ---- round 24: the drawbridge's cycle, angle, moving surface and slide (constants.js), and the hop planner
+{
+  const D = C.DRAWBRIDGE, deg = (a) => a * 180 / Math.PI;
+  D.t0 = 0;
+  ok(D.cycle === 28 && D.down === 12 && D.rising === 4 && D.up === 8 && D.lowering === 4, 'the drawbridge cycle is Down 12, Rising 4, Up 8, Lowering 4 (28 s)');
+  ok(C.drawbridgePhase(0).phase === 'down' && C.drawbridgePhase(11.99).phase === 'down' && C.drawbridgePhase(12).phase === 'rising' && C.drawbridgePhase(16).phase === 'up'
+    && C.drawbridgePhase(23.99).phase === 'up' && C.drawbridgePhase(24).phase === 'lowering' && C.drawbridgePhase(28).phase === 'down' && C.drawbridgePhase(-1).phase === 'lowering', 'the phases at their boundaries, and the cycle wraps both ways');
+  ok(C.drawbridgeAngle(5) === 0 && Math.abs(deg(C.drawbridgeAngle(14)) - 40) < 0.01 && Math.abs(deg(C.drawbridgeAngle(16)) - 80) < 0.01 && Math.abs(deg(C.drawbridgeAngle(20)) - 80) < 0.01
+    && Math.abs(deg(C.drawbridgeAngle(26)) - 40) < 0.01 && C.drawbridgeAngle(28.5) === 0, 'the angle: flat down, 80° up, halfway through a rise or a fall at its middle');
+  let mono = true;
+  for (let t = 12; t < 16; t += 0.05) if (C.drawbridgeAngle(t + 0.05) < C.drawbridgeAngle(t)) mono = false;
+  for (let t = 24; t < 28; t += 0.05) if (C.drawbridgeAngle(t + 0.05) > C.drawbridgeAngle(t)) mono = false;
+  ok(mono, 'the rise only rises and the fall only falls');
+  const W5 = C.drawbridgeWindow(5), W20 = C.drawbridgeWindow(20);
+  ok(W5.phase === 'down' && Math.abs(W5.downFor - 7) < 1e-9 && W5.downIn === 0 && W20.phase === 'up' && W20.downFor === 0 && Math.abs(W20.downIn - 8) < 1e-9, 'the window: down for 7 more s at 5 s; down again in 8 s at 20 s');
+  ok(C.drawbridgeSlide(0) === 0 && C.drawbridgeSlide(D.slideFrom) === 0 && C.drawbridgeSlide(20 * Math.PI / 180) > 1 && Math.abs(C.drawbridgeSlide(D.fallAngle) - D.slideMax) < 1e-9 && C.drawbridgeSlide(D.upAngle) === D.slideMax, 'the slide: nothing until 10°, 5 m/s from 45°');
+  // the moving surface on Sky Ruins (a test drawbridge at environment's posted hinge: (16, 6, 0) along +x, a 7.2 × 3.4 slab)
+  const had = C.ACTIVE_MAP.name;
+  if (C.setActiveMap('sky')) {
+    C.setDrawbridges([{ id: 'db-unit', x: 16, y: 6, z: 0, dir: [1, 0], w: 3.4, d: 7.2 }]);
+    C.updateDrawbridges(0);
+    const S0 = C.SURFACES.find(q => q.drawbridge === 'db-unit');
+    ok(!!S0 && S0.kind === 'ramp' && Math.abs(S0.x - 19.6) < 1e-6 && Math.abs(S0.d - 7.2) < 1e-6 && S0.y0 === 6 && S0.y1 === 6 && !S0.noStand, 'down: one flat ramp from the hinge to the far end, standable');
+    ok(C.surfaceHeight(22.5, 0, 6) === 6 && C.surfaceHeight(16.5, 1.5, 6) === 6 && C.surfaceHeight(19.6, 2.0, 6) < 6, 'down: a floor at 6 along its 3.4 m width over the gap, none beside it');
+    ok(C.activeMap().built.SURFACES.includes(S0), 'the surface is in the map\'s built list too (a map switch keeps it)');
+    C.updateDrawbridges(14);   // 40°
+    ok(C.SURFACES.filter(q => q.drawbridge).length === 1 && Math.abs(S0.y1 - (6 + 7.2 * Math.sin(40 * Math.PI / 180))) < 1e-6 && Math.abs(S0.d - 7.2 * Math.cos(40 * Math.PI / 180)) < 1e-6 && !S0.noStand,
+      'rising (40°): the same surface, its far end up 4.6 m, its footprint shortened, still standable');
+    const u = 5, xu = 16 + u * Math.cos(40 * Math.PI / 180), top = 6 + u * Math.sin(40 * Math.PI / 180);
+    ok(Math.abs(C.surfaceHeight(xu, 0, top - 0.2) - top) < 0.02 && Math.abs((C.drawbridgeUnder(xu, 0, top)?.u ?? -9) - u) < 0.05, `at 40°, 5 m up the slab the floor is where the helper says (${top.toFixed(2)} m) and drawbridgeUnder knows how far along`);
+    // a wizard standing still 5 m up the slab as it rises (feet follow the floor while it's within a step): lifted, then dropped past the fall angle
+    let y = 6, fellAt = null, peak = 6;
+    for (let t = 12; t <= 16; t += 1 / 60) { C.updateDrawbridges(t); const fl = C.surfaceHeight(21, 0, y); if (fl >= y - 0.02) { y = fl; peak = Math.max(peak, y); } else { fellAt = { t, a: deg(C.drawbridgeAngle(t)) }; break; } }
+    ok(fellAt && fellAt.a > 44.9 && fellAt.a < 47 && peak > 9.4, `standing 5 m up: carried to ${peak.toFixed(2)} m, dropped as the slab passed 45° (${fellAt?.a.toFixed(1)}° at ${fellAt?.t.toFixed(2)} s)`);
+    C.updateDrawbridges(16);   // up: 80°
+    const [px] = C.surfacePushOut(16.3, 0, 6, C.PLAYER_RADIUS), topAt = S0.y0 + (S0.y1 - S0.y0) * ((16.4 - S0.x) / S0.d + 0.5);
+    ok(S0.noStand && px < 16.05 && C.surfaceHeight(16.6, 0, 6) < 6 && !!C.surfaceSolidAt(16.4, topAt - 0.1, 0) && C.surfaceBlocks([14, 7.5, 0], [19, 7.5, 0]), 'up (80°): a wall across the island\'s edge: pushes a wizard back onto the apron, holds nobody, is solid to shots and sight');
+    const slide = C.drawbridgeSlideVec({ a: 30 * Math.PI / 180, b: C.drawbridges()[0] });
+    ok(slide && slide[0] < -3 && Math.abs(slide[1]) < 1e-9, `the slide points back to the hinge (-x) at 30°: ${slide?.map(v => v.toFixed(2))}`);
+    C.setDrawbridges([]); C.updateDrawbridges(0);
+    const own = (C.DRAWBRIDGES || []).map(b => b.id);
+    ok(!C.SURFACES.some(q => q.drawbridge === 'db-unit') && !C.activeMap().built.SURFACES.some(q => q.drawbridge === 'db-unit') && C.SURFACES.filter(q => q.drawbridge).every(q => own.includes(q.drawbridge)) && C.SURFACES.filter(q => q.drawbridge).length === own.length,
+      `an empty test list takes the test surface out of both lists; the map's own drawbridges stay (${own.join(', ') || 'none'})`);
+  } else ok(true, '(no Sky Ruins layout loaded: the moving-surface checks skipped)');
+  if (had) C.setActiveMap(had);
+  // the hop planner: a sprint-jump alone makes 3 m level; 4-5.3 m needs the air jump at the apex; past about 6 m nothing does
+  const cap = C.sprintOf() * 0.97, P3 = C.hopPlan([0, 6, 0], [3, 6, 0], cap), P4 = C.hopPlan([0, 6, 0], [4, 6.3, 0], cap), P5 = C.hopPlan([0, 6, 0], [5.3, 6, 0], cap), P7 = C.hopPlan([0, 6, 0], [7, 6, 0], cap);
+  ok(P3 && !P3.air && P4 && P4.air && Math.abs(P4.airAt - C.JUMP.v0 / C.JUMP.gravity) < 1e-9 && P5 && P5.air && P5.speed <= cap && !P7,
+    `hopPlan: 3 m single (${P3?.speed.toFixed(1)} m/s), 4 m +0.3 and 5.3 m with the air jump at the apex (${P4?.speed.toFixed(1)}, ${P5?.speed.toFixed(1)} m/s), 7 m impossible`);
+}
+
+// ---- round 24: the route graph on Sky Ruins (bots.js): stepping-stone hops, the narrow walkway, the drawbridge edge
+{
+  const { routeGraphDebug } = await import('../../server/bots.js');
+  const had = C.ACTIVE_MAP.name;
+  if (C.setActiveMap('sky')) {
+    C.updateDrawbridges(0);
+    const G = routeGraphDebug();
+    const stones = (C.ISLANDS || []).filter(i => i.w <= 2.5 && i.d <= 2.5), hops = G.edges.filter(e => e.kind === 'hop'), narrow = G.edges.filter(e => e.kind === 'narrow'), dbs = G.edges.filter(e => e.kind === 'drawbridge');
+    if (stones.length) {
+      // every stone is on a hop chain (each gap made by a planned sprint-jump plus the air jump: hopPlan built the edges), from banks on two islands
+      const stoneIdx = G.nodes.map((n, i) => n.stone ? i : -1).filter(i => i >= 0);
+      ok(stoneIdx.every(i => G.adj[i].some(e => e.kind === 'hop')) && hops.length >= stones.length * 2, `every stepping stone has a hop edge (${stones.length} stones, ${hops.length / 2} hops)`);
+      const bankIslands = new Set(G.nodes.filter(n => n.bank).map(n => n.bank.id));
+      ok(bankIslands.size >= 2, `the stones are jumped onto from ${bankIslands.size} islands (${[...bankIslands].join(', ')})`);
+      // the chain crosses: from a bank on one island, hops only, to a bank on another
+      const bankIdx = G.nodes.map((n, i) => n.bank ? i : -1).filter(i => i >= 0), seen = new Set([bankIdx[0]]), queue = [bankIdx[0]];
+      while (queue.length) { const u = queue.shift(); for (const e of G.adj[u]) if (e.kind === 'hop' && !seen.has(e.b)) { seen.add(e.b); queue.push(e.b); } }
+      ok(bankIdx.some(i => i !== bankIdx[0] && seen.has(i) && G.nodes[i].bank.id !== G.nodes[bankIdx[0]].bank.id), 'a chain of hops joins two islands through the stones');
+    } else ok(true, '(no stepping stones in layout-sky.json yet: the hop checks skipped)');
+    const wk = C.SURFACES.find(s => /^walkway/.test(s.name || ''));
+    if (wk) ok(narrow.length === 2 && Math.min(wk.w, wk.d) <= 1.2 && narrow[0].s === wk && narrow.every(e => G.adj[e.a].some(q => q.kind === 'walk')), `the narrow walkway (${wk.name}, ${Math.min(wk.w, wk.d).toFixed(1)} m wide) is one narrow edge each way, joined to the islands`);
+    else ok(true, '(no walkway-* deck in layout-sky.json yet: the narrow check skipped)');
+    if (C.drawbridges().length) ok(dbs.length === 2 && dbs[0].len > 7, `the drawbridge is a time-gated edge each way (${dbs[0]?.len.toFixed(1)} m)`);
+    else ok(true, '(no drawbridge in layout-sky.json yet: the edge check skipped)');
+  }
+  if (had) C.setActiveMap(had);
+}
+
 await serverChecks();
 await roomChecks();
 await savesChecks();
@@ -238,7 +317,7 @@ async function serverChecks() {
   try {
     await new Promise((res, rej) => { srv.stdout.on('data', d => { if (/listening/.test(d)) res(); }); srv.on('exit', () => rej(new Error('server exited'))); });
     const RELIC = C.SPELLBOOK.trapped_relic, ROLL = C.SPELLBOOK.roll;
-    const join = async (name, lo) => {
+    const join = async (name, lo, room = undefined) => {   // (round 24: `room` 'new' or a code, for checks that want a room of their own)
       const ws = new WebSocket(`ws://localhost:${port}`);
       // (round 16: like the game's client, a state report echoes the server's last move of us it has seen, unless the test sets tp)
       const c = { ws, name, msgs: [], id: null, props: null, tp: 0, send: (m) => ws.send(JSON.stringify(m.t === 'state' && !('tp' in m) ? { ...m, tp: c.tp } : m)) };
@@ -248,7 +327,7 @@ async function serverChecks() {
         if (m.id === c.id && typeof m.seq === 'number' && ['respawn', 'flaskArrive', 'mirror', 'mrainLand'].includes(m.t)) c.tp = m.seq;
         c.msgs.push(m); });
       await new Promise(r => ws.on('open', r));
-      c.send({ t: 'join', proto: 24, name, loadout: { ...C.DEFAULT_LOADOUT, primary: 'spark', ...lo } });   // (round 22 / 24: a current client, not a legacy or v22 room)
+      c.send({ t: 'join', proto: 24, name, loadout: { ...C.DEFAULT_LOADOUT, primary: 'spark', ...lo }, ...(room ? { room } : {}) });   // (round 22 / 24: a current client, not a legacy or v22 room)
       while (c.id == null) await wait(10);
       return c;
     };
@@ -518,6 +597,7 @@ async function serverChecks() {
     for (const c of [A, B, V, R]) c.ws.close();
     await wait(300);
     await agilityChecks(join, since, spots);
+    await drawbridgeChecks(join, since);
   } catch (e) { ok(false, `server checks: ${e.message}`); }
   finally { if (srv.exitCode === null) { srv.kill(); await new Promise(r => srv.once('exit', r)); } }   // (so a rerun can have the port)
 }
@@ -1000,6 +1080,68 @@ async function wallWalkChecks(join, since) {
   for (const c of [A, B]) c.ws.close();
   await wait(300);
   await siphonChecks(join, since);
+}
+
+// ---- round 24: the drawbridge against the real server (a test drawbridge at environment's hinge on Sky Ruins, the cycle moved with
+// debugMap drawbridgePhase): a wizard standing on the slab is carried up as it rises (the server's height matches the shared helper's),
+// its slide at the shared curve's speed passes the speed check, past 45° it drops into the void (nobody credited); up, the slab is a wall
+// (a wizard walking out of the gate is held, a Spark stops at it)
+async function drawbridgeChecks(join, since) {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  if (!C.MAPS?.sky) { ok(true, '(no Sky Ruins: the drawbridge server checks skipped)'); return; }
+  // (a private room of their own: the public rooms still hold earlier checks' players and bots, whose shots and knockbacks spoil a placement)
+  const A = await join('Bridge', { utility: 'telekinesis' }, 'new'), B = await join('Gate', { utility: 'telekinesis' }, A.room?.code);
+  ok(!!A.room?.code && B.room?.id === A.room?.id, `the drawbridge testers share a private room (${A.room?.id}, ${B.room?.id})`);
+  A.send({ t: 'matchDebug', size: 2, countdown: 1, map: 'sky' }); A.send({ t: 'removeBots' });
+  for (let i = 0; i < 40 && !A.msgs.some(m => m.t === 'map' && m.map?.id === 'sky'); i++) await wait(100);
+  ok(A.msgs.some(m => m.t === 'map' && m.map?.id === 'sky'), 'the drawbridge test room is on Sky Ruins');
+  // (the match goes live on it: the countdown roots everyone and its end respawns them, which would undo a placement)
+  for (let i = 0; i < 60 && ![A, B].every(c => c.msgs.some(m => m.t === 'matchPhase' && m.match?.phase === 'live' && m.match?.map?.id === 'sky')); i++) await wait(100);
+  await wait(300);
+  const H = { id: 'db-srv', x: 16, y: 6, z: 0, dir: [1, 0], yaw: Math.PI / 2, w: 3.4, d: 7.2 };
+  let n = A.msgs.length;
+  A.send({ t: 'debugMap', drawbridges: [H], drawbridgePhase: 11, void: 1 }); await wait(250);
+  const mm = since(A, n, m => m.t === 'map').pop();
+  ok(mm?.drawbridges?.[0]?.id === 'db-srv' && Number.isFinite(mm.drawbridges[0].t0), `debugMap: the map message carries the test drawbridge and the cycle's origin (t0 ${mm?.drawbridges?.[0]?.t0?.toFixed(2)})`);
+  C.DRAWBRIDGE.t0 = mm?.drawbridges?.[0]?.t0 ?? 0;
+  C.setDrawbridges([H]);   // (our own copy of the helper poses the same test slab: the layout's own drawbridge is replaced, as on the server)
+  const snapOf = (c) => { const sn = c.msgs.filter(m => m.t === 'snap').pop(); return sn ? { time: sn.time, me: sn.players.find(q => q.id === c.id) } : null; };
+  // A stands 5.5 m up the slab (x 21.5) while it's down; B on the apron behind the gate
+  A.send({ t: 'debugPlace', p: [21.5, 6, 0], yaw: -Math.PI / 2 }); B.send({ t: 'debugPlace', p: [14.6, 6, 0], yaw: Math.PI / 2 }); await wait(250);
+  const s0 = snapOf(A);
+  ok(s0?.me && Math.abs(s0.me.p[1] - 6) < 0.05 && Math.abs(s0.me.p[0] - 21.5) < 0.05, `down: A stands on the slab over the gap at 6 m (${s0?.me?.p.map(v => v.toFixed(2))})`);
+  // through the rise, reporting the height the snapshots give us (a client does its own, from the same helper), and from about 17° the
+  // slide toward the hinge at the shared curve's speed: the server lifts us with the slab and lets the slide through
+  let lastY = 6, x = 21.5, slid = 0, rejected = 0; const diffs = [];
+  for (let i = 0; i < 80; i++) {
+    const sn = snapOf(A);
+    if (sn?.me) { lastY = sn.me.p[1]; const sv = C.drawbridgeSlide(C.drawbridgeAngle(sn.time)); if (sv > 0) { x -= sv * 0.05; slid += sv * 0.05; } }
+    A.send({ t: 'state', p: [x, lastY, 0], yaw: -Math.PI / 2 }); await wait(50);
+    if (sn?.me) { C.updateDrawbridges(sn.time); diffs.push(Math.abs(sn.me.p[1] - C.surfaceHeight(sn.me.p[0], 0, 99))); if (Math.abs(sn.me.p[0] - x) > 0.6) rejected++; }
+    if (sn && C.drawbridgePhase(sn.time).at > 14.05) break;
+  }
+  const s1 = snapOf(A), worst = Math.max(...diffs.slice(6));
+  ok(s1.me.p[1] > 8.3 && worst < 0.45, `rising: the server carried A up to ${s1.me.p[1].toFixed(2)} m; its height matches the shared helper's (worst ${worst.toFixed(2)} m over ${diffs.length} snapshots)`);
+  ok(slid > 1.2 && rejected === 0 && Math.abs(s1.me.p[0] - x) < 0.6, `the slide toward the hinge (${slid.toFixed(2)} m reported at the shared curve's speed) passes the speed check (server x ${s1.me.p[0].toFixed(2)}, ours ${x.toFixed(2)})`);
+  // past 45° the slab holds nobody: standing still now, A drops off the tilted slab into the void
+  n = A.msgs.length;
+  for (let i = 0; i < 70 && !since(A, n, m => m.t === 'death' && m.id === A.id).length; i++) { const sn = snapOf(A); if (sn?.me) lastY = sn.me.p[1]; A.send({ t: 'state', p: [x, lastY, 0], yaw: -Math.PI / 2 }); await wait(50); }
+  const d = since(A, n, m => m.t === 'death' && m.id === A.id)[0];
+  ok(d && d.cause === 'void' && (d.killer == null || d.killer === A.id), `past 45° A dropped and died in the void, nobody credited (${d?.cause}, killer ${d?.killer})`);
+  // up (80°): a wall across the island's edge: B can't walk out onto it, and a Spark from the gate stops at it
+  A.send({ t: 'debugMap', drawbridgePhase: 18 }); await wait(200);
+  // (like a client: each report steps on from where the server last had us, so a push-back holds)
+  for (let i = 0; i < 24; i++) { const sn = snapOf(B); const bx = Math.min(17.5, (sn?.me?.p[0] ?? 14.6) + 0.15); B.send({ t: 'state', p: [bx, 6, 0], yaw: Math.PI / 2 }); await wait(50); }
+  const sb = snapOf(B);
+  ok(sb.me.p[0] < 16.1 && sb.me.p[0] > 15.2 && Math.abs(sb.me.p[1] - 6) < 0.05, `up: B walking out of the gate is held on the apron (x ${sb.me.p[0].toFixed(2)}, y ${sb.me.p[1].toFixed(2)})`);
+  n = B.msgs.length;
+  B.send({ t: 'cast', kind: 'fast', origin: [sb.me.p[0], 7.3, 0], dir: [1, 0, 0] }); await wait(700);
+  const pj = since(B, n, m => m.t === 'proj' && m.owner === B.id)[0], pe = pj && since(B, n, m => m.t === 'projEnd' && m.id === pj.id)[0];
+  ok(pe && pe.hit && pe.p[0] < 17.6 && pe.p[0] > 15.5, `a Spark from the gate stops at the raised slab (hit at x ${pe?.p?.[0]?.toFixed(2)})`);
+  A.send({ t: 'debugMap', drawbridges: [], drawbridgePhase: 0 }); await wait(150);
+  C.DRAWBRIDGE.t0 = 0; C.setDrawbridges([]);
+  for (const c of [A, B]) c.ws.close();
+  await wait(300);
 }
 
 // ---- round 16: Blood Siphon (the Lash's id): a 0.35 s cast, a bolt that heals its caster for half its damage; a miss costs nothing
