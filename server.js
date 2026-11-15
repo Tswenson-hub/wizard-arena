@@ -11,7 +11,8 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import * as C from './public/shared/constants.js';
 import { createRoom } from './server/room.js';
-import * as Saves from './server/saves.js';   // round 18: CrazyGames players' saves on Supabase (environment-owned; no-ops without keys)
+import * as Saves from './server/saves.js';
+import { attach as attachNoobTube } from './vendor/noobtube/server/index.js';   // Noob Tube (separate game) on /nt, rooms in its own worker thread   // round 18: CrazyGames players' saves on Supabase (environment-owned; no-ops without keys)
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -23,8 +24,19 @@ app.get('/healthz', (req, res) => res.type('text').send(`ok rooms=${rooms.size} 
 app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1h' }));
 // three.js is served from node_modules so the game has no CDN dependency.
 app.use('/vendor/three', express.static(path.join(__dirname, 'node_modules', 'three'), { maxAge: '7d' }));
+// Noob Tube (~/thoomp, packaged by its tools/sync-to-wizard-arena.mjs): the web client at /noobtube/, its game
+// server on the /nt websocket path in a worker_thread (its ticks never block ours). NOOBTUBE=0 turns it off.
+app.use('/noobtube', express.static(path.join(__dirname, 'vendor', 'noobtube', 'public'), { maxAge: '1h' }));
 const httpServer = http.createServer(app);
-const wss = new WebSocketServer({ server: httpServer });
+const nt = process.env.NOOBTUBE === '0' ? null : attachNoobTube(httpServer, { path: '/nt' });
+app.get('/nt/healthz', (req, res) => res.type('text').send(nt ? nt.healthz() : 'off'));
+app.get('/nt/perf', (req, res) => res.json(nt ? nt.perf() : { off: true }));
+// Upgrades are routed: /nt belongs to Noob Tube's own socket server, everything else is ours.
+const wss = new WebSocketServer({ noServer: true });
+httpServer.on('upgrade', (req, socket, head) => {
+  if (nt?.claims(req)) return;
+  wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+});
 
 // ---------------------------------------------------------------- rooms (round 17)
 // Public rooms: a plain join goes to the fullest public room with a free human seat (else a new one). Private rooms: made
