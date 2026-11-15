@@ -18,7 +18,7 @@ const ROOM_ERRORS = {
 	busy: () => "The server is too busy for a new private room right now. You're in a public match instead."
 };
 const cleanCode = (v) => String(v ?? "").trim().toUpperCase();
-function createRegistry({ createRoom, maxRooms = 12, maxBots = 60, emptyTtl = 60, seats = 6, now = () => performance.now() / 1e3, rand = Math.random, log = () => {} } = {}) {
+function createRegistry({ createRoom, maxRooms = 12, maxBots = 96, emptyTtl = 60, seats = 8, now = () => performance.now() / 1e3, rand = Math.random, log = () => {} } = {}) {
 	const rooms = /* @__PURE__ */ new Map();
 	let nextPlayerId = 1, nextPublic = 1;
 	const allocId = () => nextPlayerId++;
@@ -167,11 +167,11 @@ function createRegistry({ createRoom, maxRooms = 12, maxBots = 60, emptyTtl = 60
 }
 // src/game/domination.js
 const DEFAULTS = {
-	scoreToWin: 200,
-	timeLimit: 480,
+	scoreToWin: 725,
+	timeLimit: 600,
 	captureTime: 6,
 	perExtra: .5,
-	maxPlayers: 3,
+	maxPlayers: 4,
 	regress: .25,
 	pointsPerSecond: 1,
 	radius: 5,
@@ -53579,7 +53579,7 @@ const CONFIG = {
 				desc: "Your own blasts hurt half as much",
 				selfDamageMult: .5
 			},
-			unlockXp: 1200
+			unlockXp: 1150
 		},
 		paratrooper: {
 			name: "Paratrooper",
@@ -53597,7 +53597,7 @@ const CONFIG = {
 				desc: "Space while falling opens a glide chute",
 				chuteAnytime: true
 			},
-			unlockXp: 3150
+			unlockXp: 3e3
 		},
 		glideFall: 3.2,
 		glideDamageMult: 1.25
@@ -65310,7 +65310,7 @@ function createRoomSim(opts = {}) {
 		pendingSeq.delete(a);
 		return s;
 	}
-	function syncBots(perTeam = 3) {
+	function syncBots(perTeam = 4) {
 		const B = game.modules.bots;
 		const need = {
 			red: perTeam,
@@ -65591,7 +65591,7 @@ const xyz = (v, f = r2$1) => [
 ];
 function createSimRoom(opts) {
 	const send = opts.send ?? (() => {});
-	const seats = opts.seats ?? 6;
+	const seats = opts.seats ?? 8;
 	let room = null;
 	const sim = createRoomSim({
 		mapId: opts.mapId ?? "citydom",
@@ -66349,7 +66349,7 @@ function createRoom(opts) {
 }
 function createStubRoom(opts) {
 	const send = opts.send ?? (() => {});
-	const seats = opts.seats ?? 6;
+	const seats = opts.seats ?? 8;
 	let seed = [...String(opts.id)].reduce((a, c) => a * 31 + c.charCodeAt(0) >>> 0, 7) || 1;
 	const room = {
 		id: opts.id,
@@ -66711,7 +66711,7 @@ const send = (cids, msg) => post({
 });
 const reg = createRegistry({
 	maxRooms: cfg.maxRooms ?? 12,
-	maxBots: cfg.maxBots ?? 60,
+	maxBots: cfg.maxBots ?? 96,
 	emptyTtl: cfg.emptyTtl ?? 60,
 	log,
 	createRoom: (o) => createRoom({
