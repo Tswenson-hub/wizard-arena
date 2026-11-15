@@ -598,6 +598,7 @@ async function serverChecks() {
     await wait(300);
     await agilityChecks(join, since, spots);
     await drawbridgeChecks(join, since);
+    await skyPropChecks(join, since);
   } catch (e) { ok(false, `server checks: ${e.message}`); }
   finally { if (srv.exitCode === null) { srv.kill(); await new Promise(r => srv.once('exit', r)); } }   // (so a rerun can have the port)
 }
@@ -1141,6 +1142,75 @@ async function drawbridgeChecks(join, since) {
   A.send({ t: 'debugMap', drawbridges: [], drawbridgePhase: 0 }); await wait(150);
   C.DRAWBRIDGE.t0 = 0; C.setDrawbridges([]);
   for (const c of [A, B]) c.ws.close();
+  await wait(300);
+}
+
+// ---- round 24b: throwables on Sky Ruins (PROP_SPAWNS [type, x, z, y]): props stand on their floor, lift and throw from it and hit, a
+// prop set down over the void or thrown off an island breaks and comes back at its spawn (home), on its floor
+async function skyPropChecks(join, since) {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  if (!C.MAPS?.sky) { ok(true, '(no Sky Ruins: the prop checks skipped)'); return; }
+  const had = C.ACTIVE_MAP.name; C.setActiveMap('sky');
+  const spawns = C.PROP_SPAWNS.map(([type, x, z, y], i) => ({ id: i + 1, type, x, z, y }));
+  if (had) C.setActiveMap(had);
+  const A = await join('Lifter', { utility: 'telekinesis' }, 'new'), B = await join('Target', { utility: 'telekinesis' }, A.room?.code);
+  A.send({ t: 'matchDebug', size: 2, countdown: 1, map: 'sky' }); A.send({ t: 'removeBots' });
+  for (let i = 0; i < 60 && ![A, B].every(c => c.msgs.some(m => m.t === 'matchPhase' && m.match?.phase === 'live' && m.match?.map?.id === 'sky')); i++) await wait(100);
+  await wait(300);
+  const mapMsg = A.msgs.filter(m => m.t === 'map' && m.map?.id === 'sky').pop();
+  const raised = (mapMsg?.props || []).filter(q => q.y > 1);
+  ok(spawns.length >= 10 && raised.length === spawns.length && raised.every(q => Math.abs(q.y - spawns[q.id - 1].y) < 1e-6),
+    `Sky Ruins' props stand on their floors in the map message (${raised.length}/${spawns.length} raised; ${[...new Set(raised.map(q => +q.y.toFixed(2)))].join(', ')} m)`);
+  const isl = (q) => spawns.find(s => s.id === q);
+  // three props on the north island (floor 6): the crate to throw at B, the keg to set down over the edge, the barrel to throw off the island
+  const crate = spawns.find(s => s.y === 6 && s.z > 24 && s.type === 'crate'), keg = spawns.find(s => s.y === 6 && s.z > 24 && s.type === 'keg'), barrel = spawns.find(s => s.y === 6 && s.z > 30 && s.type === 'barrel');
+  if (!crate || !keg || !barrel) { ok(false, `north-island props for the checks (${!!crate} ${!!keg} ${!!barrel})`); for (const c of [A, B]) c.ws.close(); return; }
+  const propOf = () => { const st = new Map(); for (const m of A.msgs) { if (m.t === 'map') for (const q of m.props || []) st.set(q.id, q); if (m.t === 'prop') st.set(m.prop.id, m.prop); if (m.t === 'propBreak') st.set(m.id, { ...(st.get(m.id) || {}), state: 'broken' }); } return st; };
+  const place = (c, x, z, yaw) => c.send({ t: 'debugPlace', p: [x, 6, z], yaw, resetCd: true });
+  const lift = async (c, pr) => {
+    const me = [pr.lx, 6, pr.lz], from = [me[0], 6 + 1.3, me[2]], ctr = [pr.x, pr.y + C.PROP_TYPES[pr.type].h * 0.5, pr.z];
+    c.send({ t: 'pickup', aimOrigin: from, aimDir: [ctr[0] - from[0], ctr[1] - from[1], ctr[2] - from[2]] }); await wait(500);
+    return propOf().get(pr.id)?.state;
+  };
+  // 1. lift the crate from 2.5 m south of it, throw it at B (on the island 4 m north of it): a hit
+  place(A, crate.x, crate.z + 2.5, Math.PI); place(B, crate.x + 0.5, crate.z + 7.5, Math.PI); await wait(300);
+  const st1 = await lift(A, { ...crate, lx: crate.x, lz: crate.z + 2.5 });
+  ok(st1 === 'carried', `Telekinesis lifts the crate from the island's floor at 6 m (${st1})`);
+  A.send({ t: 'debugPlace', p: [crate.x, 6, crate.z + 2.5], yaw: 0 }); await wait(250);   // (turned round to face B)
+  let n = A.msgs.length;
+  A.send({ t: 'throw', target: [crate.x + 0.5, 6 + C.HIT_CENTER_Y, crate.z + 7.5] }); await wait(800);
+  const hit = since(A, n, m => m.t === 'hit' && m.target === B.id && m.kind === 'prop')[0], br1 = since(A, n, m => m.t === 'propBreak' && m.id === crate.id)[0];
+  ok(!!hit && hit.dmg > 0 && hit.target === B.id && !!br1 && br1.p[1] > 5, `the thrown crate hits B up on the island and breaks there (${hit?.dmg} damage, broke at y ${br1?.p?.[1]?.toFixed(2)})`);
+  // 2. the keg: set down over the island's west edge (x -10): it falls away (broken), to be back at home
+  place(A, keg.x - 2.5, keg.z, Math.PI / 2); await wait(300);
+  const st2 = await lift(A, { ...keg, lx: keg.x - 2.5, lz: keg.z });
+  A.send({ t: 'debugPlace', p: [-9.4, 6, 30], yaw: -Math.PI / 2 }); await wait(300);
+  n = A.msgs.length; A.send({ t: 'drop' }); await wait(300);
+  const br2 = since(A, n, m => m.t === 'propBreak' && m.id === keg.id)[0];
+  ok(st2 === 'carried' && !!br2 && !since(A, n, m => m.t === 'prop' && m.prop.id === keg.id && m.prop.state === 'idle').length, `the keg set down over the void edge breaks instead of resting on the cloud (${st2}, broke at ${br2?.p?.map(v => v.toFixed(1))})`);
+  // 3. the barrel: set down on the island elsewhere (it rests there, on the floor), lifted again and thrown off the island to the west
+  place(A, barrel.x + 2.5, barrel.z, -Math.PI / 2); await wait(300);
+  const st3 = await lift(A, { ...barrel, lx: barrel.x + 2.5, lz: barrel.z });
+  n = A.msgs.length; A.send({ t: 'drop' }); await wait(300);
+  const rest = since(A, n, m => m.t === 'prop' && m.prop.id === barrel.id && m.prop.state === 'idle').pop()?.prop;
+  ok(st3 === 'carried' && rest && Math.abs(rest.y - 6) < 0.05 && Math.hypot(rest.x - barrel.x, rest.z - barrel.z) > 0.5, `set down on the island it rests on the floor there (${rest?.x?.toFixed(1)}, ${rest?.y?.toFixed(2)}, ${rest?.z?.toFixed(1)})`);
+  const re = { ...barrel, x: rest?.x ?? barrel.x, z: rest?.z ?? barrel.z };
+  place(A, re.x + 2.5, re.z, -Math.PI / 2); await wait(300);
+  const st4 = await lift(A, { ...re, lx: re.x + 2.5, lz: re.z });
+  A.send({ t: 'debugPlace', p: [-8.8, 6, re.z], yaw: -Math.PI / 2 }); await wait(250);
+  n = A.msgs.length; A.send({ t: 'throw', dir: [-1, 0.25, 0] }); await wait(2500);
+  const br4 = since(A, n, m => m.t === 'propBreak' && m.id === barrel.id)[0];
+  const hadM = C.ACTIVE_MAP.name; C.setActiveMap('sky');
+  const offIsland = !!br4 && C.surfaceHeight(br4.p[0], br4.p[2], br4.p[1]) < C.voidY();
+  if (hadM) C.setActiveMap(hadM);
+  ok(st4 === 'carried' && offIsland, `thrown off the island to the west it breaks out over the void (at ${br4?.p?.map(v => v.toFixed(1))})`);
+  // 4. both come back at home on their floor (PROP_RESPAWN_TIME, 18 s); the crate where it was lifted from (its home too)
+  await wait((C.PROP_RESPAWN_TIME + 1.2) * 1000);
+  const S = propOf(), k = S.get(keg.id), b = S.get(barrel.id), c = S.get(crate.id);
+  ok(k?.state === 'idle' && Math.hypot(k.x - keg.x, k.z - keg.z) < 0.01 && Math.abs(k.y - 6) < 0.01, `the keg is back at home on the island floor (${k?.state} at ${k?.x}, ${k?.y}, ${k?.z})`);
+  ok(b?.state === 'idle' && Math.hypot(b.x - barrel.x, b.z - barrel.z) < 0.01 && Math.abs(b.y - 6) < 0.01, `the barrel thrown off the island is back at home, not where it was last set down (${b?.state} at ${b?.x}, ${b?.y}, ${b?.z})`);
+  ok(c?.state === 'idle' && Math.abs(c.y - 6) < 0.01, `the crate is back on its floor (${c?.state} at y ${c?.y})`);
+  for (const q of [A, B]) q.ws.close();
   await wait(300);
 }
 
