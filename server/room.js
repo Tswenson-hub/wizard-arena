@@ -51,10 +51,12 @@ export function createRoom(opts) {
   // ---------------------------------------------------------------- props
   function buildProps() {
     props.clear();
-    C.PROP_SPAWNS.forEach(([type, x, z], i) => {
+    // round 24b: [type, x, z, y] (y: the floor it stands on, Sky Ruins' islands at 6; 0 on the courtyard); its spawn is its home
+    C.PROP_SPAWNS.forEach(([type, x, z, y0], i) => {
       const id = i + 1;
       if (!C.PROP_TYPES[type]) { console.warn(`[props] spawn ${id}: unknown type '${type}', skipped`); return; }   // (a layout mid-edit)
-      props.set(id, { id, type, x, z, state: 'idle', carrier: null, respawnAt: 0, liftUntil: 0 });
+      const y = Number.isFinite(y0) ? y0 : 0;
+      props.set(id, { id, type, x, z, y, hx: x, hz: z, hy: y, state: 'idle', carrier: null, respawnAt: 0, liftUntil: 0 });
     });
   }
   buildProps();
@@ -63,6 +65,8 @@ export function createRoom(opts) {
     return { id: p.id, type: p.type, x: p.x, y: p.y || 0, z: p.z, state: p.state, carrier: p.carrier };
   }
   const isHeld = (prop) => prop.state === 'lifting' || prop.state === 'carried';
+  // round 24b: a spot over the void (Sky Ruins: the floor there is below MAP_INFO.void, or a test's debugMap void)
+  const overVoid = (x, z, y = 99) => { const vy = debugSpots?.void ?? C.voidY(); return vy != null && groundAt(x, z, y) < vy; };
 
   // ---------------------------------------------------------------- players
   // Round 11: no heroes. Everyone is the generic wizard; `loadout` (C.sanitizeLoadout) is what they cast, `voice` their
@@ -482,12 +486,13 @@ export function createRoom(opts) {
     if (!prop) return;
     match.onDrop(p, prop, reason || (destroy ? 'destroyed' : 'dropped'));
     prop.carrier = null;
-    if (destroy) {
-      breakProp(prop, [p.p[0], 1, p.p[2]]);
+    const hp = C.holdPoint(p.p, p.yaw);
+    const x = clamp(hp[0], -C.ARENA_RADIUS, C.ARENA_RADIUS), z = clamp(hp[2], -C.ARENA_RADIUS, C.ARENA_RADIUS);
+    if (destroy || overVoid(x, z, p.p[1] + 0.3)) {
+      breakProp(prop, destroy ? [p.p[0], p.p[1] + 1, p.p[2]] : hp);   // (round 24b: set down over the void: it falls away, and is back at home)
     } else {
-      const hp = C.holdPoint(p.p, p.yaw);
       prop.state = 'idle';
-      prop.x = clamp(hp[0], -C.ARENA_RADIUS, C.ARENA_RADIUS); prop.z = clamp(hp[2], -C.ARENA_RADIUS, C.ARENA_RADIUS);
+      prop.x = x; prop.z = z;
       prop.y = groundAt(prop.x, prop.z, p.p[1] + 0.3);   // (round 15: set down on the floor there, a wall-walk too)
       broadcast({ t: 'prop', prop: propPublic(prop) });
     }
@@ -626,6 +631,8 @@ export function createRoom(opts) {
     prop.state = 'broken';
     prop.carrier = null;
     prop.respawnAt = now() + C.PROP_RESPAWN_TIME;
+    // round 24b: it comes back where it last rested, unless that spot (or where it broke) is over the void: then at its spawn
+    if (prop.hx != null && (overVoid(prop.x, prop.z, (prop.y || 0) + 0.3) || (at && overVoid(at[0], at[2])))) { prop.x = prop.hx; prop.z = prop.hz; prop.y = prop.hy; }
     broadcast({ t: 'propBreak', id: prop.id, p: at });
   }
 
@@ -1744,8 +1751,8 @@ export function createRoom(opts) {
         endProjectile(proj, true, { surface: 'firewall' });
         continue;
       }
-      // ground / arena bounds
-      if (proj.p[1] <= proj.radius * 0.5 || proj.p[1] > 40 || Math.hypot(proj.p[0], proj.p[2]) > C.ARENA_RADIUS + 6) {
+      // ground / arena bounds (round 24b: a thrown prop that falls past the void is gone)
+      if (proj.p[1] <= proj.radius * 0.5 || (proj.propId && proj.p[1] < (debugSpots?.void ?? C.voidY() ?? -1e9)) || proj.p[1] > 40 || Math.hypot(proj.p[0], proj.p[2]) > C.ARENA_RADIUS + 6) {
         proj.p[1] = Math.max(proj.p[1], 0.05);
         endProjectile(proj, true, { surface: 'ground' });
         continue;
@@ -1860,7 +1867,7 @@ export function createRoom(opts) {
         broadcast({ t: 'prop', prop: propPublic(prop) });
       }
       if (prop.state === 'broken' && t >= prop.respawnAt) {
-        const occupied = [...players.values()].some(pl => !pl.dead && dist2D(pl.p, [prop.x, 0, prop.z]) < 1.5);
+        const occupied = [...players.values()].some(pl => !pl.dead && dist2D(pl.p, [prop.x, 0, prop.z]) < 1.5 && Math.abs(pl.p[1] - (prop.y || 0)) < 2);   // (round 24b: on its floor)
         if (occupied) { prop.respawnAt = t + 2; continue; }
         prop.state = 'idle';
         broadcast({ t: 'prop', prop: propPublic(prop) });
@@ -1931,7 +1938,7 @@ export function createRoom(opts) {
         // tests only (WA_DEBUG=1): move a resting prop to (x, z)
         const prop = process.env.WA_DEBUG && props.get(msg.id);
         if (!prop || prop.state !== 'idle' || !Number.isFinite(msg.x) || !Number.isFinite(msg.z)) break;
-        prop.x = msg.x; prop.z = msg.z;
+        prop.x = msg.x; prop.z = msg.z; prop.y = Number.isFinite(msg.y) ? msg.y : groundAt(msg.x, msg.z, 99);   // (round 24b: on the floor there)
         broadcast({ t: 'prop', prop: propPublic(prop) });
         break;
       }

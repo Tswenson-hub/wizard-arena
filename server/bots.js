@@ -983,7 +983,7 @@ function throwProp(me, target, act, cfg, world) {
 // Turn to a prop and hand `send` the aim ray at it (for a pickup or a curse).
 function aimProp(me, prop, send) {
   const from = [me.p[0], me.p[1] + 1.3, me.p[2]];
-  const c = [prop.x, C.PROP_TYPES[prop.type].h * 0.5, prop.z];
+  const c = [prop.x, (prop.y || 0) + C.PROP_TYPES[prop.type].h * 0.5, prop.z];   // (round 24b: on its floor)
   me.yaw = yawTo(me.p, c);
   send(from, [c[0] - from[0], c[1] - from[1], c[2] - from[2]]);
 }
@@ -1056,8 +1056,9 @@ function pickProp(me, target, world, t) {
     if (prop.state !== 'idle') continue;
     if (prop.cursedBy === me.id) continue;                                   // our own trap: leave it be
     if (t - (me.bot.burned.get(prop.id) ?? -Infinity) < 40) continue;      // it blew up on us (Hard bots)
-    const pp = [prop.x, 0, prop.z];
+    const pp = [prop.x, prop.y || 0, prop.z];   // (round 24b: on its floor)
     const d = dist2D(me.p, pp);
+    if (Math.abs(pp[1] - me.p[1]) > 3) continue;   // (not one on another level)
     if (d > Math.min(12, C.TK.range - 1) || !hasLOS(me.p, pp)) continue;
     // prefer props near us and not behind us relative to the target
     const s = d + dist2D(pp, target.p) * 0.3;

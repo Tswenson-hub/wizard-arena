@@ -835,7 +835,7 @@ function applySnapshot(w, s) {
 function startCarry(w, id) {
   w.carrying = id;
   const e = id ? props.get(id) : null;
-  w.setCarry(e ? makePropMesh(e.data.type) : null, e && e.data.state === 'lifting' ? [e.data.x, 0, e.data.z] : null);
+  w.setCarry(e ? makePropMesh(e.data.type) : null, e && e.data.state === 'lifting' ? [e.data.x, e.data.y || 0, e.data.z] : null);   // (round 24b: from its floor)
 }
 
 function setProp(data, initial = false) {
@@ -847,11 +847,11 @@ function setProp(data, initial = false) {
   }
   const prevState = entry.data.state;
   entry.data = data;
-  entry.mesh.position.set(data.x, 0, data.z);
+  entry.mesh.position.set(data.x, data.y || 0, data.z);   // (round 24b: on its floor: Sky Ruins' islands are 6 m up)
   entry.mesh.visible = data.state === 'idle';
   if (data.state === 'idle' && prevState === 'broken' && !initial) {
     entry.mesh.scale.setScalar(0.01); entry.spawnT = 0;   // pop-in
-    effects.burst(new THREE.Vector3(data.x, 0.5, data.z), C.PROP_TYPES[data.type].color, 8, 2, 0.3, 0);
+    effects.burst(new THREE.Vector3(data.x, (data.y || 0) + 0.5, data.z), C.PROP_TYPES[data.type].color, 8, 2, 0.3, 0);
   }
   if (data.state === 'lifting' || data.state === 'carried') {
     const carrier = players.get(data.carrier);
@@ -1392,7 +1392,7 @@ function handleMessage(msg) {
       break;
     }
     case 'prop':
-      if (msg.prop.state === 'lifting') { sfx.pickup([msg.prop.x, 0.6, msg.prop.z]); const w = players.get(msg.prop.carrier); if (w) tkGesture(w, 'tk_lift'); }
+      if (msg.prop.state === 'lifting') { sfx.pickup([msg.prop.x, (msg.prop.y || 0) + 0.6, msg.prop.z]); const w = players.get(msg.prop.carrier); if (w) tkGesture(w, 'tk_lift'); }
       setProp(msg.prop);
       break;
     case 'propBreak': {
