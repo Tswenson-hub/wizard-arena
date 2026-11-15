@@ -302,7 +302,8 @@ ui.form.addEventListener('submit', async (e) => {
   try {
     const room = ui.form.dataset.room || undefined;   // round 17: select.js's buttons ('' public, 'new', a code); the launch's auto-join
     // fill bots play at this difficulty; round 21: a first-timer's own new public room gets Easy ones (the server's rule)
-    const welcome = await net.connect(name, { loadout: wantLoadout, voice: wantVoice }, ui.botDiff.value, room, firstVisit ? { firstVisit: true } : null);
+    const welcome = await net.connect(name, { loadout: wantLoadout, voice: wantVoice }, ui.botDiff.value, room,
+      { ...(firstVisit ? { firstVisit: true } : {}), ...(adminKey() ? { admin: adminKey() } : {}), platform: PLATFORM });   // (round 23: the admin key and the source)
     onWelcome(welcome);
   } catch (err) {
     ui.loadStatus.textContent = err.message || 'Connection failed';
@@ -466,7 +467,7 @@ withPlatform(P => P.onMuteAudio?.(m => sfx.setPlatformMute(m)));
 async function autoJoin() {
   const P = await platform();
   await P?.ready?.();
-  const room = P ? (P.inviteRoom?.() || (P.isInstantMultiplayer?.() ? 'new' : null)) : null;   // (an invite first: platform.js's order)
+  const room = adminPublicRoom() || (P ? (P.inviteRoom?.() || (P.isInstantMultiplayer?.() ? 'new' : null)) : null);   // (an invite first: platform.js's order; round 23: an admin's public room id)
   if ((!room && !firstVisit) || me || ui.joinBtn.disabled) return;
   await Select.nameReady?.();
   if (me || ui.joinBtn.disabled) return;
@@ -488,6 +489,20 @@ const URLQ = (() => { try { return new URLSearchParams(location.search); } catch
 const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch { /* not remembered */ } };
 const PLAYED_KEY = 'waPlayedOnce', VISITS_KEY = 'waVisits', VISIT_SESSION_KEY = 'waVisitAt';
+// Round 23: Ty's admin key. `?admin=<key>` stores it (and is taken off the address bar); `?admin=1` means "use the stored one" (the
+// Discord alert's join link). The join carries it; the server verifies it (no alert for Ty's own joins, and he may join a public
+// room by its id: `?room=public-3`). The key is never shown or logged here.
+const ADMIN_KEY_LS = 'waAdminKey';
+{
+  const a = URLQ.get('admin');
+  if (a && a !== '1') lsSet(ADMIN_KEY_LS, a);
+  if (a) { try { const u = new URL(location.href); u.searchParams.delete('admin'); history.replaceState(history.state, '', u.toString()); } catch {} }
+}
+const adminKey = () => lsGet(ADMIN_KEY_LS) || null;
+// an admin's `?room=public-N` (platform.js only passes private codes)
+const adminPublicRoom = () => { const v = URLQ.get('room'); return adminKey() && v && /^public-\d+$/i.test(v.trim()) ? v.trim().toLowerCase() : null; };
+// where this client runs, for the alert's "source" (the CrazyGames build sets window.WA_SERVER in its config.js)
+const PLATFORM = window.WA_SERVER ? 'crazygames' : 'web';
 const FIRST = { playedAfter: 10, hintAfter: 75, hintVisits: 3 };
 let firstVisit = false, playedOnce = !!lsGet(PLAYED_KEY), visitNo = 0, playT = 0, hintShown = false, menuEverOpened = false;
 // the logged-in CrazyGames player's profile: null for guests, our own site, no token or any error
