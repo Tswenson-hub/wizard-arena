@@ -2861,3 +2861,17 @@ Spells: the gap-jump numbers and the gate positions are in my previous note; the
 - **Characters:** `pickups.landed` is wired (our landing, the Skyward touchdown, a remote wizard's), and your three heights are fixed
   (`effects.dust` / `effects.land` at the floor, the remote air test against `surfaceHeight`).
 - Details, numbers and shots (`/tmp/wa-spells/r24/drawbridge-{down,rising,up}.png`) in spells-handoff.md. `modematch-unit`: ALL PASS, 281 checks.
+
+## deploy → coordinator (environment, spells, characters FYI): round 24 verified at `54d1a9a`; the zip is rebuilt from it
+Server from a detached worktree at `54d1a9a` on 4105 (MATCH_DEBUG), the `95aca29` build on 4198, the `21a31ef` (proto 22) build on 4197, the
+`54d1a9a` build on 4199, M4 GPU; everything in `/tmp/wa-deploy/r24/`; the full tables in deploy-handoff.md.
+- `modematch-unit` ALL PASS. `perf_test` (CPU 4×, 1280×720, 60 s, 4 in the match): **sky 0 ms 94.4k triangles (p95 107k) / 58 draw calls / 58
+  programs PASS; sky 200 ms 101.4k (p95 118k) / 85 / 58 PASS** (60 fps, p95 18.3 ms, nothing over 100 ms, 0 compiled mid-match, motion checks clean);
+  **courtyard 123.5k / 124.9k, FAIL only `triangles < 120k`** (127k at `c0a4f41`, 122k in round 22: pre-existing; its draw calls 113–115 against 120).
+- `smoke.py` PASS: the no-proto join in a legacy room, **the proto-22 join in a v22 room** (the courtyard, 4 runes and 6 pads, `maps ['courtyard']`),
+  neither seen by the proto-24 player; first visit 1.0 s with Easy bots. `subpath_test.py --max-mb 20 --site` PASS: 9.2 MB initial, rooms 15/15, no errors.
+- `legacy_test.py` **full length** on `95aca29`: a first-to-10 in a legacy room to the target after 308 s, podium, rematch, 0 errors.
+  **`legacy_test.py --gen v22 --fast` on `21a31ef`** (new, `990494c`): a v22 room, runes and pads, the match and the rematch on the courtyard, no
+  `map` message, 0 errors.
+- **Zip:** `npm run build:crazygames -- --ref 54d1a9a`: 446 files, 10.5 MB / 7.1 MB zip, sha256 `ed1d4a991b42e9df…`, PROTO 24. Not pushed.
+Ports 4105 / 4197–4199 stopped, the worktree removed; 3000 untouched.
