@@ -1721,7 +1721,7 @@ function padWaypoint(me, world, dest, destY, t) {
 //                              the target's middle. Hard bots take these most, Easy ones rarely.
 //   'drawbridge'               the keep's drawbridge (C.drawbridges): its apron end to the far island; time-gated at query time: used only
 //                              when the bridge is down for the whole crossing from the bot's ETA (or comes down within 2.5 s of it).
-function lineOk(a, ay, b) {
+function lineOk(a, ay, b, by = null) {
   const dx = b[0] - a[0], dz = b[1] - a[1], l = Math.hypot(dx, dz), n = Math.max(1, Math.ceil(l / 1.2));
   let prev = ay, before = ay;
   for (let i = 1; i <= n; i++) {
@@ -1732,6 +1732,8 @@ function lineOk(a, ay, b) {
   }
   // a spot on a lower plane must be reached before the last stretch (a flask under the deck's edge: standing above it is no way down)
   if (n > 1 && before > prev + 1.5) return false;
+  // round 24: the walk must end on the destination's own floor (the dungeon rune under the courtyard: the floor above it is no way there)
+  if (by != null && Math.abs(prev - by) > C.STEP_UP + 0.05) return false;
   return true;
 }
 const STONE_MAX = 2.5, HOP_CAP = () => C.sprintOf() * 0.97;   // a stone: an ISLANDS rock this small; a hop's run-up speed (the bot sets it, so no cfg.speed)
@@ -1806,7 +1808,7 @@ function routeGraph(world) {
     const a = nodes[i], b = nodes[j], d = Math.hypot(a.p[0] - b.p[0], a.p[1] - b.p[1]);
     if (d > 30 || b.y > a.y + C.STEP_UP + 0.05) continue;
     if (a.stone && b.stone) continue;   // (two stones never join by a walk)
-    if (lineOk(a.p, a.y, b.p)) edges.push({ a: i, b: j, cost: d, kind: 'walk' });
+    if (lineOk(a.p, a.y, b.p, b.y)) edges.push({ a: i, b: j, cost: d, kind: 'walk' });
   }
   const adj = nodes.map(() => []);
   for (const e of edges) adj[e.a].push(e);
@@ -1838,11 +1840,11 @@ function routeWaypoint(me, world, dest, destY, t) {
   b.routeAt = t + 0.3; b.routeDest = dest.slice(); b.routeEdge = null;
   const myFloor = floorUnder(me.p), me2 = [me.p[0], me.p[2]];
   const destFloor = Number.isFinite(destY) ? destY : C.surfaceHeight(dest[0], dest[1], 99);
-  if (lineOk(me2, myFloor, dest) && destFloor <= myFloor + C.STEP_UP + 0.05) return (b.routeWp = null);   // straight there
+  if (lineOk(me2, myFloor, dest, destFloor) && destFloor <= myFloor + C.STEP_UP + 0.05) return (b.routeWp = null);   // straight there
   const G = routeGraph(world);
   if (!G.nodes.length) return (b.routeWp = null);
   const n = G.nodes.length, dist = new Array(n).fill(Infinity), prev = new Array(n).fill(-1), via = new Array(n).fill(null), done = new Array(n).fill(false);
-  for (let i = 0; i < n; i++) { const N = G.nodes[i]; if (N.y <= myFloor + C.STEP_UP + 0.05 && lineOk(me2, myFloor, N.p)) dist[i] = Math.hypot(N.p[0] - me2[0], N.p[1] - me2[1]); }
+  for (let i = 0; i < n; i++) { const N = G.nodes[i]; if (N.y <= myFloor + C.STEP_UP + 0.05 && lineOk(me2, myFloor, N.p, N.y)) dist[i] = Math.hypot(N.p[0] - me2[0], N.p[1] - me2[1]); }
   let bestEnd = -1, bestCost = Infinity;
   for (let it = 0; it < n; it++) {
     let u = -1;
@@ -1850,7 +1852,7 @@ function routeWaypoint(me, world, dest, destY, t) {
     if (u < 0) break;
     done[u] = true;
     const N = G.nodes[u];
-    if (destFloor <= N.y + C.STEP_UP + 0.05 && lineOk(N.p, N.y, dest)) { const c = dist[u] + Math.hypot(dest[0] - N.p[0], dest[1] - N.p[1]); if (c < bestCost) { bestCost = c; bestEnd = u; } }
+    if (destFloor <= N.y + C.STEP_UP + 0.05 && lineOk(N.p, N.y, dest, destFloor)) { const c = dist[u] + Math.hypot(dest[0] - N.p[0], dest[1] - N.p[1]); if (c < bestCost) { bestCost = c; bestEnd = u; } }
     for (const e of G.adj[u]) { const c = edgeCost(e, me, t, dist[u]); if (c < Infinity && dist[u] + c < dist[e.b]) { dist[e.b] = dist[u] + c; prev[e.b] = u; via[e.b] = e; } }
   }
   if (bestEnd < 0) return (b.routeWp = null);
