@@ -130,6 +130,128 @@ export const voidY = () => { const v = MAPNS.MAP_INFO?.void; return Number.isFin
 // The void (Sky Ruins): below map.js VOID_Y you're dead, credited to whoever hurt you within `credit` s ("knocked into the void").
 export const VOID = { credit: 5 };
 
+// ---------------------------------------------------------------- round 24: the drawbridge (Sky Ruins' east route), a moving surface
+// The keep's east gate drops a wooden bridge to the east island on a cycle on the SERVER CLOCK (room.js `now()`, the seconds the
+// snapshots carry as `time`): Down, Rising, Up, Lowering (Ty: slow, and long in each position, 28 s; no warning cue). Everyone computes
+// the same angle from the same clock, so nothing is sent per frame: the server before its tick and each state report, the client each
+// frame from its snapshot-synced clock, the bots from the tick. map.js DRAWBRIDGES (environment) gives the hinge and the slab:
+// { id, x, y, z (the hinge, at the walking surface on the island's edge), yaw (the way the slab extends when down), w, d (its length), thick }.
+// updateDrawbridges(t) keeps one `ramp` surface per drawbridge in SURFACES (and the map's built list, so a map switch keeps it) whose
+// footprint, far-end height and standability follow the angle: down it's a flat deck; rising, a slope whose far end lifts (anyone on it
+// slides toward the hinge past `slideFrom`, and past `fallAngle` it holds nobody: they drop, into the void past the island's edge);
+// up (`upAngle`), a wooden wall across the gate that blocks movement, shots and sight.
+export const DRAWBRIDGE = {
+  down: 12, rising: 4, up: 8, lowering: 4,
+  upAngle: 80 * Math.PI / 180, slideFrom: 10 * Math.PI / 180, fallAngle: 45 * Math.PI / 180,
+  slideMax: 5,       // m/s toward the hinge at the fall angle (a sprint toward the gate still gains on it)
+  t0: 0,             // the server second the cycle starts Down at (tests move it: room.js debugMap { drawbridgePhase })
+};
+DRAWBRIDGE.cycle = DRAWBRIDGE.down + DRAWBRIDGE.rising + DRAWBRIDGE.up + DRAWBRIDGE.lowering;
+const smoothK = (k) => k * k * (3 - 2 * k);   // a heavy bridge starts and stops slowly
+// Where the cycle is at server second t: { phase: 'down' | 'rising' | 'up' | 'lowering', k (0..1 within the phase), at (s into the cycle) }
+export function drawbridgePhase(t) {
+  const D = DRAWBRIDGE, c = D.cycle, at = ((t - D.t0) % c + c) % c;
+  if (at < D.down) return { phase: 'down', k: at / D.down, at };
+  if (at < D.down + D.rising) return { phase: 'rising', k: (at - D.down) / D.rising, at };
+  if (at < D.down + D.rising + D.up) return { phase: 'up', k: (at - D.down - D.rising) / D.up, at };
+  return { phase: 'lowering', k: (at - D.down - D.rising - D.up) / D.lowering, at };
+}
+// The slab's angle at server second t: 0 down (flat), DRAWBRIDGE.upAngle up (the far end raised).
+export function drawbridgeAngle(t) {
+  const P = drawbridgePhase(t), A = DRAWBRIDGE.upAngle;
+  return P.phase === 'down' ? 0 : P.phase === 'up' ? A : P.phase === 'rising' ? A * smoothK(P.k) : A * (1 - smoothK(P.k));
+}
+// For the bots' planning: { phase, angle, downFor (s the bridge stays down from t; 0 when it isn't), downIn (s until it is next
+// down; 0 when it is), downLen (how long a Down lasts) }.
+export function drawbridgeWindow(t) {
+  const D = DRAWBRIDGE, P = drawbridgePhase(t);
+  const downFor = P.phase === 'down' ? D.down - P.at : 0;
+  const downIn = P.phase === 'down' ? 0 : D.cycle - P.at;
+  return { phase: P.phase, angle: drawbridgeAngle(t), downFor, downIn, downLen: D.down };
+}
+export const drawbridgeMoving = (t) => { const ph = drawbridgePhase(t).phase; return ph === 'rising' || ph === 'lowering'; };
+// How fast someone standing on a slab tilted `a` slides toward its hinge (m/s): nothing until slideFrom, slideMax at the fall angle.
+export function drawbridgeSlide(a) {
+  const D = DRAWBRIDGE;
+  if (!(a > D.slideFrom)) return 0;
+  return D.slideMax * Math.min(1, (Math.sin(a) - Math.sin(D.slideFrom)) / (Math.sin(D.fallAngle) - Math.sin(D.slideFrom)));
+}
+// The drawbridges in play: a test's list (setDrawbridges, room.js debugMap { drawbridges }) if one is set, else the map's.
+const DRAWBRIDGE_DEBUG = [];
+// (the way the slab extends: `dir` [dx, dz] when given, else from the yaw as map.js reads it: local +z along (sin yaw, cos yaw), so +x is π/2)
+const normDrawbridge = (b) => {
+  const dir = Array.isArray(b.dir) && Math.hypot(b.dir[0], b.dir[1]) > 1e-6 ? [b.dir[0] / Math.hypot(b.dir[0], b.dir[1]), b.dir[1] / Math.hypot(b.dir[0], b.dir[1])] : null;
+  const yaw = dir ? Math.atan2(dir[0], dir[1]) : +(b.yaw ?? b.rotY ?? 0);
+  return { id: String(b.id), x: +b.x, y: +b.y, z: +b.z, yaw, w: +(b.w ?? 3.4), d: +(b.d ?? b.len ?? 7.2), thick: +(b.thick ?? 0.35), dir: dir || [Math.sin(yaw), Math.cos(yaw)] };
+};
+export function setDrawbridges(list) { DRAWBRIDGE_DEBUG.length = 0; if (Array.isArray(list)) for (const b of list) if (b && b.id != null && [b.x, b.y, b.z].every(Number.isFinite)) DRAWBRIDGE_DEBUG.push(normDrawbridge(b)); }
+let _dbSrc = null, _dbN = -1, _dbList = [];   // (the map's list, normalised once per change of the array or its length)
+export const drawbridges = () => {
+  if (DRAWBRIDGE_DEBUG.length) return DRAWBRIDGE_DEBUG;
+  const L = MAPNS.DRAWBRIDGES;
+  if (!Array.isArray(L)) return [];
+  if (L !== _dbSrc || L.length !== _dbN || (L.length && _dbList[0]?.id !== String(L[0].id))) { _dbSrc = L; _dbN = L.length; _dbList = L.map(normDrawbridge); }
+  return _dbList;
+};
+const DB_SURF = new Map();   // id -> its ramp surface (one object per drawbridge, kept across map switches)
+// The slab as a map.js ramp at angle a: the footprint from the hinge, d cos a long (the top rises from y0 at the hinge to y1 = y + d sin a
+// at the far end); past the fall angle nobody stands on it (noStand), so it's a wall.
+function poseDrawbridge(s, b, a) {
+  const c = Math.cos(a), fd = Math.max(0.15, b.d * c);
+  s.x = b.x + b.dir[0] * fd / 2; s.z = b.z + b.dir[1] * fd / 2; s.d = fd; s.w = b.w; s.yaw = b.yaw; s.thick = b.thick;
+  s.y0 = b.y; s.y1 = b.y + b.d * Math.sin(a); s.angle = a;
+  const ns = a > DRAWBRIDGE.fallAngle;
+  if (!!s.noStand !== ns) { s.noStand = ns; _floorN = -1; }   // (topFloorAt's standable list is filtered on noStand)
+}
+// Put every drawbridge's surface where the clock says, in SURFACES and in the live map's built list. Returns the angle.
+export function updateDrawbridges(t) {
+  const list = drawbridges(), L0 = MAPNS.SURFACES, M = MAPNS.activeMap?.(), L1 = M?.built?.SURFACES;
+  const lists = L1 && L1 !== L0 ? [L0, L1] : [L0];
+  for (const L of lists) for (let i = L.length - 1; i >= 0; i--) if (L[i].drawbridge && !list.some(b => b.id === L[i].drawbridge)) L.splice(i, 1);
+  const a = drawbridgeAngle(t);
+  for (const b of list) {
+    let s = DB_SURF.get(b.id);
+    if (!s) DB_SURF.set(b.id, s = { kind: 'ramp', x: b.x, z: b.z, w: b.w, d: b.d, yaw: b.yaw, y0: b.y, y1: b.y, thick: b.thick, name: b.id, piece: b.id, drawbridge: b.id, style: 'drawbridge' });
+    poseDrawbridge(s, b, a);
+    for (const L of lists) if (!L.includes(s)) L.push(s);
+  }
+  return a;
+}
+// Round 24: a planned jump between two floors (the stepping stones, for the bots and the reachability check): from [x, y, z] to
+// [x, y, z] at a horizontal speed up to `cap` (m/s). A single jump when its arc lands there within the cap, else the jump with the air jump
+// at its apex. Returns { v: [vx, vz], speed, time, air, airAt (s after take-off for the air jump) }, or null when even that can't make it.
+export function hopPlan(from, to, cap) {
+  const dx = to[0] - from[0], dz = to[2] - from[2], dist = Math.hypot(dx, dz), dy = to[1] - from[1], g = JUMP.gravity;
+  if (dist < 1e-6) return null;
+  const landT = (v0, y0) => { const disc = v0 * v0 - 2 * g * (dy - y0); return disc < 0 ? null : (v0 + Math.sqrt(disc)) / g; };   // the later root of y0 + v0 e - g e²/2 = dy
+  const t1 = landT(JUMP.v0, 0);
+  if (t1 != null && dist / t1 <= cap) { const speed = dist / t1; return { v: [dx / dist * speed, dz / dist * speed], speed, time: t1, air: false, airAt: null }; }
+  const e1 = JUMP.v0 / g, t2 = landT(AIR_JUMP.v0, JUMP.height);
+  if (t2 == null) return null;
+  const T = e1 + t2, speed = dist / T;
+  if (speed > cap) return null;
+  return { v: [dx / dist * speed, dz / dist * speed], speed, time: T, air: true, airAt: e1 };
+}
+// The drawbridge under feet at (x, z, footY), or null: { s (its surface), b (its entry), u (m from the hinge along the slab), a (angle) }.
+export function drawbridgeUnder(x, z, footY) {
+  for (const s of MAPNS.SURFACES) {
+    if (!s.drawbridge) continue;
+    const c = Math.cos(s.yaw), n = Math.sin(s.yaw), dx = x - s.x, dz = z - s.z, lx = dx * c - dz * n, lz = dx * n + dz * c;
+    if (Math.abs(lx) > s.w / 2 + 0.3 || Math.abs(lz) > s.d / 2 + 0.3) continue;
+    const k = Math.max(0, Math.min(1, lz / s.d + 0.5)), top = s.y0 + (s.y1 - s.y0) * k;
+    if (Math.abs(footY - top) > 0.7) continue;
+    const b = drawbridges().find(q => q.id === s.drawbridge);
+    if (!b) continue;
+    return { s, b, u: k * b.d, a: s.angle || 0 };
+  }
+  return null;
+}
+// The slide of someone on drawbridge `db` (drawbridgeUnder): a velocity [vx, vz] toward the hinge, or null when the slab is too flat.
+export function drawbridgeSlideVec(db) {
+  const v = drawbridgeSlide(db.a);
+  return v > 0 ? [-db.b.dir[0] * v, -db.b.dir[1] * v] : null;
+}
+
 // Round 14: every primary's magazine reloads in this long (was 1.5 s).
 export const PRIMARY_RELOAD = 1.2;
 

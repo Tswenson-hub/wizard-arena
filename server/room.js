@@ -24,12 +24,16 @@ export function createRoom(opts) {
   const GEN = opts.gen || (opts.legacy ? 'legacy' : 'current'), LEGACY = GEN === 'legacy';
   // a legacy room runs on map.js's frozen copy of the courtyard ('legacy': what the live build bundles), shown to clients as 'courtyard'
   let mapId = LEGACY && C.MAPS?.legacy ? 'legacy' : 'courtyard';
-  const useMap = () => { if (typeof C.setActiveMap === 'function' && C.ACTIVE_MAP?.name !== mapId) C.setActiveMap(mapId); };
+  // (round 24: and put the drawbridge where the clock says, so every query this tick or message sees the moving surface)
+  const useMap = () => { if (typeof C.setActiveMap === 'function' && C.ACTIVE_MAP?.name !== mapId) C.setActiveMap(mapId); if (typeof C.updateDrawbridges === 'function') C.updateDrawbridges(now()); };
   useMap();
   // the maps this room rotates through (a legacy room: the courtyard only); map.js lists only the maps it could load
   const mapsAvail = () => LEGACY ? [mapId] : GEN === 'v22' ? ['courtyard'] : (Array.isArray(C.MAP_ORDER) && C.MAP_ORDER.length ? C.MAP_ORDER.slice() : ['courtyard']);
   const pubMapId = (id) => (id === 'legacy' ? 'courtyard' : id);
   const pubMap = (id) => ({ id: pubMapId(id), name: C.MAPS?.[id]?.title ?? (id === 'legacy' ? 'The Courtyard' : id) });
+  // round 24: this map's drawbridges (constants.js drawbridges(): the map's, or a test's) with the cycle's origin, so a client or a
+  // script computes the same angle from the snapshots' clock: C.drawbridgeAngle(time) with C.DRAWBRIDGE.t0 = t0
+  const drawbridgesPublic = () => (typeof C.drawbridges === 'function' ? C.drawbridges() : []).map(b => ({ id: b.id, x: b.x, y: b.y, z: b.z, yaw: b.yaw, w: b.w, d: b.d, thick: b.thick, dir: b.dir, t0: C.DRAWBRIDGE?.t0 ?? 0 }));
   const players = new Map();   // id -> player
   const sockets = new Map();   // id -> ws
   const observers = new Set();  // sockets that watch without a player (botmatch.mjs adds bots and reads the broadcasts)
@@ -1901,8 +1905,13 @@ export function createRoom(opts) {
         // instead of the map's (a list left out keeps the map's), and `void` (a height) instead of MAP_INFO.void, until the next map switch
         if (!process.env.WA_DEBUG) break;
         debugSpots = { runes: Array.isArray(msg.runes) ? msg.runes : undefined, pads: Array.isArray(msg.pads) ? msg.pads : undefined, void: Number.isFinite(msg.void) ? msg.void : null };   // (a list left out: the map's own stays)
+        // round 24: `drawbridges` (a test list instead of the map's, process-wide until replaced; [] removes it) and `drawbridgePhase`
+        // (seconds into the 28 s cycle right now: 12 = the rise starts now)
+        if (Array.isArray(msg.drawbridges) && C.setDrawbridges) C.setDrawbridges(msg.drawbridges);
+        if (Number.isFinite(msg.drawbridgePhase) && C.DRAWBRIDGE) C.DRAWBRIDGE.t0 = now() - msg.drawbridgePhase;
+        useMap();
         buildRunes(); buildPads();
-        broadcast({ t: 'map', map: pubMap(mapId), props: [...props.values()].map(propPublic), potions: potions.map(potionPublic), runes: runes.map(runePublic), pads: pads.map(padPublic) });
+        broadcast({ t: 'map', map: pubMap(mapId), props: [...props.values()].map(propPublic), potions: potions.map(potionPublic), runes: runes.map(runePublic), pads: pads.map(padPublic), drawbridges: drawbridgesPublic() });
         break;
       }
       case 'debugCharge': {
@@ -1934,6 +1943,7 @@ export function createRoom(opts) {
         if ((p.tpSeq || 0) > (Number.isInteger(msg.tp) ? msg.tp : 0)) { if (Number.isFinite(msg.yaw)) p.yaw = msg.yaw; break; }
         // loose anti-cheat: clamp to arena and to a plausible speed
         const dt = Math.max(0.016, t - (p.lastStateAt || t));
+        const slideAt = (q) => { const db = C.drawbridgeUnder?.(q[0], q[2], q[1]); return db ? C.drawbridgeSlide(db.a) : 0; };   // round 24: the drawbridge's slide under a spot
         // Feet stay on the ground except inside a Skyward Flash, where the height may only fall
         // (never faster than a drop, never slower than the slowest hover).
         // the floor at the reported spot, for feet at the reported height but at most 1 m above the last (a ladder climbs about
@@ -1970,7 +1980,7 @@ export function createRoom(opts) {
           y = clamp(msg.p[1], floor, Math.max(y, ceil));
         } else if (msg.p[1] > y + 0.02 && p.p[1] > y + 0.02) {
           // off an edge: falling. No higher than where the fall began, and at least gravity's pull after a moment's slack.
-          if (!p.fall) { p.fall = { start: t, y0: p.p[1] }; p.jumpSpeed = Math.max(p.jumpSpeed || 0, takeoffSpeed(p, t)); }
+          if (!p.fall) { p.fall = { start: t, y0: p.p[1] }; p.jumpSpeed = Math.max(p.jumpSpeed || 0, takeoffSpeed(p, t) + slideAt(p.p)); }   // (round 24: off a tilting drawbridge, with its slide)
           const e = Math.max(0, t - p.fall.start - 0.25);
           y = clamp(msg.p[1], y, Math.max(y, Math.min(p.fall.y0 + 0.05, p.fall.y0 - C.JUMP.gravity * e * e / 2 + 0.1)));
         } else if (p.fall || p.airJumped || p.jumpSpeed || p.rideQueued) touchedDown(p);   // standing (or stepped up a ramp or stair: the floor under the new spot)
@@ -2007,7 +2017,9 @@ export function createRoom(opts) {
         // A movement budget: it refills at the fastest this wizard may go right now, and holds at most a short burst
         // (about 0.25 s of it, plus 0.25 m), so bunched-up updates from an honest client pass but a steady overspeed
         // doesn't. (A fixed allowance per update used to be worth about 6 m/s on top of the walk.)
-        const allowed = own + (p.kbUntil > t ? p.kbSpeed + 1 : 0) + 0.4;
+        // round 24: on a tilting drawbridge the client slides itself toward the hinge (the same curve, C.drawbridgeSlide); allow that much more
+        const slide = C.drawbridgeUnder ? Math.max(slideAt(p.p), slideAt(np)) : 0;
+        const allowed = own + (p.kbUntil > t ? p.kbSpeed + 1 : 0) + (slide > 0 ? slide + 0.5 : 0) + 0.4;
         const cap = allowed * 0.25 + 0.25;
         p.moveBudget = Math.min(cap, (p.moveBudget ?? cap) + allowed * dt);
         // (the first report, or one after a teleport, starts a fresh budget instead of spending it)
@@ -2562,7 +2574,7 @@ export function createRoom(opts) {
     for (const c of [...smokeFlasks.values()]) { smokeFlasks.delete(c.id); broadcast({ t: 'smokeFlaskEnd', id: c.id }); }
     for (const q of players.values()) { q.carrying = null; q.pad = null; q.grab = null; q.fall = null; q.jump = null; q.hover = null; q.swapGraceUntil = now() + 2; }   // (the grace: a client's report against the old map's floors mustn't drop it into the void)
     buildProps(); buildPotions(); buildRunes(); buildPads();
-    broadcast({ t: 'map', map: pubMap(mapId), props: [...props.values()].map(propPublic), potions: potions.map(potionPublic), runes: runes.map(runePublic), pads: pads.map(padPublic) });
+    broadcast({ t: 'map', map: pubMap(mapId), props: [...props.values()].map(propPublic), potions: potions.map(potionPublic), runes: runes.map(runePublic), pads: pads.map(padPublic), drawbridges: drawbridgesPublic() });
     roomChanged();
     console.log(`[room] ${room.id} is on ${mapId}`);
   }
@@ -2681,7 +2693,7 @@ export function createRoom(opts) {
       firewalls: [...firewalls.values()].map(firewallPublic),
       pools: [...pools.values()].map(poolPublic),
       potions: potions.map(potionPublic),
-      ...(LEGACY ? {} : { runes: runes.map(runePublic), pads: pads.map(padPublic) }),   // round 22 (a legacy room has none, and sends none)
+      ...(LEGACY ? {} : { runes: runes.map(runePublic), pads: pads.map(padPublic), drawbridges: drawbridgesPublic() }),   // round 22 (a legacy room has none, and sends none); round 24: the drawbridges
       map: pubMap(mapId),
       smokeFlasks: [...smokeFlasks.values()].map(c => ({ id: c.id, owner: c.owner, p: [c.x, c.y, c.z], left: Math.max(0, c.until - now()) })),
       decoys: [...decoys.values()].map(decoyPublic),
