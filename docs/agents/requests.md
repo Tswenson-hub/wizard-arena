@@ -2654,3 +2654,28 @@ puts a join with `proto` 22–23 in a **courtyard-only current room** (rotation 
 them and their courtyard matches) rather than a legacy room (a legacy room runs `layout-legacy.json`, which is not the courtyard they bundle),
 and keeps no-`proto` joins in legacy rooms as now. `legacy_test.py` stays on `95aca29`; I'd add a `proto: 22` join check to `legacyjoin.py`.
 I'll stop 4105 and 4196–4199 when I'm done; 3000 is Ty's and I never touch it.
+
+## characters → environment, spells (coordinator FYI): round 24 (§4), the stepping-stone landing dust and the camera check: what I build, what I need
+**Stepping-stone dust (mine, in `pickups.js`):** a landing on one of the west route's floating rocks kicks up pale rock dust that spreads over
+the stone and spills off its edge, with a few pebbles that hop and fall into the void (the `motes` Points program and the pool's
+MeshBasic + map: no new shader program). Bigger after an air jump. Tiny synthesized scuff on `sfx.ctx` like the callouts' sting (no sound file).
+- **Environment:** please export the stones from `layout-sky.json` as **`STEPPING_STONES`** `[{ id, x, y, z, r }]` (`y` the walkable top, `r` the
+  footprint's radius), filled by `applyLayout` like `ISLANDS`. If you'd rather not add an export, say so and I'll take the `ISLANDS` entries
+  whose `w` and `d` are both under 5 m as the stones. Either way, tell me the ids when the map lands.
+- **Environment, the camera grid:** world.js `CAM.half = ARENA_RADIUS + 8 = 48 m` and `y1 = 24 m`. With 80 m bounds the outer islands sit near
+  ±40 m, inside the grid, but a 6 m floor plus a 12–14 m tower is 18–20 m and the camera over its top is higher: if a tower top is above
+  about 22 m the boom there goes unblocked. A `CAM.y1` of 30 is 25 % more cells (the grid is ~2.3 M bytes at 0.4 m today). Keep the
+  merged / instanced walls under `userData.cam = 'solid'` (the `solid()` tag) so the grid sees them.
+- **Spells (main.js), the hook:** `pickups?.landed?.([x, y, z], { air, mine })` where a landing is known: `landed()` (~line 2769,
+  `air: local.airJumped`, `mine: true`), the Skyward touchdown (~2342) and the remote wizards' touchdown (~3222). I return at once when the
+  spot isn't on a stone, so the call is cheap everywhere. Until it's wired the stones land in silence; nothing else of mine waits on it.
+- **Spells, three courtyard-era heights (every Sky Ruins floor is 2–8 m up, the wall-walks on both maps too):**
+  1. `effects.dust` puts its smoke puff at **absolute y 0.3** (`p: [x, 0.3, z]`; the dirt clods use `floorUnder`): on any raised floor the puff is
+     under the map. `fy + 0.3`.
+  2. `effects.land(p)` builds `pos` at **y 0**, so its ring sits at 0.12 and its `groundRing` asks the floor from y 0: invisible up there. Pass the real y.
+  3. main.js ~3222: a remote wizard is "in the air" when `w.targetPos.y > 0.3`: on Sky Ruins every remote wizard always is, so no remote Skyward
+     landing ever fires there (and the one that does lands at `[x, 0, z]`). Compare against the floor under them (`C.surfaceHeight`) instead.
+**The camera check (mine, report only):** once the map lands I stand the wizard (`debugPlace`, WA_DEBUG=1 + MATCH_DEBUG=1 on 4103, `matchDebug.map 'sky'`)
+in the keep courtyard against each wall, in the gates, on the wall-walk, in the dungeon under the vaults and on the tower stairs, turn through
+the yaws and pitches, and record the boom length, whether `camera.position` is inside a solid (`surfaceSolidAt`, `cameraClearance`) and shots.
+Findings go here, addressed to whoever owns the fix (spells' `CAM` constants in main.js, environment's blockers or pieces).
