@@ -1,8 +1,9 @@
 # Characters hand-off
 
-## Round 24: the stepping-stone landing dust; the camera in the keep (in progress)
+## Round 24: the stepping-stone landing dust; the camera in the keep (checked, findings posted)
 Commits: `ba4f746` `33f7fe3` requests.md (the plan, the stones from `ISLANDS`, the camera grid note, the hook and three courtyard-era heights
-for spells), `01dac80` pickups.js first cut, `abf742a` pickups.js tuned from game-page shots.
+for spells), `01dac80` pickups.js first cut, `abf742a` pickups.js tuned from game-page shots, `363fe44` and the final hand-off commit (this
+section and the camera findings post in requests.md). Nothing of mine is uncommitted; port 4103 is stopped.
 
 ### What's built
 - **`pickups.landed([x, y, z], { air, mine })`** (pickups.js): on one of Sky Ruins' stepping stones (the `ISLANDS` entries under 5 m across,
@@ -15,8 +16,17 @@ for spells), `01dac80` pickups.js first cut, `abf742a` pickups.js tuned from gam
   own landing a synthesized scrape (lowpassed noise) and two or three pebble clicks on `sfx.ctx` → `sfxBus` (no sound file). Returns null at
   once off a stone, so the call is cheap on every landing. **Programs: 56 → 56** in a live Sky Ruins match. **Not wired in main.js yet**:
   the hook is requested (`landed()`, the Skyward touchdown, the remote touchdown).
-- **Still to do** (needs environment's map): the camera check in the keep (`/tmp/wa-characters/r24/camera.py`, below) and a shot of the dust on
-  a real stone.
+- **On the real map** (`bb8bd1f`): `C.STEPPING_STONES` (`stone-1..3`, r 1.2) is read first; the landing on `stone-1` from the game camera is
+  `real_game_dust_air_300ms.png` / `real_game_dust_down_350ms.png` (the grey cloud, the dark pebbles over the stone's edge), programs 55 → 55.
+  Spells' working-tree main.js calls `pickups.landed()` in `landed()`, the Skyward touchdown and the remote touchdown.
+- **The camera check (report only; findings posted in requests.md):** 19 spots × 4 yaws × 3 pitches on the keep, the towers, the dungeon and the
+  south passage. Fine: the gate passages, the wall-walk, the landings and tops, the NE tower room, the dungeon floor and stairwell. **One cause
+  behind every bad frame:** `CAM.minSide = 0.45` beats a blocked side step, so against a wall the shoulder point lands 1–12 cm from the face, the
+  boom is 0 and the camera (near plane 0.1) renders the wall's inside with the wizard clipped: the courtyard's NE inner corner facing east, the
+  east curtain facing south, the central tower's first step at its south doorway facing west (the shoulder inside the doorway lintel). Suggested
+  to spells: no `minSide` clamp when blocked (side → 0 keeps the margin), or the left-shoulder swap; and run the boom's clearance from the head
+  too (the south passage facing west: the shoulder past the jamb, the camera out through the opening, the wizard half behind the wall). Layout
+  note to environment: the stair holes in the NE tower's and the central tower's decks let the camera pop above the deck on the last steps.
 
 ### Verified (`/tmp/wa-characters/r24/`, port 4103 with `MAP_EDIT=1 WA_DEBUG=1 MATCH_DEBUG=1`, GPU Chromium `--use-angle=metal`)
 - `staged_dust.py` (the editor page `?edit=1&map=sky`, a test stone on the west bridge): **ALL PASS** (no stones from the round-22b layout,
@@ -26,10 +36,13 @@ for spells), `01dac80` pickups.js first cut, `abf742a` pickups.js tuned from gam
   Shots `game_dust_plain_*.png`, `game_dust_air_*.png` (120, 300, 600, 1000 ms) and `game_dust_down_350ms.png` (looking down: the grey
   cloud round the feet and the dark pebbles falling past the bridge's edge). Tuned twice from the shots: the first cut's pale dust and a
   heavily blotched texture read as a few specks.
-- `camera.py` (the game page; `debugPlace` + `local.pos`, yaws × pitches per spot; per frame the boom length, `surfaceSolidAt(camera)`,
-  world.js `cameraClearance(head → camera)`, shots): a dry run on the round-22b layout runs clean and flags the old tower (the camera
-  jammed against its wall with the wizard off screen, boom 0.79 m; the camera inside a wall piece looking up from the tower top). Note the
-  pitch sign: a positive `local.pitch` looks down. The keep's spots go in when the map lands.
+- `camera.py spots_keep.json` (the game page; `debugPlace` + `local.pos`, yaws × pitches per spot; per row the boom length,
+  `surfaceSolidAt(camera)`, world.js `cameraClearance(head → camera)`, a shot per flagged row): `camera_report.json`,
+  `cam_<spot>_y<yaw>_p<pitch>.png`; `probe_cam.py` prints the side step's and the boom's clearances at the five worst rows (the numbers in the
+  requests post). A positive `local.pitch` looks down. The head → camera clearance is a proxy (the boom runs from the shoulder), so a row flagged
+  at 0.4–0.75 with a short boom is usually the low ceiling and needs the shot to judge; the real failures read 0.0–0.3 with `inSolid` or a
+  side step under 0.45.
+- `game_dust.py real`: the real stone, the map's own export, **ALL PASS**, programs 55 → 55.
 
 ## Round 22: streak banners, rune and pad visuals, buff auras, the launch pose, "Next map", the map fade, first to 10
 Commits: `b98c395` `4ff…` requests.md (the interfaces, the jump_pad note, the landed note), `a51d489` callouts.js + callouts.css + pickups.js +

@@ -2806,3 +2806,32 @@ Against your working-tree `layout-sky.json` / `map.js` (not committed yet when I
   **y 30** (`CAM.y1`); everything merged is `cam: 'solid'` as before (the drawbridge slab isn't: it moves).
 - **Deploy:** nothing changes in the protocol or the map id. The map is heavier than the old Sky Ruins (about 240k kit triangles in the whole
   scene, most of them walls and floor tiles with far LOD boxes); my `perf_test --map sky` numbers follow in my hand-off.
+
+## characters → spells (environment, coordinator FYI): round 24, the camera inside the keep: one systemic cause (the side step's floor), two layout notes
+I stood the wizard at 19 spots (the courtyard against the walls and in its NE corner, both gate passages, the wall-walk, the central tower's
+spiral at five points, the NE tower's room and inner flight, the dungeon's rune, flask and NE stairwell, the passage under the south bridge),
+4 yaws × 3 pitches each, reading the boom length, `surfaceSolidAt(camera)`, world.js `cameraClearance(head → camera)` and a shot per flagged
+row (`/tmp/wa-characters/r24/camera.py spots_keep.json`; `camera_report.json`, `cam_<spot>_y<yaw>_p<pitch>.png`; the probe `probe_cam.py`).
+**Fine as is:** both gate passages, the wall-walk and the gatehouse front, the tower landings and tops, the NE tower's room, the dungeon floor
+and its stairwell (looking down under the 2.8 m vaults pulls the camera onto the hat, but the wizard and the room stay readable).
+**One cause behind every bad frame: `CAM.minSide = 0.45` wins over a blocked side step** (main.js `updateCamera`:
+`side = Math.max(CAM.minSide, CAM.side * camClear(pivot, sideFull))`). Against a wall the clearance says 0.1–0.2 m, the clamp puts the
+shoulder point 0.45 m out, i.e. 1–12 cm from the wall face, the boom from there is 0, and the camera (near plane 0.1 m) sits in the wall:
+half the screen is the wall's inside and the wizard is clipped away. Seen at:
+- the courtyard's **NE inner corner** facing east (the shoulder 1 cm from the NE tower's base at z 10.41): `cam_court-ne-corner_y1.57_p+0.0.png`;
+- **against the east curtain** facing south (the shoulder 12 cm from the inner face at x 11.77): `cam_court-east-wall-south_y3.14_p+0.0.png`;
+- **the central tower's first step at its south doorway** facing west (the shoulder inside `wall_doorway-363-lintel`, `surfaceSolidAt` says so):
+  `cam_ctower-flight1-foot_y4.71_p+0.0.png`.
+  Probe numbers (`kSide` the side step's clearance, `hitSide` map.js's): corner 0.38 / 0.38, curtain 0.21 / 0.48, doorway 0.21 / 0.28 → side 0.45 all three.
+**Suggested fix (yours):** when the side step is blocked, don't clamp to `minSide`: take `side = max(0, CAM.side * k − CAM.margin)` (0 means the
+camera looks straight over the head, which reads fine), or swap to the **left shoulder** when the right is blocked and the left is clear (the usual
+answer; `right` negated). Either way keep the camera `CAM.margin` from any solid along the side step too. Also: the boom's clearance runs from the
+shoulder only, so where the shoulder sits past a jamb the boom goes out through the opening while the body stays behind the wall (the passage under
+the south bridge facing west: `cam_bridge-south-passage-west_y4.71_p+0.0.png`, the wizard half behind the wall's edge). Taking
+`min(camClear(shoulderP, desired), camClear(pivot, desired'))` (the same boom from the head) would hold it inside.
+**Layout notes (environment, low priority):** the stair holes in the decks let the camera pop above the deck on the last steps and lose the wizard
+under it: the NE tower's flight (`cam_tower-ne-flight-mid_y1.57_p+0.0.png`: the camera looks across the tower top, the wizard under the deck) and the
+central tower's third flight (`cam_ctower-flight3-mid_y1.57_p+0.0.png`). Inherent to a hole over a stair; a taller parapet round the hole or a step
+back of the hole's far edge would hide less. The dungeon stairwells are fine (the earlier scare was my own placement).
+**The dust:** `pickups.landed()` is in and your tree's main.js already calls it (three places, seen). On the real `stone-1` from the game camera:
+`real_game_dust_air_300ms.png`, `real_game_dust_down_350ms.png` (the grey cloud, the pebbles over the edge), programs 55 → 55.
