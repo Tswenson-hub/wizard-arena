@@ -14,18 +14,20 @@ const dist2D = (a, b) => Math.hypot(a[0] - b[0], a[2] - b[2]);
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 
 // opts: { id, kind: 'public' | 'private' | 'lab', code, allocId() (player ids, unique across rooms), canAddBot() (the server-wide bot cap),
-//   legacy (round 22: a room for clients without `proto` (the live CrazyGames build): the courtyard only, no runes, pads or rotation) }
+//   legacy (round 22: a room for clients without `proto` (the old CrazyGames build): the courtyard only, no runes, pads or rotation),
+//   gen (round 24: 'legacy' | 'v22' | 'current'; a 'v22' room (the round-23 build, which bundles the old Sky Ruins) keeps runes, pads
+//   and the pace but plays the courtyard only: no rotation, no lock on another map) }
 // Round 22: the room keeps its own map (`mapId`), and because other rooms may be on another map in the same tick, every entry point
 // (simulate, message, join, snapshot, an observer's message) first makes map.js read this room's map (C.useMap, environment's).
 export function createRoom(opts) {
   const { allocId } = opts;
-  const LEGACY = !!opts.legacy;
+  const GEN = opts.gen || (opts.legacy ? 'legacy' : 'current'), LEGACY = GEN === 'legacy';
   // a legacy room runs on map.js's frozen copy of the courtyard ('legacy': what the live build bundles), shown to clients as 'courtyard'
   let mapId = LEGACY && C.MAPS?.legacy ? 'legacy' : 'courtyard';
   const useMap = () => { if (typeof C.setActiveMap === 'function' && C.ACTIVE_MAP?.name !== mapId) C.setActiveMap(mapId); };
   useMap();
   // the maps this room rotates through (a legacy room: the courtyard only); map.js lists only the maps it could load
-  const mapsAvail = () => LEGACY ? [mapId] : (Array.isArray(C.MAP_ORDER) && C.MAP_ORDER.length ? C.MAP_ORDER.slice() : ['courtyard']);
+  const mapsAvail = () => LEGACY ? [mapId] : GEN === 'v22' ? ['courtyard'] : (Array.isArray(C.MAP_ORDER) && C.MAP_ORDER.length ? C.MAP_ORDER.slice() : ['courtyard']);
   const pubMapId = (id) => (id === 'legacy' ? 'courtyard' : id);
   const pubMap = (id) => ({ id: pubMapId(id), name: C.MAPS?.[id]?.title ?? (id === 'legacy' ? 'The Courtyard' : id) });
   const players = new Map();   // id -> player
@@ -2621,7 +2623,7 @@ export function createRoom(opts) {
     const n = humans().length;
     return { id: room.id, code: room.code, private: room.kind === 'private', humans: n, max: MAX_HUMANS, joinable: n < MAX_HUMANS,
       host: room.kind === 'private' ? room.host : null, bots: match.state().botDiff,
-      map: pubMapId(mapId), lock: match.mapLock(), maps: mapsAvail().map(pubMapId), ...(LEGACY ? { legacy: true } : {}) };   // round 22
+      map: pubMapId(mapId), lock: match.mapLock(), maps: mapsAvail().map(pubMapId), gen: GEN, ...(LEGACY ? { legacy: true } : {}) };   // round 22 / 24
   }
   let lastInfo = '';
   function roomChanged() {
@@ -2755,6 +2757,6 @@ export function createRoom(opts) {
     unobserve(ws) { observers.delete(ws); if (!observers.size && !humans().length) room.emptySince ??= now(); },
     observerCount: () => observers.size,
     observerMessage(msg) { if (msg.t === 'addBot' || msg.t === 'removeBots') { useMap(); handle({ bot: null }, msg); } },
-    legacy: LEGACY, map: () => pubMapId(mapId),
+    legacy: LEGACY, gen: GEN, map: () => pubMapId(mapId),
   });
 }

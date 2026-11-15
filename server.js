@@ -46,11 +46,14 @@ httpServer.on('upgrade', (req, socket, head) => {
 const MAX_ROOMS = +process.env.MAX_ROOMS || 40;
 const MAX_BOTS = +process.env.MAX_BOTS || 90;
 const ROOM_EMPTY_TTL = +process.env.ROOM_EMPTY_TTL || 60;
-// Round 22: the protocol version a client sends with its join (`proto`). A join without it (the live CrazyGames build, which
+// Round 22: the protocol version a client sends with its join (`proto`). A join without it (the old CrazyGames build, which
 // bundles its own layout and knows nothing of runes, pads or a second map) goes to a legacy room: the courtyard only, never shared
-// with a current client. Rooms of the two kinds never mix: a private code of the other kind is refused.
-export const PROTO = 22;
-const legacyJoin = (msg) => !(Number.isFinite(msg.proto) && msg.proto >= PROTO);
+// with a current client. Round 24: three generations of client, each in rooms of its own (a private code of another generation is
+// refused): 'legacy' (no proto), 'v22' (proto 22-23: the round-23 build pending at CrazyGames bundles the OLD Sky Ruins layout, so its
+// rooms stay on the courtyard with runes, pads and the current pace, no rotation), 'current' (proto >= PROTO: the rebuilt Sky Ruins).
+export const PROTO = 24;
+export const GENERATIONS = ['legacy', 'v22', 'current'];
+export const genOf = (msg) => !Number.isFinite(msg.proto) ? 'legacy' : msg.proto >= PROTO ? 'current' : 'v22';
 export const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';   // no 0 O 1 I L
 const now = () => performance.now() / 1000;
 const rooms = new Map();   // id ('public-3' or the private code) -> room
@@ -73,59 +76,59 @@ function onMatchEnd(list, { roomKind, seconds, roomId, map, legacy }) {
 function onHumanJoin(ev) {
   try { notifier.onHumanJoin(ev); } catch (e) { console.warn('[notify] join', e); }
 }
-function makeRoom(kind, legacy = false) {
+function makeRoom(kind, gen = 'current') {
   if (rooms.size >= MAX_ROOMS) return null;
   let id, code = null;
   if (kind === 'private') {
     do { code = Array.from({ length: 4 }, () => CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)]).join(''); } while (rooms.has(code));
     id = code;
   } else id = `${kind}-${nextPublic++}`;
-  const room = createRoom({ id, kind, code, allocId, canAddBot, onMatchEnd, onHumanJoin, isAdmin: (k) => notifier.isAdmin(k), legacy });
+  const room = createRoom({ id, kind, code, allocId, canAddBot, onMatchEnd, onHumanJoin, isAdmin: (k) => notifier.isAdmin(k), legacy: gen === 'legacy', gen });
   rooms.set(id, room);
-  console.log(`[room] ${id} opened${legacy ? ' (legacy)' : ''} (${rooms.size} rooms)`);
+  console.log(`[room] ${id} opened${gen !== 'current' ? ` (${gen})` : ''} (${rooms.size} rooms)`);
   return room;
 }
 // The fullest public room with a free seat (an empty one counts), else a new one. At the room cap: the emptiest public
 // room even if full (the 5th human watches until a place opens), so a plain join always gets in somewhere. Round 22: only
-// rooms of the joiner's kind (legacy or current). Ty: players should face each other over bots whenever possible, so other
+// rooms of the joiner's generation (legacy, v22 or current). Ty: players should face each other over bots whenever possible, so other
 // humans always win; a first visit only prefers the courtyard between rooms with the same number of humans.
 const onCourtyard = (r) => r.map() === 'courtyard' ? 0 : 1;
-function publicRoom(legacy = false, firstVisit = false) {
-  const pub = [...rooms.values()].filter(r => r.kind === 'public' && !!r.legacy === legacy);
+function publicRoom(gen = 'current', firstVisit = false) {
+  const pub = [...rooms.values()].filter(r => r.kind === 'public' && r.gen === gen);
   const free = pub.filter(r => r.humanCount() < 4)
     .sort((a, b) => b.humanCount() - a.humanCount() || (firstVisit ? onCourtyard(a) - onCourtyard(b) : 0));
-  return free[0] || makeRoom('public', legacy) || pub.sort((a, b) => a.humanCount() - b.humanCount())[0] || null;
+  return free[0] || makeRoom('public', gen) || pub.sort((a, b) => a.humanCount() - b.humanCount())[0] || null;
 }
 const cleanCode = (v) => String(v ?? '').trim().toUpperCase();
 const ROOM_ERRORS = {
   unknown: (c) => `There's no room ${c}. You're in a public match instead.`,
   full: (c) => `Room ${c} is full. You're in a public match instead.`,
   busy: () => `The server is too busy for a new private room right now. You're in a public match instead.`,
-  version: (c, legacy) => legacy ? `Room ${c} runs a newer version of the game: reload the page to join it. You're in a public match instead.`
+  version: (c, gen) => gen !== 'current' ? `Room ${c} runs a newer version of the game: reload the page to join it. You're in a public match instead.`
     : `Room ${c} runs an older version of the game. You're in a public match instead.`,
 };
 // Where a join goes: { room, error } (error: a private room that couldn't be had; the player lands in a public room).
-// Round 22: `legacy` (a join without proto) keeps to legacy rooms; `firstVisit` prefers the courtyard. Round 23: an admin (Ty, the
+// Round 22 / 24: `gen` (the join's generation, genOf) keeps to rooms of that generation; `firstVisit` prefers the courtyard. Round 23: an admin (Ty, the
 // join's verified key) may name a public room by its id ('public-3') and lands there when it has a free seat and is their kind;
 // anyone else naming one gets today's public match.
-function roomFor(want, legacy = false, firstVisit = false, admin = false) {
+function roomFor(want, gen = 'current', firstVisit = false, admin = false) {
   const code = cleanCode(want);
   let reason = null;
-  if (code === 'NEW') { const r = makeRoom('private', legacy); if (r) return { room: r }; reason = 'busy'; }
+  if (code === 'NEW') { const r = makeRoom('private', gen); if (r) return { room: r }; reason = 'busy'; }
   else if (admin && /^PUBLIC-\d+$/.test(code)) {
     const r = rooms.get(code.toLowerCase());
-    if (r && r.kind === 'public' && !!r.legacy === legacy && r.humanCount() < 4) return { room: r };
-    reason = !r || r.kind !== 'public' ? 'unknown' : !!r.legacy !== legacy ? 'version' : 'full';
+    if (r && r.kind === 'public' && r.gen === gen && r.humanCount() < 4) return { room: r };
+    reason = !r || r.kind !== 'public' ? 'unknown' : r.gen !== gen ? 'version' : 'full';
   }
   else if (code && code !== 'PUBLIC') {
     const r = rooms.get(code);
     if (!r || r.kind !== 'private') reason = 'unknown';
-    else if (!!r.legacy !== legacy) reason = 'version';
+    else if (r.gen !== gen) reason = 'version';
     else if (r.humanCount() >= 4) reason = 'full';
     else return { room: r };
   }
-  const room = publicRoom(legacy, firstVisit);
-  return { room, error: reason && { code: code === 'NEW' ? null : code, reason, text: ROOM_ERRORS[reason](code, legacy) } };
+  const room = publicRoom(gen, firstVisit);
+  return { room, error: reason && { code: code === 'NEW' ? null : code, reason, text: ROOM_ERRORS[reason](code, gen) } };
 }
 // A socket that sends addBot / removeBots without joining (`node bot.js`, the balance tools): the room it names, else the
 // busiest public room with humans in it, else a lab room of its own (bots only, nobody can join it).
@@ -209,13 +212,13 @@ wss.on('connection', (ws) => {
         return;
       }
       if (msg.t !== 'join') return;
-      const legacy = legacyJoin(msg);   // round 22: the live CrazyGames build sends no `proto`
-      const pick = roomFor(msg.room, legacy, msg.firstVisit === true, notifier.isAdmin(msg.admin));   // (round 23: the admin key, never echoed or logged)
+      const gen = genOf(msg);   // round 22 / 24: no `proto` = the old CrazyGames build; 22-23 = the round-23 build (the courtyard only)
+      const pick = roomFor(msg.room, gen, msg.firstVisit === true, notifier.isAdmin(msg.admin));   // (round 23: the admin key, never echoed or logged)
       room = pick.room;
       if (!room) { ws.send(JSON.stringify({ t: 'notice', text: 'The server is full. Try again in a minute.' })); ws.close(4001, 'full'); return; }
       if (watching) { watching.unobserve(ws); watching = null; }
       if (pick.error) { ws.send(JSON.stringify({ t: 'roomError', ...pick.error })); console.log(`[room] ${pick.error.reason} '${pick.error.code}': to ${room.id}`); }
-      if (legacy) console.log(`[room] a legacy join (no proto) -> ${room.id}`);
+      if (gen !== 'current') console.log(`[room] a ${gen} join (proto ${msg.proto ?? 'none'}) -> ${room.id}`);
       id = room.join(ws, msg, pick.error ? { roomError: pick.error } : {});
       return;
     }

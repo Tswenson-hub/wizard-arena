@@ -3,7 +3,7 @@ const serverUrl = () => window.WA_SERVER || `${location.protocol === 'https:' ? 
 const UNAVAILABLE = { t: 'stats', unavailable: true };
 // Round 22: the protocol version in the join. A server that knows runes, pads and the second map puts clients without it (the live
 // CrazyGames build from before this round) in legacy rooms: the courtyard only, never mixed with current clients.
-export const PROTO = 22;
+export const PROTO = 24;   // round 24: the rebuilt Sky Ruins (22-23 clients bundle the old one and play the courtyard only)
 
 // Round 19: the stats panel from the join screen (no game socket yet): a short-lived socket, auth with the CrazyGames token
 // if there is one, then { t: 'stats' }; resolves with the reply, or { unavailable } after `ms`. Never rejects.

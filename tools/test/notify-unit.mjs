@@ -97,7 +97,7 @@ const flush = () => wait(60);
       const c = { ws, name, msgs: [], id: null, room: null, send: (m) => ws.send(JSON.stringify(m)) };
       ws.on('message', raw => { const m = JSON.parse(raw); if (m.t === 'welcome') { c.id = m.id; c.room = m.room; c.welcome = m; } c.msgs.push(m); });
       await new Promise(r => ws.on('open', r));
-      c.send({ t: 'join', proto: 22, name, ...extra });
+      c.send({ t: 'join', proto: 24, name, ...extra });   // (round 24: a current client)
       while (c.id == null) await wait(10);
       return c;
     };

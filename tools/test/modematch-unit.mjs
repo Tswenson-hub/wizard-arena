@@ -248,7 +248,7 @@ async function serverChecks() {
         if (m.id === c.id && typeof m.seq === 'number' && ['respawn', 'flaskArrive', 'mirror', 'mrainLand'].includes(m.t)) c.tp = m.seq;
         c.msgs.push(m); });
       await new Promise(r => ws.on('open', r));
-      c.send({ t: 'join', proto: 22, name, loadout: { ...C.DEFAULT_LOADOUT, primary: 'spark', ...lo } });   // (round 22: a current client, not a legacy room)
+      c.send({ t: 'join', proto: 24, name, loadout: { ...C.DEFAULT_LOADOUT, primary: 'spark', ...lo } });   // (round 22 / 24: a current client, not a legacy or v22 room)
       while (c.id == null) await wait(10);
       return c;
     };
@@ -1254,14 +1254,14 @@ async function roomChecks() {
       const L1 = await joinAs('OldBuild', { difficulty: 'normal' });
       const w1 = L1.msgs.find(m => m.t === 'welcome');
       ok(L1.room.legacy === true && w1.match.map.id === 'courtyard' && w1.runes === undefined && w1.pads === undefined, `a join without proto: a legacy room on the courtyard, no runes or pads (${JSON.stringify(L1.room)})`);
-      const N1 = await joinAs('NewBuild', { proto: 22, difficulty: 'normal' });
-      ok(N1.room.id !== L1.room.id && !N1.room.legacy, `a proto-22 join never shares it (${N1.room.id} vs ${L1.room.id})`);
+      const N1 = await joinAs('NewBuild', { proto: 24, difficulty: 'normal' });
+      ok(N1.room.id !== L1.room.id && !N1.room.legacy, `a proto-24 join never shares it (${N1.room.id} vs ${L1.room.id})`);
       const L2 = await joinAs('OldBuild2', {});
       ok(L2.room.id === L1.room.id, 'a second legacy join shares the legacy room');
       await wait(1500);
       ok(!L1.msgs.some(m => m.t === 'snap' && m.runes) && !L1.msgs.some(m => m.t === 'snap' && m.players.some(q => q.id === N1.id)), 'its snapshots carry no runes and never the new client');
-      const LP = await joinAs('OldHost', { room: 'new' }), NP = await joinAs('NewHost', { proto: 22, room: 'new' });
-      const toL = await joinAs('NewGuest', { proto: 22, room: LP.room.code }), toN = await joinAs('OldGuest', { room: NP.room.code });
+      const LP = await joinAs('OldHost', { room: 'new' }), NP = await joinAs('NewHost', { proto: 24, room: 'new' });
+      const toL = await joinAs('NewGuest', { proto: 24, room: LP.room.code }), toN = await joinAs('OldGuest', { room: NP.room.code });
       const errL = toL.msgs.find(m => m.t === 'welcome')?.roomError, errN = toN.msgs.find(m => m.t === 'welcome')?.roomError;
       ok(errL?.reason === 'version' && !toL.room.private && !toL.room.legacy, `a new client at a legacy code: 'version', a public room of its own kind (${errL?.text})`);
       ok(errN?.reason === 'version' && !toN.room.private && toN.room.legacy === true, `an old client at a new code: 'version', a legacy public room (${errN?.text})`);
@@ -1273,7 +1273,27 @@ async function roomChecks() {
       ok(NP.msgs.filter(m => m.t === 'room').pop()?.room.lock === (C.MAPS?.sky ? 'sky' : null), 'a guest (in another room) can\'t change it');
       LP.send({ t: 'roomMap', map: 'sky' }); await wait(300);
       ok(LP.msgs.filter(m => m.t === 'room').pop()?.room.map === 'courtyard', 'a legacy room has no other map to lock');
-      await close(L1, L2, N1, LP, NP, toL, toN);
+      // round 24: three generations. A proto-22 or -23 join (the round-23 build pending at CrazyGames bundles the OLD Sky Ruins layout) gets a
+      // 'v22' room: the courtyard with runes, pads and the current pace, no rotation and no other map to lock; never shared with a legacy
+      // (no proto) or a current (proto 24) client, and a private code of another generation is refused with 'version'
+      const V1 = await joinAs('Round23', { proto: 22, difficulty: 'normal' }), V2 = await joinAs('Round23b', { proto: 23 });
+      const wv = V1.msgs.find(m => m.t === 'welcome');
+      ok(V1.room.gen === 'v22' && !V1.room.legacy && wv.match.map.id === 'courtyard' && Array.isArray(wv.runes) && wv.runes.length > 0 && Array.isArray(wv.pads) && wv.pads.length > 0
+        && V1.room.maps.join() === 'courtyard', `a proto-22 join: a v22 room on the courtyard with runes and pads, no rotation (${JSON.stringify({ gen: V1.room.gen, maps: V1.room.maps, runes: wv.runes?.length, pads: wv.pads?.length })})`);
+      ok(V2.room.id === V1.room.id && V1.room.id !== L1.room.id && V1.room.id !== N1.room.id, `a proto-23 join shares it; it is neither the legacy nor the current room (${V2.room.id}; ${L1.room.id}, ${N1.room.id})`);
+      ok(N1.room.gen === 'current' && L1.room.gen === 'legacy' && L1.room.legacy === true, `the rooms say their generation (${N1.room.gen}, ${L1.room.gen})`);
+      const VP = await joinAs('V22Host', { proto: 22, room: 'new' });
+      const toV = await joinAs('NewAtV22', { proto: 24, room: VP.room.code }), vToN = await joinAs('V22AtNew', { proto: 23, room: NP.room.code }), oldToV = await joinAs('OldAtV22', { room: VP.room.code });
+      const err = (c) => c.msgs.find(m => m.t === 'welcome')?.roomError;
+      ok(err(toV)?.reason === 'version' && toV.room.gen === 'current' && !toV.room.private, `a current client at a v22 code: 'version', a current public room (${err(toV)?.text})`);
+      ok(err(vToN)?.reason === 'version' && vToN.room.gen === 'v22' && !vToN.room.private, `a v22 client at a current code: 'version', a v22 public room (${err(vToN)?.text})`);
+      ok(err(oldToV)?.reason === 'version' && oldToV.room.legacy === true && !oldToV.room.private, `a legacy client at a v22 code: 'version', a legacy public room`);
+      ok(vToN.room.id === V1.room.id || vToN.room.gen === 'v22', 'the v22 public room is shared by v22 clients only');
+      VP.send({ t: 'roomMap', map: 'sky' }); await wait(400);
+      ok(VP.msgs.filter(m => m.t === 'room').pop()?.room.map === 'courtyard' && !VP.msgs.some(m => m.t === 'map' && m.map.id === 'sky'), 'a v22 host can\'t lock Sky Ruins: the room stays on the courtyard');
+      await wait(1200);
+      ok(!V1.msgs.some(m => m.t === 'snap' && m.players.some(q => q.id === N1.id || q.id === L1.id)) && V1.msgs.some(m => m.t === 'snap' && m.runes), 'a v22 room\'s snapshots carry runes and never a legacy or current client');
+      await close(L1, L2, N1, LP, NP, toL, toN, V1, V2, VP, toV, vToN, oldToV);
     }
   } catch (e) { ok(false, `room checks: ${e.message}`); }
   finally { if (srv.exitCode === null) { srv.kill(); await new Promise(r => srv.once('exit', r)); } }
