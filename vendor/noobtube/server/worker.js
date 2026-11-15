@@ -53579,7 +53579,7 @@ const CONFIG = {
 				desc: "Your own blasts hurt half as much",
 				selfDamageMult: .5
 			},
-			unlockXp: 2100
+			unlockXp: 1200
 		},
 		paratrooper: {
 			name: "Paratrooper",
@@ -53597,7 +53597,7 @@ const CONFIG = {
 				desc: "Space while falling opens a glide chute",
 				chuteAnytime: true
 			},
-			unlockXp: 4250
+			unlockXp: 3150
 		},
 		glideFall: 3.2,
 		glideDamageMult: 1.25
@@ -53785,6 +53785,42 @@ function readLocalIntent(game) {
 		dPitch
 	};
 }
+const LADDER = {
+	speed: 9,
+	topHop: 4.5,
+	inward: 3.5,
+	reach: .35
+};
+function ladderClimb(actor, world, intent, dt) {
+	const ladders = world?.ladders;
+	if (!ladders?.length || !actor.alive) {
+		actor.climbing = false;
+		return false;
+	}
+	const r = (actor.radius ?? .4) + LADDER.reach, h = actor.height ?? 1.8, p = actor.pos;
+	let hit = null;
+	for (const l of ladders) {
+		if (l.active === false) continue;
+		if (p.x + r < l.min.x || p.x - r > l.max.x || p.z + r < l.min.z || p.z - r > l.max.z) continue;
+		if (p.y + h < l.min.y || p.y > l.top + .5) continue;
+		hit = l;
+		break;
+	}
+	const wants = (intent.forward || 0) > 0 || !!intent.jump || actor.climbing && (intent.forward || 0) >= 0;
+	if (!hit || !wants) {
+		actor.climbing = false;
+		return false;
+	}
+	if (p.y >= hit.top - .15) {
+		actor.vel.set(-hit.out.x * LADDER.inward, LADDER.topHop, -hit.out.z * LADDER.inward);
+		actor.climbing = false;
+		return false;
+	}
+	if (!actor.climbing) actor.climbing = true;
+	actor.vel.set(actor.vel.x * .2, LADDER.speed, actor.vel.z * .2);
+	actor.onGround = false;
+	return true;
+}
 function createPlayer(game) {
 	const P = CONFIG.player;
 	const half = P.width / 2;
@@ -53894,7 +53930,19 @@ function createPlayer(game) {
 			this.vel.x = hv.x;
 			this.vel.z = hv.z;
 			if (this.pull) this.vel.addScaledVector(this.pull, dt);
-			this.vel.y -= P.gravity * (this.gravityMult ?? 1) * dt;
+			const wasClimbing = this.climbing;
+			if (ladderClimb(this, game.world, intent, dt)) {
+				if (!wasClimbing) game.bus.emit("ladder:climb", {
+					actor: this,
+					on: true
+				});
+			} else {
+				if (wasClimbing) game.bus.emit("ladder:climb", {
+					actor: this,
+					on: false
+				});
+				this.vel.y -= P.gravity * (this.gravityMult ?? 1) * dt;
+			}
 			if (this.gliding && !this.onGround) {
 				const maxFall = this.glideFall ?? 3.2;
 				if (this.vel.y < -maxFall) this.vel.y = -maxFall;
@@ -53968,6 +54016,7 @@ function createPlayer(game) {
 // src/game/destruction.js
 var destruction_exports = /* @__PURE__ */ __exportAll({
 	STYLES: () => STYLES,
+	TOUGHNESS: () => TOUGHNESS,
 	TYPES: () => TYPES,
 	activeWalls: () => activeWalls,
 	aimPoint: () => aimPoint,
@@ -53983,6 +54032,7 @@ var destruction_exports = /* @__PURE__ */ __exportAll({
 	buildingColor: () => buildingColor,
 	buildingIds: () => buildingIds,
 	clear: () => clear$1,
+	columnBlocks: () => columnBlocks,
 	createDestruction: () => createDestruction,
 	damageSphere: () => damageSphere,
 	debugTopple: () => debugTopple,
@@ -53995,6 +54045,7 @@ var destruction_exports = /* @__PURE__ */ __exportAll({
 	progress: () => progress,
 	rebuildingList: () => rebuildingList,
 	setRebuild: () => setRebuild,
+	standingFraction: () => standingFraction,
 	stats: () => stats,
 	supported: () => supported,
 	takeDelta: () => takeDelta,
@@ -54002,12 +54053,13 @@ var destruction_exports = /* @__PURE__ */ __exportAll({
 	update: () => update$6,
 	wallBlocks: () => wallBlocks
 });
+const TOUGHNESS = 1.3;
 const TYPES = {
-	concrete: { hp: 40 },
-	brick: { hp: 30 },
-	glass: { hp: 5 },
-	wood: { hp: 15 },
-	steel: { hp: 120 }
+	concrete: { hp: 40 * TOUGHNESS },
+	brick: { hp: 30 * TOUGHNESS },
+	glass: { hp: 5 * TOUGHNESS },
+	wood: { hp: 15 * TOUGHNESS },
+	steel: { hp: 120 * TOUGHNESS }
 };
 const STYLES = {
 	"brick-red": {
@@ -55054,6 +55106,26 @@ function createDestruction(g = null) {
 		const b = buildings[blk.b];
 		return !(b?.wall && !b.active);
 	}
+	function columnBlocks(id, face, along) {
+		const b = buildings.find((x) => x.id === id);
+		if (!b) return [];
+		const ns = face === "n" || face === "s";
+		const c = Math.floor(along - (ns ? b.ox : b.oz));
+		if (c < 0 || c >= (ns ? b.w : b.d)) return [];
+		const i = ns ? c : face === "w" ? 0 : b.w - 1, k = ns ? face === "n" ? 0 : b.d - 1 : c;
+		const out = [];
+		for (let r = 0; r < Math.min(b.rows, b.floors * ROWS_PER_FLOOR); r++) {
+			const j = b.grid[i + b.w * (k + b.d * r)];
+			if (j >= 0) out.push(j);
+		}
+		return out;
+	}
+	function standingFraction(ids) {
+		if (!ids.length) return 0;
+		let n = 0;
+		for (const j of ids) if (blocks[j]?.state === ALIVE) n++;
+		return n / ids.length;
+	}
 	function progressOf(b) {
 		return b.total ? Math.min(1, b.lost / b.total) : 0;
 	}
@@ -55157,6 +55229,8 @@ function createDestruction(g = null) {
 	}
 	if (g) init(g);
 	return {
+		columnBlocks,
+		standingFraction,
 		placeWall,
 		activeWalls,
 		wallBlocks,
@@ -55273,6 +55347,12 @@ function setRebuild(...a) {
 }
 function rebuildingList(...a) {
 	return def$6().rebuildingList(...a);
+}
+function columnBlocks(...a) {
+	return def$6().columnBlocks(...a);
+}
+function standingFraction(...a) {
+	return def$6().standingFraction(...a);
 }
 // src/game/levels/downtown.js
 const S = (z) => [
@@ -56125,7 +56205,7 @@ const LEVELS = [
 			buildings: ["garage"],
 			pct: .8
 		}],
-		par: 16
+		par: 20
 	},
 	{
 		id: "dt-6",
@@ -56538,7 +56618,7 @@ const LEVELS = [
 			],
 			pct: .6
 		}, { kind: "eliminate" }],
-		par: 40
+		par: 50
 	},
 	{
 		id: "dt-8",
@@ -57075,172 +57155,154 @@ const SHOWCASE = {
 	}
 };
 // src/game/levels/citydom.js
-const FRONT = {
-	P: {
-		n: "s",
-		s: "n",
-		e: "w",
-		w: "e"
-	},
-	Q: {
-		n: "e",
-		s: "w",
-		e: "n",
-		w: "s"
-	},
-	PQ: {
-		n: "w",
-		s: "e",
-		e: "s",
-		w: "n"
-	}
+const FRONT_P = {
+	n: "s",
+	s: "n",
+	e: "w",
+	w: "e"
 };
-const OPS = {
-	P: ([x, z]) => [-x, -z],
-	Q: ([x, z]) => [-z, -x],
-	PQ: ([x, z]) => [z, x]
-};
-const ROT = {
-	P: (r) => r + Math.PI,
-	Q: (r) => -Math.PI / 2 - r,
-	PQ: (r) => Math.PI / 2 - r
-};
-function orbitB(b) {
-	const out = [b];
-	for (const op of [
-		"P",
-		"Q",
-		"PQ"
-	]) {
-		const [x, z] = OPS[op]([b.x, b.z]);
-		if (out.some((o) => Math.abs(o.x - x) < .01 && Math.abs(o.z - z) < .01)) continue;
-		const swap = op !== "P";
-		out.push({
-			...b,
-			id: `${b.id}-${op.toLowerCase()}`,
-			x,
-			z,
-			w: swap ? b.d : b.w,
-			d: swap ? b.w : b.d,
-			front: FRONT[op][b.front] ?? b.front
-		});
-	}
-	return out;
-}
-function orbitP(p) {
-	const out = [p];
-	for (const op of [
-		"P",
-		"Q",
-		"PQ"
-	]) {
-		const [x, z] = OPS[op]([p.pos[0], p.pos[2]]);
-		if (out.some((o) => Math.abs(o.pos[0] - x) < .01 && Math.abs(o.pos[2] - z) < .01)) continue;
-		out.push({
-			...p,
-			pos: [
-				x,
-				p.pos[1],
-				z
-			],
-			rot: ROT[op](p.rot ?? 0)
-		});
-	}
-	return out;
+function mirror(b) {
+	if (b.pos) return [b, {
+		...b,
+		pos: [
+			-b.pos[0],
+			b.pos[1],
+			-b.pos[2]
+		],
+		rot: (b.rot ?? 0) + Math.PI
+	}];
+	return [b, {
+		...b,
+		id: `${b.id}-p`,
+		x: -b.x,
+		z: -b.z,
+		front: FRONT_P[b.front] ?? b.front
+	}];
 }
 const CITYDOM = {
 	id: "citydom",
 	name: "Downtown Domination",
 	index: 10,
 	intro: "",
-	size: [70, 70],
+	size: [80, 80],
 	roads: {
-		alongX: [-30, 30],
-		alongZ: [-30, 30]
+		alongX: [-35, 35],
+		alongZ: [-35, 35]
 	},
 	buildings: [
 		{
 			id: "gate",
-			x: -8,
-			z: -8,
+			x: -12,
+			z: -9,
 			w: 6,
 			d: 6,
 			floors: 2,
 			style: "brick-red",
-			front: "e"
+			front: "w"
+		},
+		{
+			id: "westblock",
+			x: -28.5,
+			z: 0,
+			w: 8,
+			d: 6,
+			floors: 2,
+			style: "plaster-blue",
+			front: "s"
 		},
 		{
 			id: "arcade",
-			x: -8,
-			z: 8,
+			x: -17,
+			z: 10,
 			w: 6,
 			d: 6,
 			floors: 2,
 			style: "plaster-yellow",
-			front: "e"
+			front: "s"
 		},
 		{
 			id: "block",
-			x: -20.5,
-			z: 6,
-			w: 8,
-			d: 8,
+			x: -4,
+			z: 18.5,
+			w: 7,
+			d: 6,
 			floors: 2,
-			style: "plaster-blue",
-			front: "e"
+			style: "plaster-green",
+			front: "s"
 		},
 		{
 			id: "court",
-			x: -16,
-			z: -23,
+			x: -23,
+			z: -26,
 			w: 10,
 			d: 4,
 			floors: 2,
 			style: "brick-brown",
+			front: "s",
+			noLadder: true
+		},
+		{
+			id: "kiosk",
+			x: -14,
+			z: -22,
+			w: 4,
+			d: 6,
+			floors: 1,
+			style: "plaster-cream",
+			front: "w"
+		},
+		{
+			id: "stall",
+			x: 0,
+			z: -8,
+			w: 5,
+			d: 3,
+			floors: 1,
+			style: "plaster-cream",
 			front: "s"
 		}
-	].flatMap(orbitB),
+	].flatMap(mirror),
 	props: [
 		{
 			kind: "bench",
 			pos: [
-				-3.5,
+				-5,
 				0,
-				-11
+				-4
 			],
 			rot: 0
 		},
 		{
 			kind: "bush",
 			pos: [
-				-2.5,
+				-6.5,
 				0,
-				-13
+				-5
 			]
 		},
 		{
 			kind: "dumpster",
 			pos: [
-				-12,
+				-20,
 				0,
-				-18
+				-12
 			],
 			rot: Math.PI / 2
 		},
 		{
 			kind: "boxes",
 			pos: [
-				-19,
+				-28,
 				0,
-				-12
+				-11
 			]
 		},
 		{
 			kind: "streetlight",
 			pos: [
-				-24.5,
+				-29.5,
 				0,
-				-24.5
+				-29.5
 			]
 		},
 		{
@@ -57248,62 +57310,79 @@ const CITYDOM = {
 			pos: [
 				0,
 				0,
-				-24.5
+				-29.5
 			]
 		},
 		{
 			kind: "trash",
 			pos: [
-				-14,
+				-9,
 				0,
-				2
+				14
 			],
 			rot: 0
 		},
 		{
 			kind: "bush",
 			pos: [
+				-22,
+				0,
+				22
+			]
+		},
+		{
+			kind: "dumpster",
+			pos: [
+				-10,
+				0,
+				26
+			],
+			rot: 0
+		},
+		{
+			kind: "boxes",
+			pos: [
 				-24,
 				0,
-				-3
+				12
 			]
 		}
-	].flatMap(orbitP),
+	].flatMap(mirror),
 	enemies: [],
 	objectives: [],
 	par: 0,
 	playerStart: {
 		pos: [
-			-29,
+			-35,
 			0,
-			29
+			20
 		],
-		yaw: -Math.PI / 4
+		yaw: -1.052
 	},
 	zones: [
 		{
 			id: "A",
 			center: [
-				-16,
+				-24.5,
 				0,
-				-16
+				-17.5
 			],
 			radius: 5,
 			pads: [
 				[
-					-20,
+					-28.5,
 					0,
-					-20
+					-22.5
 				],
 				[
-					-12,
+					-20.5,
 					0,
-					-20.2
+					-22.5
 				],
 				[
-					-20.2,
+					-27.5,
 					0,
-					-12
+					-9.5
 				]
 			]
 		},
@@ -57317,50 +57396,50 @@ const CITYDOM = {
 			radius: 5.5,
 			pads: [
 				[
-					-13,
+					-9,
 					0,
-					4
+					8
 				],
 				[
-					13,
+					9,
 					0,
-					-4
+					-8
 				],
 				[
-					-4,
+					-5,
 					0,
-					13
+					5
 				],
 				[
-					4,
+					5,
 					0,
-					-13
+					-5
 				]
 			]
 		},
 		{
 			id: "C",
 			center: [
-				16,
+				24.5,
 				0,
-				16
+				17.5
 			],
 			radius: 5,
 			pads: [
 				[
-					20,
+					28.5,
 					0,
-					20
+					22.5
 				],
 				[
-					12,
+					20.5,
 					0,
-					20.2
+					22.5
 				],
 				[
-					20.2,
+					27.5,
 					0,
-					12
+					9.5
 				]
 			]
 		}
@@ -57371,75 +57450,78 @@ const CITYDOM = {
 	spawns: {
 		red: [
 			[
-				-29,
+				-35,
 				0,
-				29
+				20
 			],
 			[
-				-31,
+				-35,
 				0,
-				31
+				17.5
 			],
 			[
-				-27.5,
+				-35,
 				0,
-				27.5
+				22.5
 			],
 			[
-				-30.5,
+				-33,
 				0,
-				28.5
+				18.5
 			],
 			[
-				-28.5,
+				-33,
 				0,
-				30.5
+				21.5
 			]
 		],
 		blue: [
 			[
-				29,
+				35,
 				0,
-				-29
+				-20
 			],
 			[
-				31,
+				35,
 				0,
-				-31
+				-17.5
 			],
 			[
-				27.5,
+				35,
 				0,
-				-27.5
+				-22.5
 			],
 			[
-				30.5,
+				33,
 				0,
-				-28.5
+				-18.5
 			],
 			[
-				28.5,
+				33,
 				0,
-				-30.5
+				-21.5
 			]
 		]
 	},
 	spawnYaw: {
-		red: -Math.PI / 4,
-		blue: 3 * Math.PI / 4
+		red: -1.052,
+		blue: 2.09
 	},
 	traffic: {
-		lane: 33,
+		lane: 38,
 		cars: 3,
 		speed: 7,
 		respawn: 12
 	},
 	heli: {
-		radius: 26,
-		y: 30,
-		period: 40,
+		radius: 30,
+		y: 38,
+		period: 28,
 		every: 40,
-		firstDrop: 20
+		firstDrop: 20,
+		hp: 360,
+		direct: 60,
+		respawn: 60
 	}
 };
 // src/game/arena.js
@@ -57460,6 +57542,7 @@ var arena_exports = /* @__PURE__ */ __exportAll({
 	init: () => init$5,
 	isCity: () => isCity,
 	isHarbour: () => isHarbour,
+	ladderList: () => ladderList,
 	lavaActive: () => lavaActive,
 	lavaAt: () => lavaAt,
 	loadLevel: () => loadLevel,
@@ -57691,7 +57774,8 @@ function createArena(g = null) {
 			stairLinks: stairLinks.splice(0),
 			perchAreas: perchAreas.splice(0),
 			draws: draws.splice(0),
-			badSpots: badSpots.splice(0)
+			badSpots: badSpots.splice(0),
+			ladderDefs: ladderDefs.splice(0)
 		};
 		game = {
 			world: createWorld(),
@@ -57718,6 +57802,7 @@ function createArena(g = null) {
 			return {
 				id: def.id,
 				name: def.name,
+				ladders: ladderDefs.map((d) => ({ ...d })),
 				boxes: game.world.boxes.map(box),
 				spawns: spawns.map((sp) => ({
 					pos: sp.pos.toArray(),
@@ -57759,7 +57844,8 @@ function createArena(g = null) {
 				"stairLinks",
 				"perchAreas",
 				"draws",
-				"badSpots"
+				"badSpots",
+				"ladderDefs"
 			]) {
 				const arr = {
 					mapBoxes,
@@ -57767,7 +57853,8 @@ function createArena(g = null) {
 					stairLinks,
 					perchAreas,
 					draws,
-					badSpots
+					badSpots,
+					ladderDefs
 				}[k];
 				arr.length = 0;
 				arr.push(...saved[k]);
@@ -57813,11 +57900,15 @@ function createArena(g = null) {
 	}
 	function unloadMap() {
 		if (!curMap) return;
+		ladderDefs.length = 0;
+		ladders.length = 0;
+		if (game.world.ladders) game.world.ladders.length = 0;
 		if (curMap.city) {
 			destruction().clear();
 			clearToys();
 			clearTraffic();
 			heliDef = null;
+			setupHeli();
 			crates.length = 0;
 			curLevel = null;
 		}
@@ -57857,9 +57948,11 @@ function createArena(g = null) {
 		if (!L.zones) destruction().build(L.buildings ?? []);
 		destruction().setRebuild?.(!!L.zones);
 		buildTraffic(L);
+		attachLadders();
 		heliDef = L.heli ?? null;
 		crates.length = 0;
 		nextDrop = clock() + (heliDef?.firstDrop ?? 20);
+		setupHeli();
 		setMutator(null);
 		game.bus.emit("map:built", { id: curMap.id });
 		setMode(mode);
@@ -58069,6 +58162,7 @@ function createArena(g = null) {
 			yaw: 0
 		};
 		if (L.zones) for (const bd of L.buildings ?? []) perch(bd.x - bd.w / 2, bd.z - bd.d / 2, bd.x + bd.w / 2, bd.z + bd.d / 2, (bd.y ?? 0) + 3 * (bd.floors ?? 1));
+		if (L.zones && L.ladders !== false) planLadders(L, hx, hz);
 		if (L.spawns) for (const [team, list] of Object.entries(L.spawns)) for (const p of list) spawns.push({
 			pos: v(...p),
 			yaw: L.spawnYaw?.[team] ?? 0,
@@ -58326,8 +58420,26 @@ function createArena(g = null) {
 			showcase();
 			game.bus.on("match:quit", () => showcase());
 		}
+		for (const n of [
+			"block:break",
+			"blocks:sync",
+			"block:rebuild",
+			"blocks:built",
+			"building:collapse"
+		]) game.bus.on(n, () => {
+			ladderDirty = true;
+		});
 		game.bus.on("heli:drop", (e) => {
 			if (e?.net && !crates.some((c) => c.id === e.id)) addCrate(e);
+		});
+		game.bus.on("heli:hit", (e) => {
+			if (e?.net) heliNet("hit", e);
+		});
+		game.bus.on("heli:down", (e) => {
+			if (e?.net) heliNet("down", e);
+		});
+		game.bus.on("heli:respawn", (e) => {
+			if (e?.net) heliNet("respawn", e);
 		});
 		game.bus.on("crate:take", (e) => {
 			const i = crates.findIndex((c) => c.id === e?.id);
@@ -58337,6 +58449,122 @@ function createArena(g = null) {
 			const i = crates.findIndex((c) => c.id === e?.id);
 			if (i >= 0) crates.splice(i, 1);
 		});
+	}
+	const ladderDefs = [], ladders = [];
+	let ladderDirty = false;
+	const LADDER_MIN = .7;
+	function planLadders(L, hx, hz) {
+		const zones = L.zones ?? [], all = L.buildings ?? [];
+		const lim = Math.min(hx, hz) - 1;
+		all.forEach((bd, n) => {
+			if ((bd.floors ?? 1) < 2 || bd.noLadder) return;
+			const near = zones.reduce((o, z) => Math.hypot(z.center[0] - bd.x, z.center[2] - bd.z) < Math.hypot(o.center[0] - bd.x, o.center[2] - bd.z) ? z : o, zones[0]);
+			const zx = near.center[0] - bd.x, zz = near.center[2] - bd.z, zl = Math.hypot(zx, zz) || 1;
+			const faces = [
+				[
+					"n",
+					0,
+					-1,
+					bd.w
+				],
+				[
+					"s",
+					0,
+					1,
+					bd.w
+				],
+				[
+					"w",
+					-1,
+					0,
+					bd.d
+				],
+				[
+					"e",
+					1,
+					0,
+					bd.d
+				]
+			].map(([f, ox, oz, len]) => {
+				const fx = bd.x + ox * bd.w / 2, fz = bd.z + oz * bd.d / 2;
+				const sx = fx + ox * 1.2, sz = fz + oz * 1.2;
+				const blocked = Math.abs(sx) > lim || Math.abs(sz) > lim || all.some((o) => o !== bd && Math.abs(sx - o.x) < o.w / 2 + 1 && Math.abs(sz - o.z) < o.d / 2 + 1);
+				return {
+					f,
+					ox,
+					oz,
+					len,
+					fx,
+					fz,
+					score: (ox * zx + oz * zz) / zl + (f === bd.front ? .35 : 0) + (blocked ? 9 : 0)
+				};
+			}).sort((a, b) => a.score - b.score);
+			const take = bd.w * bd.d >= 40 ? 2 : 1;
+			faces.slice(0, take).filter((f) => f.score < 5).forEach((F, k) => {
+				const ns = F.f === "n" || F.f === "s", o0 = ns ? bd.x - bd.w / 2 : bd.z - bd.d / 2;
+				const off = (F.len / 2 - 1.5) * ((n + k) % 2 ? 1 : -1);
+				const along = o0 + Math.floor((ns ? bd.x : bd.z) + off - o0) + .5;
+				const top = (bd.y ?? 0) + 3 * bd.floors;
+				const [cx, cz] = ns ? [along, F.fz] : [F.fx, along];
+				const def = {
+					building: bd.id,
+					face: F.f,
+					along,
+					top,
+					y0: bd.y ?? 0,
+					out: [
+						F.ox,
+						0,
+						F.oz
+					],
+					min: [
+						ns ? cx - .45 : Math.min(cx, cx + F.ox * .5),
+						bd.y ?? 0,
+						ns ? Math.min(cz, cz + F.oz * .5) : cz - .45
+					],
+					max: [
+						ns ? cx + .45 : Math.max(cx, cx + F.ox * .5),
+						top,
+						ns ? Math.max(cz, cz + F.oz * .5) : cz + .45
+					]
+				};
+				ladderDefs.push(def);
+				stairLinks.push([v(cx + F.ox * 1.2, bd.y ?? 0, cz + F.oz * 1.2), v(cx - F.ox * 1.6, top, cz - F.oz * 1.6)]);
+			});
+		});
+	}
+	function attachLadders() {
+		ladders.length = 0;
+		for (const d of ladderDefs) ladders.push({
+			min: v(...d.min),
+			max: v(...d.max),
+			top: d.top,
+			out: v(...d.out),
+			building: d.building,
+			face: d.face,
+			blocks: destruction().columnBlocks?.(d.building, d.face, d.along) ?? [],
+			active: true
+		});
+		game.world.ladders = ladders;
+		refreshLadders(true);
+	}
+	function refreshLadders(silent = false) {
+		ladderDirty = false;
+		const D = destruction();
+		for (const l of ladders) {
+			const on = !l.blocks.length || (D.standingFraction?.(l.blocks) ?? 1) >= LADDER_MIN;
+			if (on !== l.active) {
+				l.active = on;
+				if (!silent) game.bus.emit("ladder:state", {
+					building: l.building,
+					face: l.face,
+					active: on
+				});
+			}
+		}
+	}
+	function ladderList() {
+		return ladders;
 	}
 	const clock = () => typeof game?.netTime === "function" ? game.netTime() : game?.time ?? 0;
 	const authority = () => game?.netRole !== "client";
@@ -58662,18 +58890,166 @@ function createArena(g = null) {
 	function trafficList() {
 		return traffic;
 	}
-	let heliDef = null, nextDrop = 0, dropN = 0;
+	let heliDef = null, nextDrop = 0, dropN = 0, heliActor = null;
 	const crates = [];
+	const hs = {
+		hp: 0,
+		of: 0,
+		down: false,
+		downAt: 0,
+		from: null,
+		to: null,
+		crashed: false,
+		respawnAt: 0,
+		killer: null,
+		damagers: /* @__PURE__ */ new Set()
+	};
+	function flight(t) {
+		const w = Math.PI * 2 / (heliDef.period ?? 40), R0 = heliDef.radius ?? 26, y0 = heliDef.y ?? 30;
+		const ph = t % 11, jink = ph < 2.5 ? Math.sin(ph / 2.5 * Math.PI) : 0;
+		const a = t * w, R = R0 + 5 * Math.sin(t * .37) + 7 * jink * (Math.floor(t / 11) % 2 ? 1 : -1);
+		return {
+			pos: v(Math.cos(a) * R, y0 + 3 * Math.sin(t * .61) + 1.5 * Math.sin(t * 1.3), Math.sin(a) * R),
+			yaw: Math.PI - a,
+			bank: .22 + .45 * jink
+		};
+	}
 	function heli() {
 		if (!heliDef) return null;
-		const t = clock(), w = Math.PI * 2 / (heliDef.period ?? 40), R = heliDef.radius ?? 26;
-		const a = t * w;
+		const t = clock();
+		if (hs.down) {
+			if (hs.crashed) return {
+				pos: hs.to.clone(),
+				yaw: 0,
+				bank: 0,
+				active: false,
+				down: true,
+				crashed: true,
+				hp: 0,
+				of: hs.of
+			};
+			const u = Math.min(1, (t - hs.downAt) / 3.5), sp = 6 * (1 - u), ang = (t - hs.downAt) * 5;
+			return {
+				pos: v(hs.from.x + (hs.to.x - hs.from.x) * u + Math.cos(ang) * sp, hs.from.y + (hs.to.y + .8 - hs.from.y) * u * u, hs.from.z + (hs.to.z - hs.from.z) * u + Math.sin(ang) * sp),
+				yaw: -ang * 1.6,
+				bank: .6,
+				active: true,
+				down: true,
+				smoking: true,
+				hp: 0,
+				of: hs.of
+			};
+		}
 		return {
-			pos: v(Math.cos(a) * R, (heliDef.y ?? 30) + Math.sin(t * .7) * .8, Math.sin(a) * R),
-			yaw: Math.PI - a,
-			bank: .18,
-			active: true
+			...flight(t),
+			active: true,
+			down: false,
+			hp: hs.hp,
+			of: hs.of,
+			smoking: hs.of > 0 && hs.hp < hs.of * .5
 		};
+	}
+	function setupHeli() {
+		hs.down = false;
+		hs.crashed = false;
+		hs.of = heliDef?.hp ?? 0;
+		hs.hp = hs.of;
+		hs.damagers.clear();
+		hs.killer = null;
+		if (heliActor) {
+			game.world.removeActor(heliActor);
+			heliActor = null;
+		}
+		if (!heliDef?.hp) return;
+		heliActor = {
+			id: "heli",
+			kind: "heli",
+			name: "Supply Helicopter",
+			team: null,
+			noTricks: true,
+			pos: v(0, -100, 0),
+			vel: v(),
+			radius: 2.4,
+			height: 3.2,
+			hitRadius: 2.6,
+			hitHeight: 3.2,
+			alive: true,
+			hp: hs.hp,
+			maxHp: hs.of,
+			directHitDamage: heliDef.direct ?? 60,
+			center(o = new Vector3()) {
+				return o.set(this.pos.x, this.pos.y + 1.6, this.pos.z);
+			},
+			eye(o = new Vector3()) {
+				return o.set(this.pos.x, this.pos.y + 1.6, this.pos.z);
+			},
+			impulse() {},
+			damage(amount, info = {}) {
+				return heliDamage(amount, info);
+			}
+		};
+		game.world.addActor(heliActor);
+	}
+	function heliDamage(amount, info) {
+		if (!authority() || hs.down || !(amount > 0)) return false;
+		hs.hp = Math.max(0, hs.hp - amount);
+		if (heliActor) heliActor.hp = hs.hp;
+		if (info.owner) hs.damagers.add(info.owner);
+		const pos = heli().pos;
+		game.bus.emit("heli:hit", {
+			hp: Math.round(hs.hp),
+			of: hs.of,
+			owner: info.owner ?? null,
+			pos,
+			direct: !!info.direct
+		});
+		if (hs.hp <= 0) shootDown(info.owner ?? null, pos);
+		return false;
+	}
+	function crashPoint(p) {
+		const [W, D] = curLevel?.size ?? [60, 60], e = Math.min(W, D) / 2 - 5;
+		return Math.abs(p.x) > Math.abs(p.z) ? v(Math.sign(p.x) * e, 0, Math.max(-e, Math.min(e, p.z))) : v(Math.max(-e, Math.min(e, p.x)), 0, Math.sign(p.z) * e);
+	}
+	function shootDown(owner, pos, to = null, at = null) {
+		hs.down = true;
+		hs.crashed = false;
+		hs.downAt = at ?? clock();
+		hs.from = pos.clone();
+		hs.to = to ? to.clone() : crashPoint(pos);
+		hs.killer = owner;
+		hs.respawnAt = hs.downAt + (heliDef.respawn ?? 60);
+		if (heliActor) {
+			heliActor.alive = false;
+			heliActor.hp = 0;
+		}
+		if (authority()) game.bus.emit("heli:down", {
+			owner,
+			damagers: [...hs.damagers].filter((a) => a && a !== owner),
+			pos: hs.from.clone(),
+			to: hs.to.clone(),
+			t: hs.downAt
+		});
+	}
+	function heliRespawn() {
+		hs.down = false;
+		hs.crashed = false;
+		hs.hp = hs.of;
+		hs.damagers.clear();
+		if (heliActor) {
+			heliActor.alive = true;
+			heliActor.hp = hs.hp;
+		}
+		game.bus.emit("heli:respawn", {});
+	}
+	function heliNet(type, e) {
+		if (!heliDef || authority()) return;
+		const P = (x) => Array.isArray(x) ? v(...x) : x?.clone ? x.clone() : null;
+		if (type === "hit") {
+			hs.hp = e.hp ?? hs.hp;
+			hs.of = e.of ?? hs.of;
+			if (heliActor) heliActor.hp = hs.hp;
+		} else if (type === "down") shootDown(null, P(e.pos) ?? heli().pos, P(e.to));
+		else if (type === "respawn") heliRespawn();
 	}
 	function addCrate(e) {
 		const from = Array.isArray(e.pos) ? v(...e.pos) : e.pos.clone(), to = Array.isArray(e.to) ? v(...e.to) : e.to.clone();
@@ -58691,7 +59067,44 @@ function createArena(g = null) {
 	}
 	function updateHeli() {
 		const t = clock();
-		if (authority() && heliDef.drops !== false && t >= nextDrop) {
+		if (hs.down) {
+			if (!hs.crashed && t - hs.downAt >= 3.5) {
+				hs.crashed = true;
+				const pos = hs.to.clone().setY(1);
+				game.bus.emit("heli:crash", { pos });
+				if (authority()) {
+					game.modules.explosion?.explode?.({
+						pos,
+						radius: 9,
+						owner: hs.killer,
+						ammo: "rpg",
+						direct: null
+					});
+					game.modules.explosion?.explode?.({
+						pos: pos.clone().setY(2.5),
+						radius: 6,
+						owner: hs.killer,
+						ammo: "barrel",
+						direct: null
+					});
+					const e = {
+						id: ++dropN,
+						zone: null,
+						pos: hs.to.clone().setY(3),
+						to: hs.to.clone(),
+						dur: .6,
+						crash: true
+					};
+					addCrate(e);
+					game.bus.emit("heli:drop", e);
+				}
+			}
+			if (authority() && t >= hs.respawnAt) heliRespawn();
+		} else if (heliActor) {
+			const f = flight(t);
+			heliActor.pos.set(f.pos.x, f.pos.y - 1.6, f.pos.z);
+		}
+		if (authority() && !hs.down && heliDef.drops !== false && t >= nextDrop) {
 			nextDrop = t + (heliDef.every ?? 40);
 			const zones = domZones();
 			if (zones.length) {
@@ -58702,7 +59115,7 @@ function createArena(g = null) {
 					zone: z.id,
 					pos: h.pos.clone().setY(h.pos.y - 1.5),
 					to,
-					dur: 5
+					dur: 6
 				};
 				addCrate(e);
 				game.bus.emit("heli:drop", e);
@@ -58740,6 +59153,7 @@ function createArena(g = null) {
 		loadLevel(SHOWCASE);
 	}
 	function update(dt) {
+		if (ladderDirty && ladders.length) refreshLadders();
 		if (toys.length) updateToys(dt);
 		if (traffic.length) updateTraffic();
 		if (heliDef) updateHeli();
@@ -60635,6 +61049,7 @@ function createArena(g = null) {
 	}
 	if (g) init(g);
 	return {
+		ladderList,
 		isHarbour,
 		horizon,
 		heli,
@@ -60804,6 +61219,9 @@ function trafficList(...a) {
 function trafficSet(...a) {
 	return def$5().trafficSet(...a);
 }
+function ladderList(...a) {
+	return def$5().ladderList(...a);
+}
 // src/game/explosion.js
 var explosion_exports = /* @__PURE__ */ __exportAll({
 	TEAMMATE_KNOCK: () => TEAMMATE_KNOCK,
@@ -60848,6 +61266,7 @@ function splashDamage(d, R, max) {
 	return max * splashFalloff(d, R);
 }
 function directDamage(target) {
+	if (target.directHitDamage != null) return target.directHitDamage;
 	return Math.max(target.hp ?? 0, target.maxHp ?? 100) + 1;
 }
 function createComboTracker(window = 1.5) {
@@ -61136,7 +61555,10 @@ function createExplosion(g) {
 			origin: k.origin.clone()
 		});
 		if (!self && owner) {
-			const t = trickScore({
+			const t = target.kind === "heli" || target.noTricks ? {
+				kinds: [],
+				points: 0
+			} : trickScore({
 				...k,
 				distance
 			}, W.longshot, W.skyMinCount);
@@ -61855,6 +62277,7 @@ const adopt = (seq, id, owner) => def$3.adopt(seq, id, owner);
 var classes_exports = /* @__PURE__ */ __exportAll({
 	activeSmokes: () => activeSmokes,
 	addSmoke: () => addSmoke,
+	aimZone: () => aimZone,
 	apply: () => apply,
 	chute: () => chute,
 	classDef: () => classDef,
@@ -61872,6 +62295,7 @@ var classes_exports = /* @__PURE__ */ __exportAll({
 	list: () => list$1,
 	listAt: () => listAt,
 	loadout: () => loadout,
+	pickZoneByAim: () => pickZoneByAim,
 	recharge: () => recharge,
 	reelPull: () => reelPull,
 	release: () => release,
@@ -61886,7 +62310,8 @@ var classes_exports = /* @__PURE__ */ __exportAll({
 	update: () => update$2,
 	use: () => use,
 	xpLeft: () => xpLeft,
-	xpLeftAt: () => xpLeftAt
+	xpLeftAt: () => xpLeftAt,
+	zoneIds: () => zoneIds
 });
 const C = () => CONFIG.classes;
 const classIds = () => C().order.slice();
@@ -61956,6 +62381,22 @@ function smokeBlocksSegment(clouds, a, b) {
 		if (px * px + py * py + pz * pz < (c.radius * .8) ** 2) return true;
 	}
 	return false;
+}
+function pickZoneByAim(zones, eye, dir) {
+	let best = null, bestDot = -Infinity;
+	for (const z of zones ?? []) {
+		const c = z.center ?? z.pos;
+		if (!c) continue;
+		const cx = Array.isArray(c) ? c[0] : c.x, cy = Array.isArray(c) ? c[1] : c.y, cz = Array.isArray(c) ? c[2] : c.z;
+		const dx = cx - eye.x, dy = cy - eye.y, dz = cz - eye.z;
+		const L = Math.hypot(dx, dy, dz) || 1;
+		const dot = (dx * dir.x + dy * dir.y + dz * dir.z) / L;
+		if (dot > bestDot) {
+			bestDot = dot;
+			best = z.id;
+		}
+	}
+	return best;
 }
 function reelPull(out, from, anchor, vel, speed, accel, gravity) {
 	out.subVectors(anchor, from);
@@ -62119,6 +62560,13 @@ function createClasses(g) {
 			readyIn: s.cd
 		};
 		const authoritative = u.id === "wall" || u.id === "smoke" || u.id === "skydrop";
+		if (u.id === "skydrop" && !opts.zone && opts.target == null) {
+			aimOf(actor, opts, _o$1, _d);
+			opts = {
+				...opts,
+				zone: pickZoneByAim(zonesList(), _o$1, _d)
+			};
+		}
 		if (game.netRole === "client" && authoritative) {
 			aimOf(actor, opts, _o$1, _d);
 			game.bus.emit("utility:request", {
@@ -62339,10 +62787,19 @@ function createClasses(g) {
 		setGlide(actor, on);
 		return true;
 	}
+	function zonesList() {
+		return game.zones ?? game.modules?.arena?.zones?.() ?? [];
+	}
 	function zoneTarget(zone) {
-		const z = (game.zones ?? game.modules?.arena?.zones?.() ?? []).find?.((x) => x.id === zone);
+		const z = zonesList().find?.((x) => x.id === zone);
 		return z ? vec(z.center ?? z.pos, new Vector3()) : null;
 	}
+	function aimZone(actor) {
+		actor.eye(_o$1);
+		actor.forward(_d);
+		return pickZoneByAim(zonesList(), _o$1, _d);
+	}
+	const zoneIds = () => zonesList().map((z) => z.id);
 	function doSkyDrop(actor, u, opts) {
 		const t = opts.target != null ? vec(opts.target, new Vector3()) : opts.zone ? zoneTarget(opts.zone) : null;
 		if (!t) return {
@@ -62427,6 +62884,8 @@ function createClasses(g) {
 		state,
 		use,
 		grappleAim,
+		aimZone,
+		zoneIds,
 		slide,
 		chute,
 		release,
@@ -62456,6 +62915,8 @@ const recharge = (actor) => def$2.recharge(actor);
 const state$1 = (actor) => def$2.state(actor);
 const use = (actor, opts) => def$2.use(actor, opts);
 const grappleAim = (actor, out) => def$2.grappleAim(actor, out);
+const aimZone = (actor) => def$2.aimZone(actor);
+const zoneIds = () => def$2.zoneIds();
 const slide = (actor) => def$2.slide(actor);
 const chute = (actor, on) => def$2.chute(actor, on);
 const release = (actor) => def$2.release(actor);
@@ -62654,6 +63115,7 @@ function createWeapon(g) {
 	}
 	function fireActor(actor) {
 		if (!actor?.alive || game.state !== "playing") return null;
+		if (actor.climbing) return null;
 		const st = stateOf(actor);
 		const power = actor.powerAmmo && AMMO$1.includes(actor.powerAmmo) ? actor.powerAmmo : null;
 		const a = power ?? ammo(actor);
@@ -62861,7 +63323,7 @@ function createBots(g = null) {
 	function nearestEnemy(a) {
 		let best = null, bd = Infinity;
 		for (const o of game.world.actors) {
-			if (!o.alive || o.kind === "dummy" || !enemies(a, o)) continue;
+			if (!o.alive || o.kind === "dummy" || o.kind === "heli" || !enemies(a, o)) continue;
 			const d = o.pos.distanceToSquared(a.pos);
 			if (d < bd) {
 				bd = d;
@@ -63534,6 +63996,35 @@ function createBots(g = null) {
 		const live = game.dom?.zones;
 		return live?.length ? live : game.modules.arena?.domZones?.() ?? [];
 	}
+	function ladderAt(b) {
+		const list = game.world.ladders;
+		if (!list?.length) return null;
+		const r = (b.radius ?? .4) + .35, p = b.pos;
+		for (const l of list) {
+			if (l.active === false) continue;
+			if (p.x + r < l.min.x || p.x - r > l.max.x || p.z + r < l.min.z || p.z - r > l.max.z) continue;
+			if (p.y + (b.height ?? 1.8) < l.min.y || p.y > l.top + .5) continue;
+			return l;
+		}
+		return null;
+	}
+	function roofNear(z) {
+		const nodes = game.modules.arena.waypoints();
+		const [x, , cz] = z.pos ?? z.center;
+		let best = -1, bd = 256;
+		for (const l of game.world.ladders ?? []) {
+			if (l.active === false) continue;
+			const rx = (l.min.x + l.max.x) / 2 - l.out.x * 1.6, rz = (l.min.z + l.max.z) / 2 - l.out.z * 1.6;
+			const d = (rx - x) ** 2 + (rz - cz) ** 2;
+			if (d > bd) continue;
+			const n = nearestNode(new Vector3(rx, l.top, rz));
+			if (n >= 0 && Math.abs(nodes[n].pos.y - l.top) < .6) {
+				bd = d;
+				best = n;
+			}
+		}
+		return best;
+	}
 	function zoneGoal(b) {
 		if (b.team !== "red" && b.team !== "blue") return null;
 		const zones = domZones();
@@ -63561,6 +64052,8 @@ function createBots(g = null) {
 				const [x, y, cz] = z.pos ?? z.center, r = (z.radius ?? 5) * .6 * Math.sqrt(rand()), a = rand() * Math.PI * 2;
 				ai.zonePt = new Vector3(x + Math.cos(a) * r, y, cz + Math.sin(a) * r);
 				ai.zoneNode = nearestNode(ai.zonePt);
+				ai.roof = -1;
+				if (rand() < .22 && !bots.some((o) => o !== b && o.team === b.team && o.ai.zone === z.id && o.ai.roof >= 0)) ai.roof = roofNear(z);
 			}
 		}
 		return z;
@@ -63572,6 +64065,16 @@ function createBots(g = null) {
 	function zoneWish(b, z, out) {
 		const ai = b.ai;
 		out.set(0, 0, 0);
+		if (ai.roof >= 0) {
+			const n = game.modules.arena.waypoints()[ai.roof];
+			if (!n) ai.roof = -1;
+			else if (Math.hypot(n.pos.x - b.pos.x, n.pos.z - b.pos.z) < 1.4 && b.pos.y > n.pos.y - .8) return out;
+			else {
+				followPath(b, out, ai.roof);
+				if (out.lengthSq() < 1e-6) out.subVectors(n.pos, b.pos).setY(0);
+				return out;
+			}
+		}
 		if (inZone(b, z)) {
 			_zw.subVectors(ai.zonePt, b.pos).setY(0);
 			if (_zw.lengthSq() > 1.5) out.copy(_zw);
@@ -63632,7 +64135,7 @@ function createBots(g = null) {
 			}
 			if (blocked(b, wish)) followPath(b, wish, nearestNode(t.pos));
 			if (b.onGround && rand() < (B.jumpChance ?? .25) * dt) ai.jump = true;
-			if (zone && !inZone(b, zone)) {
+			if (zone && !inZone(b, zone) && !(ai.roof >= 0 && b.pos.y > 2)) {
 				zoneWish(b, zone, _zw);
 				if (_zw.lengthSq() > 1e-6) wish.normalize().multiplyScalar(.45).add(_zw.normalize());
 			} else ai.path.length = 0;
@@ -63712,7 +64215,7 @@ function createBots(g = null) {
 		let best = null, bestScore = Infinity;
 		const fx = -Math.sin(b.yaw), fz = -Math.cos(b.yaw);
 		for (const a of game.world.actors) {
-			if (a === b || !a.alive || a.kind === "dummy") continue;
+			if (a === b || !a.alive || a.kind === "dummy" || a.kind === "heli") continue;
 			if (!enemies(b, a)) continue;
 			const dx = a.pos.x - b.pos.x, dz = a.pos.z - b.pos.z;
 			const d = Math.hypot(dx, dz, a.pos.y - b.pos.y);
@@ -63944,7 +64447,12 @@ function createBots(g = null) {
 			b.vel.x += ai.wish.x * add;
 			b.vel.z += ai.wish.z * add;
 		}
-		b.vel.y -= P.gravity * dt;
+		const lad = ladderAt(b);
+		const intoLadder = lad && ai.wish.lengthSq() > .01 && -(ai.wish.x * lad.out.x + ai.wish.z * lad.out.z) > .3;
+		if (!(lad && ladderClimb(b, game.world, {
+			forward: intoLadder ? 1 : 0,
+			jump: false
+		}, dt))) b.vel.y -= P.gravity * dt;
 		b.airTime = b.onGround ? 0 : b.airTime + dt;
 		moveBody(b, dt);
 		b.walkPhase += Math.hypot(b.vel.x, b.vel.z) * dt * 1.7;
@@ -64260,6 +64768,110 @@ function generatePads(zones, blocked = null) {
 		};
 	});
 }
+// server/heli.js
+const HELI = {
+	maxHp: 360,
+	directEq: 60,
+	crashDelay: 3,
+	respawn: 60,
+	crashRadius: 8,
+	crashDamage: 80,
+	crashKnock: 18,
+	xpKill: 250,
+	xpAssist: 50
+};
+function createHeliHp(o = {}) {
+	const c = {
+		...HELI,
+		...o
+	};
+	const s = {
+		hp: c.maxHp,
+		alive: true,
+		downAt: -1,
+		crashed: true,
+		respawnAt: -1,
+		killer: null,
+		damage: /* @__PURE__ */ new Map(),
+		crashPos: null,
+		c
+	};
+	function hit(amount, info = {}, now = 0) {
+		if (!s.alive) return null;
+		const dmg = info.direct ? c.directEq : Math.max(0, amount);
+		if (!(dmg > 0)) return null;
+		const owner = info.owner ?? null;
+		s.hp = Math.max(0, s.hp - dmg);
+		if (owner) s.damage.set(owner, (s.damage.get(owner) ?? 0) + dmg);
+		if (s.hp > 0) return {
+			hit: {
+				hp: Math.round(s.hp),
+				of: c.maxHp,
+				owner,
+				dmg
+			},
+			down: null
+		};
+		s.alive = false;
+		s.downAt = now;
+		s.crashed = false;
+		s.respawnAt = now + c.respawn;
+		s.killer = owner;
+		return {
+			hit: {
+				hp: 0,
+				of: c.maxHp,
+				owner,
+				dmg
+			},
+			down: { owner }
+		};
+	}
+	function rewards() {
+		const k = s.killer;
+		if (!k) return [];
+		const out = [{
+			actor: k,
+			amount: c.xpKill
+		}];
+		for (const [a, d] of s.damage) if (a !== k && d > 0 && a.team === k.team) out.push({
+			actor: a,
+			amount: c.xpAssist
+		});
+		return out;
+	}
+	function tick(now) {
+		if (!s.alive && !s.crashed && now - s.downAt >= c.crashDelay) {
+			s.crashed = true;
+			return "crash";
+		}
+		if (!s.alive && s.crashed && now >= s.respawnAt) {
+			s.alive = true;
+			s.hp = c.maxHp;
+			s.killer = null;
+			s.damage.clear();
+			s.downAt = -1;
+			s.respawnAt = -1;
+			s.crashPos = null;
+			return "respawn";
+		}
+		return null;
+	}
+	const pub = (now = 0) => ({
+		hp: Math.round(s.hp),
+		of: c.maxHp,
+		alive: s.alive,
+		respawnIn: s.alive ? 0 : Math.max(0, +(s.respawnAt - now).toFixed(1))
+	});
+	return {
+		s,
+		hit,
+		rewards,
+		tick,
+		pub,
+		cfg: c
+	};
+}
 // server/sim.js
 const MODS = {
 	arena: arena_exports,
@@ -64402,6 +65014,98 @@ function createRoomSim(opts = {}) {
 	});
 	const spawnLog = [];
 	const losFn = (a, b) => world.lineClear(v3(a), v3(b));
+	const H = createHeliHp();
+	let heliActor = null;
+	const heliPose = () => game.modules.arena.heli?.() ?? null;
+	game.heliState = H.s;
+	if (heliPose()) {
+		const HH = 2.6;
+		heliActor = {
+			id: "heli",
+			netId: "heli",
+			kind: "heli",
+			name: "Helicopter",
+			team: "heli",
+			ctrl: "server",
+			pos: new Vector3(),
+			vel: new Vector3(),
+			radius: 2.6,
+			height: HH,
+			hp: H.s.hp,
+			maxHp: H.cfg.maxHp,
+			alive: true,
+			yaw: 0,
+			onGround: false,
+			center(out = new Vector3()) {
+				return out.set(this.pos.x, this.pos.y + HH / 2, this.pos.z);
+			},
+			eye(out = new Vector3()) {
+				return this.center(out);
+			},
+			damage(amount, info = {}) {
+				const r = H.hit(amount, info, game.time);
+				if (!r) return false;
+				this.hp = H.s.hp;
+				onEvent("heli:hit", {
+					hp: r.hit.hp,
+					of: r.hit.of,
+					owner: idOf(r.hit.owner),
+					dmg: Math.round(r.hit.dmg)
+				});
+				if (!r.down) return false;
+				this.alive = false;
+				const c = this.center(new Vector3());
+				const hitDown = world.raycast(c, new Vector3(0, -1, 0), 80);
+				H.s.crashPos = hitDown?.point ? hitDown.point.clone() : new Vector3(c.x, 0, c.z);
+				onEvent("heli:down", {
+					owner: idOf(r.down.owner),
+					pos: arr(c, 100),
+					crash: arr(H.s.crashPos, 100),
+					crashIn: H.cfg.crashDelay,
+					respawnIn: H.cfg.respawn
+				});
+				for (const g of H.rewards()) if (g.actor?.ctrl === "remote") onEvent("xp", {
+					id: g.actor.netId,
+					amount: g.amount,
+					reason: "heli"
+				});
+				return true;
+			},
+			impulse() {}
+		};
+		world.addActor(heliActor);
+	}
+	const _hp = new Vector3();
+	function stepHeli() {
+		if (!heliActor) return;
+		if (heliActor.alive) {
+			const p = heliPose();
+			if (p) {
+				_hp.copy(heliActor.pos);
+				heliActor.pos.set(p.pos.x, p.pos.y - heliActor.height / 2, p.pos.z);
+				heliActor.vel.subVectors(heliActor.pos, _hp).multiplyScalar(1 / SUBSTEP);
+				heliActor.yaw = p.yaw ?? 0;
+			}
+		}
+		const r = H.tick(game.time);
+		if (r === "crash") {
+			const at = H.s.crashPos.clone().setY(H.s.crashPos.y + .6);
+			game.modules.explosion.explode({
+				pos: at,
+				radius: H.cfg.crashRadius,
+				splashMax: H.cfg.crashDamage,
+				knock: H.cfg.crashKnock,
+				owner: H.s.killer,
+				ammo: "heli"
+			});
+			onEvent("heli:crash", { pos: arr(at, 100) });
+			onEvent("heli:crate", { pos: arr(H.s.crashPos, 100) });
+		} else if (r === "respawn") {
+			heliActor.alive = true;
+			heliActor.hp = H.s.hp;
+			onEvent("heli:up", H.pub(game.time));
+		}
+	}
 	let blastOwner = null;
 	bus.on("explode", (e) => {
 		blastOwner = e.owner ?? null;
@@ -64736,6 +65440,13 @@ function createRoomSim(opts = {}) {
 			ok: false,
 			reason: "invalid"
 		};
+		if (classDef(a.cls)?.utility?.id === "skydrop") {
+			if (zone != null && !game.zones.some((z) => z.id === zone)) return {
+				ok: false,
+				reason: "invalid"
+			};
+			if (zone == null) zone = lookedAtZone(a, aim);
+		}
 		const r = C.use?.(a, {
 			server: true,
 			aim,
@@ -64751,6 +65462,22 @@ function createRoomSim(opts = {}) {
 			note: "class utility differs from the request"
 		};
 		return r;
+	}
+	function lookedAtZone(a, aim) {
+		const o = aim?.origin ? v3(aim.origin) : a.center(new Vector3());
+		const d = aim?.dir ? v3(aim.dir) : new Vector3(-Math.sin(a.yaw), 0, -Math.cos(a.yaw));
+		d.y = 0;
+		d.normalize();
+		let best = null, bd = -Infinity;
+		for (const z of game.zones) {
+			const to = new Vector3(z.center[0] - o.x, 0, z.center[2] - o.z).normalize();
+			const dot = d.dot(to);
+			if (dot > bd) {
+				bd = dot;
+				best = z.id;
+			}
+		}
+		return best;
 	}
 	function ammoAllowed(a, ammo) {
 		if (a.powerAmmo === ammo) return true;
@@ -64791,6 +65518,7 @@ function createRoomSim(opts = {}) {
 			acc -= SUBSTEP;
 			game.time += SUBSTEP;
 			for (const k of ORDER) game.modules[k].update?.(SUBSTEP);
+			stepHeli();
 			blastOwner = null;
 		}
 		for (const [id, a] of humans) {
@@ -64831,6 +65559,12 @@ function createRoomSim(opts = {}) {
 		setClass,
 		useUtility,
 		ammoAllowed,
+		lookedAtZone,
+		heli: H,
+		get heliActor() {
+			return heliActor;
+		},
+		ladders: () => (world.ladders ?? []).map((l) => l.active === false ? 0 : 1),
 		dispose() {
 			game.modules.bots.clear?.();
 			game.modules.projectile.clearAll?.();
@@ -65008,6 +65742,19 @@ function createSimRoom(opts) {
 			});
 			return;
 		}
+		if (type === "xp") {
+			const h = room.players.get(p.id);
+			if (h) send([h.cid], {
+				t: "xp",
+				amount: p.amount,
+				reason: p.reason
+			});
+			return;
+		}
+		if (type === "heli:crate") {
+			dropCrate(p.pos, null);
+			return;
+		}
 		broadcast({
 			t: type,
 			...p
@@ -65071,6 +65818,8 @@ function createSimRoom(opts) {
 			dom: publicState(room.dom),
 			blocks: { bits: sim.bitsB64() },
 			real: true,
+			heli: sim.heli.pub(sim.game.time),
+			ladders: sim.ladders(),
 			crates: [...crates.values()].map((c) => ({
 				id: c.id,
 				pos: c.pos,
