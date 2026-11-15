@@ -563,7 +563,7 @@ export class Effects {
       const x = (pos.x ?? pos[0]) + (Math.random() - 0.5) * 0.6, z = (pos.z ?? pos[2]) + (Math.random() - 0.5) * 0.6, fy = floorUnder([x, pos.y ?? pos[1] ?? 0, z]);   // (arrays or vectors)
       this.S(i % 2 ? 'dirt_01' : 'dirt_02', { p: [x, fy + 0.15, z], v: [(Math.random() - 0.5) * 1.5, 1 + Math.random() * 1.5, (Math.random() - 0.5) * 1.5], grav: 4, floor: fy + 0.06,
         life: 0.55 + Math.random() * 0.3, size: [0.45 + Math.random() * 0.35, 0.75], spin: (Math.random() - 0.5) * 4, color: 0x8a6c48, alpha: 0.95, add: false });
-      if (i % 2 === 0) this.S('smoke_07', { p: [x, 0.3, z], v: [(Math.random() - 0.5) * 0.6, 0.5, (Math.random() - 0.5) * 0.6], drag: 1, life: 0.8 + Math.random() * 0.4,
+      if (i % 2 === 0) this.S('smoke_07', { p: [x, fy + 0.3, z], v: [(Math.random() - 0.5) * 0.6, 0.5, (Math.random() - 0.5) * 0.6], drag: 1, life: 0.8 + Math.random() * 0.4,
         size: [0.6, 1.8], spin: (Math.random() - 0.5), color: 0xb89c78, alpha: 0.45, add: false, optional: true });
     }
   }
@@ -647,11 +647,11 @@ export class Effects {
 
   // Touching down after a Skyward Flash.
   land(p) {
-    const pos = new THREE.Vector3(p[0], 0, p[2]);
+    const pos = new THREE.Vector3(p[0], p[1] || 0, p[2]);   // (round 24: at the floor's height; every Sky Ruins floor is up)
     for (let i = 0; i < 6; i++) this.dust(pos, 2);
     this.groundRing(pos, 1.6, 0x9a8a70, 0.5, 0.7);
     const ring = this.mesh(this.G(23, () => new THREE.RingGeometry(0.8, 1, 32).rotateX(-Math.PI / 2)), this.mat(0xb59a72, { opacity: 0.6, depthWrite: false }));
-    ring.position.copy(pos).setY(0.12); ring.scale.setScalar(0.4);
+    ring.position.copy(pos).setY(pos.y + 0.12); ring.scale.setScalar(0.4);
     this.scene.add(ring);
     this.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0, maxLife: 0.35, grav: 0, grow: 4, still: true });
   }

@@ -672,6 +672,7 @@ async function onMapChange(msg) {
     mountPickupsFor(msg.pads || []);
     pickups?.onMessage?.({ t: 'snap', runes: msg.runes || [] });
     local.pad = null; local.fall = null; local.jump = null;
+    noteDrawbridges(msg.drawbridges);   // round 24
     noteMap(msg.map);
   };
   if (callouts?.mapChange) await callouts.mapChange({ name, swap }); else await swap();
@@ -690,6 +691,7 @@ function onWelcome(msg) {
   matchUI.onWelcome(msg);
   for (const p of msg.players) addPlayer(p);
   for (const pr of msg.props) setProp(pr, true);
+  noteDrawbridges(msg.drawbridges);   // round 24
   for (const pj of msg.projectiles) effects.spawnProjectile(withBolt(pj));
   for (const g of msg.rams || []) addRam(g);
   for (const st of msg.stampedes || []) stampedeFx.set(st.id, Object.assign(effects.stampedeLane(st.p, st.dir, st.width, st.length, st.left), { owner: st.owner }));
@@ -907,6 +909,36 @@ function netClock(msg) {
   NET.delay += (want - NET.delay) * 0.05;
 }
 const netNow = () => performance.now() / 1000 + NET.offset - NET.delay;   // the moment remote wizards are drawn at (server s)
+const serverNow = () => performance.now() / 1000 + (NET.offset ?? 0);   // our estimate of the server's clock now (round 24: the drawbridge cycle runs on it)
+// Round 24: the drawbridge (Sky Ruins' east route). Every frame the shared cycle (C.drawbridgeAngle on the server clock) poses its moving
+// surface for our own physics (updateDrawbridges), turns environment's slab (World.setDrawbridgeAngle) and plays the sounds: a clank of chain
+// and iron as it starts and stops, a creak while it moves. No warning cue (Ty). The server's map / welcome messages carry the list with the
+// cycle's origin (t0), so a test room's drawbridge and phase reach us too.
+const drawbridgeFx = { phase: null, creak: null, list: [] };
+function noteDrawbridges(list) {
+  if (!Array.isArray(list) || !C.DRAWBRIDGE) return;
+  drawbridgeFx.list = list;
+  if (list[0] && Number.isFinite(list[0].t0)) C.DRAWBRIDGE.t0 = list[0].t0;
+  if (typeof C.setDrawbridges === 'function') {
+    // the map's own list (environment's layout) is what we have anyway; a test's list (not in the layout) is set as ours too
+    const own = (C.DRAWBRIDGES || []).map(b => String(b.id)).sort().join(','), got = list.map(b => String(b.id)).sort().join(',');
+    C.setDrawbridges(own === got ? [] : list);
+  }
+  if (drawbridgeFx.creak) { drawbridgeFx.creak.stop(0.2); drawbridgeFx.creak = null; }
+  drawbridgeFx.phase = null;
+}
+function updateDrawbridgeFx(angle) {
+  const list = typeof C.drawbridges === 'function' ? C.drawbridges() : [];
+  for (const b of list) World.setDrawbridgeAngle?.(b.id, angle);
+  if (!list.length || typeof C.drawbridgePhase !== 'function') return;
+  const phase = C.drawbridgePhase(serverNow()).phase, moving = phase === 'rising' || phase === 'lowering';
+  if (phase === drawbridgeFx.phase) { if (drawbridgeFx.creak) drawbridgeFx.creak.setRate?.(phase === 'rising' ? 1 : 0.85); return; }
+  const first = drawbridgeFx.phase == null;
+  drawbridgeFx.phase = phase;
+  const b = list[0], at = [b.x, b.y + 1.2, b.z];
+  if (moving) { if (!first) sfx.drawbridgeClank?.(at, 0.7); if (!drawbridgeFx.creak) drawbridgeFx.creak = sfx.drawbridgeCreak?.(at) || null; }
+  else { if (drawbridgeFx.creak) { drawbridgeFx.creak.stop(0.15); drawbridgeFx.creak = null; } if (!first) sfx.drawbridgeClank?.(at, phase === 'down' ? 1 : 0.8); }
+}
 function netPush(s, t) {
   let buf = netBuf.get(s.id);
   if (!buf) netBuf.set(s.id, buf = []);
@@ -2316,6 +2348,7 @@ const groundAt = (x, z, footY = 0) => (C.surfaceHeight ? C.surfaceHeight(x, z, f
 
 function updateLocal(dt) {
   if (local.swapping) return;   // round 22: a map change's data is still loading (onMapChange): no physics, no report
+  if (typeof C.updateDrawbridges === 'function' && NET.offset != null) updateDrawbridgeFx(C.updateDrawbridges(serverNow()));   // round 24: the moving surface, posed before our physics
   const stunned = now < local.stunUntil || me.stunned;
   const bound = now < local.silenceUntil || me.bound;
   const rooted = now < local.rootUntil;
@@ -2339,7 +2372,7 @@ function updateLocal(dt) {
     const sfl = groundAt(local.pos.x, local.pos.z, local.pos.y);
     if (local.pos.y <= sfl || me.dead) {
       local.pos.y = sfl; local.flight = null;
-      if (!me.dead) { effects.land([local.pos.x, sfl, local.pos.z]); sfx.land([local.pos.x, sfl + 0.2, local.pos.z]); }
+      if (!me.dead) { effects.land([local.pos.x, sfl, local.pos.z]); sfx.land([local.pos.x, sfl + 0.2, local.pos.z]); pickups?.landed?.([local.pos.x, sfl, local.pos.z], { air: false, mine: true }); }
     }
   }
   const airborne = !!local.flight;
@@ -2762,11 +2795,18 @@ function updateLocal(dt) {
   }
   // dragged toward an enemy Eye of the Storm
   if (local.pull && now < local.pull.until && !rooted && !me.dead) { local.pos.x += local.pull.v[0] * dt; local.pos.z += local.pull.v[1] * dt; }
+  // round 24: on a tilting drawbridge we slide toward its hinge (the server allows the same speed; bots slide the same way)
+  local.slideVec = null;
+  if (!me.dead && !local.jump && !local.fall && !local.flight && !local.pad && !local.hover && !local.grab && typeof C.drawbridgeUnder === 'function') {
+    const db = C.drawbridgeUnder(local.pos.x, local.pos.z, local.pos.y), sv = db && C.drawbridgeSlideVec(db);
+    if (sv) { local.pos.x += sv[0] * dt; local.pos.z += sv[1] * dt; local.slideVec = sv; }
+  }
 
   // ---- height (real time; the server checks it against its clock): a jump's arc, falling off an edge, stepping
   // up a ramp or stairs. A jump's arc carries on below where it started (off a ledge) until it meets a floor.
   const landed = () => {
     effects.dust(local.pos, 3); sfx.play('step_grass', { pos: [local.pos.x, local.pos.y + 0.1, local.pos.z], vol: 0.6, rate: 0.85, jitter: 0.05, bag: 'land' + myId });
+    pickups?.landed?.([local.pos.x, local.pos.y, local.pos.z], { air: local.airJumped, mine: true });   // round 24 (characters): the stepping-stone dust
     if (local.airJumped) doubleLandFx(local.pos);
     local.airJumped = false; local.jumpSpeed = 0;   // the air jump comes back
   };
@@ -2814,7 +2854,12 @@ function updateLocal(dt) {
     const fl = groundAt(local.pos.x, local.pos.z, local.pos.y);
     if (local.pos.y > fl + 0.02) {
       // walked off an edge: fall under the jump's gravity (carrying the speed we walked off with)
-      if (!local.fall) { local.fall = { start: now, y0: local.pos.y }; local.jumpSpeed = Math.max(local.jumpSpeed, Math.min(C.sprintOf(), Math.hypot(local.vel.x, local.vel.z))); }
+      if (!local.fall) {
+        local.fall = { start: now, y0: local.pos.y };
+        const slide = local.slideVec ? Math.hypot(local.slideVec[0], local.slideVec[1]) : 0;   // (round 24: off a tilting drawbridge, the slide carries on)
+        if (slide) { local.vel.x += local.slideVec[0]; local.vel.z += local.slideVec[1]; }
+        local.jumpSpeed = Math.max(local.jumpSpeed, Math.min(C.sprintOf(), Math.hypot(local.vel.x, local.vel.z)) + slide);
+      }
       const e = now - local.fall.start;
       local.pos.y = Math.max(fl, local.fall.y0 - C.JUMP.gravity * e * e / 2);
       if (local.pos.y <= fl + 0.001) { local.pos.y = fl; if (local.fall.y0 - fl > 0.6 || local.airJumped) landed(); else { local.airJumped = false; local.jumpSpeed = 0; } local.fall = null; }
@@ -3217,9 +3262,9 @@ function frame(t) {
       netSmooth(w, dt);
       const moving = w.netAnim === 'run';
       w.updateAnimation(moving, dt * slowMo);
-      // a remote wizard touching down after a Skyward Flash
-      const air = w.targetPos.y > 0.3;
-      if (w.wasAir && !air && !w.dead) { effects.land([w.targetPos.x, 0, w.targetPos.z]); sfx.land([w.targetPos.x, 0.2, w.targetPos.z]); }
+      // a remote wizard touching down after a Skyward Flash (round 24: against the floor under them, not y 0: every Sky Ruins floor is up)
+      const wfl = groundAt(w.targetPos.x, w.targetPos.z, w.targetPos.y), air = w.targetPos.y > wfl + 0.3;
+      if (w.wasAir && !air && !w.dead) { effects.land([w.targetPos.x, wfl, w.targetPos.z]); sfx.land([w.targetPos.x, wfl + 0.2, w.targetPos.z]); pickups?.landed?.([w.targetPos.x, wfl, w.targetPos.z], { air: false, mine: false }); }
       w.wasAir = air;
     }
     for (const d of decoys.values()) {
@@ -3278,5 +3323,5 @@ requestAnimationFrame(frame);
 
 // Debug handle for the automated tests (round 14: off unless asked for, with ?debug in the URL or localStorage waDebug = 1).
 const DEBUG = (() => { try { return new URLSearchParams(location.search).has('debug') || localStorage.getItem('waDebug') === '1'; } catch { return false; } })();
-if (DEBUG) window.__wa = { renderer, input, net, local, players, props, rams, effects, scene, camera, sfx, decoys, walls, frosts, frostMark, mrainMark, flaskMark, cageMark, laneMark, cages, firewalls, stampedeFx, C, get cursedProps() { return cursedProps; }, get seenTraps() { return seenTraps; }, get quality() { return Q.debug(); }, Q, NET, netBuf,
+if (DEBUG) window.__wa = { renderer, input, net, local, players, props, rams, effects, scene, camera, sfx, decoys, walls, frosts, frostMark, mrainMark, flaskMark, cageMark, laneMark, cages, firewalls, stampedeFx, C, drawbridgeFx, serverNow, get cursedProps() { return cursedProps; }, get seenTraps() { return seenTraps; }, get quality() { return Q.debug(); }, Q, NET, netBuf,
   get first() { return { firstVisit, visitNo, playT, hintShown, playedOnce, menuEverOpened, cfg: FIRST }; }, get map() { return mapId; }, set map(v) {}, get pads() { return padArcs; }, get pickups() { return pickups; }, get callouts() { return callouts; } };

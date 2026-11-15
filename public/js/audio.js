@@ -222,6 +222,54 @@ export class Sfx {
     this.play('impact_big', { pos, vol: 1.0, rate: 0.6, jitter: 0.04, delay: 0.03 });
   }
   // Skyward Flash: the blink, pitched up; a soft thud on landing.
+  // Round 24: the drawbridge. A clank of chain and iron as it starts and stops (a bright rattle, two ringing metal partials and a low
+  // thud, at the hinge) and a creak while it moves (a slow, wobbling sawtooth through a low-pass: returns { stop(fade), setRate(r) }).
+  // Synthesized: no recording in the CC0 set yet; swap in a sample under 'drawbridge_clank' / 'drawbridge_creak' when there is one.
+  drawbridgeClank(pos, vol = 0.8) {
+    if (!this.ctx) return;
+    if (this.buffers.drawbridge_clank?.length) { this.play('drawbridge_clank', { pos, vol, jitter: 0.04 }); return; }
+    const ctx = this.ctx, t = ctx.currentTime, out = ctx.createGain(); out.gain.value = vol;
+    (pos ? out.connect(this.panner(pos)) : out).connect(this.sfxBus);
+    const ring = (type, f0, f1, dur, g0, delay = 0) => {
+      const o = ctx.createOscillator(), g = ctx.createGain(); o.type = type;
+      o.frequency.setValueAtTime(f0, t + delay); o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + delay + dur);
+      g.gain.setValueAtTime(0.0001, t + delay); g.gain.exponentialRampToValueAtTime(g0, t + delay + 0.008); g.gain.exponentialRampToValueAtTime(0.0001, t + delay + dur);
+      o.connect(g).connect(out); o.start(t + delay); o.stop(t + delay + dur + 0.02);
+    };
+    const n = Math.floor(ctx.sampleRate * 0.16), buf = ctx.createBuffer(1, n, ctx.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n) ** 2;
+    const src = ctx.createBufferSource(); src.buffer = buf;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 2600; bp.Q.value = 0.9;
+    const ng = ctx.createGain(); ng.gain.value = 0.5;
+    src.connect(bp).connect(ng).connect(out); src.start(t);
+    ring('sine', 640, 600, 0.45, 0.35); ring('triangle', 1530, 1450, 0.3, 0.2, 0.01); ring('sine', 95, 45, 0.35, 0.6);
+    for (let i = 1; i <= 3; i++) ring('square', 1900 + i * 230, 1700, 0.05, 0.08, 0.05 * i + Math.random() * 0.03);   // the chain's rattle
+  }
+  drawbridgeCreak(pos, vol = 0.32) {
+    if (!this.ctx) return null;
+    if (this.buffers.drawbridge_creak?.length) return this.loop('drawbridge_creak', { pos, vol, fadeIn: 0.3 });
+    const ctx = this.ctx, t = ctx.currentTime, out = ctx.createGain();
+    out.gain.setValueAtTime(0.0001, t); out.gain.exponentialRampToValueAtTime(vol, t + 0.4);
+    const pn = pos ? this.panner(pos) : null;
+    (pn ? out.connect(pn) : out).connect(this.sfxBus);
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 420; lp.Q.value = 2.5; lp.connect(out);
+    const o1 = ctx.createOscillator(), o2 = ctx.createOscillator(), g2 = ctx.createGain(); o1.type = 'sawtooth'; o2.type = 'square'; g2.gain.value = 0.25;
+    o1.frequency.value = 68; o2.frequency.value = 137; o1.connect(lp); o2.connect(g2).connect(lp);
+    const lfo = ctx.createOscillator(), lg = ctx.createGain(), lf = ctx.createGain(); lfo.type = 'sine'; lfo.frequency.value = 0.9; lg.gain.value = 22; lf.gain.value = 160;
+    lfo.connect(lg); lg.connect(o1.frequency); lg.connect(o2.frequency); lfo.connect(lf).connect(lp.frequency);
+    const stut = ctx.createOscillator(), sg = ctx.createGain(); stut.type = 'square'; stut.frequency.value = 11; sg.gain.value = 0.35; stut.connect(sg).connect(out.gain);   // the wood's judder
+    for (const o of [o1, o2, lfo, stut]) o.start(t);
+    let stopped = false;
+    return {
+      setRate: (r, time = 0.2) => { if (!stopped) { o1.frequency.setTargetAtTime(68 * r, ctx.currentTime, time); o2.frequency.setTargetAtTime(137 * r, ctx.currentTime, time); } },
+      setPos: (p) => { if (pn && !stopped) setPannerPos(pn, p, ctx); },
+      stop: (fade = 0.15) => {
+        if (stopped) return; stopped = true;
+        const t1 = ctx.currentTime; out.gain.cancelScheduledValues(t1); out.gain.setValueAtTime(Math.max(0.0001, out.gain.value), t1); out.gain.exponentialRampToValueAtTime(0.0001, t1 + fade);
+        for (const o of [o1, o2, lfo, stut]) o.stop(t1 + fade + 0.02);
+      },
+    };
+  }
   skyward(pos) { this.play('skyward_launch', { pos, vol: 0.85, jitter: 0.04 }); }
   land(pos) { this.play('skyward_land', { pos, vol: 0.6, jitter: 0.1 }); }
   ramBonk(pos) { this.play('impact_small', { pos, vol: 1, rate: 0.55 }); this.bleat(pos, false, { delay: 0.05 }); }
