@@ -2679,3 +2679,35 @@ MeshBasic + map: no new shader program). Bigger after an air jump. Tiny synthesi
 in the keep courtyard against each wall, in the gates, on the wall-walk, in the dungeon under the vaults and on the tower stairs, turn through
 the yaws and pitches, and record the boom length, whether `camera.position` is inside a solid (`surfaceSolidAt`, `cameraClearance`) and shots.
 Findings go here, addressed to whoever owns the fix (spells' `CAM` constants in main.js, environment's blockers or pieces).
+
+## environment → spells (characters, deploy, coordinator FYI): round 24 Sky Ruins, the drawbridge's hinge, size and cycle, and the shapes I'm building to
+Posted first so §2 can start; the numbers below are the generator's constants and won't move unless I say so here.
+- **Frame:** +z north, +x east, as before. The keep island is a 32 m square at the origin, its **courtyard floor at 6.0**, the dungeon at 2.0, the
+  wall-walk at 10.17, the corner-tower tops at 14.33, the central tower's top at 18.5. Outer floors stay at **6.0**. `MAP_INFO.void` stays **1.0**.
+- **The east gate** is in the curtain wall at x = 12.5 (the opening is z −2.08..2.08, 2.9 m tall, through a 2.5 m deep passage from x 11.25 to
+  13.75); outside it a stone apron at floor 6.0 from x 13.75 to the island's edge at **x = 16.0**, z ±4.
+- **Hinge:** an axis parallel to z at **(16.0, 6.0, 0.0)**, i.e. at the walking surface on the island's edge. The surface is the slab's top: when
+  down it is the rectangle **x 16.0..23.2, z −1.7..1.7 at y = 6.0** (length **7.2**, width **3.4**; its tip overlaps the east island's floor by
+  0.2 m: the island's inner edge is at **x = 23.0**, floor 6.0). At angle `a` (0 = down, π/2 = up, the far end rising) the surface point `u` m from
+  the hinge along the slab is `(16 + u cos a, 6 + u sin a, z)`, u ∈ [0, 7.2]. The slab's body hangs **0.35** below its surface (drawn only; make
+  the collision the surface plus that thickness if you like). Up, it stands at x = 16 from y 6 to 13.2 (above the wall-walk, below the tower tops):
+  a wooden wall across the island's edge; the gate behind it is open but leads to the void.
+- **The gap** is 7.0 m (16 → 23): a sprint-jump (6.5 m/s, 0.63 s) makes 4.1 m, a walk-jump plus air jump about 4.0 m, a sprint + air jump about
+  7.5 m, so a sprinting double jump can still just clear it from a run-up (a skilled bypass); everything else needs the bridge down.
+- **Chain anchors** for the visuals: **(13.75, 11.5, ±1.7)**, on the gatehouse's outer face above the gate, to the slab's far corners (23.2, 6, ±1.7)
+  when down. **Cycle:** Down 12 s, Rising 4 s, Up 8 s, Lowering 4 s (28 s), no warning cue (Ty).
+- **Layout entry and exports (mine, map.js):** a new kind `drawbridge` `{ id: 'drawbridge-e', x: 16, y: 6, z: 0, rotY: -π/2, w: 3.4, d: 7.2,
+  thick: 0.35 }` where `rotY` is the direction the slab extends when down (local +z along (sin rotY, cos rotY): −π/2 is +x) and the entry's
+  position is the hinge. map.js exports **`DRAWBRIDGES`** `[{ id, x, y, z, yaw, w, d, thick, dir: [dx, dz] }]` (static; empty on the courtyard
+  and in legacy rooms). I **don't** add a static surface for it: `surfaceHeight` / `surfaceTopAt` over the gap return 0 (the cloud) until your
+  moving surface is in. `drawbridgeAngle(t)` and the moving surface in the queries are yours (the brief's §2); if you'd rather I add a
+  `movingSurfaces` hook in map.js that the queries consult, say so and I'll do it.
+- **Drawing:** world.js builds the slab (planks with iron bands) and the two chains, pivoted at the hinge, and exports
+  **`setDrawbridgeAngle(id, a)`** (radians) for main.js to call each frame with your `drawbridgeAngle(matchTime)`; nothing moves until it's
+  called. The clank and creak sounds are yours.
+- **The other routes** (for the route graph, final numbers in my hand-off): the **south stone bridge** x ±2.3, z −23..−16 at 6.0 (4.6 m wide, with
+  a **lower passage** under it at **2.0** from the south island's stair down into the dungeon: the dungeon is reached from inside the walls by
+  stairs and from the south island this way); the **north walkway** x ±0.5, z 16..24 at **6.4** (1 m wide, a 0.4 m step up at both ends, no rails);
+  the **west stepping stones**: three 2.4 m rocks between the keep's west edge (x −16) and the west island (inner edge about x −30), gaps
+  3.6–4.0 m edge to edge, zig-zagging ±1.5 in z, the middle one 0.3 m higher with the rune on it. **Bots:** `ISLANDS` lists every rock footprint
+  (the stones included, `w` ≤ 2.5 tells a stone from an island).
