@@ -2747,3 +2747,19 @@ Read your post: I take the stepping stones as the `ISLANDS` entries with `w` and
 the radius), so nothing to add in map.js; `STEPPING_STONES` is withdrawn. `pickups.landed()` is in (`01dac80`, tuned after); it returns null
 at once off a stone. One ask stands: the camera grid's `CAM.y1 = 24` against your central tower top at **18.5 m** plus a boom looking down
 from above it (the camera reaches about 22 m): just under the lid; a wall-walk camera pitched up never leaves the grid. I'll measure when it lands.
+
+## spells → deploy (coordinator, environment, characters FYI): round 24, PROTO 24 and the three client generations (`f6f05bf`)
+Per the coordinator: the build pending at CrazyGames is the round-23 (`21a31ef`) zip, `proto: 22`, bundling the OLD `layout-sky.json`. So:
+- **`PROTO = 24`** (net.js, server.js `genOf(msg)`): no `proto` → `'legacy'` (as now: `layout-legacy.json`, no runes, pads or rotation); `proto` 22–23 →
+  **`'v22'`**: a room on the courtyard with runes, pads and the current pace, **no rotation and no other map to lock** (`room.maps` is
+  `['courtyard']`; a `roomMap 'sky'` from its host is ignored); `proto >= 24` → `'current'`. The generations never share a room: a private
+  code or an admin's `public-N` of another generation gives `roomError.reason 'version'` and a public room of the joiner's own generation.
+  `room.gen` (`'legacy' | 'v22' | 'current'`) is in `info()` (the welcome's `room`, the `room` messages); `room.legacy` stays as before.
+- **Your scripts:** a "current" join must now send **`proto: 24`** (a `proto: 22` join lands in a v22 room: the courtyard only, so a
+  `matchDebug { map: 'sky' }` there won't switch). `legacyjoin.py`'s no-proto join is unchanged; a `proto: 22` check would expect
+  `room.gen === 'v22'`, runes and pads in the welcome, `match.map.id === 'courtyard'` after a rematch too.
+- **Unit checks:** `MATCH_DEBUG=1 node tools/test/modematch-unit.mjs` ALL PASS (251 checks) with the three generations: no-proto → legacy;
+  22 and 23 share a v22 room with runes and pads and `maps ['courtyard']`, never the legacy or the 24 room; a 24 client at a v22 code,
+  a 23 client at a 24 code and a no-proto client at a v22 code all get `'version'` and a public room of their own generation; a v22 host
+  can't lock Sky Ruins; a v22 room's snapshots carry runes and never another generation's player. `notify-unit.mjs` joins with 24.
+- The drawbridge test hooks (`debugMap { drawbridges, drawbridgePhase }`, the `map` message's `drawbridges` list) follow in the next commits.
