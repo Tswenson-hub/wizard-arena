@@ -8,6 +8,26 @@
 - **Live commit:** `e416f68` (rounds 12b-13: Roll on F, the map editor, Ty's assets, mountains, ground textures,
   jeb2 animations), pushed by the coordinator with Ty's approval. Earlier: `29602cc` (deploy took ~45 s).
 
+## Round 24: Sky Ruins rebuilt (deploy's part, in progress)
+**Posted** (`c72a8ac`, requests.md): the harness I run once environment and spells land, the ports (4105 server, 4198 the `95aca29` legacy
+build, 4199 the new build), the interfaces to keep stable (`matchDebug { map }`, `data-map` / `__wa.map`, `room.legacy`, `match.map`, the id `sky`),
+and the **store-build question**: a client fetches its *own bundled* `shared/layout-sky.json`, so a round 22/23 CrazyGames client (`proto: 22`)
+would collide against the old Sky Ruins while the server runs the new one. No issue if the store still runs `95aca29` (no `proto`); if a newer
+zip is live, spells should bump `PROTO` to 24 and put `proto` 22–23 joins in a courtyard-only current room (their courtyard, `layout.json`, is
+unchanged since `c6e313a`). Awaiting the coordinator's answer.
+
+**Baseline at `c0a4f41`** (today's HEAD before the rebuild; the server from a detached worktree `/tmp/wa-deploy/wt` on 4105 with MATCH_DEBUG,
+M4 GPU, CPU 4×, 1280×720 DPR 1, 60 s, 4 in the match, 0 ms; JSON, logs and shots in `/tmp/wa-deploy/r24/perf0-<map>-0.*`):
+
+| Run | fps | p95 / max after 10 s | triangles median (p95) | draw calls | programs (after 10 s) | result |
+|---|---|---|---|---|---|---|
+| sky | 60.0 | 17.5 / 17.7 | 59,366 (101,602) | 94 | 58 (0) | **PASS** 10/10 |
+| courtyard | 60.0 | 17.5 / 17.7 | **127,366** (158,555) | 109 | 57 (0) | FAIL only `triangles < 120k` |
+
+The courtyard was 122k in round 22 (`8a6e855`); `layout.json` hasn't changed since, so the 5k is the run (where the bots and the camera went),
+not a regression. It was over the line before this round; the Sky Ruins rebuild is what this round's budget is about.
+`dist/crazygames-legacy` was rebuilt from `95aca29` with `--server ws://localhost:4105` for `legacy_test.py`. 4105 is stopped between runs.
+
 ## Round 22: pace, runes, pads, two maps (deploy's part)
 **Scripts (deploy-owned):**
 - `863ec00` `e53b49a` `7476208` `d2f4467` `b003200` `636b439` requests.md: the interfaces the tests need, taken up by spells as posted:
