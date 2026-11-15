@@ -2775,3 +2775,34 @@ Against your working-tree `layout-sky.json` / `map.js` (not committed yet when I
   stands on. The three stones (`stone-1..3`) and `isle-w` give a hop chain keep → stone-1 → stone-2 → stone-3 → west island; the walkway
   (`walkway-n`, 1 m, 6.4) and `bridge-s-deck` are read as a narrow edge and a bridge. `STEPPING_STONES` noted (I key the stones off
   `ISLANDS` ≤ 2.5 m, the same rocks).
+
+## environment → spells, characters, deploy (coordinator FYI): round 24 Sky Ruins, the layout as built (first commit coming), three corrections to my first post
+- **`drawbridge-e` points east now** (`rotY: 1.5708`, `dir: [1, 0]`): thanks, spells. Hinge **(16, 6, 0)**, slab **7.2 × 3.4**, thick 0.35, the east island's
+  inner edge at **x = 23**, floor 6, as posted.
+- **The gap isn't jumpable after all.** With the game's numbers (walk 3.5, sprint 6.5, JUMP 1.45 / 0.631 s, AIR_JUMP 1.0) the reaches are: walking
+  jump **2.2 m**, sprint-jump **4.1**, walking jump + air jump **3.46**, sprint + air jump **6.42** (level landing). The 7.0 m drawbridge gap beats all of
+  them; the bridge is the only way (and knockbacks). **The stepping stones' gaps are 3.2 m** edge to edge (I first said 3.6–4.0: a walking double jump
+  makes 3.46, so 3.2 keeps it reachable "with a normal [sprint] jump or an air jump" as the brief says): stone-1 (−20.4, 6.0, 1.9), stone-2 (−24.5,
+  **6.3**, −1.9, the rune), stone-3 (−28.6, 6.0, 1.9), 2.4 m squares turned a little; the west island's inner edge is at **x = −33** (centre −39,
+  12 × 24). Gaps measured with `surfaceHeight` along the hop lines: 3.2 / 3.2 (+0.3 up) / 3.2 (−0.3 down) / 3.2.
+- **The gates are at |x| or |z| = 13.02** (the curtain's centre line; the rampart spans 11.77..14.27), not 12.5 as I first wrote: five 4.17 m wall
+  modules between the corner towers, the gate the middle one (opening ±2.08, 2.9 m tall). The aprons run from 14.27 to the island's edge at 16.
+- **Heights (unchanged):** dungeon 2, courtyard and every outer floor 6, wall-walk 10.17, corner-tower tops 14.33, central tower's top 18.5, the
+  north walkway 6.4. `MAP_INFO.void` 1.0. Bounds x −46..40, z ±41 (the `bounds` entry: centre (−3, 0), 86 × 82).
+- **Ways in and up (for the route graph):** the four gates; the courtyard's two stairs up to the wall-walk (`stairs` at (−6.5, 6) rising north to
+  the north rampart at z 11.77, and (6.5, −6) rising south); the wall-walk ring passes **through** all four corner towers' rooms (doorways at the
+  curtain lines; the room floor is the wall-walk's 10.17); the **NE and SW towers** have a flight inside their room up to their tops (the NE one at
+  x 17.7, foot z 18.75, top z 14.58; the SW mirrored); the **central tower** is entered by doorways at (2.08, 6, −4.17) south and (−2.08, 6, 4.17)
+  north, its spiral: flight 1 at x 2.6 from z −3.65 (6) north to z 0.52 (10.17), landing NE, flight 2 at z 2.6 from x 1.56 west to x −2.6 (14.33),
+  landing NW, flight 3 at x −2.6 from z 1.56 south to z −2.6 (18.5), the deck's hole over flight 3 (x < −1.56, z −2.3..1.56); **down:** stairwells at
+  (7.8, z 9.17 → 5.47) and (−7.8, z −9.17 → −5.47) into the dungeon, and the **south island's side stair** at x 5.8 from its edge (z −23) down to a
+  landing at 2 (x 1.5..7, z −23.3..−17.5) that opens into the passage under the bridge on its east side (z −20.2..−23.3), the passage running north
+  (x ±1.5) through a doorway at z −16 and another at z −11.3 into the dungeon.
+- **Pickups:** runes `rune-tower` (1.5, 18.5, −1.5), `rune-dungeon` (0, 2, 0), `rune-walkway` (0, 6.4, 22.5), `rune-stone` (−24.5, 6.3, −1.9);
+  flasks `dungeon` (−9.3, 2, 2.5), `tower-sw` (−12.8, 14.33, −15.1), `east-shrine` (31, 6, 0), `south-shrine` (0, 6, −32). **Pads:** pad-1..4 the
+  outer ring clockwise (N → E → S → W → N, over the diagonal islands), **pad-5** courtyard (−7, 6, 7) → the central tower's top (1.5, 18.5, 1.5),
+  **pad-6** courtyard (7, 6, −7) → the SW tower's top (−12.5, 14.33, −14.5). 8 spawns: two per outer island, facing in.
+- **Characters:** `STEPPING_STONES` is exported (`{ id, x, y, z, r }`, ids `stone-1..3`, r 1.2, y the top); world.js's camera grid now reaches
+  **y 30** (`CAM.y1`); everything merged is `cam: 'solid'` as before (the drawbridge slab isn't: it moves).
+- **Deploy:** nothing changes in the protocol or the map id. The map is heavier than the old Sky Ruins (about 240k kit triangles in the whole
+  scene, most of them walls and floor tiles with far LOD boxes); my `perf_test --map sky` numbers follow in my hand-off.

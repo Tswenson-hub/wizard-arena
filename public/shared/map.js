@@ -264,14 +264,19 @@ if (IS_NODE) {
 //           models sprinkled in ('castle/a,castle/b'), `seed` for where
 //   block   an invisible box (`w` x `d`, from `y` up `h`): blocks movement only (an edge you can't walk or jump off),
 //           unless `shots: 1` (blocks spells and sight too) or `stand: 1` (you can stand on its top); `rock: 1` (round 22,
-//           Sky Ruins) draws a rocky underside hanging from its footprint (ISLANDS), the island whose floor tiles sit on it
+//           Sky Ruins) draws a rocky underside hanging from its footprint (ISLANDS), the island whose floor tiles sit on it; `stone: 1` (round 24) marks a
+//           floating stepping stone (STEPPING_STONES, for the landing dust); `ghost: 1` draws the rock with no collider at all
+//           (an island cut into solid parts round a stairwell keeps one rock)
+//   drawbridge  (round 24) the hinge of a moving bridge: the entry is the hinge axis (x, y, z), `rotY` the direction the slab
+//           extends when down, `w` its width, `d` its length, `thick` its body below the surface. Static data (DRAWBRIDGES):
+//           the angle, the moving surface and the sounds are the spells agent's (drawbridgeAngle, server.js, main.js)
 //   deco    any other model from public/models fitted to `h` m, lifted by `y`; a round collider when `r` > 0 (`colH` tall)
 //   prop    a throwable (PROP_TYPES `type`; its id is its index + 1 among the props), spawn (facing rotY), heal (named spot);
 //           a spawn or heal spot stands on top of what's there unless its `y` says otherwise (under a deck, inside the hall)
 //   bounds  the playable rectangle (`w` x `d`): blinks and thrown wizards are kept inside it (ARENA_BOUNDS)
 export const RUNE_TYPES = ['haste', 'fury', 'aegis', 'surge'];
 export const LAYOUT_KINDS = {
-  kit: ['model', 'y', 'solid', 'tint', 'light'], circle: ['r', 'h'], rune: ['type', 'y'], pad: ['tx', 'ty', 'tz', 'h', 'r', 'y'], portal: ['link', 'r', 'y'], floor: ['model', 'w', 'd', 'mix', 'seed'], block: ['w', 'd', 'y', 'h', 'shots', 'stand', 'rock'],
+  kit: ['model', 'y', 'solid', 'tint', 'light'], circle: ['r', 'h'], rune: ['type', 'y'], pad: ['tx', 'ty', 'tz', 'h', 'r', 'y'], portal: ['link', 'r', 'y'], floor: ['model', 'w', 'd', 'mix', 'seed'], block: ['w', 'd', 'y', 'h', 'shots', 'stand', 'rock', 'stone', 'ghost'], drawbridge: ['w', 'd', 'y', 'thick'],
   deco: ['model', 'h', 'y', 'r', 'colH'], prop: ['type'], spawn: ['y'], heal: ['name', 'y'], bounds: ['w', 'd'],
 };
 // Stable pretty JSON for layout.json: one entry per line, keys in a fixed order, numbers to 4 decimals (0.1 mm), so a
@@ -351,6 +356,14 @@ export const KIT_PARTS = {
     { name: 'rail-l', ramp: [-3.5, -2.5], lz: [4, 0], y: [1, 5.1], noStand: true }, { name: 'rail-r', ramp: [2.5, 3.5], lz: [4, 0], y: [1, 5.1], noStand: true }],
   'castle/stairs_walled': [{ name: 'treads', ramp: [-1.25, 1.25], lz: [4, 0], y: [0, 4] },
     { name: 'wall-l', box: [-2.5, -1.25, 0, 4], y: [0, 4] }, { name: 'wall-r', box: [1.25, 2.5, 0, 4], y: [0, 4] }],
+  // round 24 (Sky Ruins): the rail-less 2-unit flight (tower stairs), the narrow flight with rails, the long shallow one
+  'castle/stairs_modular_center': [{ name: 'treads', ramp: [-1, 1], lz: [4, 0], y: [0, 4] }],
+  'castle/stairs_narrow': stairsParts(1.5, true).map(p => p.name === 'treads' ? p : { ...p, ramp: p.name === 'rail-l' ? [-2, -1.5] : [1.5, 2] }),
+  'castle/stairs_long': [{ name: 'treads', ramp: [-1.5, 1.5], lz: [8, 0], y: [0, 4] },
+    { name: 'rail-l', ramp: [-2.5, -1.5], lz: [8, 0], y: [1, 5.1], noStand: true }, { name: 'rail-r', ramp: [1.5, 2.5], lz: [8, 0], y: [1, 5.1], noStand: true }],
+  // a doorway you walk through (the opening is about 1.6 units wide and 2.1 tall, arched to 2.8): two jambs and a lintel
+  'castle/wall_doorway': [{ name: 'jamb-l', box: [-2, -0.8, -0.5, 0.5], y: [0, 4] }, { name: 'jamb-r', box: [0.8, 2, -0.5, 0.5], y: [0, 4] },
+    { name: 'lintel', box: [-0.8, 0.8, -0.5, 0.5], y: [2.1, 4] }],
   // rubble: a pile you can jump onto, a little lower than its peaks
   'castle/rubble_large': [{ box: [-3.6, 3.6, -1.3, 0.7], y: [0, 2.9] }],
   'castle/rubble_half': [{ box: [0, 3.6, -1.2, 0.6], y: [0, 2.9] }],
@@ -400,6 +413,9 @@ export const PROP_SPAWNS = [], SPAWN_POINTS = [], HEAL_SPOTS = [], COLLIDERS = [
 // Round 22: RUNE_SPAWNS { id, x, y, z, type (null: random) }, JUMP_PADS { id, x, y, z, r, target: [x, y, z], h, yaw (facing the
 // target) }, PORTALS { id, x, y, z, r, link, yaw (facing the other end) }.
 export const RUNE_SPAWNS = [], JUMP_PADS = [], PORTALS = [], ISLANDS = [];   // ISLANDS: { id, x, z, w, d, yaw, top, bottom } (blocks with rock: 1)
+// Round 24: STEPPING_STONES { id, x, y (the walkable top), z, r (the footprint's radius) } (blocks with stone: 1); DRAWBRIDGES
+// { id, x, y, z (the hinge), yaw, w, d, thick, dir: [dx, dz] (the slab's direction when down) }.
+export const STEPPING_STONES = [], DRAWBRIDGES = [];
 // A jump pad's arc for a point mass under `gravity` (JUMP.gravity on both the server and the client, so both compute the
 // same flight): up to the apex `h` above the pad, then down to the target. Returns { v: [vx, vy, vz] (m/s), t (s), h }.
 export function padLaunch(pad, gravity) {
@@ -427,11 +443,14 @@ export function buildMap(L, name = ACTIVE_MAP.name) {
   const of = (kind) => L.entries.filter(e => e.kind === kind);
   for (const e of L.entries) if (e.kind === 'kit' && e.model in KIT_MODELS) buildKit(out, e);
   for (const e of of('block')) {
+    if (e.ghost) continue;   // round 24: a drawn-only block (an island's rock under solid parts of its own)
     const k = S_(e), y = e.y || 0, h = (e.h ?? 3) * k;
     out.SURFACES.push({ kind: 'box', x: e.x, z: e.z, w: e.w * k, d: e.d * k, yaw: e.rotY || 0, top: y + h, ...(y > 0.05 ? { thick: h } : {}),
       name: e.id, piece: e.id, style: 'block', ...(e.shots ? {} : { moveOnly: true }), ...(e.stand ? {} : { noStand: true }) });
   }
   out.ISLANDS = of('block').filter(e => e.rock).map(e => ({ id: e.id, x: e.x, z: e.z, w: e.w * S_(e), d: e.d * S_(e), yaw: e.rotY || 0, top: (e.y || 0) + (e.h ?? 3) * S_(e), bottom: e.y || 0 }));
+  out.STEPPING_STONES = of('block').filter(e => e.stone).map(e => ({ id: e.id, x: e.x, y: (e.y || 0) + (e.h ?? 3) * S_(e), z: e.z, r: Math.max(e.w, e.d) * S_(e) / 2 }));
+  out.DRAWBRIDGES = of('drawbridge').map(e => { const yaw = e.rotY || 0; return { id: e.id, x: e.x, y: e.y || 0, z: e.z, yaw, w: (e.w ?? 3) * S_(e), d: (e.d ?? 6) * S_(e), thick: (e.thick ?? 0.3) * S_(e), dir: [Math.sin(yaw), Math.cos(yaw)] }; });
   out.FLOORS = of('floor').map(e => ({ id: e.id, model: e.model, x: e.x, z: e.z, w: e.w * S_(e), d: e.d * S_(e), yaw: e.rotY || 0,
     mix: e.mix ? String(e.mix).split(',').map(s => s.trim()).filter(Boolean) : [], seed: e.seed ?? 1 }));
   out.RUNE_CIRCLES = of('circle').map(e => ({ id: e.id, x: e.x, z: e.z, y: e.y || 0, r: (e.r ?? 6) * S_(e), h: (e.h ?? 5) * S_(e) }));
@@ -473,7 +492,7 @@ export function buildMap(L, name = ACTIVE_MAP.name) {
 
 // Rebuild every export from `L` in place: arrays keep their identity (emptied and refilled), objects are cleared and
 // reassigned, so every module holding a reference sees the new layout.
-const EXPORTS = { SCATTER_SETTINGS, ARENA_BOUNDS, MAP_INFO, PROP_SPAWNS, SPAWN_POINTS, HEAL_SPOTS, COLLIDERS, LOS_VOLUMES, KIT_PIECES, FLOORS, DECOS, RUNE_CIRCLES, RUNE_SPAWNS, JUMP_PADS, PORTALS, ISLANDS, SURFACES };
+const EXPORTS = { SCATTER_SETTINGS, ARENA_BOUNDS, MAP_INFO, PROP_SPAWNS, SPAWN_POINTS, HEAL_SPOTS, COLLIDERS, LOS_VOLUMES, KIT_PIECES, FLOORS, DECOS, RUNE_CIRCLES, RUNE_SPAWNS, JUMP_PADS, PORTALS, ISLANDS, STEPPING_STONES, DRAWBRIDGES, SURFACES };
 function assignExports(m) {
   for (const [k, target] of Object.entries(EXPORTS)) {
     const v = m[k];

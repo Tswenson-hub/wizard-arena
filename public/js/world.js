@@ -292,24 +292,62 @@ function cloudLayers() {
 // point about as deep as the island is wide, every vertex pushed in or out by a hash so it reads as cliff, flat-shaded (per-face
 // normals), drawn with the castle stone's material on a grey texel of its palette: no shader program of its own.
 const ROCK_UV = [664.5 / 1024, 130.5 / 1024];   // a warm grey stone swatch
+const ROCK_DEEP_UV = [0.9614, 0.1802], ROCK_LEDGE_UV = [0.6333, 0.2114], CRYSTAL_ROCK_UV = [0.3833, 0.2896];   // a dark brown-grey, a mid grey, amethyst
+// Round 24: the rock is layered. Strata rings alternate a ledge (the outline steps in a little, nearly flat) and a drop (steeply
+// in and down), each vertex jittered, the deeper strata on a darker texel; a big island hangs a few amethyst clusters and spikes
+// under its ledges; a stepping stone (a footprint under 3 m) is a plain short spike.
 function islandRock(I) {
-  const rings = [[0, 1.04], [0.12, 1.0], [0.3, 0.86], [0.55, 0.6], [0.8, 0.3], [1, 0.0]], N = 20;
-  const depth = 0.75 * Math.max(I.w, I.d) + 3, hash = (a, b) => { const v = Math.sin(a * 127.1 + b * 311.7 + I.x * 3.1 + I.z * 1.7) * 43758.5453; return v - Math.floor(v); };
+  const big = Math.max(I.w, I.d) >= 3;
+  const rings = big
+    ? [[0, 1.05, 0], [0.05, 1.0, 0], [0.09, 0.9, 1], [0.24, 0.84, 0], [0.28, 0.72, 1], [0.46, 0.66, 0], [0.5, 0.5, 1], [0.7, 0.42, 0], [0.74, 0.26, 1], [1, 0.0, 1]]
+    : [[0, 1.04, 0], [0.15, 0.92, 0], [0.45, 0.62, 1], [1, 0.0, 1]];   // [how far down, outline factor, deep texel]
+  const N = big ? 24 : 12;
+  const depth = (big ? 0.7 : 0.9) * Math.max(I.w, I.d) + (big ? 3 : 1);
+  const hash = (a, b) => { const v = Math.sin(a * 127.1 + b * 311.7 + I.x * 3.1 + I.z * 1.7) * 43758.5453; return v - Math.floor(v); };
   const c = Math.cos(I.yaw), sn = Math.sin(I.yaw);
+  const toWorld = (lx, y, lz) => [I.x + lx * c + lz * sn, y, I.z - lx * sn + lz * c];
   const ringPts = rings.map(([down, k], ri) => Array.from({ length: N }, (_, i) => {
     const a = (i + 0.5 * (ri % 2)) / N * Math.PI * 2, ca = Math.cos(a), sa = Math.sin(a);
-    const r = ri === rings.length - 1 ? 0 : Math.min(I.w / 2 / Math.max(1e-3, Math.abs(ca)), I.d / 2 / Math.max(1e-3, Math.abs(sa))) * k * (0.86 + 0.28 * hash(ri, i));
-    const lx = ca * r, lz = sa * r, y = I.top - 0.08 - down * depth * (0.92 + 0.16 * hash(i, ri));
-    return [I.x + lx * c + lz * sn, y, I.z - lx * sn + lz * c];
+    const last = ri === rings.length - 1, jit = last ? 0 : 0.84 + 0.3 * hash(ri, i);
+    const r = last ? 0 : Math.min(I.w / 2 / Math.max(1e-3, Math.abs(ca)), I.d / 2 / Math.max(1e-3, Math.abs(sa))) * k * jit;
+    const y = I.top - 0.08 - down * depth * (0.94 + 0.12 * hash(i, ri));
+    return toWorld(ca * r, y, sa * r);
   }));
-  const pos = [];
-  for (let r = 0; r + 1 < rings.length; r++) for (let i = 0; i < N; i++) {
-    const a = ringPts[r][i], b = ringPts[r][(i + 1) % N], c2 = ringPts[r + 1][i], d = ringPts[r + 1][(i + 1) % N];
-    pos.push(...a, ...c2, ...b, ...b, ...c2, ...d);
+  const pos = [], uv = [];
+  const tri = (a, b, d, t) => { pos.push(...a, ...b, ...d); uv.push(...t, ...t, ...t); };
+  for (let r = 0; r + 1 < rings.length; r++) {
+    const t = rings[r + 1][2] ? ROCK_DEEP_UV : rings[r + 1][1] > rings[r][1] - 0.08 ? ROCK_LEDGE_UV : ROCK_UV;
+    for (let i = 0; i < N; i++) {
+      const a = ringPts[r][i], b = ringPts[r][(i + 1) % N], c2 = ringPts[r + 1][i], d = ringPts[r + 1][(i + 1) % N];
+      tri(a, c2, b, t); tri(b, c2, d, t);
+    }
+  }
+  if (big) {
+    // crystal clusters (three octahedra each) and a few spikes on the ledge rings, hanging from the rock's outline
+    let nC = 0;
+    for (const ri of [2, 4, 6]) for (let i = 0; i < N; i++) {
+      const h = hash(i * 3 + 1, ri * 7 + 2);
+      if (h < 0.78) continue;
+      const [x, y, z] = ringPts[ri][i], outw = [x - I.x, z - I.z], L = Math.hypot(...outw) || 1, ox = outw[0] / L, oz = outw[1] / L;
+      if (h > 0.9) {   // a spike: a thin pyramid pointing down and out
+        const tip = [x + ox * 0.6, y - 1.6 - 1.4 * hash(i, 9), z + oz * 0.6], w = 0.28;
+        const base = [[x - oz * w, y, z + ox * w], [x + oz * w, y, z - ox * w], [x - ox * w * 0.8, y, z - oz * w * 0.8]];
+        for (let k = 0; k < 3; k++) tri(base[k], base[(k + 1) % 3], tip, ROCK_DEEP_UV);
+        continue;
+      }
+      for (let k = 0; k < 3 && nC < 40; k++, nC++) {
+        const s0 = 0.22 + 0.2 * hash(k + 5, i + ri), len = s0 * (2.2 + hash(k, i)), cx = x + ox * 0.25 + oz * (k - 1) * 0.3, cz = z + oz * 0.25 - ox * (k - 1) * 0.3, cy = y - 0.2 - 0.25 * k;
+        // an octahedron stretched along a tilted axis (down and out)
+        const ax = [ox * 0.55, -0.8, oz * 0.55], up = [-oz, 0, ox], side = [ax[1] * up[2] - ax[2] * up[1], ax[2] * up[0] - ax[0] * up[2], ax[0] * up[1] - ax[1] * up[0]];
+        const P = (u, v, w2) => [cx + ax[0] * u + up[0] * v + side[0] * w2, cy + ax[1] * u + up[1] * v + side[1] * w2, cz + ax[2] * u + up[2] * v + side[2] * w2];
+        const top = P(-len * 0.35, 0, 0), bot = P(len, 0, 0), ringC = [P(0, s0, 0), P(0, 0, s0), P(0, -s0, 0), P(0, 0, -s0)];
+        for (let q = 0; q < 4; q++) { tri(ringC[q], ringC[(q + 1) % 4], bot, CRYSTAL_ROCK_UV); tri(ringC[(q + 1) % 4], ringC[q], top, CRYSTAL_ROCK_UV); }
+      }
+    }
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  geo.setAttribute('uv', new THREE.Float32BufferAttribute(Array.from({ length: pos.length / 3 }, () => ROCK_UV).flat(), 2));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   geo.computeVertexNormals();   // non-indexed: one normal per face
   return geo;
 }
@@ -320,6 +358,49 @@ function buildIslands(scene) {
   for (const g of geos) g.dispose();
   mesh.castShadow = false; mesh.receiveShadow = true; mesh.userData.cat = 'islands'; mesh.userData.cam = 'solid';   // (nothing below an island to shadow)
   addW(scene, mesh);
+}
+// Round 24: the drawbridge (map.js DRAWBRIDGES: the hinge, the slab's size and the direction it extends when down). A slab of planks
+// with iron bands pivoted at the hinge, and two chains from the gatehouse above the gate to its far corners. Nothing here knows the
+// cycle: main.js calls setDrawbridgeAngle(id, a) every frame with the spells agent's drawbridgeAngle(matchTime) (0 down, pi/2 up). The
+// slab and the chains draw with the castle stone's material on a wood and an iron texel of its palette: no shader program of their own.
+const WOOD_UV = [0.5083, 0.1958], IRON_UV = [0.6333, 0.9927];
+const CHAIN_ANCHOR = { back: 2.25, up: 5.5 };   // behind the hinge (toward the gate) and above it, at the slab's width
+const drawbridges = new Map();   // id -> { pivot, chains: [{ mesh, from }], D }
+const texelUV = (geo, t) => { const a = geo.attributes.uv; for (let i = 0; i < a.count; i++) a.setXY(i, t[0], t[1]); return geo; };
+function buildDrawbridges(scene) {
+  drawbridges.clear();
+  for (const D of C.DRAWBRIDGES || []) {
+    const root = new THREE.Group(); root.position.set(D.x, D.y, D.z); root.rotation.y = D.yaw;   // local +z: the slab's direction when down
+    const pivot = new THREE.Group(); root.add(pivot);
+    const mat = kitMaterial('castle/drawbridge', null), parts = [];
+    const nP = 5, gap = 0.04, pw = (D.w - gap * (nP - 1)) / nP;
+    for (let i = 0; i < nP; i++) parts.push(texelUV(new THREE.BoxGeometry(pw, D.thick, D.d).translate((i - (nP - 1) / 2) * (pw + gap), -D.thick / 2, D.d / 2), WOOD_UV));
+    for (const z of [0.45, D.d / 2, D.d - 0.45]) parts.push(texelUV(new THREE.BoxGeometry(D.w + 0.08, D.thick + 0.06, 0.26).translate(0, -D.thick / 2 + 0.02, z), IRON_UV));
+    for (const x of [-1, 1]) parts.push(texelUV(new THREE.BoxGeometry(0.16, 0.16, D.d - 0.2).translate(x * (D.w / 2 - 0.12), 0.08, D.d / 2), IRON_UV));   // the kerbs
+    const slab = new THREE.Mesh(mergeGeometries(parts), mat);
+    for (const g of parts) g.dispose();
+    slab.castShadow = true; slab.receiveShadow = true; slab.userData.cat = 'castle';
+    pivot.add(slab);
+    const chains = [-1, 1].map(sx => {
+      const mesh = new THREE.Mesh(texelUV(new THREE.BoxGeometry(0.1, 0.1, 1), IRON_UV), mat);
+      mesh.castShadow = false; mesh.userData.cat = 'castle'; root.add(mesh);
+      return { mesh, from: new THREE.Vector3(sx * (D.w / 2 - 0.12), CHAIN_ANCHOR.up, -CHAIN_ANCHOR.back) };
+    });
+    addW(scene, root);
+    drawbridges.set(D.id, { pivot, chains, D, angle: null });
+    setDrawbridgeAngle(D.id, 0);
+  }
+}
+const _to = new THREE.Vector3(), _mid = new THREE.Vector3();
+export function setDrawbridgeAngle(id, a) {
+  const B = drawbridges.get(id);
+  if (!B || B.angle === a) return;
+  B.angle = a; B.pivot.rotation.x = -a;   // the far end rises
+  for (const ch of B.chains) {
+    _to.set(ch.from.x, B.D.d * Math.sin(a) + 0.08, B.D.d * Math.cos(a) - 0.3);   // the slab's far corner (its kerb), in the root's frame
+    _mid.addVectors(ch.from, _to).multiplyScalar(0.5);
+    ch.mesh.position.copy(_mid); ch.mesh.lookAt(ch.mesh.parent.localToWorld(_to.clone())); ch.mesh.scale.z = ch.from.distanceTo(_to);
+  }
 }
 
 // ------------------------------------------------------------ models
@@ -577,7 +658,8 @@ const kitGeo = {};
 function kitMeshes(model, gltf) {
   gltf.scene.updateMatrixWorld(true);
   const out = [];
-  gltf.scene.traverse(o => { if (o.isMesh) out.push([bakedGeometry(o), o.material]); });
+  // (round 24: KayKit's wall_doorway carries a closed door as its own mesh; the doorway is walked through, so the door isn't drawn)
+  gltf.scene.traverse(o => { if (o.isMesh && !/_door$/.test(o.name)) out.push([bakedGeometry(o), o.material]); });
   return (kitGeo[model] = out);
 }
 // One InstancedMesh per mesh of `model` for the given placements { x, y, z, yaw, s }.
@@ -815,6 +897,7 @@ export function loadModels(loader, scene, { cameraGrid = true, merge = cameraGri
   const lodData = merge ? fetch(KIT_LOD.json).then(r => r.json()).catch(() => null) : Promise.resolve(null);
   buildRunes(scene);
   buildIslands(scene);
+  buildDrawbridges(scene);
   const propModels = Object.entries(C.PROP_TYPES).filter(([, T]) => T.model);
   return Promise.all([
     load('./models/potion.glb').then(g => { models.potion = fitModel(g, C.PROP_TYPES.potion.h); }, () => {}),
@@ -886,7 +969,7 @@ export function loadModels(loader, scene, { cameraGrid = true, merge = cameraGri
 // near trees): their materials cut a dithered see-through hole around the line from the camera to us (cameraCutaway).
 // Props move and stay out; round decos are COLLIDERS too, which main.js already checks.
 const TREE_MODEL = /^(pine|oak|birch)/;
-const CAM = { cell: 0.4, half: C.ARENA_RADIUS + 8, y0: -2, y1: 24, pad: 0.22, margin: 0.25 };
+const CAM = { cell: 0.4, half: C.ARENA_RADIUS + 8, y0: -2, y1: 30, pad: 0.22, margin: 0.25 };   // (y1 24 -> 30 in round 24: the keep's tower tops are 18.5 m up)
 let camGrid = null;   // { cells: Uint8Array, n, ny }
 
 function buildCameraGrid(scene) {

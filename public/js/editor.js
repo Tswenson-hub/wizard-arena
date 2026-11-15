@@ -578,23 +578,34 @@ function unreachableSurfaces() {
     }
     return pts;
   };
-  const reached = new Set();
+  const reached = new Set(), sky = C.MAP_INFO?.ground === 'none';
   // round 22: on a map with no ground (Sky Ruins) the walk starts from the floors under the spawn points, not the void
-  if (C.MAP_INFO?.ground === 'none') for (const [x, , z] of C.SPAWN_POINTS) for (const s of stand) if (inside(s, x, z)) reached.add(s);
-  for (let pass = 0, grew = true; grew && pass < 12; pass++) {
+  if (sky) for (const [x, , z] of C.SPAWN_POINTS) for (const s of stand) if (inside(s, x, z)) reached.add(s);
+  // round 24: a gap is jumped too: from a reached floor up to JUMP_GAP m away (horizontally, in the edge's outward direction) and no more
+  // than `reach` below the landing (a walking jump plus an air jump makes about 3.5 m level; a sprint-jump 4.1), and a jump pad's target
+  // counts as reached from its pad. Blocks (the islands, decks and stones) are checked like any floor.
+  const JUMP_GAP = 3.5, GAP_STEPS = [1, 1.5, 2, 2.5, 3, 3.5];
+  const padFrom = (x, z) => [...reached].some(q => inside(q, x, z, 0.3));
+  for (let pass = 0, grew = true; grew && pass < 16; pass++) {
     grew = false;
+    for (const P of C.JUMP_PADS || []) if (padFrom(P.x, P.z)) for (const s of stand) if (!reached.has(s) && inside(s, P.target[0], P.target[2], 0.1) && Math.abs(sTopAt(s, P.target[0], P.target[2]) - P.target[1]) < 0.6) { reached.add(s); grew = true; }
     for (const s of stand) {
       if (reached.has(s)) continue;
       for (const [ex, ez, ox, oz] of edge(s)) {
         const top = sTopAt(s, ex, ez);
-        let floor = C.insideArena(ox, oz) ? 0 : -Infinity;                                 // the ground beside it, inside the bounds
+        let floor = !sky && C.insideArena(ox, oz) ? 0 : -Infinity;                         // the ground beside it, inside the bounds (none on a sky map)
         for (const q of reached) if (inside(q, ox, oz, 0.1)) floor = Math.max(floor, sTopAt(q, ox, oz));
         for (const q of reached) if (q !== s && inside(q, ex, ez, 0.1) && Math.abs(sTopAt(q, ex, ez) - top) < step + 0.05) floor = Math.max(floor, top);   // joined to a reached surface
         if (top - floor <= Math.max(step + 0.05, grab)) { reached.add(s); grew = true; break; }
+        // a jump across a gap: a reached floor within JUMP_GAP along the outward line, landing no higher than `reach` above it
+        let jumpFloor = -Infinity;
+        const nx = (ox - ex) / 0.7, nz = (oz - ez) / 0.7;
+        for (const g of GAP_STEPS) { const px = ex + nx * g, pz = ez + nz * g; for (const q of reached) if (q !== s && inside(q, px, pz, 0.1)) jumpFloor = Math.max(jumpFloor, sTopAt(q, px, pz)); }
+        if (top - jumpFloor <= reach) { reached.add(s); grew = true; break; }
       }
     }
   }
-  return stand.filter(s => !reached.has(s) && !s.ladder && s.style !== 'block' && !s.moveOnly);
+  return stand.filter(s => !reached.has(s) && !s.ladder && !s.moveOnly && !(s.style === 'block' && s.top <= 0.05));
 }
 
 // ------------------------------------------------------------ save, export, import
