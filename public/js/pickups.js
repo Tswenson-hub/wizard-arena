@@ -78,13 +78,14 @@ const padTex = () => canvasTex('pad', 256, (g, s) => {
 // rock dust (round 24): a soft uneven puff, blotched so an expanding disc of it reads as dust rather than a glow
 const dustTex = () => canvasTex('dust', 128, (g, s) => {
   const c = s / 2, grd = g.createRadialGradient(c, c, 0, c, c, c);
-  grd.addColorStop(0, 'rgba(255,255,255,0.95)'); grd.addColorStop(0.45, 'rgba(255,255,255,0.6)'); grd.addColorStop(0.8, 'rgba(255,255,255,0.18)'); grd.addColorStop(1, 'rgba(255,255,255,0)');
+  grd.addColorStop(0, 'rgba(255,255,255,1)'); grd.addColorStop(0.4, 'rgba(255,255,255,0.8)'); grd.addColorStop(0.75, 'rgba(255,255,255,0.3)'); grd.addColorStop(1, 'rgba(255,255,255,0)');
   g.fillStyle = grd; g.fillRect(0, 0, s, s);
+  // a few soft bites out of the rim, so a puff isn't a perfect ball (light ones: heavy bites left only specks)
   g.globalCompositeOperation = 'destination-out';
-  for (let i = 0; i < 16; i++) {
-    const a = rand(i, 1) * 6.283, rr = c * (0.25 + rand(i, 2) * 0.7), R = c * (0.08 + rand(i, 3) * 0.16);
+  for (let i = 0; i < 6; i++) {
+    const a = rand(i, 1) * 6.283, rr = c * (0.55 + rand(i, 2) * 0.4), R = c * (0.14 + rand(i, 3) * 0.16);
     const h = g.createRadialGradient(c + Math.cos(a) * rr, c + Math.sin(a) * rr, 0, c + Math.cos(a) * rr, c + Math.sin(a) * rr, R);
-    h.addColorStop(0, 'rgba(255,255,255,0.75)'); h.addColorStop(1, 'rgba(255,255,255,0)');
+    h.addColorStop(0, 'rgba(255,255,255,0.4)'); h.addColorStop(1, 'rgba(255,255,255,0)');
     g.fillStyle = h; g.fillRect(0, 0, s, s);
   }
 });
@@ -132,9 +133,10 @@ function matsFor(type) {
 let padMats = null;
 const padMatsFor = () => padMats ??= { ring: flat(padTex(), PAD_COLOR), disc: flat(dotTexture(), PAD_COLOR, true) };
 // the stepping stones' dust: pale rock dust, darker pebbles (normal blending: additive dust would glow on the sky)
-const DUST_COLOR = 0xd9d3c7, PEBBLE_COLOR = 0x8d8578, DRIFT_COLOR = 0xc4bcae;
-let dustMat = null;
-const dustMatFor = () => dustMat ??= flat(dustTex(), DUST_COLOR);
+const DUST_COLOR = 0xa39b8f, PEBBLE_COLOR = 0x3e3a34, DRIFT_COLOR = 0xa39b8f;   // mid grey-beige: pale dust vanished against the sky and the stone
+let dustMats = null;
+const dustMatsFor = () => dustMats ??= { disc: flat(dustTex(), DUST_COLOR),
+  puff: new THREE.SpriteMaterial({ map: dustTex(), color: DUST_COLOR, transparent: true, depthWrite: false, opacity: 0 }) };   // (the rune halo's program)
 // a vertical plane seen from both sides without DoubleSide (that would be another program): two front faces back to back
 let glyphGeo = null;
 function glyphGeometry() {
@@ -318,15 +320,17 @@ export function mountPickups({ scene, sfx = null, pads: pads0 = null, stones: st
   // A pool of puffs (made on the first landing, so the courtyard pays nothing): each is two dust discs, a Points of pebbles and a Points of
   // drifting dust. The pebbles are pure functions of the time since the landing (an arc under gravity; one that comes down on the stone sticks
   // there and fades, one that comes down past the edge keeps falling and fades on the way): no per-particle state.
-  const PUFFS = 6, PEBBLES = 12, DRIFT = 8, G = 9.8;
+  const PUFFS = 6, PEBBLES = 14, DRIFT = 8, SPRITES = 7, G = 9.8;
   const puffs = [];
   const pnow = () => performance.now() / 1000;
   function makePuff() {
     const g = new THREE.Group(); g.name = 'stonedust'; g.userData.cat = 'pickups'; g.visible = false;
-    const M = dustMatFor();
-    const disc = () => { const m = new THREE.Mesh(new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2), M.clone()); m.renderOrder = 2; return m; };
+    const M = dustMatsFor();
+    const disc = () => { const m = new THREE.Mesh(new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2), M.disc.clone()); m.renderOrder = 2; return m; };
     const d1 = disc(), d2 = disc();
-    const P = { g, d1, d2, born: -1, p: null };   // p: { lx, lz, r, air, rot }  (the landing spot relative to the stone's centre)
+    // the body of the cloud: billboard puffs that roll outward and up off the stone (they read from the over-the-shoulder camera, where a flat disc is edge-on)
+    const sprites = []; for (let i = 0; i < SPRITES; i++) { const sp = new THREE.Sprite(M.puff.clone()); sp.renderOrder = 3; sp.visible = false; sprites.push(sp); }
+    const P = { g, d1, d2, sprites, born: -1, p: null };   // p: { lx, lz, r, air, rot }  (the landing spot relative to the stone's centre)
     const sphere = new THREE.Sphere(new THREE.Vector3(0, -1, 0), 8);
     const pebble = (i) => {   // one pebble's arc: the start, the velocity, when it comes back down to the top, and whether that is on the stone
       const q = P.p, a = rand(i + 1, 11) * 6.283, boost = q.air ? 1.3 : 1;
@@ -336,23 +340,23 @@ export function mountPickups({ scene, sfx = null, pads: pads0 = null, stones: st
       const xl = x + Math.cos(a) * h * tl, zl = z + Math.sin(a) * h * tl;
       return { a, h, vy, y0, tl, x, z, onStone: Math.hypot(xl, zl) < q.r - 0.08 };
     };
-    const pebbles = motes(PEBBLES, { size: 0.13, color: PEBBLE_COLOR, additive: false, sphere, place: (i, tt, p) => {
-      if (!P.p || (P.p.air ? 0 : 4) > i) { p.set(0, -50, 0); return 0; }   // (8 pebbles after a plain jump, 12 after an air jump)
+    const pebbles = motes(PEBBLES, { size: 0.3, color: PEBBLE_COLOR, additive: false, sphere, place: (i, tt, p) => {
+      if (!P.p || (P.p.air ? 0 : 4) > i) { p.set(0, -50, 0); return 0; }   // (10 pebbles after a plain jump, 14 after an air jump)
       const u = tt - P.born, k = pebble(i);
       if (u < 0) { p.set(0, -50, 0); return 0; }
       if (k.onStone && u > k.tl) { p.set(k.x + Math.cos(k.a) * k.h * k.tl, 0.03, k.z + Math.sin(k.a) * k.h * k.tl); return Math.max(0, 1 - (u - k.tl) / 0.9); }
       p.set(k.x + Math.cos(k.a) * k.h * u, k.y0 + k.vy * u - 0.5 * G * u * u, k.z + Math.sin(k.a) * k.h * u);
       return u > k.tl ? Math.max(0, 1 - (u - k.tl) / 0.8) : 1;   // past the edge: fading as it falls into the void
     } });
-    const drift = motes(DRIFT, { size: 0.5, color: DRIFT_COLOR, additive: false, sphere, place: (i, tt, p) => {
+    const drift = motes(DRIFT, { size: 0.9, color: DRIFT_COLOR, additive: false, sphere, place: (i, tt, p) => {
       if (!P.p) { p.set(0, -50, 0); return 0; }
       const u = tt - P.born, life = P.p.air ? 1.4 : 1.1, q = u / life;
       if (u < 0 || q >= 1) { p.set(0, -50, 0); return 0; }
       const a = rand(i + 1, 21) * 6.283, sp = (0.8 + rand(i + 1, 22) * 0.9) * (P.p.air ? 1.3 : 1), rr = 0.25 + sp * u * (1 - 0.4 * q);
       p.set(P.p.lx + Math.cos(a) * rr, 0.15 + u * (0.3 + rand(i + 1, 23) * 0.25), P.p.lz + Math.sin(a) * rr);
-      return 0.3 * (1 - q) * Math.min(1, q * 6);
+      return 0.5 * (1 - q) * Math.min(1, q * 6);
     } });
-    g.add(d1, d2, pebbles, drift);
+    g.add(d1, d2, pebbles, drift, ...sprites);
     P.pebbles = pebbles; P.drift = drift;
     scene.add(g);
     return P;
@@ -360,15 +364,27 @@ export function mountPickups({ scene, sfx = null, pads: pads0 = null, stones: st
   function tickPuff(P) {
     if (P.born < 0) return;
     const u = pnow() - P.born, life = P.p.air ? 1.9 : 1.6;
-    if (u >= life) { P.born = -1; P.p = null; P.g.visible = false; return; }
+    if (u >= life) { P.born = -1; P.p = null; P.g.visible = false; for (const sp of P.sprites) sp.visible = false; return; }
     const r0 = P.p.r * (P.p.air ? 1.25 : 1.0);
     for (const [d, delay, sc] of [[P.d1, 0, 1], [P.d2, 0.07, 0.72]]) {
       const k = Math.max(0, Math.min(1, (u - delay) / 0.8)), e = 1 - (1 - k) * (1 - k);
       d.visible = k > 0 && k < 1;
       d.scale.setScalar(Math.max(0.01, r0 * (0.35 + 1.75 * e) * sc));
-      d.material.opacity = 0.62 * (1 - k) * (1 - k) * Math.min(1, k * 10);
+      d.material.opacity = 0.9 * (1 - k) * (1 - k) * Math.min(1, k * 10);
       d.position.set(P.p.lx * (1 - e * 0.6), 0.06 + e * 0.12 + (sc < 1 ? 0.03 : 0), P.p.lz * (1 - e * 0.6));
     }
+    const plife = P.p.air ? 1.2 : 1.0, big = P.p.air ? 1.35 : 1.1;
+    P.sprites.forEach((sp, i) => {
+      const q = u / plife;
+      if (q >= 1) { sp.visible = false; return; }
+      const a = rand(i + 1, 41) * 6.283, v = (0.8 + rand(i + 1, 42) * 1.1) * big, e = 1 - (1 - q) * (1 - q);
+      const rr = 0.2 + v * e * 0.9, sz = (0.6 + 1.5 * e) * big * (0.8 + rand(i + 1, 43) * 0.4);
+      sp.visible = true;
+      sp.position.set(P.p.lx + Math.cos(a) * rr, 0.2 + sz * 0.3 + e * (0.35 + rand(i + 1, 44) * 0.4) * big, P.p.lz + Math.sin(a) * rr);
+      sp.scale.setScalar(sz);
+      sp.material.opacity = 0.8 * Math.pow(1 - q, 1.5) * Math.min(1, q * 8);
+      sp.material.rotation = rand(i + 1, 45) * 6.283 + q * (rand(i + 1, 46) - 0.5) * 2;
+    });
   }
   function scuff(pos, mine, air) {
     sfx?.play?.('impact_small', { pos: [pos[0], pos[1] + 0.2, pos[2]], vol: mine ? 0.45 : 0.3, rate: air ? 0.85 : 1.1, jitter: 0.08 });
