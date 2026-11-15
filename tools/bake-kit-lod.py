@@ -15,9 +15,12 @@ PORT = sys.argv[1] if len(sys.argv) > 1 else '4102'
 OUT = pathlib.Path(__file__).resolve().parent.parent / 'public/models/castle'
 # Only what repeats enough to pay for its two draw calls (the piece near, its box far): every model here is 6k+ triangles
 # over the map. A banner or a single crate isn't.
-LOD_MODELS = ['castle/wall', 'castle/wall_cracked', 'castle/wall_window_closed', 'castle/floor_tile_large']
+LOD_MODELS = ['castle/wall', 'castle/wall_cracked', 'castle/wall_window_closed', 'castle/floor_tile_large',
+              # round 24 (Sky Ruins' keep): its foundation causeways and walkway, pillars, the towers' windows and doorways, the gate linings
+              'castle/floor_foundation_allsides', 'castle/pillar', 'castle/wall_window_open', 'castle/wall_archedwindow_open', 'castle/wall_doorway',
+              'castle/wall_half', 'castle/wall_arched', 'castle/ceiling_tile']
 # cut out: what the bake leaves empty stays transparent (world.js alpha-tests the boxes): the balustrade's gaps, the stack's outline
-CUTOUT = ['castle/barrier', 'castle/crates_stacked']
+CUTOUT = ['castle/barrier', 'castle/crates_stacked', 'castle/wall_window_open', 'castle/wall_archedwindow_open', 'castle/wall_doorway']   # (round 24: the openings stay open)
 PPU = 48       # atlas pixels per model unit (a wall is 4 units: 192 px a side)
 ATLAS_W = 1024
 TILT = 1.0     # the bake light: the face's normal plus TILT x its image-up
@@ -28,7 +31,7 @@ async def main():
         pg = await b.new_page()
         pg.on('console', lambda m: print('page:', m.text) if m.type == 'error' else None)
         await pg.goto(f'http://localhost:{PORT}/?debug=1')
-        await pg.wait_for_function("!document.querySelector('#joinBtn').disabled", timeout=120000)
+        await pg.wait_for_function("window.__wa && window.__wa.scene", timeout=120000)   # (round 24: the menu changed; the page's modules are what the bake needs)
         r = await pg.evaluate("""async ([MODELS, CUTOUT, PPU, W, TILT]) => {
           const THREE = await import('three');
           const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
