@@ -1,5 +1,36 @@
 # Characters hand-off
 
+## Round 24: the stepping-stone landing dust; the camera in the keep (in progress)
+Commits: `ba4f746` `33f7fe3` requests.md (the plan, the stones from `ISLANDS`, the camera grid note, the hook and three courtyard-era heights
+for spells), `01dac80` pickups.js first cut, `abf742a` pickups.js tuned from game-page shots.
+
+### What's built
+- **`pickups.landed([x, y, z], { air, mine })`** (pickups.js): on one of Sky Ruins' stepping stones (the `ISLANDS` entries under 5 m across,
+  `top` the landing height, half the width the radius; environment's rule is `w ≤ 2.5`; a `stones` list at mount for tests, `setStones(list)`)
+  it kicks up two expanding dust discs (the pool's MeshBasic + map program) that spill over the stone's edge, seven billboard puffs rolling
+  outward and up (the rune halo's Sprite + map program: a flat disc is edge-on from the over-the-shoulder camera), 10 pebbles (14 after an air
+  jump) on the `motes` Points program that hop up and come down (one that lands inside the stone's radius sticks and fades; one past the edge
+  keeps falling into the void and fades on the way: pure functions of the time since the landing, no per-particle state) and a drift of grey
+  motes. A pool of 6 puffs made on the first landing, so the courtyard pays nothing. Sound: a spatial `impact_small` for everyone, and for our
+  own landing a synthesized scrape (lowpassed noise) and two or three pebble clicks on `sfx.ctx` → `sfxBus` (no sound file). Returns null at
+  once off a stone, so the call is cheap on every landing. **Programs: 56 → 56** in a live Sky Ruins match. **Not wired in main.js yet**:
+  the hook is requested (`landed()`, the Skyward touchdown, the remote touchdown).
+- **Still to do** (needs environment's map): the camera check in the keep (`/tmp/wa-characters/r24/camera.py`, below) and a shot of the dust on
+  a real stone.
+
+### Verified (`/tmp/wa-characters/r24/`, port 4103 with `MAP_EDIT=1 WA_DEBUG=1 MATCH_DEBUG=1`, GPU Chromium `--use-angle=metal`)
+- `staged_dust.py` (the editor page `?edit=1&map=sky`, a test stone on the west bridge): **ALL PASS** (no stones from the round-22b layout,
+  one from the list; `landed()` null off the stone and the stone on it; a live puff; every puff retired; no page errors).
+- `game_dust.py` (the game page: a first-visit match switched to Sky Ruins by `matchDebug`, the wizard placed on the west bridge by
+  `debugPlace`, a second pickups instance with the test stone, landings fired by hand): **ALL PASS**, programs **56 → 56**, no errors.
+  Shots `game_dust_plain_*.png`, `game_dust_air_*.png` (120, 300, 600, 1000 ms) and `game_dust_down_350ms.png` (looking down: the grey
+  cloud round the feet and the dark pebbles falling past the bridge's edge). Tuned twice from the shots: the first cut's pale dust and a
+  heavily blotched texture read as a few specks.
+- `camera.py` (the game page; `debugPlace` + `local.pos`, yaws × pitches per spot; per frame the boom length, `surfaceSolidAt(camera)`,
+  world.js `cameraClearance(head → camera)`, shots): a dry run on the round-22b layout runs clean and flags the old tower (the camera
+  jammed against its wall with the wizard off screen, boom 0.79 m; the camera inside a wall piece looking up from the tower top). Note the
+  pitch sign: a positive `local.pitch` looks down. The keep's spots go in when the map lands.
+
 ## Round 22: streak banners, rune and pad visuals, buff auras, the launch pose, "Next map", the map fade, first to 10
 Commits: `b98c395` `4ff…` requests.md (the interfaces, the jump_pad note, the landed note), `a51d489` callouts.js + callouts.css + pickups.js +
 looks.js + spellanim.js, `2eed43e` select.js + select.css + podium.js + recap.css, `cadb63d` the tuning from staged shots. Spells' main.js
