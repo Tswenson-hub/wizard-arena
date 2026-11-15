@@ -12,6 +12,7 @@ import { WebSocketServer } from 'ws';
 import * as C from './public/shared/constants.js';
 import { createRoom } from './server/room.js';
 import * as Saves from './server/saves.js';
+import { createNotifier } from './server/notify.js';   // round 23: Discord alerts when a real player is in, and the admin key (env only; no-ops without)
 import { attach as attachNoobTube } from './vendor/noobtube/server/index.js';   // Noob Tube (separate game) on /nt, rooms in its own worker thread   // round 18: CrazyGames players' saves on Supabase (environment-owned; no-ops without keys)
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -58,11 +59,19 @@ const allocId = () => nextPlayerId++;
 const totalBots = () => { let n = 0; for (const r of rooms.values()) n += r.botCount(); return n; };
 const totalHumans = () => { let n = 0; for (const r of rooms.values()) n += r.humanCount(); return n; };
 const canAddBot = () => totalBots() < MAX_BOTS;
+const notifier = createNotifier();
+if (notifier.enabled) console.log('[notify] Discord alerts on');
 
-// round 18: a finished match goes to the players' saves (guests and bots are skipped there; lab rooms aren't recorded)
-function onMatchEnd(list, { roomKind, seconds }) {
+// round 18: a finished match goes to the players' saves (guests and bots are skipped there; lab rooms aren't recorded).
+// Round 23: and a short Discord line when a real player was in it (notify.js throttles it).
+function onMatchEnd(list, { roomKind, seconds, roomId, map, legacy }) {
   if (roomKind !== 'public' && roomKind !== 'private') return;
   Saves.recordRecap(list, { roomKind, seconds }).catch(e => console.warn('[saves] recordRecap', e));
+  try { notifier.onMatchEnd({ roomId, kind: roomKind, legacy, map, seconds, ranked: list.map(p => ({ name: p.name, bot: !!p.bot, admin: !!p.admin, kills: p.kills || 0 })) }); } catch (e) { console.warn('[notify] matchEnd', e); }
+}
+// round 23: a human joined a room (room.js, after the welcome): a Discord alert when a real player (not Ty) is the first one in
+function onHumanJoin(ev) {
+  try { notifier.onHumanJoin(ev); } catch (e) { console.warn('[notify] join', e); }
 }
 function makeRoom(kind, legacy = false) {
   if (rooms.size >= MAX_ROOMS) return null;
@@ -71,7 +80,7 @@ function makeRoom(kind, legacy = false) {
     do { code = Array.from({ length: 4 }, () => CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)]).join(''); } while (rooms.has(code));
     id = code;
   } else id = `${kind}-${nextPublic++}`;
-  const room = createRoom({ id, kind, code, allocId, canAddBot, onMatchEnd, legacy });
+  const room = createRoom({ id, kind, code, allocId, canAddBot, onMatchEnd, onHumanJoin, isAdmin: (k) => notifier.isAdmin(k), legacy });
   rooms.set(id, room);
   console.log(`[room] ${id} opened${legacy ? ' (legacy)' : ''} (${rooms.size} rooms)`);
   return room;
@@ -96,11 +105,18 @@ const ROOM_ERRORS = {
     : `Room ${c} runs an older version of the game. You're in a public match instead.`,
 };
 // Where a join goes: { room, error } (error: a private room that couldn't be had; the player lands in a public room).
-// Round 22: `legacy` (a join without proto) keeps to legacy rooms; `firstVisit` prefers the courtyard.
-function roomFor(want, legacy = false, firstVisit = false) {
+// Round 22: `legacy` (a join without proto) keeps to legacy rooms; `firstVisit` prefers the courtyard. Round 23: an admin (Ty, the
+// join's verified key) may name a public room by its id ('public-3') and lands there when it has a free seat and is their kind;
+// anyone else naming one gets today's public match.
+function roomFor(want, legacy = false, firstVisit = false, admin = false) {
   const code = cleanCode(want);
   let reason = null;
   if (code === 'NEW') { const r = makeRoom('private', legacy); if (r) return { room: r }; reason = 'busy'; }
+  else if (admin && /^PUBLIC-\d+$/.test(code)) {
+    const r = rooms.get(code.toLowerCase());
+    if (r && r.kind === 'public' && !!r.legacy === legacy && r.humanCount() < 4) return { room: r };
+    reason = !r || r.kind !== 'public' ? 'unknown' : !!r.legacy !== legacy ? 'version' : 'full';
+  }
   else if (code && code !== 'PUBLIC') {
     const r = rooms.get(code);
     if (!r || r.kind !== 'private') reason = 'unknown';
@@ -194,7 +210,7 @@ wss.on('connection', (ws) => {
       }
       if (msg.t !== 'join') return;
       const legacy = legacyJoin(msg);   // round 22: the live CrazyGames build sends no `proto`
-      const pick = roomFor(msg.room, legacy, msg.firstVisit === true);
+      const pick = roomFor(msg.room, legacy, msg.firstVisit === true, notifier.isAdmin(msg.admin));   // (round 23: the admin key, never echoed or logged)
       room = pick.room;
       if (!room) { ws.send(JSON.stringify({ t: 'notice', text: 'The server is full. Try again in a minute.' })); ws.close(4001, 'full'); return; }
       if (watching) { watching.unobserve(ws); watching = null; }

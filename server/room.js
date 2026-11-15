@@ -2531,7 +2531,7 @@ export function createRoom(opts) {
     players, props, now, broadcast, send, propPublic,
     addBot: (...a) => addBot(...a), removePlayer: (id) => removePlayer(id), respawn: (p) => respawn(p),
     addUltCharge: (p, pct) => addUltCharge(p, pct),
-    onMatchEnd: (list, info) => opts.onMatchEnd?.(list, { ...info, roomKind: opts.kind }),   // round 18: the saves
+    onMatchEnd: (list, info) => opts.onMatchEnd?.(list, { ...info, roomKind: opts.kind, roomId: room.id, map: pubMapId(mapId), legacy: LEGACY }),   // round 18: the saves; round 23: the Discord line
     resetUlt: (p) => { p.ult = 0; },
     // between matches: every ram goes
     resetRams: () => { for (const r of [...rams]) despawnRam(r); },
@@ -2648,6 +2648,10 @@ export function createRoom(opts) {
     const lo = C.sanitizeLoadout(msg.loadout);
     const p = newPlayer(id, name, lo || C.DEFAULT_LOADOUT, msg.voice);
     p.proto = Number.isFinite(msg.proto) ? msg.proto : 0;   // round 22: 0 = the live CrazyGames build (server.js put it in a legacy room)
+    // round 23: Ty's admin key (verified by server.js's notifier; never stored or echoed) and where the client runs ('crazygames' | 'web')
+    p.admin = typeof opts.isAdmin === 'function' && opts.isAdmin(msg.admin);
+    p.platform = msg.platform === 'crazygames' || msg.platform === 'web' ? msg.platform : (LEGACY || ws.account ? 'crazygames' : undefined);
+    const humansBefore = humans().length;
     if (room.kind === 'private' && room.host == null) room.host = id;   // the creator (or the first in after everyone left)
     // fill bots play at this difficulty (a private room: the host's choice only). Round 21: a first-timer (the client's
     // `firstVisit`) alone in a public room gets Easy bots, so they can win their first fights; one joining other humans
@@ -2687,6 +2691,10 @@ export function createRoom(opts) {
     if (msg.loadout !== undefined && !lo) send(id, { t: 'loadoutRejected', reason: 'That loadout is not valid: you have the default one.' });
     console.log(`[+] ${name} (#${id}) joined ${room.id}. ${players.size} in the room`);
     roomChanged();
+    // round 23: the Discord alert (server.js decides; the live counts are looked up when a held post goes out)
+    const humanList = () => humans().map(q => ({ name: q.name, admin: !!q.admin, platform: q.platform }));
+    opts.onHumanJoin?.({ roomId: room.id, kind: room.kind, legacy: LEGACY, map: pubMapId(mapId), platform: p.platform, humansBefore,
+      humans: humanList(), humansNow: () => humans().filter(q => !q.admin).length, humansList: humanList });
     return id;
   }
 
