@@ -1,5 +1,31 @@
 # Spells hand-off
 
+## Round 23: Discord alerts when a real player is in, and the admin key
+**`server/notify.js`** (`createNotifier`): environment only (`NOTIFY_WEBHOOK_URL`, `NOTIFY_THREAD_ID` appended as `?thread_id=`,
+`ADMIN_KEY`); without a webhook every alert is a no-op, without a key nobody is an admin. `onHumanJoin` posts the embed ("🧙 A player
+is in Wizard Arena": room, map, source, the real players' names, the `?room=<id>&admin=1` join link, or the crazygames.com line for a
+legacy room) when a public room, or a private room someone made, gets its first real player (not a bot, not Ty); nothing more for that
+room within 10 minutes; at most one post per 2 minutes overall, a post held by that gap goes out when it ends if the room still has a
+real player. `onMatchEnd` posts a one-line "🏁 Match over" for rooms with a real player, one per room per 10 minutes. Posts are
+fire-and-forget fetches with a 5 s timeout; failures are logged. `isAdmin` is a constant-time compare; the key is never sent back or
+logged. **server.js**: the notifier, `onHumanJoin`, the match-end line, and an admin's `room: 'public-N'` landing there when it has a
+free seat and is their kind (else today's 'unknown' / 'full' / 'version' error and a public match); non-admins keep today's behaviour.
+**room.js**: `p.admin`, `p.platform` (`'crazygames' | 'web'` from the join; a legacy join or a verified CrazyGames account counts as
+CrazyGames), the join hook after the welcome with the live human list, the room id / map / legacy on the match-end call. **main.js**:
+`?admin=<key>` stored in `waAdminKey` and taken off the address bar, `?admin=1` uses the stored key; the join carries `admin` and
+`platform`; an admin's `?room=public-N` is read by main.js itself (platform.js only passes private codes). Backward compatible: a join
+without these fields is a non-admin on an unknown platform; the Noob Tube hosting (`20bb9d8`) is untouched.
+
+**Verified:** `node tools/test/notify-unit.mjs` **ALL PASS (32 checks)**: a stub webhook and a fake clock (a human join posts once with the
+embed to the thread, a second join and a refill within 10 min don't, an admin alone doesn't, a lab room doesn't, a post inside the 2-minute
+gap is held and sent when it ends, a room posts again after 10 min, a legacy room's text, the match-end line and its throttle, an unreachable
+webhook is logged not thrown, nothing without the environment variables, no admin without a key), then the real server on 4193 with the
+stub (one post for the first human, none for the fill bots or the admin, the admin joins `public-1` by id, a non-admin naming it gets
+today's 'unknown' and a public match, a missing id gives 'unknown', a legacy join never lands in a current room, the key appears in no
+message or log). `/tmp/wa-spells/r23/admin.py` (Playwright, a private server with a stub webhook): **ALL PASS (7)**: the join carries
+`platform: 'web'` and no key, the first real player's join posts, `?admin=<key>` is stored and stripped, the alert's link puts Ty in that
+public room with no alert, the key isn't in the room state. `MATCH_DEBUG=1 node tools/test/modematch-unit.mjs`: ALL PASS, 242 checks.
+
 ## Round 22b: bot pathing on the two-plane Sky Ruins
 **bots.js:** a route graph per map (`routeGraph`: the ends of every `bridge-*` deck, the foot and top of every stair, each pad's launch
 and landing; nodes joined when the straight walk stays on a floor with no step up, a stair joins its ends, a pad its launch to its
