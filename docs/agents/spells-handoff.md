@@ -1,5 +1,83 @@
 # Spells hand-off
 
+## Round 24: the drawbridge (a moving surface on the server clock), bot routes on the rebuilt Sky Ruins, three client generations
+Commits: `f6f05bf` (PROTO 24, the three generations), `2c7cea0` (constants.js, room.js: the moving surface), `7f0c1b4` + `2eb6321` (bots.js), `564775f` (main.js, effects.js, audio.js), `15378fd` (unit checks), plus the requests.md posts `878346d` `7735b02` `d4dd6e0`.
+
+**Three client generations (server.js, room.js, net.js):** `PROTO = 24`. `genOf(join)`: no `proto` → `'legacy'` (as before: `layout-legacy.json`, no
+runes, pads or rotation); `proto` 22–23 → **`'v22'`** (the round-23 zip pending at CrazyGames bundles the OLD `layout-sky.json`, so its rooms play
+the courtyard with runes, pads and the pace, `room.maps = ['courtyard']`, no rotation, a `roomMap 'sky'` ignored); `proto >= 24` → `'current'`.
+Rooms never mix generations: a private code or an admin's `public-N` of another one gives `roomError 'version'` and a public room of the joiner's
+own generation. `room.gen` in `info()`; `room.legacy` as before. (The coordinator's call, answering deploy's question in requests.md.)
+
+**The drawbridge (constants.js, room.js, bots.js, main.js, audio.js):** `DRAWBRIDGE = { down 12, rising 4, up 8, lowering 4 (28 s), upAngle 80°,
+slideFrom 10°, fallAngle 45°, slideMax 5 m/s, t0 }`; `drawbridgePhase(t)` / `drawbridgeAngle(t)` (smoothstep within a rise or a fall) on the
+**server clock** (room.js `now()`, the seconds the snapshots carry as `time`; the client's estimate is `performance.now()/1000 + NET.offset`, so a
+rise is at most a one-way latency early on screen, about 1° at the worst), `drawbridgeWindow(t)` for the bots, `drawbridgeSlide(a)`.
+**`updateDrawbridges(t)`** keeps one `ramp` surface per map.js `DRAWBRIDGES` entry (environment's hinge (16, 6, 0), 7.2 × 3.4 along +x) in
+`SURFACES` and in the map's `built.SURFACES` (a map switch keeps it), with `x, z, d, y1` rewritten from the angle (the footprint shortens to
+`d cos a`, the far end rises to `y + d sin a`) and `noStand` past the fall angle; `drawbridge: id`, `style: 'drawbridge'`, `thick` 0.35. So
+every existing query sees it: down, a floor at 6 over the gap; rising, a slope that lifts whoever stands on it (feet follow the floor while it
+stays within a step: a 60 Hz tick moves the far end 6 cm at most) and, past 10°, **slides them toward the hinge** (`drawbridgeUnder` +
+`drawbridgeSlideVec`: the client predicts it, bots do it in moveBot, the server allows the slide speed in the state check and carries it into a
+fall); past 45° it **holds nobody**: whoever is still on it drops (past the island's edge, into the void: a plain `'void'` death, nobody
+credited; a wizard pushed out on the hinge side lands on the apron); up, a wall across the island's edge that blocks movement, shots and sight.
+room.js calls it in `useMap()` (every tick and message); main.js at the top of `updateLocal` and then `World.setDrawbridgeAngle(id, a)` for
+environment's slab and chains. **Sound (audio.js, synthesized, no file):** `drawbridgeClank` (a bright rattle, two ringing partials and a thud)
+at each start and stop of the slab, `drawbridgeCreak` (a wobbling sawtooth through a low-pass, with a judder) while it moves; they pick up a
+`drawbridge_clank` / `drawbridge_creak` sample automatically if one is added to the manifest. **No warning cue** (Ty).
+**Test hooks (WA_DEBUG):** `debugMap { drawbridges: [{ id, x, y, z, yaw | dir, w, d }] }` (a test list instead of the map's, process-wide; `[]`
+removes it), `debugMap { drawbridgePhase: s }` (the cycle's phase right now; 12 = the rise starts); the `map` and `welcome` messages carry
+`drawbridges: [{ id, x, y, z, yaw, w, d, thick, dir, t0 }]`.
+
+**Bots on the rebuilt Sky Ruins (bots.js):** the route graph's edges have kinds and the bot that walks one follows it: `walk` / `stair` / `pad`
+as before; **`narrow`** (a `walkway-*` deck: along its centre line, no strafe, dodge or detour, 1.3× the cost, Easy 1.8×); **`hop`** (a stepping
+stone, an `ISLANDS` rock ≤ 2.5 m, to the next stone or to a bank point 0.7 m inside an island's edge: `C.hopPlan` plans a sprint-jump from the
+stone's edge onto the target's middle, with the air jump at the apex when the single arc can't make it; the run-up and the flight are at exactly
+the planned velocity (the server moves bots), so a bot lands where it aimed; Hard 0.8× the cost, Normal 1.6×, Easy 3×); **`drawbridge`** (its
+apron end to the far island, time-gated at query time: taken only when the bridge stays down for the whole crossing from the bot's ETA, or
+comes down within 2.5 s of it). A bot on a tilting bridge, or one that won't stay down for the rest of its crossing, sprints for the nearer end
+(the hinge once it tilts: the slide helps); the void probe treats a tilting bridge, or one about to rise, as no floor. Bank nodes read the floor
+under them (`isle-keep`'s `top` is the dungeon's 2 m). `routeGraphDebug()` is exported for the unit checks. `WA_BOTLOG=1` logs a refused hop.
+
+**Characters' asks (main.js, effects.js):** `pickups?.landed?.([x, y, z], { air, mine })` at our landing, the Skyward touchdown and a remote
+wizard's; `effects.dust`'s puff and `effects.land`'s rings at the floor's height; a remote wizard's "in the air" against the floor under them.
+
+**Verified** (ports 4101 / 4191; logs and shots in `/tmp/wa-spells/r24/`):
+- `MATCH_DEBUG=1 node tools/test/modematch-unit.mjs`: **ALL PASS, 281 checks**. New: the three generations (no-proto → legacy; 22 and 23 share a v22 room with
+  runes, pads and `maps ['courtyard']`, never the legacy or 24 room; `'version'` across generations both ways; a v22 host can't lock Sky Ruins);
+  the cycle's phases and angle at their boundaries, monotonic rises and falls, the window, the slide curve; the moving surface on Sky Ruins (down
+  a flat deck over the gap, 40° the far end up 4.6 m and standable, a wizard standing 5 m up carried to 9.4 m and dropped as it passed 45°,
+  80° a wall that pushes back onto the apron, holds nobody, blocks shots and sight; a test list replaced and removed); `hopPlan` (3 m single,
+  4–5.3 m with the air jump, 7 m impossible); the route graph on the committed layout (every stone on a hop chain from the keep's apron to
+  the west island, `walkway-n` a narrow edge each way joined to the islands, the drawbridge a time-gated edge); against the real server (a
+  private room on Sky Ruins, a test slab at the hinge): a wizard standing 5.5 m out is carried up as it rises and its height matches the shared
+  helper's, its slide at the shared curve's speed passes the speed check, past 45° it drops into the void with nobody credited, up the slab
+  holds a wizard walking out of the gate on the apron and a Spark from the gate stops at it. `node tools/test/notify-unit.mjs`: ALL PASS.
+- `/tmp/wa-spells/r24/drawbridge.py` (Playwright, GPU): **ALL PASS, 12 checks**: the client's clock agrees on the cycle, its own prediction carries it up with
+  the slab (height vs the helper within 0.04 m), slides it 2.9 m toward the hinge, drops it past 45° into the void; the creak ran while it rose
+  and the fx phases followed the cycle; up, the client's copy is a wall and walking east from the gate is held at the island's edge; no console
+  errors. Shots `drawbridge-down.png`, `drawbridge-rising.png`, `drawbridge-up.png`.
+- Sky Ruins bot matches (`/tmp/wa-spells/r24/botmatch-sky.mjs 4101 150 sky hard normal easy normal`, on environment's committed layout `bb8bd1f`):
+  | Run | Void deaths | Routes used (zone entries by the 4 bots) | 4 s stalls |
+  |---|---|---|---|
+  | before the dungeon-route fix | **0** (0 knocked) | walkway 10, stones 9 (9 hops), drawbridge 3, stone bridge 2, dungeon 4, wall-walk 12, tower 1 | 49 (mostly bots standing on the courtyard floor over the dungeon rune) |
+  | with it (`2eb6321`) | **0** (0 knocked) | stones 12 (6 hops), drawbridge 10, walkway 1, stone bridge 1, dungeon 38, wall-walk 32, tower 5; 22 pad launches, 8 runes | 26 (fights at an island's edge, two bots pressing at the south bridge's foot) |
+
+  Every route is used in each run, no non-knockback void death; no hop was ever refused by the server (`WA_BOTLOG`). The earlier runs on
+  environment's working tree (the slab pointing west, a `debugMap` slab at the right hinge instead) were 0 and 2 (both knocked) void deaths.
+- `deploy/perf_test.py --map sky --seconds 30` on this machine (the unit suite running alongside): 53 fps, p95 frame 33.5 ms, draw calls 74,
+  programs 55, 0 compiled in the match; **triangles 114k median (p95 157k) against the sky target of 60k**: environment's new keep, nothing of mine
+  draws (the slab and chains are world.js's).
+
+**Known issues / for others:**
+- **Environment:** `drawbridge-e`'s `rotY` was −π/2 (the slab into the keep) in the working tree; `bb8bd1f` has +π/2. The sky triangle count is
+  yours. `WAYPOINTS [{ x, z, y? }]` would be read as plain route nodes if the gates ever need help.
+- **Deploy:** a "current" join is `proto: 24` now (a 22 lands in a v22 room on the courtyard). The drawbridge hooks above.
+- Bots never climb the central tower for its rune (`runeGoal` weighs height 2×: the round-22 choice that stopped mid-fight tower trips); the
+  tower rune is for humans. A bot waiting at the apron for the bridge stands still up to 2.5 s.
+- The slab's thin raised footprint is passable by a client that reports positions blindly past its middle (the same as any thin wall: the server
+  pushes out through the nearest side); a real client pushes itself out each frame and never gets there.
+
 ## Round 23: Discord alerts when a real player is in, and the admin key
 **`server/notify.js`** (`createNotifier`): environment only (`NOTIFY_WEBHOOK_URL`, `NOTIFY_THREAD_ID` appended as `?thread_id=`,
 `ADMIN_KEY`); without a webhook every alert is a no-op, without a key nobody is an admin. `onHumanJoin` posts the embed ("🧙 A player
