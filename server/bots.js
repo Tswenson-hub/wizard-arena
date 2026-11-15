@@ -1289,7 +1289,7 @@ function respond(me, world, t, proj, th, act) {
   // Round 13: already up: the air jump lifts us over a chest-high shot (and the skim volley below)
   if (canAirJump(me, t) && th.tc < 0.35 && th.tc > 0.06 && Math.random() < (cfg.airJump ?? 0)) return act({ t: 'jump', n: 2, y0: me.p[1] });
   // ...so hop them: a jump in the last moment clears the shards (they fly about 0.3 m up)
-  if (proj.kind === 'skim' && th.tc < 0.4 && th.tc > 0.08 && canJump(me, t) && Math.random() < (cfg.jump ?? 0)) return act({ t: 'jump' });
+  if (proj.kind === 'skim' && th.tc < 0.4 && th.tc > 0.08 && canJump(me, t) && Math.random() < (cfg.jump ?? 0) && !me.bot.hop && !walkwayUnder(me)) return act({ t: 'jump' });   // (round 24: not mid-hop or on the walkway)
   // Roll: inside its 0.25 s dodge window the shot passes through (and the roll carries us off its line anyway)
   if (rollReady(me, t) && th.tc < ROLL.immune && th.tc > 0.03 && Math.random() < 0.6 * cfg.dodge) return rollAway(me, [-proj.v[2] * b.strafe, 0, proj.v[0] * b.strafe], act);
   // Sparks, shards and thrown props: sidestep if there's time to clear the hit sphere, else ward.
@@ -1356,6 +1356,7 @@ function moveBot(me, dt, world, t) {
       // a potion or a rune we're walking to; fight from wherever we are on the way (round 22: by a jump pad when that's the way)
       const gTop = C.surfaceTopAt(goal[0], goal[1]);
       const wp = routeWaypoint(me, world, goal, gTop, t) || (gTop > me.p[1] + C.STEP_UP ? rampWaypoint(me, goal, gTop) : null);
+      if (wp && b.routeEdge?.kind === 'hop' && !b.hop && !flying && canJump(me, t)) startHop(me, b.routeEdge, routeGraph(world), t);   // round 24
       const gx = (wp ? wp[0] : goal[0]) - me.p[0], gz = (wp ? wp[1] : goal[1]) - me.p[2], gl = Math.hypot(gx, gz) || 1;
       wx = gx / gl; wz = gz / gl;
       if (target && !target.dead && hasLOS(me.p, target.p)) me.yaw = yawTo(me.p, target.p);
@@ -1403,7 +1404,8 @@ function moveBot(me, dt, world, t) {
         const wp = (want && planes ? routeWaypoint(me, world, [target.p[0], target.p[2]], target.p[1], t) : null)
           || (want && target.p[1] > me.p[1] + C.STEP_UP + 0.5 ? padWaypoint(me, world, [target.p[0], target.p[2]], target.p[1], t) : null)
           || (want ? rampWaypoint(me, [target.p[0], target.p[2]], target.p[1]) : null);
-        if (wp) { const px = wp[0] - me.p[0], pz = wp[1] - me.p[2], pl = Math.hypot(px, pz) || 1; wx = px / pl; wz = pz / pl; b.rampUntil = t + 0.5; }
+        if (wp) { const px = wp[0] - me.p[0], pz = wp[1] - me.p[2], pl = Math.hypot(px, pz) || 1; wx = px / pl; wz = pz / pl; b.rampUntil = t + 0.5;
+          if (b.routeEdge?.kind === 'hop' && !b.hop && !flying && canJump(me, t)) startHop(me, b.routeEdge, routeGraph(world), t); }   // round 24: the stepping stones
         // just came up: keep going onto their platform instead of strafing off the stairs
         else if (t < (b.rampUntil || 0) + 1.5 && d > 1.8) { wx = fx; wz = fz; }
       }
@@ -1456,12 +1458,54 @@ function moveBot(me, dt, world, t) {
     if (r > C.ARENA_RADIUS - 5) { wx -= me.p[0] / r * 1.5; wz -= me.p[2] / r * 1.5; }
     // round 22b: stuck against something (a pillar, a low wall, a crate) for a moment: sidestep round it for 0.7 s, alternating sides
     if (b.detour && t < b.detour.until) { wx = b.detour.dir[0]; wz = b.detour.dir[1]; }
+    // round 24: on the narrow walkway (1 m, no rails): along its centre line, no strafe, dodge or detour; toward the route's end, else onward
+    const walkway = VOID_Y != null && !flying ? walkwayUnder(me) : null;
+    if (walkway) {
+      const s_ = walkway, c = Math.cos(s_.yaw || 0), n = Math.sin(s_.yaw || 0), along = s_.d >= s_.w ? [n, c] : [c, -n];
+      const dx = me.p[0] - s_.x, dz = me.p[2] - s_.z, off = s_.d >= s_.w ? dx * c - dz * n : dx * n + dz * c;   // our offset from the centre line (local x for a deck longer than wide, else local z)
+      const l0 = Math.hypot(wx, wz), sgn = l0 > 0.01 ? Math.sign(wx * along[0] + wz * along[1]) || 1 : (b.walkwaySgn || 1);
+      b.walkwaySgn = sgn;
+      const lat = s_.d >= s_.w ? [c, -n] : [n, c];   // the deck's sideways axis in world space
+      wx = along[0] * sgn - lat[0] * off * 2.5; wz = along[1] * sgn - lat[1] * off * 2.5;
+      b.dodgeUntil = Math.min(b.dodgeUntil, t); b.detour = null;
+    }
+    // round 24: on the drawbridge: if it is tilting, or won't stay down long enough for the rest of the crossing, sprint for the nearer end
+    // (the hinge when it's already rising: the slide helps)
+    const onDb = !flying && b.onDrawbridge;
+    if (onDb && typeof C.drawbridgePhase === 'function') {
+      const P = C.drawbridgePhase(t), D = C.DRAWBRIDGE, spd = C.sprintOf() * cfg.speed, toHinge = onDb.u / spd, toFar = (onDb.b.d - onDb.u) / spd;
+      const downFor = P.phase === 'down' ? D.down - P.at : 0, tilting = onDb.a > 0.02;
+      const l0 = Math.hypot(wx, wz), ahead = l0 > 0.01 ? (wx * onDb.b.dir[0] + wz * onDb.b.dir[1]) / l0 : 0;   // + : heading for the far end
+      const need = ahead >= 0 ? toFar : toHinge;
+      if (tilting || downFor < need + 0.4) {
+        const sgn = tilting ? -1 : (toHinge <= toFar + 0.5 ? -1 : 1);
+        wx = onDb.b.dir[0] * sgn; wz = onDb.b.dir[1] * sgn; b.dodgeUntil = Math.min(b.dodgeUntil, t); b.detour = null; b.dbFlee = t;
+      }
+    }
+    // round 24: a planned hop (the stepping stones): run to the take-off point along the planned line, jump there (or where the floor ends)
+    if (b.hop && (t > b.hop.until || flying && !me.jump && !b.hop.jumped)) b.hop = null;
+    if (b.hop && !b.hop.jumped) {
+      const H = b.hop, v = H.plan.v, vl = Math.hypot(v[0], v[1]) || 1, ux = v[0] / vl, uz = v[1] / vl;
+      const d = (H.plan.takeoff[0] - me.p[0]) * ux + (H.plan.takeoff[1] - me.p[2]) * uz;   // how far to the take-off point along the line
+      const edgeAhead = floorUnder([me.p[0] + ux * 0.45, me.p[1], me.p[2] + uz * 0.45]) < VOID_Y;
+      wx = ux; wz = uz; b.dodgeUntil = Math.min(b.dodgeUntil, t); b.detour = null;
+      if (!stunned && !(me.kbUntil > t)) b.vel = [v[0], v[1]];   // the run-up at exactly the planned speed (a bank point is 0.35 m from the edge: no room to accelerate)
+      if (d <= 0.12 || edgeAhead) {
+        if (canJump(me, t)) {
+          world.handle(me, { t: 'jump' });
+          if (me.jump) { H.jumped = true; H.jumpAt = t; H.until = t + H.plan.time + 1; }
+          else { b.hop = null; b.hopRefused = (b.hopRefused || 0) + 1; if (process.env.WA_BOTLOG) console.log(`[bot] ${me.name} hop refused at (${me.p.map(v => v.toFixed(2))}) floor ${floorUnder(me.p).toFixed(2)} st ${me.st.toFixed(0)} fall ${!!me.fall} vy ${me.vy ?? 0} charging ${!!me.charging} blocking ${!!me.blocking} rooted ${rooted(me, t)}`); }
+        }
+        else { b.hop = null; wx = 0; wz = 0; b.vel = [0, 0]; }   // (couldn't jump: don't walk off)
+      }
+    }
     // round 22 (Sky Ruins): never walk off an island. If the floor a step ahead is below the void, turn along the edge
     // (the least turn that keeps a floor under us), else stop
-    if (VOID_Y != null && !flying) {
+    if (VOID_Y != null && !flying && !b.hop && !walkway) {
       // the reach: how far the bot gets before it can turn (a sprint needs about 0.3 s), at least 1.4 m; three probes along it
       const reach = Math.max(1.4, Math.hypot(b.vel[0], b.vel[1]) * 0.35 + 0.6);
-      const safe = (dx, dz) => [1, 0.6, 0.3].every(k => floorUnder([me.p[0] + dx * reach * k, me.p[1], me.p[2] + dz * reach * k]) >= VOID_Y - 0.01);
+      const dbRisky = (x, z, y) => { if (b.dbFlee > t - 0.5 || typeof C.drawbridgeUnder !== 'function') return false; const db = C.drawbridgeUnder(x, z, y); if (!db) return false; const P = C.drawbridgePhase(t); return db.a > 0.02 || P.phase !== 'down' || C.DRAWBRIDGE.down - P.at < 2.5; };   // (round 24: a tilting bridge, or one about to rise, is no floor to step onto)
+      const safe = (dx, dz) => [1, 0.6, 0.3].every(k => { const q = [me.p[0] + dx * reach * k, me.p[1], me.p[2] + dz * reach * k]; return floorUnder(q) >= VOID_Y - 0.01 && !dbRisky(q[0], q[2], q[1]); });
       const l0 = Math.hypot(wx, wz), ux = l0 > 1e-6 ? wx / l0 : 0, uz = l0 > 1e-6 ? wz / l0 : 0;
       // the way it's already going (momentum, a fall's drift, knockback): over the edge, stop dead (the server moves bots, so it can)
       const vl = Math.hypot(b.vel[0], b.vel[1]);
@@ -1485,7 +1529,7 @@ function moveBot(me, dt, world, t) {
     const tg = target && !target.dead ? target : null, dT = tg ? dist2D(me.p, tg.p) : 0;
     // round 22 (pace): sprint to anything past the preferred range (was +5 m), or out of sight past 5 m (was 8): fights start sooner
     const far = goal ? Math.hypot(goal[0] - me.p[0], goal[1] - me.p[2]) > 5 : !!tg && (dT > (kit(me).primary === 'gale_shear' ? SHEAR_RANGE + 1.5 : prefRange(me, cfg)[1] + 1.5) || (dT > 5 && !hasLOS(me.p, tg.p)) || !!b.padWp);   // (sprint is free: close in on one we can't see)
-    const fleeing = me.hp < 35 && !!tg && dT < 14;
+    const fleeing = (me.hp < 35 && !!tg && dT < 14) || (b.hop && !b.hop.jumped && b.hop.plan.speed > run) || b.dbFlee > t - 0.3;   // (round 24: a hop's run-up, off a tilting drawbridge)
     const threatened = [...b.threats.values()].some(r => !r.handled && !r.ignore) || t < (b.ramDanger || 0);
     const keep = false;   // round 10: sprint is free, nothing to save stamina for
     const want = (far || fleeing) && !keep && wl > 0.01 && !stunned && !flying && !me.blocking && !busyCasting(me) && !me.carrying && t >= b.dodgeUntil;
@@ -1513,6 +1557,7 @@ function moveBot(me, dt, world, t) {
   const upInAir = !flying && (!!me.jump || airborne(me, t));
   if (upInAir && me.jumpSpeed) speed = Math.max(speed, me.jumpSpeed * cfg.speed);   // round 13: a sprint-jump carries its speed
   if (me.crouch) speed = Math.min(speed, C.CROUCH.speed);
+  if (b.hop && !b.hop.jumped && !flying) { speed = b.hop.plan.speed; me.crouch = false; }   // round 24: the hop's run-up at the planned speed
   if (me.slowUntil > t) speed *= 1 - SKIM.slow;
   if (castSlowedBot(me, t) && !flying) speed *= C.CAST_SLOW.mult;   // round 13: a cast slows, it doesn't stop
   if (rooted(me, t)) { speed = 0; b.vel = [0, 0]; }
@@ -1525,9 +1570,19 @@ function moveBot(me, dt, world, t) {
   // round 13: snappier (MOVE_ACCEL), with only a little drag in the air when not steering
   const k = Math.min(1, dt * (wl > 0.01 ? C.MOVE_ACCEL.accel : upInAir ? C.MOVE_ACCEL.airDrag : C.MOVE_ACCEL.stop));
   if (!b.dash) { b.vel[0] += (tx - b.vel[0]) * k; b.vel[1] += (tz - b.vel[1]) * k; }
+  if (b.hop?.jumped) {
+    // round 24: the hop in the air: exactly the planned velocity (the server moves bots, so it lands where it aimed), the air jump at the apex
+    const H = b.hop;
+    if (!(me.kbUntil > t)) b.vel = [H.plan.v[0], H.plan.v[1]];
+    if (H.plan.air && !H.aired && t >= H.jumpAt + H.plan.airAt) { H.aired = true; if (canAirJump(me, t)) world.handle(me, { t: 'jump', n: 2, y0: me.p[1] }); }
+    if (t > H.jumpAt + 0.15 && !me.jump && !airborne(me, t)) { b.hop = null; b.vel = [0, 0]; b.hopsDone = (b.hopsDone || 0) + 1; }   // landed
+    else if (t > H.jumpAt + 0.15 && !me.jump && me.p[1] < (VOID_Y ?? -1e9) + 1) b.hop = null;   // (fell short: the fall is the fall)
+  }
   me.p[0] += b.vel[0] * dt; me.p[2] += b.vel[1] * dt;
   // dragged by an Eye of the Storm
   if (b.pull && t < b.pull.until && !rooted(me, t)) { me.p[0] += b.pull.v[0] * dt; me.p[2] += b.pull.v[1] * dt; }
+  // round 24: on a tilting drawbridge, the slide toward the hinge (the same curve a client predicts for itself)
+  if (!upInAir && C.drawbridgeUnder) { const db = C.drawbridgeUnder(me.p[0], me.p[2], me.p[1]); const sv = db && C.drawbridgeSlideVec(db); if (sv) { me.p[0] += sv[0] * dt; me.p[2] += sv[1] * dt; b.onDrawbridge = db; } else b.onDrawbridge = db || null; }
 
   // collisions, same as the client's
   const pr = C.PLAYER_RADIUS;
@@ -1550,7 +1605,7 @@ function moveBot(me, dt, world, t) {
   // round 22 (Sky Ruins): the last word. Sliding along a wall can carry a bot over an edge the probe above didn't look at, so a
   // step that ends over the void (and isn't a pad arc, a knockback or an Eye's pull; in the air too: a jump or a Skyward drift stays
   // over the island's edge) is taken back and the bot stops.
-  if (VOID_Y != null && !me.pad && !(me.kbUntil > t) && !(b.pull && t < b.pull.until) && b.lastPos
+  if (VOID_Y != null && !me.pad && !b.hop && !(me.kbUntil > t) && !(b.pull && t < b.pull.until) && b.lastPos
       && floorUnder(me.p) < VOID_Y && floorUnder(b.lastPos) >= VOID_Y) {
     me.p[0] = b.lastPos[0]; me.p[2] = b.lastPos[2];
     b.vel = [0, 0]; b.strafe *= -1; b.edgeStops = (b.edgeStops || 0) + 1;
@@ -1658,6 +1713,14 @@ function padWaypoint(me, world, dest, destY, t) {
 // up higher than STEP_UP; a drop is fine), a stair joins its two ends, a pad its launch to its landing (one way). Built once per map
 // (and the pad count), kept in mapList. routeWaypoint runs Dijkstra from the bot to the destination over it and hands back the first
 // node to walk to, or null when the straight walk is fine (or nothing connects). Checked every 0.3 s per bot (the probes cost).
+// Round 24 (the rebuilt Sky Ruins): edges have kinds, and the bot that walks one follows it (moveBot):
+//   'walk' / 'stair' / 'pad'   as before (a `bridge-*` deck's ends, a ramp's ends, a pad's launch and landing)
+//   'narrow'                   a `walkway-*` deck (1 m wide, no rails): its ends; the follower walks the centre line, no strafe, dodge or detour
+//   'hop'                      a stepping stone (an ISLANDS rock 2.5 m or less across) to the next stone or to a bank point on an island's
+//                              edge: a planned sprint-jump (C.hopPlan: the air jump at the apex when needed) from the stone's edge onto
+//                              the target's middle. Hard bots take these most, Easy ones rarely.
+//   'drawbridge'               the keep's drawbridge (C.drawbridges): its apron end to the far island; time-gated at query time: used only
+//                              when the bridge is down for the whole crossing from the bot's ETA (or comes down within 2.5 s of it).
 function lineOk(a, ay, b) {
   const dx = b[0] - a[0], dz = b[1] - a[1], l = Math.hypot(dx, dz), n = Math.max(1, Math.ceil(l / 1.2));
   let prev = ay, before = ay;
@@ -1671,47 +1734,114 @@ function lineOk(a, ay, b) {
   if (n > 1 && before > prev + 1.5) return false;
   return true;
 }
+const STONE_MAX = 2.5, HOP_CAP = () => C.sprintOf() * 0.97;   // a stone: an ISLANDS rock this small; a hop's run-up speed (the bot sets it, so no cfg.speed)
+const isStone = (isl) => isl.w <= STONE_MAX && isl.d <= STONE_MAX;
+// the point of an island's walkable footprint nearest (x, z), `inset` m inside its edge, in world space
+function islandPointNear(isl, x, z, inset = 0.7) {
+  const c = Math.cos(isl.yaw || 0), n = Math.sin(isl.yaw || 0), dx = x - isl.x, dz = z - isl.z, lx = dx * c - dz * n, lz = dx * n + dz * c;
+  const hx = Math.max(0, isl.w / 2 - inset), hz = Math.max(0, isl.d / 2 - inset), cx = Math.max(-hx, Math.min(hx, lx)), cz = Math.max(-hz, Math.min(hz, lz));
+  return [isl.x + cx * c + cz * n, isl.z - cx * n + cz * c];
+}
+// a hop's plan from node A (its edge toward B, 0.35 m in) to node B's point
+function hopPlanFor(A, B) {
+  const dx = B.p[0] - A.p[0], dz = B.p[1] - A.p[1], l = Math.hypot(dx, dz) || 1, ux = dx / l, uz = dz / l;
+  const r = Math.max(0, (A.r ?? 0.7) - 0.35), takeoff = [A.p[0] + ux * r, A.y, A.p[1] + uz * r];
+  const plan = C.hopPlan(takeoff, [B.p[0], B.y, B.p[1]], HOP_CAP());
+  return plan && { ...plan, takeoff: [takeoff[0], takeoff[2]], land: B.p.slice(), landY: B.y };
+}
 function routeGraph(world) {
   const m = mapList();
-  const pads = world.pads || [];
-  if (m.graph && m.graph.padN === pads.length) return m.graph;
-  const nodes = [], edges = [];   // nodes: { p: [x, z], y }, edges: adjacency with costs
-  const add = (x, z, y) => { nodes.push({ p: [x, z], y }); return nodes.length - 1; };
+  const pads = world.pads || [], dbs = typeof C.drawbridges === 'function' ? C.drawbridges() : [];
+  const key = `${pads.length}:${dbs.length}:${(C.ISLANDS || []).length}:${C.SURFACES.length}`;
+  if (m.graph && m.graph.key === key) return m.graph;
+  const nodes = [], edges = [];   // nodes: { p: [x, z], y, kind?, r? (how far its floor reaches toward a hop) }; edges: { a, b, cost, kind, ... }
+  const add = (x, z, y, extra = {}) => { nodes.push({ p: [x, z], y, ...extra }); return nodes.length - 1; };
+  const both = (a, b, cost, extra = {}) => edges.push({ a, b, cost, ...extra }, { a: b, b: a, cost, ...extra });
   for (const s of C.SURFACES) {
-    if (s.kind === 'box' && /^bridge/.test(s.name || '') && s.thick) {
+    if (s.drawbridge) continue;   // (below, from its entry)
+    const deck = s.kind === 'box' && s.thick && /^(bridge|walkway)/.test(s.name || '');
+    if (deck) {
       const c = Math.cos(s.yaw || 0), n = Math.sin(s.yaw || 0), half = Math.max(s.w, s.d) / 2 + 0.8;
       const along = s.d >= s.w ? [n, c] : [c, -n];   // the long axis in world space
-      const a = add(s.x + along[0] * half, s.z + along[1] * half, s.top), b = add(s.x - along[0] * half, s.z - along[1] * half, s.top);
-      edges.push([a, b, half * 2], [b, a, half * 2]);
+      const narrow = /^walkway/.test(s.name) || Math.min(s.w, s.d) < 1.3;
+      const a = add(s.x + along[0] * half, s.z + along[1] * half, narrow ? C.surfaceHeight(s.x + along[0] * half, s.z + along[1] * half, s.top + 1) : s.top, { deck: s });
+      const b = add(s.x - along[0] * half, s.z - along[1] * half, narrow ? C.surfaceHeight(s.x - along[0] * half, s.z - along[1] * half, s.top + 1) : s.top, { deck: s });
+      both(a, b, half * 2 * (narrow ? 1.3 : 1) + (narrow ? 1 : 0), narrow ? { kind: 'narrow', s } : { kind: 'walk' });
     } else if (s.kind === 'ramp' && s.w >= 0.7 && !s.noStand && !s.moveOnly) {
       const foot = C.rampFoot(s), top = rampHigh(s), lo = Math.min(s.y0, s.y1), hi = Math.max(s.y0, s.y1);
-      const a = add(foot[0], foot[1], lo), b = add(top[0] + (top[0] - foot[0]) * 0.15, top[1] + (top[1] - foot[1]) * 0.15, hi);
-      nodes[a].ramp = s; nodes[b].ramp = s;
-      edges.push([a, b, s.d + 1], [b, a, s.d + 1]);
+      const a = add(foot[0], foot[1], lo, { ramp: s }), b = add(top[0] + (top[0] - foot[0]) * 0.15, top[1] + (top[1] - foot[1]) * 0.15, hi, { ramp: s });
+      both(a, b, s.d + 1, { kind: 'stair' });
     }
   }
-  for (const pd of pads) { const a = add(pd.x, pd.z, pd.y), b = add(pd.tx, pd.tz, pd.ty); edges.push([a, b, Math.hypot(pd.tx - pd.x, pd.tz - pd.z) * 0.7 + 2]); }
+  for (const pd of pads) { const a = add(pd.x, pd.z, pd.y), b = add(pd.tx, pd.tz, pd.ty); edges.push({ a, b, cost: Math.hypot(pd.tx - pd.x, pd.tz - pd.z) * 0.7 + 2, kind: 'pad' }); }
+  // round 24: the drawbridge: its apron end and its far end (0.8 m onto the floors at either end), joined by a time-gated edge
+  for (const db of dbs) {
+    const a = add(db.x - db.dir[0] * 0.8, db.z - db.dir[1] * 0.8, db.y), b = add(db.x + db.dir[0] * (db.d + 0.8), db.z + db.dir[1] * (db.d + 0.8), db.y);
+    both(a, b, db.d + 1.6, { kind: 'drawbridge', db, len: db.d + 1.6 });
+  }
+  // round 24: the stepping stones (a node at each one's middle) and bank points on the islands they can be jumped from, joined by hops
+  const islands = C.ISLANDS || [], stones = islands.filter(isStone), banks = [];
+  const stoneNodes = stones.map(st => add(st.x, st.z, st.top, { stone: st, r: Math.min(st.w, st.d) / 2 }));
+  for (const [i, st] of stones.entries()) {
+    for (const isl of islands) {
+      if (isStone(isl)) continue;
+      const pt = islandPointNear(isl, st.x, st.z);
+      if (Math.hypot(pt[0] - st.x, pt[1] - st.z) > 6.5) continue;
+      let bi = banks.find(q => Math.hypot(q.p[0] - pt[0], q.p[1] - pt[1]) < 1.0);
+      if (!bi) { const fy = C.surfaceHeight(pt[0], pt[1], 99); if (VOID_Y != null && fy < VOID_Y) continue; bi = { p: pt, i: add(pt[0], pt[1], fy, { bank: isl, r: 0.7 }) }; banks.push(bi); }   // (the floor there: the keep's rock is the dungeon's level, its apron is 4 m up)
+      const A = nodes[stoneNodes[i]], B = nodes[bi.i];
+      if (hopPlanFor(A, B) && hopPlanFor(B, A)) both(stoneNodes[i], bi.i, Math.hypot(pt[0] - st.x, pt[1] - st.z) + 3, { kind: 'hop' });
+    }
+    for (let j = i + 1; j < stones.length; j++) {
+      const A = nodes[stoneNodes[i]], B = nodes[stoneNodes[j]], d = Math.hypot(A.p[0] - B.p[0], A.p[1] - B.p[1]);
+      if (d > 7 || !hopPlanFor(A, B) || !hopPlanFor(B, A)) continue;
+      both(stoneNodes[i], stoneNodes[j], d + 3, { kind: 'hop' });
+    }
+  }
+  // (environment may place plain waypoints one day: C.WAYPOINTS [{ x, z, y? }])
+  for (const w of C.WAYPOINTS || []) add(w.x, w.z, w.y ?? C.surfaceHeight(w.x, w.z, 99));
   // walks between nodes on a floor (a drop allowed, a rise not)
   for (let i = 0; i < nodes.length; i++) for (let j = 0; j < nodes.length; j++) {
     if (i === j) continue;
     const a = nodes[i], b = nodes[j], d = Math.hypot(a.p[0] - b.p[0], a.p[1] - b.p[1]);
     if (d > 30 || b.y > a.y + C.STEP_UP + 0.05) continue;
-    if (lineOk(a.p, a.y, b.p)) edges.push([i, j, d]);
+    if (a.stone && b.stone) continue;   // (two stones never join by a walk)
+    if (lineOk(a.p, a.y, b.p)) edges.push({ a: i, b: j, cost: d, kind: 'walk' });
   }
   const adj = nodes.map(() => []);
-  for (const [a, b, c] of edges) adj[a].push([b, c]);
-  return (m.graph = { nodes, adj, padN: pads.length });
+  for (const e of edges) adj[e.a].push(e);
+  return (m.graph = { nodes, adj, edges, key });
 }
+// What an edge costs this bot now (metres; Infinity: not for it). `etaDist`: how far it has walked by the edge's start.
+function edgeCost(e, me, t, etaDist) {
+  const cfg = me.bot.cfg, hard = cfg.speed >= 1, easy = cfg.speed < 0.9;
+  switch (e.kind) {
+    case 'hop': return me.st < C.JUMP.stamina + C.AIR_JUMP.stamina + 12 ? Infinity : e.cost * (hard ? 0.8 : easy ? 3 : 1.6);
+    case 'narrow': return e.cost * (hard ? 1 : easy ? 1.8 : 1.3);
+    case 'drawbridge': {
+      if (typeof C.drawbridgePhase !== 'function') return e.cost;
+      const P = C.drawbridgePhase(t), D = C.DRAWBRIDGE;
+      const eta = etaDist / (C.sprintOf() * cfg.speed * 0.85), cross = e.len / (C.speedOf() * cfg.speed) + 0.5;
+      if (P.phase === 'down' && D.down - P.at >= eta + cross) return e.cost;
+      const nextDown = D.cycle - P.at, wait = nextDown - eta;   // (down again later: worth a short wait at the apron, not a long one)
+      if (wait <= 2.5 && eta + Math.max(0, wait) + cross <= nextDown + D.down) return e.cost + Math.max(0, wait) * 3.5 + 2;
+      return Infinity;
+    }
+    default: return e.cost;
+  }
+}
+// Exported for the unit checks: the live map's graph (nodes and edges with kinds), built against C.JUMP_PADS.
+export function routeGraphDebug() { VOID_Y = C.voidY(); return routeGraph({ pads: (C.JUMP_PADS || []).map(pd => ({ x: pd.x, y: pd.y, z: pd.z, tx: pd.target[0], ty: pd.target[1], tz: pd.target[2] })) }); }
 function routeWaypoint(me, world, dest, destY, t) {
   const b = me.bot;
   if (b.routeWp !== undefined && t < (b.routeAt || 0) && b.routeDest && Math.hypot(b.routeDest[0] - dest[0], b.routeDest[1] - dest[1]) < 3) return b.routeWp;
-  b.routeAt = t + 0.3; b.routeDest = dest.slice();
+  b.routeAt = t + 0.3; b.routeDest = dest.slice(); b.routeEdge = null;
   const myFloor = floorUnder(me.p), me2 = [me.p[0], me.p[2]];
   const destFloor = Number.isFinite(destY) ? destY : C.surfaceHeight(dest[0], dest[1], 99);
   if (lineOk(me2, myFloor, dest) && destFloor <= myFloor + C.STEP_UP + 0.05) return (b.routeWp = null);   // straight there
   const G = routeGraph(world);
   if (!G.nodes.length) return (b.routeWp = null);
-  const n = G.nodes.length, dist = new Array(n).fill(Infinity), prev = new Array(n).fill(-1), done = new Array(n).fill(false);
+  const n = G.nodes.length, dist = new Array(n).fill(Infinity), prev = new Array(n).fill(-1), via = new Array(n).fill(null), done = new Array(n).fill(false);
   for (let i = 0; i < n; i++) { const N = G.nodes[i]; if (N.y <= myFloor + C.STEP_UP + 0.05 && lineOk(me2, myFloor, N.p)) dist[i] = Math.hypot(N.p[0] - me2[0], N.p[1] - me2[1]); }
   let bestEnd = -1, bestCost = Infinity;
   for (let it = 0; it < n; it++) {
@@ -1721,16 +1851,36 @@ function routeWaypoint(me, world, dest, destY, t) {
     done[u] = true;
     const N = G.nodes[u];
     if (destFloor <= N.y + C.STEP_UP + 0.05 && lineOk(N.p, N.y, dest)) { const c = dist[u] + Math.hypot(dest[0] - N.p[0], dest[1] - N.p[1]); if (c < bestCost) { bestCost = c; bestEnd = u; } }
-    for (const [v, c] of G.adj[u]) if (dist[u] + c < dist[v]) { dist[v] = dist[u] + c; prev[v] = u; }
+    for (const e of G.adj[u]) { const c = edgeCost(e, me, t, dist[u]); if (c < Infinity && dist[u] + c < dist[e.b]) { dist[e.b] = dist[u] + c; prev[e.b] = u; via[e.b] = e; } }
   }
   if (bestEnd < 0) return (b.routeWp = null);
   let first = bestEnd;
   while (prev[first] >= 0) first = prev[first];
   const N = G.nodes[first];
-  // already at the first node (or on the stair it is the foot of): the next one
-  const onIt = Math.hypot(N.p[0] - me2[0], N.p[1] - me2[1]) < 1.6 || (N.ramp && onRamp(me, N.ramp));
-  if (onIt) { let nxt = bestEnd; while (prev[nxt] >= 0 && prev[nxt] !== first) nxt = prev[nxt]; if (nxt !== first) return (b.routeWp = G.nodes[nxt].p.slice()); return (b.routeWp = null); }
+  // already at the first node (or on the stair it is the foot of): the next one, and the edge that takes us there (hops and the like)
+  const onIt = Math.hypot(N.p[0] - me2[0], N.p[1] - me2[1]) < (N.stone || N.bank ? 1.0 : 1.6) || (N.ramp && onRamp(me, N.ramp));
+  if (onIt) {
+    let nxt = bestEnd; while (prev[nxt] >= 0 && prev[nxt] !== first) nxt = prev[nxt];
+    if (nxt !== first) { b.routeEdge = via[nxt]; return (b.routeWp = G.nodes[nxt].p.slice()); }
+    return (b.routeWp = null);
+  }
   return (b.routeWp = N.p.slice());
+}
+// Round 24: start the hop the route asks for (the bot stands at the edge's first node): the run-up to the take-off point, then the jump.
+function startHop(me, E, G, t) {
+  const A = G.nodes[E.a], B = G.nodes[E.b], plan = hopPlanFor(A, B);
+  if (!plan) return false;
+  me.bot.hop = { plan, jumped: false, aired: false, until: t + 4, from: A, to: B };
+  return true;
+}
+// the walkway deck (a `walkway-*` SURFACES box) under a bot, or null
+function walkwayUnder(me) {
+  for (const s of C.SURFACES) {
+    if (s.kind !== 'box' || !/^walkway/.test(s.name || '')) continue;
+    const c = Math.cos(s.yaw || 0), n = Math.sin(s.yaw || 0), dx = me.p[0] - s.x, dz = me.p[2] - s.z, lx = dx * c - dz * n, lz = dx * n + dz * c;
+    if (Math.abs(lx) <= s.w / 2 + 0.3 && Math.abs(lz) <= s.d / 2 + 0.3 && Math.abs(me.p[1] - s.top) < 0.6) return s;
+  }
+  return null;
 }
 
 function coverPoint(me, target) {
