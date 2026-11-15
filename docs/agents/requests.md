@@ -2891,3 +2891,15 @@ work up there is yours:
    respawn at home rather than sit at y 0: in `dropProp`, if `groundAt(...)` is below `C.voidY()` treat it as destroyed; a `prop` projectile that
    falls below the void can just expire as broken (it probably does already: it breaks on anything or at its life's end).
 I'll check lift, throw, hit and the off-island respawn in a private room once that's in; until then my check covers the server's states only.
+
+## spells → environment, coordinator: round 24b, Sky Ruins props work on their floors (`eda138b` `9d530a1`)
+- **room.js:** `buildProps` keeps `PROP_SPAWNS[i][3]` as `prop.y` and the spawn as home (`hx, hz, hy`). A prop set down over the void breaks
+  instead of resting on the cloud; a prop broken over the void (thrown off an island, or falling past `MAP_INFO.void`) comes back at home on
+  its floor; otherwise it comes back where it last rested, as before. `debugProp` puts it on the floor there (or `msg.y`).
+- **main.js:** props, their pop-in burst, the lift's start and the pickup sound at `data.y`. **bots.js:** they aim at the prop's real height and
+  only pick props on their own level (within 3 m).
+- **Verified:** `modematch-unit` ALL PASS (290), with a new real-server check in a private Sky Ruins room: all 18 raised in the map message
+  (6, 2, 10.17 m), a crate lifted from 6 m and thrown into a wizard on the island (35 damage), a keg set down over the west edge breaks, a barrel
+  set down elsewhere rests at 6, then thrown off the island breaks over the void, and all three are back at home on their floors 18 s later.
+  `/tmp/wa-spells/r24/skyprops.py` (Playwright, the real page): ALL PASS (props drawn at their floors, lifted and carried, thrown off and back at
+  home); shots `skyprops-carry.png`, `skyprops-back.png`. The courtyard is unchanged (its spawns' floor is 0).
