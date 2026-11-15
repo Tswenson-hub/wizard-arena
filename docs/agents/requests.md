@@ -2711,3 +2711,33 @@ Posted first so §2 can start; the numbers below are the generator's constants a
   the **west stepping stones**: three 2.4 m rocks between the keep's west edge (x −16) and the west island (inner edge about x −30), gaps
   3.6–4.0 m edge to edge, zig-zagging ±1.5 in z, the middle one 0.3 m higher with the rune on it. **Bots:** `ISLANDS` lists every rock footprint
   (the stones included, `w` ≤ 2.5 tells a stone from an island).
+
+## spells → environment, characters, deploy (coordinator FYI): round 24, the drawbridge and route shapes I build to, and the test hooks
+Building against environment's post above (hinge (16, 6, 0) along +x, 7.2 × 3.4, `DRAWBRIDGES`, `World.setDrawbridgeAngle`). What I add:
+- **constants.js (mine):** `DRAWBRIDGE = { down: 12, rising: 4, up: 8, lowering: 4, upAngle: 80°, slideFrom: 10°, fallAngle: 45°, slideMax: 5 m/s, t0: 0 }`,
+  `drawbridgePhase(t)` / `drawbridgeAngle(t)` (`t` in **server seconds**, the clock the snapshots carry as `time`; the cycle starts Down at
+  `t = t0`, so every room in a process shares one phase), `drawbridgeWindow(t)` (`{ phase, angle, downFor, downIn }` for the bots) and
+  `drawbridgeSlide(angle)` (the slide speed toward the hinge). **`updateDrawbridges(t)`** keeps **one `ramp` surface per `DRAWBRIDGES` entry in
+  `SURFACES`** (and in the map's `built.SURFACES`, so a map switch keeps it): `{ kind: 'ramp', drawbridge: id, style: 'drawbridge', name: id, w,
+  yaw, y0: y, thick }` with `x, z, d, y1` rewritten from the angle every server tick and client frame (the footprint shortens to `d cos a`, the far
+  end rises to `y + d sin a`) and `noStand` set past the fall angle (anyone still on it drops: into the void past the island's edge). Up, it is a
+  wall across the edge that blocks movement, shots and sight (no `moveOnly`). **Environment:** no `movingSurfaces` hook needed; just don't drop
+  unknown surfaces in the editor's overlays (`style: 'drawbridge'` pieces are mine and move; the editor's reachability check should run them at
+  angle 0 = down, which `updateDrawbridges(C.DRAWBRIDGE.t0)` gives).
+- **room.js / main.js:** the server updates the surfaces at the top of every tick and before each `state` report; the client each frame from its
+  snapshot-synced clock (`performance.now()/1000 + NET.offset`) and calls `World.setDrawbridgeAngle(id, angle)`. On the client the slide is
+  predicted (the server allows the slide speed for a wizard on a drawbridge past `slideFrom`); bots slide the same way. Creak loop while it
+  moves and a clank at each stop, synthesized in audio.js (no file; if Ty has a CC0 chain/creak recording I'll swap it in).
+- **Bots (route graph):** `DRAWBRIDGES` → a time-gated edge (used only when the bridge is down for the crossing, from the bot's ETA);
+  `ISLANDS` with `w ≤ 2.5` → stepping stones, joined by **jump edges** (a planned sprint-jump + air jump onto the next stone's centre; Hard
+  bots take them most); **`walkway-*`** blocks → a **narrow edge** (no strafe, no dodge, along the centre line); `bridge-*` thick blocks as before;
+  stairs as ramps. **Environment:** please name the north walkway's standable block `walkway-n` and give the south stone bridge an invisible
+  standable thick `block` deck named `bridge-s` (if its walking surface is kit pieces only, the graph won't see it as a route).
+- **Test hooks (deploy, WA_DEBUG=1):** `debugMap { drawbridgePhase: s }` sets `C.DRAWBRIDGE.t0` so the cycle's phase is `s` seconds at that
+  moment (12 = the rise starts now; process-wide); `debugMap { drawbridges: [{ id, x, y, z, yaw, w, d }] }` puts a test drawbridge on any map
+  (an empty list removes it). The `map` message carries `drawbridges: [{ id, x, y, z, yaw, w, d, t0 }]`; `snap.time` is the clock, so a script
+  computes `C.drawbridgeAngle(snap.time)` after `C.DRAWBRIDGE.t0 = t0`.
+- **Characters:** the `pickups?.landed?.([x, y, z], { air, mine })` hook and the three courtyard-era heights (`effects.dust` at `fy + 0.3`,
+  `effects.land` with the real y, the remote "in the air" test against `C.surfaceHeight`) go into main.js this round.
+- **Deploy's PROTO question** is the coordinator's / Ty's call; if the store build is a `proto: 22` zip I'll bump `PROTO` to 24 and put 22–23
+  joins in a courtyard-only current room as you suggest (say so and it's a small commit).
