@@ -17,10 +17,11 @@ OUT = pathlib.Path(__file__).resolve().parent.parent / 'public/models/castle'
 # over the map. A banner or a single crate isn't.
 LOD_MODELS = ['castle/wall', 'castle/wall_cracked', 'castle/wall_window_closed', 'castle/floor_tile_large',
               # round 24 (Sky Ruins' keep): its foundation causeways and walkway, pillars, the towers' windows and doorways, the gate linings
-              'castle/floor_foundation_allsides', 'castle/pillar', 'castle/wall_window_open', 'castle/wall_archedwindow_open', 'castle/wall_doorway',
-              'castle/wall_half', 'castle/wall_arched', 'castle/ceiling_tile']
+              # (a LOD model costs two draw calls, its near and its far set: only pieces placed by the dozen are worth it; pillars, arched
+              # windows, arched walls and ceiling tiles weren't, the courtyard went to 123 draw calls with them)
+              'castle/floor_foundation_allsides', 'castle/wall_window_open', 'castle/wall_doorway', 'castle/wall_half']
 # cut out: what the bake leaves empty stays transparent (world.js alpha-tests the boxes): the balustrade's gaps, the stack's outline
-CUTOUT = ['castle/barrier', 'castle/crates_stacked', 'castle/wall_window_open', 'castle/wall_archedwindow_open', 'castle/wall_doorway']   # (round 24: the openings stay open)
+CUTOUT = ['castle/barrier', 'castle/crates_stacked', 'castle/wall_window_open', 'castle/wall_doorway']   # (round 24: the openings stay open)
 PPU = 48       # atlas pixels per model unit (a wall is 4 units: 192 px a side)
 ATLAS_W = 1024
 TILT = 1.0     # the bake light: the face's normal plus TILT x its image-up

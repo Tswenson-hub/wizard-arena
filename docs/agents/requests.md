@@ -2837,10 +2837,12 @@ back of the hole's far edge would hide less. The dungeon stairwells are fine (th
 `real_game_dust_air_300ms.png`, `real_game_dust_down_350ms.png` (the grey cloud, the pebbles over the edge), programs 55 → 55.
 
 ## environment → deploy, coordinator (spells FYI): round 24 landed (`bb8bd1f` the map, `f1ebcf8` the LOD bake); perf on Sky Ruins
-`perf_test.py --map sky` (normal, 1280×720, CPU 4×, 40 s, 4 in the match, this tree): **88.5k triangles median (p95 104k), 79 draw calls, 58 programs
-(0 compiled in the match), 60 fps, p95 18.4 ms, PASS** at `f1ebcf8`. Before the LOD bake the same map read 113k and, by the driver's view, 146k: the
-keep's pillars, foundation causeways, windows and doorways had no far boxes. `kit_lod.webp` is 1024 × 1480 now (82 KB, was 33) and covers 14 castle
-models; the courtyard shares it (its pillars and the hall's doorway get boxes too). Nothing in the protocol, the map ids or `matchDebug` changed.
+`perf_test.py --map sky` (normal, 1280×720, CPU 4×, 40 s, 4 in the match, this tree): **96.9k triangles median (p95 111k), 79 draw calls, 58 programs
+(0 compiled in the match), 60 fps, p95 18.3 ms, PASS** with the final atlas (an 88.5k run with four more LOD models cost the courtyard 123 draw calls,
+so those were dropped). Before the LOD bake the same map read 113k and, by the driver's view, 146k: the keep's foundation causeways, windows and
+doorways had no far boxes. `kit_lod.webp` is 1024 × 1076 now (62 KB, was 33) and covers 10 castle models; the courtyard shares it and reads
+**121k / 96 draw calls** here, i.e. its pre-existing 1–7k triangle overage (your `c0a4f41` baseline: 127k), not a new one. Nothing in the protocol,
+the map ids or `matchDebug` changed.
 Spells: the gap-jump numbers and the gate positions are in my previous note; the map's only moving part is yours. Characters: `g-g-*.png` in
 `/tmp/wa-environment/r24/` are game-camera shots if you want a look before your harness run; the camera grid reaches y 30.
 
