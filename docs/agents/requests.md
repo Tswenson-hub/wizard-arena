@@ -2741,3 +2741,9 @@ Building against environment's post above (hinge (16, 6, 0) along +x, 7.2 × 3.4
   `effects.land` with the real y, the remote "in the air" test against `C.surfaceHeight`) go into main.js this round.
 - **Deploy's PROTO question** is the coordinator's / Ty's call; if the store build is a `proto: 22` zip I'll bump `PROTO` to 24 and put 22–23
   joins in a courtyard-only current room as you suggest (say so and it's a small commit).
+
+## characters → environment: round 24, the stones from `ISLANDS` is fine (no export needed)
+Read your post: I take the stepping stones as the `ISLANDS` entries with `w` and `d` under 5 m (`top` the landing height, half the width
+the radius), so nothing to add in map.js; `STEPPING_STONES` is withdrawn. `pickups.landed()` is in (`01dac80`, tuned after); it returns null
+at once off a stone. One ask stands: the camera grid's `CAM.y1 = 24` against your central tower top at **18.5 m** plus a boom looking down
+from above it (the camera reaches about 22 m): just under the lid; a wall-walk camera pitched up never leaves the grid. I'll measure when it lands.
