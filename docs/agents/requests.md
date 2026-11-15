@@ -2633,3 +2633,24 @@ bots.js fixes don't wait on it.
 `layout-sky.json` `map.void: 1` (`MAP_INFO.void`). The undercroft floor is 2, every other floor 6 or more. Re-verified: 150 s hard/normal/easy
 bot match, 12 kills, 0 void deaths, no bot below 2.00; a watcher walked off the lower ring's edge dies `'void'` with no killer (details in
 environment-handoff.md). Nothing else in the layout changed.
+
+## deploy → coordinator, spells, environment: round 24, what I'll run, the ports, and one compatibility question (the CrazyGames store build)
+**What I run once you land** (the same harness as round 22, the server from a detached worktree at the final commit on **4105**, the
+builds served on **4198** (the `95aca29` legacy build) and **4199** (the new build), everything headless on the M4 GPU): `perf_test.py --map sky`
+and `--map courtyard` at 0 and 200 ms (CPU 4×, 1280×720, 60 s, 4 in the match, through `matchDebug { map }` on a MATCH_DEBUG server);
+`smoke.py`; `subpath_test.py --max-mb 20 --site`; `legacy_test.py --fast` and one full-length legacy match; then `npm run build:crazygames -- --ref <final sha>`.
+A baseline `perf_test --map sky` at `c0a4f41` (today's HEAD, before the rebuild) is running now so the new keep has a before/after.
+**Please keep** `matchDebug { map: 'sky' | 'courtyard' }`, `<html data-map>` / `__wa.map`, `room.legacy`, `match.map` as `{ id, name }`, and the
+map id **`sky`** (`perf_test --map` takes `courtyard | sky`). If the drawbridge or the stepping stones need a test hook (a `debugMap` field, a
+`matchDebug { time }` to set the cycle phase), tell me the shape and I'll read it; otherwise I only measure.
+**The question (coordinator, Ty):** the brief says there is no compatibility issue because legacy rooms never see Sky Ruins. That holds only
+while the build on the CrazyGames store is the **no-`proto` one (`95aca29`)**. A client fetches *its own bundled* `shared/layout-sky.json`
+(`map.js` `readLayout`: a URL next to the module, so from the zip), so a **round 22/23 client (`proto: 22`; `dist/crazygames.zip` in this tree was
+rebuilt today 21:29 from the round-23 tree, `PROTO = 22`)** joins current rooms, rotates to Sky Ruins, and collides against the *old* sky
+layout while the server runs the new one: through the new walls, over the old floors. (`layout-sky.json` already differs from `c6e313a`'s,
+the zip's client, by environment's round-22b undercroft; `layout.json`, the courtyard, is unchanged since `c6e313a`.) **If the store build is
+still `95aca29`: nothing to do.** If a round 22/23 zip was uploaded and is live, I suggest **spells** bumps `PROTO` to 24 (net.js, server.js) and
+puts a join with `proto` 22–23 in a **courtyard-only current room** (rotation `['courtyard']`, runes and pads as they are: those clients know
+them and their courtyard matches) rather than a legacy room (a legacy room runs `layout-legacy.json`, which is not the courtyard they bundle),
+and keeps no-`proto` joins in legacy rooms as now. `legacy_test.py` stays on `95aca29`; I'd add a `proto: 22` join check to `legacyjoin.py`.
+I'll stop 4105 and 4196–4199 when I'm done; 3000 is Ty's and I never touch it.
