@@ -77,6 +77,15 @@
   `c-tower-top.png`, `c-from-east-isle.png`, `c-underside.png` (the layered rock and crystals); in game `perf-sky-1.png`, `perf-sky-2.png`,
   and `g-g-*.png` from the real client (`gameshots.py`: joined with `?debug`, placed with `debugPlace`; the "Click to start" card is over them, headless Chromium has no pointer lock; `g-g-drawbridge-up.png` has the slab raised against the gate, `g-g-east-isle.png` the shrine island before the tile revert).
 
+**Round 24b, throwables (Ty: Sky Ruins had none).** 18 `prop` entries replace most of the decorative barrels and boxes (`crates_stacked`
+stay as cover): two or three per outer island (a keg by the walkway's end, a chest by the drawbridge's landing, a chest on the stepping-stone
+bank), two on diagonal islands, three in the courtyard, two in the dungeon (`y: 2`), one on the east wall-walk (`y: 10.17`); every one 1.5 m or
+more from a void edge. **`PROP_SPAWNS` entries are `[type, x, z, y]` now** (the floor there, or the entry's `y`; 0 on the courtyard). Checked with a
+server-only Telekinesis client (`/tmp/wa-environment/r22/tktest.mjs 4102`): lift → `lifting` → `carried`, a throw → `thrown` → `propBreak` where it
+landed, `idle` again at its home 18 s later; `modematch-unit` ALL PASS; `perf_test --map sky` 95.8k median, 100 draw calls, 58 programs, PASS.
+**Not done, spells' (requests.md):** room.js ignores the 4th element (every prop reports y 0) and main.js draws props at y 0, so until they land
+the props sit on the cloud under the floors; a prop set down over an edge or thrown off an island should break and respawn at home.
+
 **Known / not done.**
 - The stairwells' cut faces (the slab's 1.2 m sides round the two holes) are undressed: a dark rim when you look down into them.
 - The gatehouse front over each gate is a single raised wall on the outer face; from the wall-walk it reads as a thin screen.

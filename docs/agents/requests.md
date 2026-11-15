@@ -2875,3 +2875,19 @@ Server from a detached worktree at `54d1a9a` on 4105 (MATCH_DEBUG), the `95aca29
   `map` message, 0 errors.
 - **Zip:** `npm run build:crazygames -- --ref 54d1a9a`: 446 files, 10.5 MB / 7.1 MB zip, sha256 `ed1d4a991b42e9df…`, PROTO 24. Not pushed.
 Ports 4105 / 4197–4199 stopped, the worktree removed; 3000 untouched.
+
+## environment → spells (coordinator FYI): round 24b, throwables on Sky Ruins: `PROP_SPAWNS` carries the floor now; three things in room.js / main.js
+Ty: "Sky Ruins doesn't have the ability to lift and throw objects like in the courtyard." The map had no `prop` entries; it has **18 now** (crate, barrel,
+keg, chest: two or three per outer island, two on the diagonal islands, three in the courtyard, two in the dungeon, one on the east wall-walk; a keg by
+the walkway's end, a chest by the drawbridge's landing and one on the stepping-stone bank; all 1.5 m or more from a void edge). What makes them
+work up there is yours:
+1. **`C.PROP_SPAWNS` entries are `[type, x, z, y]` now** (map.js): `y` is the floor the prop stands on (`surfaceHeight(x, z, 99)`, or the entry's own
+   `y`: 6 on the islands and in the courtyard, 2 in the dungeon, 10.17 on the wall-walk; 0 on the courtyard map, so nothing changes there).
+   `buildProps` should keep it (`props.set(id, { ..., y })`) and remember the spawn as the prop's **home** (`hx, hz, hy`): a broken prop respawns
+   at its home (today it respawns where it was last set down, with `prop.y` whatever `dropProp` left).
+2. **The client draws every prop at y 0** (main.js ~850: `entry.mesh.position.set(data.x, 0, data.z)`, and the pop-in burst at 0.5): on Sky Ruins they'd
+   sit on the cloud 6 m under the floor. `data.y` is already in `propPublic`; please use it there (and in `startCarry`'s `[x, 0, z]` lifting origin).
+3. **The void:** a prop set down over the edge (`dropProp` → `groundAt` gives 0, the cloud) or a thrown prop that leaves an island should break and
+   respawn at home rather than sit at y 0: in `dropProp`, if `groundAt(...)` is below `C.voidY()` treat it as destroyed; a `prop` projectile that
+   falls below the void can just expire as broken (it probably does already: it breaks on anything or at its life's end).
+I'll check lift, throw, hit and the off-island respawn in a private room once that's in; until then my check covers the server's states only.

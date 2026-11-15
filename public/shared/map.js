@@ -271,13 +271,14 @@ if (IS_NODE) {
 //           extends when down, `w` its width, `d` its length, `thick` its body below the surface. Static data (DRAWBRIDGES):
 //           the angle, the moving surface and the sounds are the spells agent's (drawbridgeAngle, server.js, main.js)
 //   deco    any other model from public/models fitted to `h` m, lifted by `y`; a round collider when `r` > 0 (`colH` tall)
-//   prop    a throwable (PROP_TYPES `type`; its id is its index + 1 among the props), spawn (facing rotY), heal (named spot);
+//   prop    a throwable (PROP_TYPES `type`; its id is its index + 1 among the props; PROP_SPAWNS carries the floor there as its 4th
+//           element, or the entry's `y`), spawn (facing rotY), heal (named spot);
 //           a spawn or heal spot stands on top of what's there unless its `y` says otherwise (under a deck, inside the hall)
 //   bounds  the playable rectangle (`w` x `d`): blinks and thrown wizards are kept inside it (ARENA_BOUNDS)
 export const RUNE_TYPES = ['haste', 'fury', 'aegis', 'surge'];
 export const LAYOUT_KINDS = {
   kit: ['model', 'y', 'solid', 'tint', 'light'], circle: ['r', 'h'], rune: ['type', 'y'], pad: ['tx', 'ty', 'tz', 'h', 'r', 'y'], portal: ['link', 'r', 'y'], floor: ['model', 'w', 'd', 'mix', 'seed'], block: ['w', 'd', 'y', 'h', 'shots', 'stand', 'rock', 'stone', 'ghost'], drawbridge: ['w', 'd', 'y', 'thick'],
-  deco: ['model', 'h', 'y', 'r', 'colH'], prop: ['type'], spawn: ['y'], heal: ['name', 'y'], bounds: ['w', 'd'],
+  deco: ['model', 'h', 'y', 'r', 'colH'], prop: ['type', 'y'], spawn: ['y'], heal: ['name', 'y'], bounds: ['w', 'd'],
 };
 // Stable pretty JSON for layout.json: one entry per line, keys in a fixed order, numbers to 4 decimals (0.1 mm), so a
 // moved asset is a one-line git diff.
@@ -461,7 +462,8 @@ export function buildMap(L, name = ACTIVE_MAP.name) {
   // props ([type, x, z]; a prop's id is its index + 1), spawns ([x, y, z, yaw facing into the fight]; y is where you stand
   // there: 0 in the courtyard and under a deck, the wall-walk's height up on it; an entry's own `y` wins) and heal spots
   // ({ id, x, z, y: on top of whatever is there })
-  out.PROP_SPAWNS = of('prop').map(e => [e.type, e.x, e.z]);
+  // (round 24: a fourth element, the floor the prop stands on: a raised island, deck or wall-walk; an entry's own `y` wins; 0 on the ground)
+  out.PROP_SPAWNS = of('prop').map(e => [e.type, e.x, e.z, e.y ?? surfaceHeight(e.x, e.z, 99, out.SURFACES)]);
   out.SPAWN_POINTS = of('spawn').map(e => [e.x, e.y ?? surfaceTopAt(e.x, e.z, out.SURFACES), e.z, e.rotY || 0]);
   // (y: the floor under the spot, looked up once: applyLayout rebuilds the spots whenever the pieces change)
   out.HEAL_SPOTS = of('heal').map(e => { const { name: id, x, z } = e, y0 = e.y, list = out.SURFACES; let under; return { id, x, z, get y() { return y0 ?? (under ??= surfaceHeight(x, z, 99, list)); } }; });
