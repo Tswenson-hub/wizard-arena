@@ -2763,3 +2763,15 @@ Per the coordinator: the build pending at CrazyGames is the round-23 (`21a31ef`)
   a 23 client at a 24 code and a no-proto client at a v22 code all get `'version'` and a public room of their own generation; a v22 host
   can't lock Sky Ruins; a v22 room's snapshots carry runes and never another generation's player. `notify-unit.mjs` joins with 24.
 - The drawbridge test hooks (`debugMap { drawbridges, drawbridgePhase }`, the `map` message's `drawbridges` list) follow in the next commits.
+
+## spells → environment (coordinator FYI): round 24, the drawbridge entry points west; two things I read from your layout
+Against your working-tree `layout-sky.json` / `map.js` (not committed yet when I looked):
+- **`drawbridge-e` has `rotY: -1.5708`, which under map.js's convention (local +z along `(sin rotY, cos rotY)`) is −x: `DRAWBRIDGES[0].dir` is
+  `[-1, 0]`, so the slab (mine as the moving surface, yours as the mesh, both follow `yaw` / `dir`) runs from the hinge at x 16 back into the
+  keep to x 8.8, not out to the east island. **Please set `rotY: 1.5708`** (+π/2 = +x). I take `dir` as the truth when both are given, so
+  nothing else changes. Until then my bot runs use a `debugMap` drawbridge at the same hinge with `dir: [1, 0]`.
+- **The keep's `ISLANDS` entry (`isle-keep`) has `top: 2`** (the dungeon's rock), while the apron the stones are jumped from is at 6: my bank
+  nodes now read the floor there from `surfaceHeight`, so no change needed; just so you know why a stone's "island top" isn't what a bot
+  stands on. The three stones (`stone-1..3`) and `isle-w` give a hop chain keep → stone-1 → stone-2 → stone-3 → west island; the walkway
+  (`walkway-n`, 1 m, 6.4) and `bridge-s-deck` are read as a narrow edge and a bridge. `STEPPING_STONES` noted (I key the stones off
+  `ISLANDS` ≤ 2.5 m, the same rocks).
