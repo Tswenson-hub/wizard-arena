@@ -66,12 +66,13 @@ function makeRoom(kind, legacy = false) {
 }
 // The fullest public room with a free seat (an empty one counts), else a new one. At the room cap: the emptiest public
 // room even if full (the 5th human watches until a place opens), so a plain join always gets in somewhere. Round 22: only
-// rooms of the joiner's kind (legacy or current); a first visit prefers a room on the courtyard (else a new one), the brief's
-// "first-visit players always start on the courtyard".
+// rooms of the joiner's kind (legacy or current). Ty: players should face each other over bots whenever possible, so other
+// humans always win; a first visit only prefers the courtyard between rooms with the same number of humans.
+const onCourtyard = (r) => r.map() === 'courtyard' ? 0 : 1;
 function publicRoom(legacy = false, firstVisit = false) {
   const pub = [...rooms.values()].filter(r => r.kind === 'public' && !!r.legacy === legacy);
-  let free = pub.filter(r => r.humanCount() < 4).sort((a, b) => b.humanCount() - a.humanCount());
-  if (firstVisit && free.some(r => r.map() !== 'courtyard')) free = free.filter(r => r.map() === 'courtyard');
+  const free = pub.filter(r => r.humanCount() < 4)
+    .sort((a, b) => b.humanCount() - a.humanCount() || (firstVisit ? onCourtyard(a) - onCourtyard(b) : 0));
   return free[0] || makeRoom('public', legacy) || pub.sort((a, b) => a.humanCount() - b.humanCount())[0] || null;
 }
 const cleanCode = (v) => String(v ?? '').trim().toUpperCase();
