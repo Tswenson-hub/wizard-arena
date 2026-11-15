@@ -10,13 +10,14 @@
 import json
 
 JOIN_JS = r"""
-async ({ url, name, seconds, room }) => new Promise((resolve) => {
+async ({ url, name, seconds, room, proto }) => new Promise((resolve) => {
   const out = { welcome: null, roomError: null, names: [], bots: [], snaps: 0, keys: [], filled: [], msgs: [], closed: false, error: null, players: [] };
   const names = new Set(), bots = new Set(), keys = new Set(), filled = new Set(), msgs = new Set();
   const fin = () => { out.names = [...names]; out.bots = [...bots]; out.keys = [...keys]; out.filled = [...filled]; out.msgs = [...msgs]; resolve(out); };
   let ws;
   try { ws = new WebSocket(url); } catch (e) { out.error = String(e); return fin(); }
-  ws.onopen = () => ws.send(JSON.stringify({ t: 'join', name, difficulty: 'normal', ...(room ? { room } : {}) }));   // the old build's join: no proto, no map
+  // the old build's join: no proto, no map; round 24: `proto` set (22) is the round-23 build's join, which the server puts in a 'v22' room
+  ws.onopen = () => ws.send(JSON.stringify({ t: 'join', name, difficulty: 'normal', ...(room ? { room } : {}), ...(proto ? { proto } : {}) }));
   ws.onerror = () => { out.error = 'socket error'; };
   ws.onclose = () => { out.closed = true; };
   ws.onmessage = (e) => {
@@ -39,13 +40,14 @@ def map_id(m):
     """match.map as a string (spells) or { id, name } (characters' shape): the id, or None."""
     return m.get('id') if isinstance(m, dict) else m
 
-async def legacy_join(browser, ws_url, name='legacyjoin', seconds=6, room=None):
-    """`room`: a code to ask for (the old client's invite / code box); a current room's code must be refused with reason 'version'."""
+async def legacy_join(browser, ws_url, name='legacyjoin', seconds=6, room=None, proto=None):
+    """`room`: a code to ask for (the old client's invite / code box); a current room's code must be refused with reason 'version'.
+    `proto`: round 24, send this protocol version (22: the round-23 build pending at CrazyGames); None: the no-proto live build's join."""
     # from the game server's own origin (Chromium refuses the socket from about:blank's opaque origin)
     ctx = await browser.new_context()
     pg = await ctx.new_page()
     await pg.goto(ws_url.replace('wss://', 'https://', 1).replace('ws://', 'http://', 1).rstrip('/') + '/healthz')
-    res = await pg.evaluate(JOIN_JS, {'url': ws_url, 'name': name, 'seconds': seconds, 'room': room})
+    res = await pg.evaluate(JOIN_JS, {'url': ws_url, 'name': name, 'seconds': seconds, 'room': room, 'proto': proto})
     await ctx.close()
     return res
 
@@ -85,5 +87,32 @@ def report(res, current_name, current_saw, name='legacyjoin'):
     seen, nonempty = extra(res.get('keys', [])), extra(res.get('filled', []))
     check(not nonempty, f'no runes or pads in the legacy room\'s snapshots (non-empty: {nonempty or "none"}; present but empty: {sorted(set(seen) - set(nonempty)) or "none"})')
     check(current_name not in res.get('names', []), f'{current_name!r} (a proto-22 client) is not in the legacy room')
+    check(name not in (current_saw or set()), f"{current_name!r} never saw {name!r} in its own room's snapshots")
+    return ok
+
+def report_v22(res, current_name, current_saw, name='v22join'):
+    """Round 24: a `proto: 22` join (the round-23 CrazyGames build, which bundles the OLD Sky Ruins layout) must land in a 'v22' room:
+    the courtyard with runes and pads, never rotated, apart from the current (proto 24) client. Prints the checks; True when they pass,
+    or when the server has no generations yet (pre-round-24: a note)."""
+    ok = True
+    def check(cond, label):
+        nonlocal ok
+        print(('  ok   ' if cond else '  FAIL ') + label)
+        ok = ok and bool(cond)
+    w = res.get('welcome')
+    print(f'v22 join (proto 22) as {name!r}:')
+    check(w is not None and not res.get('error'), f"the server answered the proto-22 join with a welcome ({res.get('snaps')} snapshots, names {sorted(res.get('names', []))}{'; ' + res['error'] if res.get('error') else ''})")
+    if not w: return False
+    room, match = w.get('room') or {}, w.get('match') or {}
+    print(f"  room {json.dumps(room)}; match target {match.get('target')}, map {match.get('map', '(no map field)')!r}")
+    if 'gen' not in room:
+        print('  note: this server has no room.gen yet (pre-round-24): the v22-room checks are skipped')
+        return ok
+    check(room.get('gen') == 'v22' and not room.get('legacy'), f"a v22 room (room.gen {room.get('gen')!r}, legacy {room.get('legacy')!r})")
+    check(map_id(match.get('map')) == 'courtyard', f"the courtyard (match.map {match.get('map')!r})")
+    runes, pads = w.get('runes'), w.get('pads')
+    check(bool(runes) and bool(pads), f"runes and pads in the welcome ({len(runes or [])} runes, {len(pads or [])} pads: the round-23 client knows them)")
+    check('snap.runes' in res.get('filled', []), "runes in the v22 room's snapshots")
+    check(current_name not in res.get('names', []), f'{current_name!r} (a proto-24 client) is not in the v22 room')
     check(name not in (current_saw or set()), f"{current_name!r} never saw {name!r} in its own room's snapshots")
     return ok

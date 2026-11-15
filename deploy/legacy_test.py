@@ -10,6 +10,8 @@
 #              match plays to the real target or the cap (about 5 minutes).
 #   --seconds  how long to wait for the match to end (default 420: the cap plus the countdown and some margin)
 #   --first    the first-visit path (a fresh profile joins by itself as the Pyromancer); default: the builder, as 'legacy'
+#   --gen v22  round 24: the page is the round-23 build (`--ref 21a31ef`, proto 22, the OLD Sky Ruins bundled): it must land in a 'v22'
+#              room (room.gen), the courtyard WITH runes and pads, and stay on the courtyard through the rematch (no rotation)
 # Checks: the welcome and the HUD agree on the target; a legacy room when the server has them (room.legacy, the courtyard,
 # no runes or pads); the match goes live, ends (target or cap), the recap shows (the podium), the rematch countdown follows;
 # the socket stays open; no console or page errors; the SDK shim's gameplayStart fired.
@@ -19,8 +21,9 @@ from playwright.async_api import async_playwright
 GL_ARGS = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] if '--swiftshader' in sys.argv else ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist']
 FAST = '--fast' in sys.argv
 FIRST = '--first' in sys.argv
+GEN = sys.argv[sys.argv.index('--gen') + 1] if '--gen' in sys.argv else 'legacy'   # round 24: 'legacy' (no proto) or 'v22' (proto 22)
 SECONDS = float(sys.argv[sys.argv.index('--seconds') + 1]) if '--seconds' in sys.argv else 420
-args = [a for i, a in enumerate(sys.argv[1:], 1) if a not in ('--fast', '--first', '--swiftshader', '--seconds') and sys.argv[i - 1] != '--seconds']
+args = [a for i, a in enumerate(sys.argv[1:], 1) if a not in ('--fast', '--first', '--swiftshader', '--seconds', '--gen') and sys.argv[i - 1] not in ('--seconds', '--gen')]
 PAGE = args[0]
 SHOT = args[1] if len(args) > 1 else None
 
@@ -91,6 +94,7 @@ async def main():
                 if not S['phases'] or S['phases'][-1][0] != ph: S['phases'].append((ph, time.time(), m['match']))
                 if ph == 'countdown' and S['end']: S['rematch'] = True
             elif t == 'matchEnd': S['end'] = S['end'] or m
+            elif t == 'map': S.setdefault('maps', []).append(m.get('map'))   # round 24: a v22 room must never send one (no rotation)
             elif t == 'recap': S['recap'] = S['recap'] or m
             elif t == 'death':
                 if m.get('id') == S.get('me'): S['deaths'] += 1
@@ -128,7 +132,13 @@ async def main():
         room = w.get('room') or {}
         print(f"  welcome.room: {room}")
         # the legacy room: only checked once the server has them (room.legacy); before that, a note
-        if 'legacy' in room:
+        if GEN == 'v22':
+            check(room.get('gen') == 'v22' and not room.get('legacy'), f"a v22 room (room.gen {room.get('gen')!r}, legacy {room.get('legacy')!r})")
+            mid = match.get('map', 'courtyard'); mid = mid.get('id') if isinstance(mid, dict) else mid
+            check(mid == 'courtyard', f"on the courtyard (match.map {match.get('map')!r})")
+            runes, pads = w.get('runes'), w.get('pads')
+            check(bool(runes) and bool(pads), f'runes and pads in the welcome ({len(runes or [])} runes, {len(pads or [])} pads)')
+        elif 'legacy' in room:
             check(room['legacy'] is True, f"a legacy room (room.legacy {room['legacy']})")
             mid = match.get('map', 'courtyard'); mid = mid.get('id') if isinstance(mid, dict) else mid   # (a string, or { id, name })
             check(mid in ('courtyard', 'legacy'), f"on the courtyard (match.map {match.get('map')!r}; 'legacy' is environment's frozen copy of the live layout)")
@@ -187,6 +197,9 @@ async def main():
     check(bool(S['recap']), f"the recap message arrived ({len((S['recap'] or {}).get('podium', []))} on the podium)")
     check(recap_dom['recap'] or recap_dom['podium'], f'the old client showed the recap: {recap_dom}')
     check(S['rematch'], 'the rematch countdown followed')
+    if GEN == 'v22':
+        mids = sorted({(mm.get('map') or {}).get('id') if isinstance(mm.get('map'), dict) else mm.get('map') for _, _, mm in S['phases'] if mm.get('map')} | {(x or {}).get('id') if isinstance(x, dict) else x for x in S.get('maps', [])})
+        check(mids == ['courtyard'], f"the courtyard in every match message, through the rematch, and no map change ({mids}; map messages {len(S.get('maps', []))})")
     check(S['closed'] is None, 'the socket stayed open' if S['closed'] is None else f"the socket closed after {S['closed'] - t0:.0f} s")
     check(len(S['bots']) >= 1 and len(S['names']) >= 4, '4 in the match (bots filled the seats)')
     starts = sum('gameplayStart' in c for c in cg)
@@ -194,7 +207,7 @@ async def main():
     check(not failed, f'no failed requests: {failed[:5] or "none"}')
     check(not errs, f'no console or page errors: {errs[:5] or "none"}')
     unknown = sorted(k for k in S['keys'] if k.split('.')[-1] in ('runes', 'pads', 'portals', 'map', 'legacy'))
-    print('fields the old client never knew, seen in welcome / snap:', unknown or 'none')
+    print('fields the old client never knew, seen in welcome / snap:' if GEN == 'legacy' else 'map / rune / pad fields seen in welcome / snap (the v22 client knows them):', unknown or 'none')
     print(f"websocket {S.get('url')}: sent {S['sent']}, received {S['recv']}")
     print('RESULT:', 'PASS' if ok else 'FAIL')
     sys.exit(0 if ok else 1)

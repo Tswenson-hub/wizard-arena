@@ -6,7 +6,7 @@
 import asyncio, json, os, sys, time, urllib.request
 from playwright.async_api import async_playwright
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from legacyjoin import legacy_join, report as legacy_report   # round 22: a join without `proto` (the live CrazyGames build)
+from legacyjoin import legacy_join, report as legacy_report, report_v22 as legacy_report_v22   # round 22: a join without `proto` (the live CrazyGames build); round 24: a proto-22 join (the round-23 build)
 
 # GPU by default (ANGLE on Metal: macOS); --swiftshader for software GL (slow: it can stall several seconds compiling the castle's shaders)
 GL_ARGS = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] if '--swiftshader' in sys.argv else ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist']
@@ -92,6 +92,10 @@ async def main():
         await pg.wait_for_timeout(1000)
         legacy_ok = legacy_report(lj, 'smoketest', seen_names)
         ok = ok and legacy_ok
+        # round 24: the round-23 build (proto 22, the OLD Sky Ruins bundled) goes to a 'v22' room: the courtyard with runes and pads, no rotation
+        vj = await legacy_join(b, ws_url, 'v22join', seconds=6, proto=22)
+        await pg.wait_for_timeout(1000)
+        ok = ok and legacy_report_v22(vj, 'smoketest', seen_names)
         # round 21: a first visit (a fresh context, no ?builder) is in a match with no click, as the Pyromancer, with Easy bots.
         # The first player leaves first: a first-timer joining other humans keeps their room's difficulty, by design.
         await pg.close(); await asyncio.sleep(1.5)
