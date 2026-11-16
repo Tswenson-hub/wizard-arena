@@ -1889,7 +1889,8 @@ function spawnDecoy(d) {
   if (decoys.has(d.id)) return;
   const owner = players.get(d.owner);
   if (!owner) return;
-  const wiz = makeWizard({ id: owner.id, name: owner.name, color: owner.color, bot: owner.botLevel, body: owner.bodyKind, loadout: owner.loadout, voice: owner.voice, p: d.p, yaw: d.yaw }, false);
+  const wiz = makeWizard({ id: owner.id, name: owner.name, color: owner.color, bot: owner.botLevel, body: owner.bodyKind, loadout: owner.loadout, voice: owner.voice, p: d.p, yaw: d.yaw,
+    lv: owner.lv, title: owner.title, persona: owner.persona, eq: owner.body?.cos || owner.eq }, false);   // (round 26: the plate and cosmetics too, or the decoy is a tell)
   wiz.hp = owner.hp; wiz.netAnim = 'run';
   if (owner === me) wiz.makeGhost();
   decoys.set(d.id, { wiz, owner: d.owner });
