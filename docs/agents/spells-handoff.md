@@ -1,5 +1,61 @@
 # Spells hand-off
 
+## Round 27 §2: six fixed kits, Arcane Grasp for everyone, Roll and Trapped Relic gone, the join by wizard id
+Commits: `e94d6a0` `cae2ca3` (requests: interfaces, posted first; saves.js `'v24'` ask), `4fd0e71` (wizards.js kit), `f4efc3c` (constants.js),
+`65b4202` (server.js, room.js, bots.js), `4c343f3` (main.js, net.js, loadout-store.js, effects.js, audio.js, the two icons), `bf3b1a2` and the
+wizards-unit commit (tests), and the requests note to characters (spellanim.js, the F pips: done in their `bc71fed`). Port 4101 is stopped.
+
+### What changed
+- **Kits:** the six wizards' kits are the brief's table; every F is `telekinesis`, shown as **"Arcane Grasp"** (`name` and `short`). The
+  Hemomancer's F was Trapped Relic. `C.SPELL_POOL` is now the kits' spells only (no Spark or Ward). `C.wizardInfo(id)` gives the gallery's data
+  (role, tip, element, unlock XP, six abilities in LMB RMB R E F Q order with a one-line `SPELLBOOK[id].line`); characters use their own lines.
+- **Mapping:** `C.wizardOfLoadout(lo)` → the same kit, else the kit with that primary, else the Pyromancer; `C.kitFor(id)`, `C.kitLoadout(x)`,
+  `C.isKit`, `C.WIZARD_IDS` (the ladder's order). The client's stored loadout maps the same way (loadout-store.js), so an old saved custom
+  shows as a wizard; the server maps any loadout it gets in a current room.
+- **Rooms:** `PROTO` 27. Generations are now `legacy`, `v22`, `v24` (proto 24-26: the store build) and `current` (27+). Only `current` rooms
+  play kits (room.js `KITS`); the older rooms keep `C.sanitizeLoadout`'s free loadouts over `C.LEGACY_POOL`, Roll and Trapped Relic
+  included, whose rules now live in `C.RETIRED_SPELLS` (found through `C.spellDef` / `C.hitSpec`). The server code for both stays, reached
+  only by those loadouts. The "version" room error says "newer"/"older" by generation order.
+- **The wire:** join `{ proto: 27, wizard }` (no `loadout`); `{ t: 'wizard', id }` (next life; at once while dead); `respawnNow { wizard }`.
+  Rows and `loadout` broadcasts carry `wizard`. A locked or unknown request answers `{ t: 'wizardRefused', want, wizard, reason }`: at the join
+  you get the Pyromancer, in game you keep your wizard. main.js feeds "X isn't unlocked yet: you're the Y" and resets the gallery.
+- **Gating:** `C.isWizardUnlocked(id, xp, gf)` against `p.prog` (an account's when logged in; the join's guest progress otherwise, trusted).
+  When an account's progress lands after the join and lacks the wizard, the next life is the Pyromancer (and wizardRefused).
+- **Ladder:** `BUILDER_UNLOCK_XP` is gone; `wizardUnlocks` → `{ unlocked, all, next }`, never a 'builder' rung.
+- **Bots:** `PERSONAS[k].wizards` (Brawler: Stormcaller; Sniper: Pyromancer or Frost Warden; Trickster: Alchemist or Hemomancer; Healer:
+  Hemomancer; Showboat: Beastcaller); `C.personaWizard` prefers one the room doesn't have. Their Roll and curse-laying code is deleted; in
+  older rooms they still keep clear of a player's trap. A Hemomancer bot now lifts and throws crates.
+- **Client removals:** Roll (input, dash, `playRoll`, pips), Trapped Relic (the F hold, glyphs, `curse`/`glyphs`/`relicFuse`/`relicBlast`
+  handlers, the marker colour and hints), their effects and sounds, `roll.png` and `trapped_relic.png` (and their CREDITS lines). The F hint
+  reads "F Arcane Grasp". The fallback picker (if select.js fails) is six wizard buttons and the voice. "Respawn as <wizard>" / "Play <wizard>
+  next life" / "your new wizard starts when you respawn".
+- **Challenges:** none referenced Roll or Relic; the pool is unchanged.
+
+### Verified
+- **Units, all ALL PASS:** `node tools/test/wizards-unit.mjs` (new, 42: every kit valid and the brief's table; Roll and Relic absent from the
+  current game but in v24 and legacy rooms; old loadouts mapped; a locked wizard falls back at the join and is refused in game; an account's
+  unlocks override a guest's claim; a grandfathered player gets everything; persona kits; Arcane Grasp lifts a crate for all six wizards),
+  `MATCH_DEBUG=1 modematch-unit` (292; its spell checks now join as proto 24, a v24 room, and the generation checks include a proto-27 room
+  and a v24 client at a current code), `playtime-unit`, `notify-unit`, `NODE_ENV=test saves-unit`. One early playtime run missed its
+  first-death check (the bots took over 90 s on a loaded machine); it passed on re-runs.
+- **botmatch** (4101, 90 s, hard normal easy): kit bots only, no server errors.
+- **Playwright, GPU Chromium, 4101:** characters' `gallery_e2e.py` (copied to `/tmp/wa-spells/r27/`): ALL PASS, 14 checks (fresh profile:
+  only the Pyromancer open, five locked with bars; hover details; no grid; one match unlocks the Frost Warden; Esc menu; respawned as the
+  Frost Warden, F reads "Arcane Grasp" and lifts a crate; no console errors). Mine, `/tmp/wa-spells/r27/spells_e2e.py` at 1920×1080: ALL PASS,
+  9 checks (an old saved Hex+Relic custom shows and joins as the Hemomancer; the join sends `proto: 27, wizard`, no loadout; the HUD has
+  Arcane Grasp and no pips; a locked `{ t: 'wizard' }` is refused with the feed line; the Esc menu respawns as the Stormcaller via
+  `wizard` + `respawnNow { wizard }`; no console errors).
+- **Screenshots (looked at):** `/tmp/wa-spells/r27/join_1080.png`, `hud_1080.png`, `esc_1080.png`; 1280×720 from the gallery run:
+  `e2e_join_hover.png`, `e2e_esc_rime.png`, `e2e_esc_wardrobe.png`, `e2e_grasp.png`.
+
+### Notes
+- **Environment:** `saves.js` `GENS` should accept `'v24'` (requests.md); until then v24 sessions log as `current`.
+- **Deploy:** the store builds keep working because proto 24-26 joins land in `v24` rooms with the old rules; legacy and v22 are untouched.
+  Two v24 clients now never share a room with a 27 client (by design). Perf on both maps wasn't re-run by me.
+- **Coordinator:** README still lists Roll, Trapped Relic and the builder.
+- The HUD's F slot wraps "Arcane Grasp" over two lines at 1920×1080 (readable; `short` could be "Grasp" if Ty prefers one line).
+- Spark, Ward and the non-kit spells stay in SPELLBOOK for the older rooms and the sims.
+
 ## Round 26: playtime (drop-off event hooks, XP / levels / daily challenges, adaptive bots with personalities, emotes and taunts) and 26b (the wizard ladder)
 Commits: `35a258c` (constants.js), `0f35109` `81a07b8` `d633e8d` (bots.js), `992850a` (room.js, match.js, progress.js), `268c631` `052a562` (server.js),
 `a69d147` `029d80f` `a84d780` (main.js, net.js, index.html, style.css), `c87d299` (26b ladder), `e73a17d` `dfa1505` (tools/test/playtime-unit.mjs),
