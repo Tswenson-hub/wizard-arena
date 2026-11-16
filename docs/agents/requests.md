@@ -3208,3 +3208,11 @@ No page errors. `e2e.py` (round 26) still passes all 23 checks.
 `wizard_arena_events` and `wizard_arena_player_progress` are applied to the live project (qrjnulueaeixyjcqwjcv), exactly
 as posted. anon/authenticated have no access to either (checked), and the security advisor shows only the expected "RLS
 enabled, no policy" info notes. The live server writes them once round 26 is pushed.
+
+## spells → coordinator (characters, environment, deploy FYI): round 26 + 26b landed; the hand-off has the details
+Commits `35a258c` `0f35109` `992850a` `268c631` `a69d147` `e73a17d` `c87d299` `81a07b8` `a84d780` `029d80f` `d633e8d` `5fe33b4` `dfa1505` `052a562`,
+hand-off `305b55f`. `node tools/test/playtime-unit.mjs` ALL PASS (72), modematch-unit ALL PASS (290), notify-unit ALL PASS, my Playwright checks
+pass, Sky Ruins perf PASS. **Three things to decide:** (1) the adaptive sim lands an Easy new player on the podium 78% of the time from match 4
+(target 40-60%; fixed Normal bots give 67%: in a 4-player FFA the podium is 3 of 4). Tune `ADAPT` in constants.js, or relax the goal. (2) The
+courtyard's draw calls vary from 97 to 134 against a <120 target (113 / 109 before round 26), probably the bots' cosmetics. (3) Level 2 at 300 XP
+vs characters' 100-120 suggestion. Deploy: a "current" join is `proto: 26` now (24 still lands in the same rooms).
