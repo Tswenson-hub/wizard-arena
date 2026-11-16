@@ -1498,11 +1498,18 @@ async function roomChecks() {
       ok(V1.room.gen === 'v22' && !V1.room.legacy && wv.match.map.id === 'courtyard' && Array.isArray(wv.runes) && wv.runes.length > 0 && Array.isArray(wv.pads) && wv.pads.length > 0
         && V1.room.maps.join() === 'courtyard', `a proto-22 join: a v22 room on the courtyard with runes and pads, no rotation (${JSON.stringify({ gen: V1.room.gen, maps: V1.room.maps, runes: wv.runes?.length, pads: wv.pads?.length })})`);
       ok(V2.room.id === V1.room.id && V1.room.id !== L1.room.id && V1.room.id !== N1.room.id, `a proto-23 join shares it; it is neither the legacy nor the current room (${V2.room.id}; ${L1.room.id}, ${N1.room.id})`);
-      ok(N1.room.gen === 'current' && L1.room.gen === 'legacy' && L1.room.legacy === true, `the rooms say their generation (${N1.room.gen}, ${L1.room.gen})`);
+      ok(N1.room.gen === 'v24' && L1.room.gen === 'legacy' && L1.room.legacy === true, `the rooms say their generation (round 27: proto 24 is the store build's v24; ${N1.room.gen}, ${L1.room.gen})`);
+      // round 27: a proto-27 join (six wizards) gets a current room, never the store build's v24 one; its private code refuses a v24 client
+      const K1 = await joinAs('Kits', { proto: 27, wizard: 'cinder', difficulty: 'normal' });
+      ok(K1.room.gen === 'current' && K1.room.id !== N1.room.id && K1.room.id !== V1.room.id && K1.room.id !== L1.room.id, `a proto-27 join: a current room of its own (${K1.room.id}; v24 ${N1.room.id})`);
+      const KP = await joinAs('KitsHost', { proto: 27, room: 'new' }), v24ToK = await joinAs('StoreAtKits', { proto: 24, room: KP.room.code });
+      const e24 = v24ToK.msgs.find(m => m.t === 'welcome')?.roomError;
+      ok(e24?.reason === 'version' && v24ToK.room.gen === 'v24' && /newer version/.test(e24.text), `a v24 client at a current code: 'version' ("newer version"), a v24 public room (${e24?.text})`);
+      await close(K1, KP, v24ToK);
       const VP = await joinAs('V22Host', { proto: 22, room: 'new' });
       const toV = await joinAs('NewAtV22', { proto: 24, room: VP.room.code }), vToN = await joinAs('V22AtNew', { proto: 23, room: NP.room.code }), oldToV = await joinAs('OldAtV22', { room: VP.room.code });
       const err = (c) => c.msgs.find(m => m.t === 'welcome')?.roomError;
-      ok(err(toV)?.reason === 'version' && toV.room.gen === 'current' && !toV.room.private, `a current client at a v22 code: 'version', a current public room (${err(toV)?.text})`);
+      ok(err(toV)?.reason === 'version' && toV.room.gen === 'v24' && !toV.room.private, `a v24 client at a v22 code: 'version', a v24 public room (${err(toV)?.text})`);
       ok(err(vToN)?.reason === 'version' && vToN.room.gen === 'v22' && !vToN.room.private, `a v22 client at a current code: 'version', a v22 public room (${err(vToN)?.text})`);
       ok(err(oldToV)?.reason === 'version' && oldToV.room.legacy === true && !oldToV.room.private, `a legacy client at a v22 code: 'version', a legacy public room`);
       ok(vToN.room.id === V1.room.id || vToN.room.gen === 'v22', 'the v22 public room is shared by v22 clients only');
