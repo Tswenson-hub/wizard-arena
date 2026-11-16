@@ -2,7 +2,7 @@
 // Map layout (arena size, obstacles, props, spawns) lives in map.js and is re-exported here.
 import { COLLIDERS, ARENA_RADIUS, LOS_HEIGHT, surfaceBlocks, SURFACES } from './map.js';
 import * as MAPNS from './map.js';   // (optional helpers, such as losVolumeBlocks, looked up by name)
-import { WIZARDS, DEFAULT_WIZARD } from './wizards.js';
+import { WIZARDS, DEFAULT_WIZARD, isWizard } from './wizards.js';
 export * from './map.js';
 export * from './wizards.js';
 
@@ -789,37 +789,11 @@ export const SPELLBOOK = {
     cooldown: 12,
   },
   telekinesis: {
-    id: 'telekinesis', slot: 'utility', name: 'Telekinesis', short: 'Lift',
-    blurb: 'Lift an object, then hurl it. It shields you while held.',
+    id: 'telekinesis', slot: 'utility', name: 'Arcane Grasp', short: 'Arcane Grasp',   // round 27: every wizard's F (the id stays 'telekinesis')
+    blurb: 'Seize an object (or a goat) with arcane force, then hurl it. It shields you while held.',
     cooldown: 0.6,       // lift to throw (THROW_COOLDOWN)
     liftCooldown: 4.5,   // after letting go of something (thrown, set down, knocked away), before the next lift (round 16, Ty: 3)
   },
-  trapped_relic: {
-    id: 'trapped_relic', slot: 'utility', name: 'Trapped Relic', short: 'Relic',
-    blurb: 'Curse an object. It explodes when an enemy comes near, lifts it or breaks it. One trap at a time: a new curse clears the old.',
-    hold: 0.5,           // F on an object: this long to curse it (no lifting with Relic: only Telekinesis lifts)
-    traps: 1,            // armed at once per caster; a new curse clears the oldest (round 16, Ty: 2 -> 1)
-    trigger: 1.8,        // an enemy this close (m, centre to centre) to a resting trap lights it
-    fuse: 0.25,          // lit, it flares, then blows this long later
-    seen: 6,             // enemies within this see the trap's glyph
-    damage: 45, radius: 3.5,
-    stun: 0.4,
-    knockback: 7,
-    staminaCost: 40,     // a ward facing the blast blocks it
-    cooldown: 9,         // round 16 (Ty): 6, round 14: 3
-    liftCooldown: 9,     // after each curse (p.cd.lift)
-  },
-  roll: {
-    id: 'roll', slot: 'utility', name: 'Roll', short: 'Roll',   // round 13 (Ty): a Utility (F), no longer Mobility
-    blurb: 'Roll 4.5 m the way you are moving (backwards if standing still). Projectiles pass through you for the first 0.25 s; area damage still lands. 2 charges.',
-    distance: 4.5,
-    dashTime: 0.35,      // a fast dash, not a teleport: it collides and steps up like walking
-    immune: 0.25,        // from the start of the roll: projectiles pass through (areas, beams and rams still hit)
-    charges: 2,          // each charge refills `cooldown` after it was spent
-    cooldown: 3.5,
-    liftCooldown: 3.5,   // (the F slot's cooldown: each charge's refill)
-  },
-
   // ---- ultimates (Q). `ult: true` hits never charge the ultimate. Each one cannot be cancelled once cast.
   meteor_rain: {
     id: 'meteor_rain', slot: 'ultimate', name: 'Meteor Rain', short: 'Meteor Rain', ult: true,
@@ -932,6 +906,38 @@ export const SPELLBOOK = {
 };
 
 
+// Round 27 (Ty): Roll and Trapped Relic are gone from the game. Their rules live on only for the older store builds (legacy, v22 and v24
+// rooms: server/room.js), which still let their players pick them; the current client never reads these.
+export const RETIRED_SPELLS = {
+  trapped_relic: {
+    id: 'trapped_relic', slot: 'utility', name: 'Trapped Relic', short: 'Relic',
+    blurb: 'Curse an object. It explodes when an enemy comes near, lifts it or breaks it. One trap at a time: a new curse clears the old.',
+    hold: 0.5,           // F on an object: this long to curse it (no lifting with Relic: only Telekinesis lifts)
+    traps: 1,            // armed at once per caster; a new curse clears the oldest (round 16, Ty: 2 -> 1)
+    trigger: 1.8,        // an enemy this close (m, centre to centre) to a resting trap lights it
+    fuse: 0.25,          // lit, it flares, then blows this long later
+    seen: 6,             // enemies within this see the trap's glyph
+    damage: 45, radius: 3.5,
+    stun: 0.4,
+    knockback: 7,
+    staminaCost: 40,     // a ward facing the blast blocks it
+    cooldown: 9,         // round 16 (Ty): 6, round 14: 3
+    liftCooldown: 9,     // after each curse (p.cd.lift)
+  },
+  roll: {
+    id: 'roll', slot: 'utility', name: 'Roll', short: 'Roll',   // round 13 (Ty): a Utility (F), no longer Mobility
+    blurb: 'Roll 4.5 m the way you are moving (backwards if standing still). Projectiles pass through you for the first 0.25 s; area damage still lands. 2 charges.',
+    distance: 4.5,
+    dashTime: 0.35,      // a fast dash, not a teleport: it collides and steps up like walking
+    immune: 0.25,        // from the start of the roll: projectiles pass through (areas, beams and rams still hit)
+    charges: 2,          // each charge refills `cooldown` after it was spent
+    cooldown: 3.5,
+    liftCooldown: 3.5,   // (the F slot's cooldown: each charge's refill)
+  },
+};
+// A spell's definition, retired ones included (the server's rules for old rooms)
+export const spellDef = (id) => SPELLBOOK[id] || RETIRED_SPELLS[id];
+
 // Primary fire is a magazine: `magazine` shots (a Skim volley counts as one), then `reload` seconds.
 // Pressing R, or `idleReload` seconds without firing, reloads a partial magazine. Only the last shot
 // of a magazine (the "finisher") stuns and interrupts wind-ups; the others just do their damage.
@@ -986,7 +992,7 @@ export function backpedalSpeed(speed, dx, dz, yaw) {
 
 
 // Damage/stun/knockback/stamina spec for a `hit` kind: a projectile kind or a spellbook id.
-export const hitSpec = (kind) => SPELLS[kind] || SPELLBOOK[kind];
+export const hitSpec = (kind) => SPELLS[kind] || SPELLBOOK[kind] || RETIRED_SPELLS[kind];
 
 // Longest a Skyward Flash can keep a wizard off the ground (float at the slowest rate, then drop).
 export const FLIGHT_MAX_TIME = SPELLBOOK.skyward.floatTime + SPELLBOOK.skyward.maxHeight / SPELLBOOK.skyward.dropSpeed + 0.6;
@@ -1193,8 +1199,6 @@ export const SPELL_INFO = {
   flask_step:    { element: 'acid',   tags: ['Teleport', 'Lob', 'Wind-up'], damage: '', cooldown: S_(SPELLBOOK.flask_step.cooldown), range: M_(16), windup: S_(SPELLBOOK.flask_step.windup) },
   // utility (F)
   telekinesis:   { element: 'arcane', tags: ['Knockdown'], damage: `${D(SPELLS.prop.damage)}`, cooldown: S_(SPELLBOOK.telekinesis.liftCooldown), range: M_(16), windup: '' },
-  trapped_relic: { element: 'dark',   tags: ['Area', 'Stuns'], damage: `trap ${D(SPELLBOOK.trapped_relic.damage)}`, cooldown: S_(SPELLBOOK.trapped_relic.cooldown), range: M_(16), windup: '', duration: `${SPELLBOOK.trapped_relic.traps} trap${SPELLBOOK.trapped_relic.traps > 1 ? 's' : ''}` },
-  roll:          { element: 'arcane', tags: ['Dash', 'Dodge'], damage: '', cooldown: '3.5 s × 2', range: M_(4.5), windup: '', duration: 'dodge 0.25 s' },
   // ultimates (Q, charged)
   meteor_rain:   { element: 'fire',   tags: ['Area', 'Wind-up'], damage: `kill ${M_(SPELLBOOK.meteor_rain.killRadius)} · ${D(SPELLBOOK.meteor_rain.splash[0])}–${D(SPELLBOOK.meteor_rain.splash[1])}`, cooldown: 'charge', range: M_(24), windup: S_(1.3) },
   eye_of_storm:  { element: 'wind',   tags: ['Area', 'Channel', 'Wind-up'], damage: `${D(SPELLBOOK.eye_of_storm.damage)} / 0.5 s`, cooldown: 'charge', range: M_(SPELLBOOK.eye_of_storm.radius), windup: S_(1.3), duration: S_(3) },
@@ -1203,10 +1207,19 @@ export const SPELL_INFO = {
   stampede:      { element: 'earth',  tags: ['Area', 'Summon', 'Wind-up'], damage: 'kill', cooldown: 'charge', range: M_(28), windup: S_(1.3) },
   berserker_brew: { element: 'acid',  tags: ['Wind-up'], damage: '×1.5, heals 30', cooldown: 'charge', range: '', windup: S_(1.3), duration: S_(7) },
 };
+const RETIRED_INFO = {
+  trapped_relic: { element: 'dark',   tags: ['Area', 'Stuns'], damage: `trap ${D(RETIRED_SPELLS.trapped_relic.damage)}`, cooldown: S_(RETIRED_SPELLS.trapped_relic.cooldown), range: M_(16), windup: '', duration: `${RETIRED_SPELLS.trapped_relic.traps} trap${RETIRED_SPELLS.trapped_relic.traps > 1 ? 's' : ''}` },
+  roll:          { element: 'arcane', tags: ['Dash', 'Dodge'], damage: '', cooldown: '3.5 s × 2', range: M_(4.5), windup: '', duration: 'dodge 0.25 s' },
+};
 
-// Everything pickable, per slot (SPELLBOOK order).
+// Round 27: what the current game can pick, per slot: only the six wizards' kits (wizards.js). Spark, Ward and the other spells
+// in no kit stay in SPELLBOOK for the older rooms but can't be picked now.
 export const SPELL_POOL = Object.fromEntries(LOADOUT_SLOTS.map(slot =>
-  [slot, Object.keys(SPELLBOOK).filter(id => SPELLBOOK[id].slot === slot && SPELL_INFO[id])]));
+  [slot, [...new Set(Object.values(WIZARDS).map(w => w.kit[slot]))]]));
+// The older generations' rules (legacy, v22, v24 rooms, and saved profiles): every spell with card data, Roll and Trapped Relic included.
+export const LEGACY_POOL = Object.fromEntries(LOADOUT_SLOTS.map(slot =>
+  [slot, [...Object.keys(SPELLBOOK).filter(id => SPELLBOOK[id].slot === slot && SPELL_INFO[id]),
+    ...Object.keys(RETIRED_SPELLS).filter(id => RETIRED_SPELLS[id].slot === slot && RETIRED_INFO[id])]]));
 
 // Cross-spell synergies: each works for whoever has every spell in `spells` equipped (server.js checks `hasCombo`).
 export const COMBOS = [
@@ -1232,31 +1245,92 @@ export function spellInfo(id) {
 export const PRESETS = Object.values(WIZARDS).map(w => ({ id: w.id, name: w.preset, hero: w.name, loadout: { ...w.kit } }));
 export const DEFAULT_LOADOUT = { ...WIZARDS[DEFAULT_WIZARD].kit };
 
-// A clean loadout from anything (a message, localStorage): every slot an id from SPELL_POOL[slot], else null.
-// Nothing is filled in or guessed: a bogus loadout is rejected as a whole.
+// A clean loadout from anything (a message, localStorage, a saved profile): every slot an id from LEGACY_POOL[slot], else null.
+// Nothing is filled in or guessed: a bogus loadout is rejected as a whole. (Round 27: the older rooms' rule; current rooms take a
+// whole kit, kitLoadout below.)
 export function sanitizeLoadout(x) {
   if (!x || typeof x !== 'object' || Array.isArray(x)) return null;
   // round 13: Roll moved from Mobility (E) to Utility (F). An old loadout with it in mobility keeps it in utility if that
   // slot is free, and gets the default mobility spell.
   if (x.mobility === 'roll') {
     x = { ...x, mobility: DEFAULT_LOADOUT.mobility };
-    if (!SPELL_POOL.utility.includes(x.utility)) x.utility = 'roll';
+    if (!LEGACY_POOL.utility.includes(x.utility)) x.utility = 'roll';
   }
   const out = {};
   for (const slot of LOADOUT_SLOTS) {
     const id = x[slot];
-    if (typeof id !== 'string' || !SPELL_POOL[slot].includes(id)) return null;
+    if (typeof id !== 'string' || !LEGACY_POOL[slot].includes(id)) return null;
     out[slot] = id;
   }
   return out;
 }
 export const sameLoadout = (a, b) => !!a && !!b && LOADOUT_SLOTS.every(s => a[s] === b[s]);
-// A random full loadout. rnd: () => [0, 1).
+// A random full loadout under the older rooms' rules (their test tools). rnd: () => [0, 1).
 export function randomLoadout(rnd = Math.random) {
-  return Object.fromEntries(LOADOUT_SLOTS.map(slot => { const l = SPELL_POOL[slot]; return [slot, l[Math.floor(rnd() * l.length)]]; }));
+  return Object.fromEntries(LOADOUT_SLOTS.map(slot => { const l = LEGACY_POOL[slot]; return [slot, l[Math.floor(rnd() * l.length)]]; }));
 }
-// A bot's loadout: half the time an old hero preset, half the time fully random (round 11).
-export const botLoadout = (rnd = Math.random) => rnd() < 0.5 ? { ...PRESETS[Math.floor(rnd() * PRESETS.length)].loadout } : randomLoadout(rnd);
+// A bot's loadout with no personality (round 27: one of the six kits, anywhere)
+export const botLoadout = (rnd = Math.random) => ({ ...PRESETS[Math.floor(rnd() * PRESETS.length)].loadout });
+
+// ---------------------------------------------------------------- round 27: six wizards, fixed kits
+// The game is the six wizards (wizards.js), each a fixed kit. A current join names a wizard; anything else (an old client's loadout,
+// an old saved custom) maps to the kit with the same primary, else the Pyromancer.
+export const WIZARD_IDS = ['cinder', 'rime', 'gale', 'vesper', 'embibe', 'jeb'];   // the gallery's order (the unlock ladder's)
+export const kitFor = (id) => ({ ...(WIZARDS[id] || WIZARDS[DEFAULT_WIZARD]).kit });
+// The wizard a loadout (or a wizard id) belongs to: the same kit, else the kit with the same primary, else the Pyromancer
+export function wizardOfLoadout(lo) {
+  if (typeof lo === 'string') return isWizard(lo) ? lo : DEFAULT_WIZARD;
+  if (!lo || typeof lo !== 'object') return DEFAULT_WIZARD;
+  const ids = WIZARD_IDS.filter(isWizard);
+  return ids.find(id => sameLoadout(WIZARDS[id].kit, lo)) || ids.find(id => WIZARDS[id].kit.primary === lo.primary) || DEFAULT_WIZARD;
+}
+// { wizard, loadout } for anything a client sends (a wizard id or a loadout)
+export function kitLoadout(x) { const wizard = wizardOfLoadout(x); return { wizard, loadout: kitFor(wizard) }; }
+export const isKit = (lo) => !!lo && WIZARD_IDS.some(id => sameLoadout(WIZARDS[id]?.kit, lo));
+// Plain one-liners for the gallery's ability rows (the cards' blurbs have the numbers)
+const SPELL_LINES = {
+  fireball: 'Hot bolts, three to a charge; the third stuns.',
+  meteor: 'Wind up, then hurl a heavy fireball.',
+  firewall: 'A wall of flame that burns up enemy shots.',
+  smoke_screen: 'Leap back and hide in a cloud of smoke.',
+  meteor_rain: 'Leap into the sky, then dive on a circle: the centre dies.',
+  gale_shear: 'Short wind blades; the third is a wide crescent.',
+  cyclone: 'Spin, hitting and flinging everyone close by.',
+  tempest_veil: 'A wind bubble that swallows every spell for 2 s.',
+  blink: 'Teleport a few steps the way you face.',
+  eye_of_storm: 'Become a tornado that drags enemies in.',
+  glacial_skim: 'Ice shards along the ground that slow whoever they hit.',
+  frostfall: 'Drop a block of ice on a circle: it crushes and freezes.',
+  glacial_bulwark: 'Raise an ice wall that blocks everything.',
+  skyward: 'Flash straight up and float down.',
+  blizzard: 'A cone of snow that pushes back and freezes.',
+  hex_shards: 'Crimson glyphs that curve in on your aim.',
+  sanguine_lash: 'A blood bolt that heals you for half its damage.',
+  black_death: 'Hold to block from every side, healing from what you absorb.',
+  mirror_step: 'Dash and split three ways: two decoys run off.',
+  night_cage: 'A ring of spikes nobody can cross; it heals you inside.',
+  sling: 'Stones that hit harder the further they fly.',
+  battering_ram: 'Stomp, then a ram charges along your aim.',
+  ram_guard: 'Three rams circle you and take the shots.',
+  ram_ride: 'Ride a ram and run enemies over.',
+  stampede: 'Ten rams thunder down a lane.',
+  potion_toss: 'Arcing potions that splash; the second stuns.',
+  toxic_flask: 'A pool of poison that burns anyone standing in it.',
+  smoke_flask: 'Purple smoke that swallows enemy shots.',
+  flask_step: 'Lob a potion: you appear where it lands.',
+  berserker_brew: 'Heal, hit harder and halve your cooldowns for 7 s.',
+  telekinesis: 'Lift a crate or a goat with arcane force, and hurl it.',
+};
+for (const [id, line] of Object.entries(SPELL_LINES)) if (SPELLBOOK[id]) SPELLBOOK[id].line = line;
+// The gallery's data for a wizard: { id, name, tagline, tip, color, element, xp, abilities: [{ slot, key, id, name, short, line }] }
+// (abilities in LMB, RMB, R, E, F, Q order)
+export function wizardInfo(id) {
+  const w = WIZARDS[id];
+  if (!w) return null;
+  return { id, name: w.preset, tagline: w.role || '', tip: w.tip || '', color: w.color, element: SPELL_INFO[w.kit.primary]?.element || 'arcane',
+    xp: WIZARD_UNLOCKS.find(u => u.id === id)?.xp ?? 0,
+    abilities: LOADOUT_SLOTS.map(slot => { const S = SPELLBOOK[w.kit[slot]]; return { slot, key: SLOT_INFO[slot].key, id: S.id, name: S.name, short: S.short, line: S.line || S.blurb }; }) };
+}
 
 // The element mix: [{ element, count }] most first (ties: the primary's, then the power's, ... first), arcane last.
 export function loadoutElements(lo) {
@@ -1392,8 +1466,8 @@ export function sanitizeProgress(x, day = dayKey()) {
     guestMerged: !!o.guestMerged };
 }
 // Round 26b (Ty): wizard unlocks. A new player starts with the Pyromancer only; the others unlock by total XP (a typical match is
-// about 130-170 XP), and the full spell builder ("Build your own") with the last one, about 17-20 minutes in. Tunable here only.
-// Grandfathered players (anyone who played before this release) have everything. Enforced by the client; the server stays lenient.
+// about 130-170 XP), the last about 17-20 minutes in. Tunable here only. Grandfathered players (anyone who played before this
+// release) have everything. Round 27: no spell builder any more, and the server checks a requested wizard (room.js).
 export const WIZARD_UNLOCKS = [
   { id: 'cinder', xp: 0 },     // the Pyromancer
   { id: 'rime', xp: 50 },      // the Frost Warden: any one finished match
@@ -1402,25 +1476,21 @@ export const WIZARD_UNLOCKS = [
   { id: 'embibe', xp: 500 },   // the Alchemist
   { id: 'jeb', xp: 650 },      // the Beastcaller
 ];
-export const BUILDER_UNLOCK_XP = 650;   // "Build your own" (the 35-card spell grid)
 export const GRANDFATHERED = 'grandfathered';   // (a marker in `unlocks`, so it rides wherever the progress is stored)
-// { unlocked: [wizard ids], builder: bool, all: bool, next: { id, name, xp, toGo } | null (the next wizard, or the builder: id 'builder') }
+// { unlocked: [wizard ids], all: bool, next: { id, name, xp, toGo } | null (the next wizard) }
 export function wizardUnlocks(xp, grandfathered = false) {
   xp = Math.max(0, Math.floor(+xp || 0));
   const all = !!grandfathered;
   const unlocked = WIZARD_UNLOCKS.filter(w => all || xp >= w.xp).map(w => w.id);
-  const builder = all || xp >= BUILDER_UNLOCK_XP;
   const nw = all ? null : WIZARD_UNLOCKS.find(w => xp < w.xp);
-  const next = nw ? { id: nw.id, name: WIZARDS[nw.id]?.preset ?? nw.id, xp: nw.xp, toGo: nw.xp - xp }
-    : !builder ? { id: 'builder', name: 'Build your own', xp: BUILDER_UNLOCK_XP, toGo: BUILDER_UNLOCK_XP - xp } : null;
-  return { unlocked, builder, all, next };
+  const next = nw ? { id: nw.id, name: WIZARDS[nw.id]?.preset ?? nw.id, xp: nw.xp, toGo: nw.xp - xp } : null;
+  return { unlocked, all, next };
 }
-// What newly unlocked going from `xpBefore` to `xpAfter`: [{ id, name, xp }] (the builder as id 'builder')
+export const isWizardUnlocked = (id, xp, grandfathered = false) => wizardUnlocks(xp, grandfathered).unlocked.includes(id);
+// What newly unlocked going from `xpBefore` to `xpAfter`: [{ id, name, xp }]
 export function wizardsUnlockedBetween(xpBefore, xpAfter, grandfathered = false) {
   if (grandfathered) return [];
-  const out = WIZARD_UNLOCKS.filter(w => w.xp > xpBefore && w.xp <= xpAfter).map(w => ({ id: w.id, name: WIZARDS[w.id]?.preset ?? w.id, xp: w.xp }));
-  if (BUILDER_UNLOCK_XP > xpBefore && BUILDER_UNLOCK_XP <= xpAfter) out.push({ id: 'builder', name: 'Build your own', xp: BUILDER_UNLOCK_XP });
-  return out;
+  return WIZARD_UNLOCKS.filter(w => w.xp > xpBefore && w.xp <= xpAfter).map(w => ({ id: w.id, name: WIZARDS[w.id]?.preset ?? w.id, xp: w.xp }));
 }
 
 // What a client is told about its progress (adds the display fields)
@@ -1462,22 +1532,28 @@ export function adaptAfter(a, place, of, kills, deaths) {
   }
   return { r: +Math.max(0, Math.min(1, r)).toFixed(3), h, n };
 }
-// Personalities: one per bot, a loadout to match and how it fights (server/bots.js reads the numbers).
+// Personalities: one per bot, the wizards that suit it (round 27: one of the six kits; room.js picks one the room doesn't have yet when it
+// can) and how it fights (server/bots.js reads the numbers).
 //   range: × the preferred distance; aggr: + aggression; healAt: HP under which it walks to a potion; runeR: how far it goes for
 //   a rune; dodge: + dodge chance; high: likes high ground; taunt: × the chance of a taunt line or an emote after a kill
 export const PERSONAS = {
-  brawler: { name: 'Brawler', loadout: { primary: 'gale_shear', power: 'cyclone', guard: 'tempest_veil', mobility: 'blink', utility: 'roll', ultimate: 'eye_of_storm' },
+  brawler: { name: 'Brawler', wizards: ['gale'],
     range: 0.6, aggr: 0.1, healAt: 40, runeR: 10, dodge: 0, taunt: 1 },
-  sniper: { name: 'Sniper', loadout: { primary: 'spark', power: 'meteor', guard: 'ward', mobility: 'skyward', utility: 'telekinesis', ultimate: 'meteor_rain' },
+  sniper: { name: 'Sniper', wizards: ['cinder', 'rime'],
     range: 1.45, aggr: 0, healAt: 55, runeR: 12, dodge: 0.05, high: true, taunt: 0.8 },
-  trickster: { name: 'Trickster', loadout: { primary: 'hex_shards', power: 'frostfall', guard: 'smoke_flask', mobility: 'mirror_step', utility: 'trapped_relic', ultimate: 'blizzard' },
+  trickster: { name: 'Trickster', wizards: ['embibe', 'vesper'],
     range: 1, aggr: 0, healAt: 50, runeR: 12, dodge: 0.15, taunt: 1.2 },
-  healer: { name: 'Healer', loadout: { primary: 'potion_toss', power: 'sanguine_lash', guard: 'black_death', mobility: 'flask_step', utility: 'telekinesis', ultimate: 'night_cage' },
+  healer: { name: 'Healer', wizards: ['vesper'],
     range: 1.1, aggr: -0.05, healAt: 70, runeR: 12, dodge: 0.05, taunt: 0.6 },
-  showboat: { name: 'Showboat', loadout: { primary: 'fireball', power: 'battering_ram', guard: 'firewall', mobility: 'ram_ride', utility: 'telekinesis', ultimate: 'stampede' },
+  showboat: { name: 'Showboat', wizards: ['jeb'],
     range: 1, aggr: 0.05, healAt: 50, runeR: 22, dodge: 0, pads: true, taunt: 2.5 },
 };
 export const PERSONA_IDS = Object.keys(PERSONAS);
+// A personality's wizard: one of its own the room doesn't have yet (taken: a Set of wizard ids), else any of its own
+export function personaWizard(persona, taken = new Set(), rnd = Math.random) {
+  const own = PERSONAS[persona]?.wizards || [DEFAULT_WIZARD], free = own.filter(id => !taken.has(id)), l = free.length ? free : own;
+  return l[Math.floor(rnd() * l.length)];
+}
 // Emotes (the KayKit Cheering, Waving and Skeletons_Taunt clips) and the bots' speech bubbles: short, harmless lines.
 export const EMOTES = ['cheer', 'wave', 'taunt'];
 export const EMOTE_COOLDOWN = 2.5;
