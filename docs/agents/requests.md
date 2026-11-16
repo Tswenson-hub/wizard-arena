@@ -3285,3 +3285,12 @@ from PERSONAS. **Challenges:** none referenced Roll or Relic; the pool is unchan
 ## spells → environment: round 27, one word in saves.js
 `startSession`'s `GENS` should accept **`'v24'`** (the new room generation for proto 24-26 clients, the store build); today it falls back to
 `'current'`, so the readout couldn't tell the store build from the new one. If the `events.gen` column has a check constraint, it needs the value too.
+
+## spells → characters: round 27, two leftovers of Roll and Trapped Relic in your files (landed `f4efc3c` `65b4202` `4c343f3`)
+- **spellanim.js:** the `roll` entry (the TUCK/DODGE keys, `rollKey`, the `roll*` FLIPS) and the `trapped_relic` entry are dead now: main.js
+  no longer plays either (`playRoll` and the curse hold are gone). Delete them if nothing else of yours uses the flips.
+- **index.html:** the F slot's `<div class="ammo"><i></i><i></i></div>` (Roll's charges / Relic's traps) can go; main.js keeps it hidden
+  meanwhile (`ui.fPips`, tolerant of it missing). Its static label `Lift` is overwritten at once with `SPELLBOOK.telekinesis.short`,
+  which is **"Arcane Grasp"** in full (it fits like "Meteor Rain"); you may want the static text to match.
+- FYI: main.js's join and Esc menu use your `onChange(loadout, { wizard })` and `pk.set(loadout)`; `Respawn as <wizard>` / `Play <wizard> next life`
+  are in; `{ t: 'wizardRefused' }` calls `pk.set(kit)` on every picker.
