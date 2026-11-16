@@ -255,14 +255,14 @@ export function createRoom(opts) {
     const t = now();
     if (t < (p.emoteAt ?? -1e9) + C.EMOTE_COOLDOWN) return false;
     p.emoteAt = t;
-    broadcast({ t: 'emote', id: p.id, e });
+    broadcast26({ t: 'emote', id: p.id, e });
     return true;
   }
   // The Wardrobe: equip unlocked cosmetics (anything locked or unknown is dropped); everyone sees { t: 'look' }
   function equip(p, eq) {
     if (p.bot || !p.prog) return;
     p.prog.equipped = C.sanitizeEquipped(eq, p.prog.level);
-    broadcast({ t: 'look', id: p.id, lv: p.prog.level, eq: p.prog.equipped, title: C.titleFor(p.prog.level) });
+    broadcast26({ t: 'look', id: p.id, lv: p.prog.level, eq: p.prog.equipped, title: C.titleFor(p.prog.level) });
     if (p.proto >= 26) send(p.id, { t: 'progress', progress: Prog.progressOf(p) });
     saveProgress(p);
   }
@@ -277,7 +277,7 @@ export function createRoom(opts) {
     if (kind !== 'death' && Math.random() < R.emoteChance * mult && emote(p, kind === 'kill' && Math.random() < 0.5 ? 'taunt' : 'cheer')) p.chatAt = t;
     if (t >= tauntAt + R.roomCooldown && Math.random() < R.chance * mult) {
       const lines = C.TAUNTS[kind] || C.TAUNTS.kill;
-      broadcast({ t: 'taunt', id: p.id, text: lines[Math.floor(Math.random() * lines.length)] });
+      broadcast26({ t: 'taunt', id: p.id, text: lines[Math.floor(Math.random() * lines.length)] });
       tauntAt = p.chatAt = t;
     }
   }
@@ -290,6 +290,12 @@ export function createRoom(opts) {
     const s = JSON.stringify(msg);
     for (const ws of sockets.values()) if (ws.readyState === 1) ws.send(s);
     for (const ws of observers) if (ws.readyState === 1) ws.send(s);   // `node bot.js` and the balance tools (no player of their own)
+  }
+  // round 26: a message only 26+ clients know (emote, taunt, look); the older store builds never see it (the observers do)
+  function broadcast26(msg) {
+    const s = JSON.stringify(msg);
+    for (const [id, ws] of sockets) if (ws.readyState === 1 && players.get(id)?.proto >= 26) ws.send(s);
+    for (const ws of observers) if (ws.readyState === 1) ws.send(s);
   }
 
   // ---------------------------------------------------------------- combat
@@ -2934,7 +2940,7 @@ export function createRoom(opts) {
       const eq = p.prog?.equipped;
       Prog.setAccountProgress(p, raw);
       if (!Object.keys(p.prog.equipped).length && eq) p.prog.equipped = C.sanitizeEquipped(eq, p.prog.level);   // (a fresh account keeps what this browser wore)
-      broadcast({ t: 'look', id, lv: p.prog.level, eq: p.prog.equipped, title: C.titleFor(p.prog.level) });
+      broadcast26({ t: 'look', id, lv: p.prog.level, eq: p.prog.equipped, title: C.titleFor(p.prog.level) });
       if (p.proto >= 26) send(id, { t: 'progress', progress: Prog.progressOf(p), ...(merged ? { merged: true } : {}) });
     },
     guestProgress: (id) => players.get(id)?.guestRaw ?? null,

@@ -1288,7 +1288,7 @@ export const xpToNext = (level) => 300 + 25 * (Math.max(1, level) - 1);
 export const xpForLevel = (level) => { const L = Math.max(1, Math.min(LEVEL_MAX, Math.floor(level))) - 1; return 300 * L + 25 * L * (L - 1) / 2; };
 export function levelForXp(xp) {
   xp = Math.max(0, Math.floor(+xp || 0));
-  let L = Math.max(1, Math.floor((Math.sqrt(Math.max(0, (575 / 25) ** 2 + 8 * xp / 25)) - 575 / 25) / 2) + 1);   // (the inverse of xpForLevel, then fixed up)
+  let L = Math.min(LEVEL_MAX, Math.max(1, Math.floor((Math.sqrt(Math.max(0, (575 / 25) ** 2 + 8 * xp / 25)) - 575 / 25) / 2) + 1));   // (the inverse of xpForLevel, then fixed up)
   while (L > 1 && xpForLevel(L) > xp) L--;
   while (L < LEVEL_MAX && xpForLevel(L + 1) <= xp) L++;
   return L;

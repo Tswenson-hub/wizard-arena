@@ -5,22 +5,25 @@
 // The maths (levels, the XP table, the daily rotation, the rating) is constants.js's, shared with the client.
 import * as C from '../public/shared/constants.js';
 
+// the UTC day (the tests may pin it: clock.day = () => '2026-12-26')
+export const clock = { day: () => C.dayKey() };
+
 // A human's progress at the join: a guest's own (the join's `progress`), or a fresh one until an account's arrives.
 export function initProgress(p, raw, { firstVisit = false, adapt = null } = {}) {
-  p.prog = C.sanitizeProgress(raw);
+  p.prog = C.sanitizeProgress(raw, clock.day());
   p.progAccount = false;
   p.adapt = C.sanitizeAdapt(adapt, firstVisit);
   p.challengeItems = [];   // challenges completed since the last match's award: [{ k: 'challenge', id, xp }]
 }
 // An account's progress (Saves.loadProgress / mergeGuestProgress) replaces the guest's.
 export function setAccountProgress(p, raw) {
-  p.prog = C.sanitizeProgress(raw);
+  p.prog = C.sanitizeProgress(raw, clock.day());
   p.progAccount = true;
   p.challengeItems = [];
 }
 // A new UTC day: today's challenges (the XP and the first-win day stay)
 function rollDay(p) {
-  const day = C.dayKey();
+  const day = clock.day();
   if (p.prog.challenges.day !== day) p.prog = C.sanitizeProgress({ ...p.prog, challenges: null }, day);
 }
 // A challenge counter moved (live matches only; room.js checks). Returns the challenges it moved: [{ id, text, n, goal, done, xp, newly }].
@@ -56,7 +59,7 @@ export function finishMatch(p, { place, of, won, map, kills = 0, deaths = 0 }) {
     ...(won ? bump(p, 'wins') : []),
     ...(won && map === 'sky' ? bump(p, 'winSky') : []),
   ];
-  const day = C.dayKey();
+  const day = clock.day();
   const firstWin = won && p.prog.firstWinDay !== day;
   if (firstWin) p.prog.firstWinDay = day;
   const mx = C.matchXp({ kills, place, won, firstWin });
