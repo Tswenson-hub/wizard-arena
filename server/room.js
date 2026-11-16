@@ -2933,12 +2933,15 @@ export function createRoom(opts) {
       else if (msg.t === 'matchDebug' && room.kind === 'lab') match.handle({ bot: null }, msg);   // round 26: the adaptive sim (MATCH_DEBUG only, match.js checks)
     },
     // round 26: a verified account's progress (Saves.loadProgress / mergeGuestProgress) for a player in this room
-    setProgress(id, raw, merged = false) {
+    // (round 26b: `grandfather`: they played before the wizard ladder (a CrazyGames profile with matches, or this browser said so):
+    // everything unlocked, saved to the account)
+    setProgress(id, raw, merged = false, { grandfather = false } = {}) {
       const p = players.get(id);
       if (!p || !raw) return;
       useMap();
-      const eq = p.prog?.equipped;
+      const eq = p.prog?.equipped, wasGf = !!p.prog?.grandfathered;
       Prog.setAccountProgress(p, raw);
+      if ((grandfather || wasGf) && Prog.grandfather(p)) saveProgress(p);
       if (!Object.keys(p.prog.equipped).length && eq) p.prog.equipped = C.sanitizeEquipped(eq, p.prog.level);   // (a fresh account keeps what this browser wore)
       broadcast26({ t: 'look', id, lv: p.prog.level, eq: p.prog.equipped, title: C.titleFor(p.prog.level) });
       if (p.proto >= 26) send(id, { t: 'progress', progress: Prog.progressOf(p), ...(merged ? { merged: true } : {}) });

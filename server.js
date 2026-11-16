@@ -201,7 +201,8 @@ wss.on('connection', (ws) => {
       }
       ws.progressLinked = true;
       ws.accountProgress = prog;
-      if (id !== null && ws.readyState === 1) room?.setProgress(id, prog, merged);
+      // round 26b: a CrazyGames profile with matches already played keeps every wizard (grandfathered)
+      if (id !== null && ws.readyState === 1) room?.setProgress(id, prog, merged, { grandfather: ws.profileMatches > 0 });
     }).catch(e => console.warn('[saves] progress', e)).finally(() => { ws.progressLinking = false; });
   };
 
@@ -217,6 +218,7 @@ wss.on('connection', (ws) => {
         if (ws.readyState !== 1) return;
         if (!r?.acc) { ws.send(JSON.stringify({ t: 'profile', guest: true })); return; }
         ws.account = { playerId: r.acc.playerId, userId: r.cg.userId, username: r.cg.username };
+        ws.profileMatches = +r.acc.stats?.matches || 0;   // round 26b: grandfathering
         const p = id !== null && room?.players.get(id);
         if (p) p.account = ws.account;
         ws.send(JSON.stringify({ t: 'profile', username: r.cg.username, save: r.acc.save, stats: r.acc.stats }));
@@ -245,6 +247,7 @@ wss.on('connection', (ws) => {
         watching?.observerMessage(msg);
         return;
       }
+      if (msg.t === 'matchDebug') { watching?.observerMessage(msg); return; }   // round 26: the adaptive sim's lab room (MATCH_DEBUG only; room.js and match.js check)
       if (msg.t !== 'join') return;
       const gen = genOf(msg);   // round 22 / 24: no `proto` = the old CrazyGames build; 22-23 = the round-23 build (the courtyard only)
       const pick = roomFor(msg.room, gen, msg.firstVisit === true, notifier.isAdmin(msg.admin));   // (round 23: the admin key, never echoed or logged)

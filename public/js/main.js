@@ -506,6 +506,7 @@ function anonId() {
 function playtimeJoin() {
   let adapt; try { adapt = JSON.parse(lsGet(ADAPT_KEY) || 'null') || undefined; } catch {}
   let extra = {}; try { extra = progress?.joinFields?.() || {}; } catch (e) { console.warn('[progress] joinFields', e); }
+  if (grandfathered()) extra = { ...extra, progress: { ...(extra.progress || extra.guest || {}), grandfathered: true } };   // round 26b
   return { anon: anonId(), ...(adapt ? { adapt } : {}), ...extra };
 }
 const PLAYED_KEY = 'waPlayedOnce', VISITS_KEY = 'waVisits', VISIT_SESSION_KEY = 'waVisitAt';
@@ -537,10 +538,16 @@ function localSignsOfPlay() {
   try { if ((JSON.parse(lsGet('waProfile') || 'null')?.stats?.matches ?? 0) > 0) return true; } catch {}
   return false;
 }
+// Round 26b: the wizard ladder. Anyone who played before this release keeps every wizard and the builder: decided once, at the first
+// load of this version (later plays set waPlayedOnce too, so it's never worked out again), or by a CrazyGames profile with matches.
+// It rides in the join's progress (`grandfathered: true`); the server keeps it with the progress (and grandfathers an account itself).
+const GF_KEY = 'waGrandfathered';   // (set once, below HOWTO_KEY)
+const grandfathered = () => lsGet(GF_KEY) === '1';
 async function settleFirstVisit() {
   if (URLQ.has('first')) return true;
   if (URLQ.has('builder') || localSignsOfPlay()) return false;
   const prof = await Promise.race([profileP, new Promise(r => setTimeout(() => r(null), 1500))]);
+  if (prof && !prof.guest && (prof.stats?.matches ?? 0) > 0) lsSet(GF_KEY, '1');   // (round 26b)
   return !(prof && !prof.guest && (prof.stats?.matches ?? 0) > 0);
 }
 function startFirstVisit() {
@@ -584,6 +591,7 @@ window.WA_MENU = {
 // every few seconds; the server keeps one write per 10 s). Guests and our own site never get a profile: local saves only.
 let account = null, lastSaved = '';
 const HOWTO_KEY = 'waHowToPlaySeen';   // (select.js's "how to play seen" flag)
+if (lsGet(GF_KEY) == null) lsSet(GF_KEY, localSignsOfPlay() ? '1' : '0');   // round 26b: grandfathering, decided once (above)
 function localSave() {
   let howto = false;
   try { howto = !!localStorage.getItem(HOWTO_KEY); } catch {}

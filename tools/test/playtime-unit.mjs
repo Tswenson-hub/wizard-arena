@@ -89,6 +89,32 @@ ok(C.levelForXp(6475) === 15 && C.titleFor(1) === 'Apprentice' && C.titleFor(10)
   Prog.clock.day = () => C.dayKey();
 }
 
+// ---------------------------------------------------------------- round 26b: the wizard ladder
+{
+  ok(C.WIZARD_UNLOCKS.map(w => `${w.id}:${w.xp}`).join() === 'cinder:0,rime:50,gale:200,vesper:350,embibe:500,jeb:650' && C.BUILDER_UNLOCK_XP === 650,
+    'the ladder: Pyromancer 0, Frost Warden 50, Stormcaller 200, Hemomancer 350, Alchemist 500, Beastcaller 650, the builder at 650');
+  ok(C.WIZARD_UNLOCKS.every(w => C.PRESETS.some(k => k.id === w.id)) && C.PRESETS.every(k => C.WIZARD_UNLOCKS.some(w => w.id === k.id)), 'every wizard is on the ladder once');
+  const fresh = C.progressPublic(C.sanitizeProgress(null));
+  ok(fresh.wizards.unlocked.join() === 'cinder' && !fresh.wizards.builder && fresh.wizards.next.id === 'rime' && fresh.wizards.next.toGo === 50, 'a fresh profile: only the Pyromancer, no builder, "Frost Warden: 50 XP to go"');
+  const q = { id: 9 };
+  Prog.initProgress(q, null);
+  const one = Prog.finishMatch(q, { place: 4, of: 4, won: false, map: 'courtyard', kills: 0, deaths: 5 });
+  ok(one.msg.wizardsUnlocked.map(w => w.id).join() === 'rime' && one.msg.progress.wizards.unlocked.includes('rime') && one.msg.before.wizards.unlocked.join() === 'cinder',
+    `one finished match (even last, no kills: +${one.msg.gained}) unlocks the Frost Warden`);
+  ok(one.msg.progress.wizards.next.id === 'gale' && one.msg.progress.wizards.next.toGo === 150, '"Stormcaller: 150 XP to go" after it');
+  const at = (xp) => C.wizardUnlocks(xp);
+  ok(at(199).unlocked.length === 2 && at(200).unlocked.length === 3 && at(349).unlocked.length === 3 && at(350).unlocked.length === 4 && at(500).unlocked.length === 5 && at(649).unlocked.length === 5 && at(650).unlocked.length === 6, 'each threshold unlocks exactly at its XP');
+  ok(!at(649).builder && at(649).next.id === 'jeb' && at(650).builder && at(650).next === null, 'the builder is hidden until 650 XP, then nothing is left');
+  ok(C.wizardsUnlockedBetween(600, 700).map(w => w.id).join() === 'jeb,builder', 'crossing 650: the Beastcaller and "Build your own" together');
+  const gf = C.sanitizeProgress({ xp: 0, grandfathered: true });
+  const stored = C.sanitizeProgress({ xp: gf.xp, unlocks: gf.unlocks });   // (what comes back from Supabase or localStorage)
+  ok(gf.unlocks.includes(C.GRANDFATHERED) && stored.grandfathered && C.progressPublic(stored).wizards.all && C.progressPublic(stored).wizards.builder && C.progressPublic(stored).wizards.unlocked.length === 6,
+    'a grandfathered player has every wizard and the builder at 0 XP, and the mark survives storage');
+  const g = { id: 10 }; Prog.initProgress(g, { xp: 20, grandfathered: true });
+  ok(Prog.finishMatch(g, { place: 1, of: 4, won: true, map: 'courtyard', kills: 3, deaths: 0 }).msg.wizardsUnlocked.length === 0, 'a grandfathered player never gets "New wizard unlocked" moments');
+  const h = { id: 11 }; Prog.initProgress(h, { xp: 10 }); ok(Prog.grandfather(h) && h.prog.grandfathered && !Prog.grandfather(h), 'grandfather() marks an account once');
+}
+
 // ---------------------------------------------------------------- adaptive difficulty: the rating and the bots' scale
 {
   let a = C.sanitizeAdapt(null, true);

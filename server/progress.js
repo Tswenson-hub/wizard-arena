@@ -74,9 +74,17 @@ export function finishMatch(p, { place, of, won, map, kills = 0, deaths = 0 }) {
   for (let L = lvBefore + 1; L <= lvAfter; L++) { levelUps.push(L); for (const u of C.UNLOCKS) if (u.level === L) unlocked.push(u); }
   p.adapt = C.adaptAfter(p.adapt, place, of, kills, deaths);
   return {
-    msg: { t: 'xp', items, gained, before: { xp: beforeXp, ...C.levelInfo(beforeXp) }, progress: C.progressPublic(p.prog, p.progAccount), levelUps, unlocked, adapt: p.adapt },
+    msg: { t: 'xp', items, gained, before: { xp: beforeXp, ...C.levelInfo(beforeXp), wizards: C.wizardUnlocks(beforeXp, p.prog.grandfathered) },
+      progress: C.progressPublic(p.prog, p.progAccount), levelUps, unlocked, adapt: p.adapt,
+      wizardsUnlocked: C.wizardsUnlockedBetween(beforeXp, p.prog.xp, p.prog.grandfathered) },   // round 26b: "New wizard unlocked: Frost Warden!"
     moved,
   };
+}
+// Round 26b: everything unlocked for someone who played before the wizard ladder (a marker in `unlocks`, so it's stored with them)
+export function grandfather(p) {
+  if (!p?.prog || p.prog.grandfathered) return false;
+  p.prog = C.sanitizeProgress({ ...p.prog, grandfathered: true }, clock.day());
+  return true;
 }
 // What Saves.writeProgress stores
 export const progressRow = (p) => ({ ...p.prog, lastDailyReset: p.prog.challenges.day });

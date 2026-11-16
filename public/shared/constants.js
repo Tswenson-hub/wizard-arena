@@ -1386,14 +1386,48 @@ export function sanitizeProgress(x, day = dayKey()) {
     const n = Math.max(0, Math.min(c.goal, Math.floor(Number(h?.n) || 0)));
     return { id: c.id, n, goal: c.goal, done: !!h?.done || n >= c.goal };
   });
-  return { xp, level, unlocks: unlocksFor(level), equipped: sanitizeEquipped(o.equipped, level),
+  const grandfathered = o.grandfathered === true || (Array.isArray(o.unlocks) && o.unlocks.includes(GRANDFATHERED));   // round 26b
+  return { xp, level, unlocks: [...unlocksFor(level), ...(grandfathered ? [GRANDFATHERED] : [])], grandfathered, equipped: sanitizeEquipped(o.equipped, level),
     challenges: { day, list }, firstWinDay: typeof o.firstWinDay === 'string' && DAY_RE.test(o.firstWinDay) ? o.firstWinDay : null,
     guestMerged: !!o.guestMerged };
 }
+// Round 26b (Ty): wizard unlocks. A new player starts with the Pyromancer only; the others unlock by total XP (a typical match is
+// about 130-170 XP), and the full spell builder ("Build your own") with the last one, about 17-20 minutes in. Tunable here only.
+// Grandfathered players (anyone who played before this release) have everything. Enforced by the client; the server stays lenient.
+export const WIZARD_UNLOCKS = [
+  { id: 'cinder', xp: 0 },     // the Pyromancer
+  { id: 'rime', xp: 50 },      // the Frost Warden: any one finished match
+  { id: 'gale', xp: 200 },     // the Stormcaller
+  { id: 'vesper', xp: 350 },   // the Hemomancer
+  { id: 'embibe', xp: 500 },   // the Alchemist
+  { id: 'jeb', xp: 650 },      // the Beastcaller
+];
+export const BUILDER_UNLOCK_XP = 650;   // "Build your own" (the 35-card spell grid)
+export const GRANDFATHERED = 'grandfathered';   // (a marker in `unlocks`, so it rides wherever the progress is stored)
+// { unlocked: [wizard ids], builder: bool, all: bool, next: { id, name, xp, toGo } | null (the next wizard, or the builder: id 'builder') }
+export function wizardUnlocks(xp, grandfathered = false) {
+  xp = Math.max(0, Math.floor(+xp || 0));
+  const all = !!grandfathered;
+  const unlocked = WIZARD_UNLOCKS.filter(w => all || xp >= w.xp).map(w => w.id);
+  const builder = all || xp >= BUILDER_UNLOCK_XP;
+  const nw = all ? null : WIZARD_UNLOCKS.find(w => xp < w.xp);
+  const next = nw ? { id: nw.id, name: WIZARDS[nw.id]?.preset ?? nw.id, xp: nw.xp, toGo: nw.xp - xp }
+    : !builder ? { id: 'builder', name: 'Build your own', xp: BUILDER_UNLOCK_XP, toGo: BUILDER_UNLOCK_XP - xp } : null;
+  return { unlocked, builder, all, next };
+}
+// What newly unlocked going from `xpBefore` to `xpAfter`: [{ id, name, xp }] (the builder as id 'builder')
+export function wizardsUnlockedBetween(xpBefore, xpAfter, grandfathered = false) {
+  if (grandfathered) return [];
+  const out = WIZARD_UNLOCKS.filter(w => w.xp > xpBefore && w.xp <= xpAfter).map(w => ({ id: w.id, name: WIZARDS[w.id]?.preset ?? w.id, xp: w.xp }));
+  if (BUILDER_UNLOCK_XP > xpBefore && BUILDER_UNLOCK_XP <= xpAfter) out.push({ id: 'builder', name: 'Build your own', xp: BUILDER_UNLOCK_XP });
+  return out;
+}
+
 // What a client is told about its progress (adds the display fields)
 export function progressPublic(prog, account = false) {
   const { level, into, need } = levelInfo(prog.xp);
   return { xp: prog.xp, level, into, need, title: titleFor(level), unlocks: unlocksFor(level), equipped: prog.equipped || {},
+    wizards: wizardUnlocks(prog.xp, prog.grandfathered), grandfathered: !!prog.grandfathered,   // round 26b
     challenges: { day: prog.challenges.day, list: prog.challenges.list.map(e => { const c = DAILY_POOL.find(k => k.id === e.id); return { ...e, text: c?.text ?? e.id, xp: c?.xp ?? 0 }; }) },
     next: nextUnlock(level), account: !!account };
 }
