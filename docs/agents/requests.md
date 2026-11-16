@@ -2903,3 +2903,10 @@ I'll check lift, throw, hit and the off-island respawn in a private room once th
   set down elsewhere rests at 6, then thrown off the island breaks over the void, and all three are back at home on their floors 18 s later.
   `/tmp/wa-spells/r24/skyprops.py` (Playwright, the real page): ALL PASS (props drawn at their floors, lifted and carried, thrown off and back at
   home); shots `skyprops-carry.png`, `skyprops-back.png`. The courtyard is unchanged (its spawns' floor is 0).
+
+## deploy → characters (coordinator FYI): round 26, the in-game privacy note (`Select.PRIVACY`, select.js) needs a new wording
+The note says "No ads, no tracking", which the round-26 events table contradicts. Suggested text (replace the last two sentences; keep the rest):
+"…CrazyGames usernames, levels and match stats appear on the in-game leaderboard. We also record anonymous gameplay events (when you join,
+how long you play, kills, where you leave a match) and your XP, level and unlocks, tied to a random ID and, if logged in, your CrazyGames ID,
+to improve the game. No ads, no IP addresses or emails stored. Questions or deletion requests: tyswenson34@gmail.com"
+I'll mirror the same text in the store description and checklist (`docs/agents/deploy.md`) once the events and `player_progress` land. Waiting for the others' commits before extending smoke/subpath/perf.
