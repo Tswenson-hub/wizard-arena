@@ -324,13 +324,13 @@ function overlay(top, rest, dur, onSkip, next = null) {
     ${top.map(tag).join('')}
     ${rest.length ? `<div class="rc-rest">${rest.map(r => `<span>${PLACE[r.place] || `${r.place}th`} <b>${esc(r.name)}</b> ${r.kills ?? 0}/${r.deaths ?? 0}</span>`).join('')}</div>` : ''}
     ${hasProfile() ? '<div class="rc-saved">✓ Saved to your profile</div>' : ''}
-    ${firstVisitUI() ? '<button type="button" class="rc-try">Try another wizard <span>Six ready-made wizards, or build your own</span></button>' : ''}
+    ${firstVisitUI() ? '<button type="button" class="rc-try">Try another wizard <span>Each wizard has six spells of its own</span></button>' : ''}
     ${next?.name ? `<div class="rc-next">Next map <b>${esc(next.name)}</b></div>` : ''}
     <div class="rc-bar"><i></i></div>`;
   document.body.appendChild(el);
   document.body.classList.add('recap-on');
   el.querySelector('.rc-skip').addEventListener('click', (e) => { e.stopPropagation(); onSkip(); });
-  // round 21, a first visit: ends the recap and opens the Esc menu's builder (the presets pulse there, Respawn applies them)
+  // round 21, a first visit: ends the recap and opens the Esc menu's wizard gallery (it pulses there, Respawn applies the pick)
   el.querySelector('.rc-try')?.addEventListener('click', (e) => { e.stopPropagation(); onSkip(); setTimeout(openEscMenu, 50); });
   const tags = [...el.querySelectorAll('.rc-tag')], bar = el.querySelector('.rc-bar i');
   const onKey = (e) => { if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onSkip(); } };

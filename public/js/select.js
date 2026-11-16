@@ -1,9 +1,9 @@
-// The spell builder (characters track, round 11). The hero picker it replaced is in git history (round 4-10).
+// The wizard gallery (characters track, round 27; the spell builder of rounds 11-26 and the hero picker of rounds 4-10 are in git history).
 import * as THREE from 'three';
 import * as C from '../shared/constants.js';
 import { makeWizardBody, looksReady, lookOf, clipsFor } from './looks.js';
 import { spellPlay } from './spellanim.js';
-import { loadSaved, saveSaved, MAX_SAVED } from './loadout-store.js';
+import { WIZARDS } from '../shared/wizards.js';
 import { getView, subscribe as onProgress, equip, unlockList, tauntsEnabled, setTauntsEnabled, wizardAccess, grandfather } from './progress.js';   // round 26: the Wardrobe and the tracker
 import { LOOKS, SLOTS, SLOT_NAMES, DEFAULT_LOOK } from '../shared/cosmetics.js';
 
@@ -11,14 +11,15 @@ const FPS = 30;
 const hex = (c) => '#' + c.toString(16).padStart(6, '0');
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
-// ================================================================ the spell builder (round 11)
-// mountSpellBuilder(container, { loadout, voice, onChange(loadout), onVoice(voice), footer }) ->
-//   { set(loadout), setVoice(voice), footer, destroy() }
-// Six slot rows of spell cards (C.LOADOUT_SLOTS; every id of C.SPELL_POOL[slot]), a live preview of the generic
-// wizard tinted by the loadout's element mix that plays a hovered card's cast, the element mix and active combos,
-// presets (the old kits), Randomize, three saved loadouts (loadout-store.js) and the voice. `footer`: an element
-// (the name field and Join, say) placed in the bottom bar; the bar is also returned as `footer`.
-// Keyboard: arrows move between cards (up/down change rows), Enter or Space picks, Tab leaves the grid.
+// ================================================================ the wizard gallery (round 27; the spell builder of rounds 11-26 is in git history)
+// mountSpellBuilder(container, { loadout, voice, onChange(loadout, { wizard }), onVoice(voice), footer }) ->
+//   { set(loadoutOrWizardId), setVoice(voice), footer, loadout, wizard, voice, destroy() }
+// (the name is main.js's.) Six wizard cards (C.PRESETS: wizards.js's fixed kits), locked ones greyed with their XP and a bar from the
+// ladder (progress.js wizardAccess). A detail panel beside them shows the hovered or focused wizard (else yours): a live preview
+// casting its signature spell, its six abilities in plain words and a playstyle tip. Picking an open card sets the loadout to its kit.
+// The top bar has How to play, Stats and the Wardrobe; the side the level, today's challenges and (on the join screen) the rooms;
+// the bottom bar the voice and `footer` (main.js's name field, Play and bots). In the Esc menu the same gallery, compact.
+// Keyboard: the cards are a radio group (arrows move, Enter or Space picks, focus shows the details); Tab leaves it.
 
 // Raven Fantasy Icons (public/textures/icons/CREDITS.md), by spell; a spell not listed uses its own id.
 const SPELL_ICON = {
@@ -26,97 +27,98 @@ const SPELL_ICON = {
   sanguine_lash: 'lash', battering_ram: 'ram', toxic_flask: 'toxic', glacial_bulwark: 'bulwark', flask_step: 'flaskstep',
 };
 const iconOf = (id) => `./textures/icons/${SPELL_ICON[id] || id}.png`;
-// A card's one-line description (round 14): short enough for two lines on the smallest card, and free of numbers so the
-// spells agent's tuning never makes it wrong. The tooltip has the full blurb and every stat.
-const CARD_LINE = {
-  spark: 'Fast bolts, long reach', glacial_skim: 'Ground shards that slow', fireball: 'Big, hot bolts', gale_shear: 'A short-range wind blade',
-  potion_toss: 'Arcing potions that splash', sling: 'Stones that hit harder far off', hex_shards: 'Glyphs that curve in',
-  toxic_flask: 'A pool of poison', meteor: 'A slow, heavy fireball', cyclone: 'Spin and fling them away', sanguine_lash: 'A blood bolt that heals you',
-  frostfall: 'Drop a block of ice', battering_ram: 'A ram charges ahead',
-  smoke_flask: 'Smoke that eats spells', ward: 'Block from the front', firewall: 'A wall of flame', black_death: 'A blood shroud that heals',
-  tempest_veil: 'Swallow spells, keep casting', ram_guard: 'Rams take your hits', glacial_bulwark: 'A freezing ice wall',
-  flask_step: 'Teleport where it lands', ram_ride: 'Gallop on a ram', blink: 'Teleport forward', skyward: 'Shoot up, float down',
-  mirror_step: 'Dash and leave decoys', smoke_screen: 'Leap back into smoke',
-  telekinesis: 'Lift an object and hurl it', trapped_relic: 'Turn an object into a trap', roll: 'Roll out of the way',
-  meteor_rain: 'Leap up, dive as a blaze', blizzard: 'A cone of freezing snow', eye_of_storm: 'Become a tornado',
-  stampede: 'A lane of charging rams', berserker_brew: 'Harder potions, half cooldowns', night_cage: 'A ring nobody crosses',
+// An ability's one line in the detail panel: plain words, free of numbers so spells' tuning never makes it wrong, and short enough
+// for one line of the panel. A spell not listed uses spells' `SPELLBOOK[id].line`, else its blurb's first sentence.
+const ABILITY_LINE = {
+  fireball: 'Big fire bolts; every third one stuns', meteor: 'A slow, heavy fireball after a wind-up', firewall: 'A wall of flame that burns up spells',
+  smoke_screen: 'Leap back into smoke that hides you', meteor_rain: 'Leap into the sky, dive down as a blaze',
+  gale_shear: 'Short-range blades of wind', cyclone: 'Spin and fling everyone near you away', tempest_veil: 'A wind bubble that swallows every spell',
+  blink: 'Teleport forward', eye_of_storm: 'Become a tornado that pulls them in',
+  glacial_skim: 'Ice shards along the ground that slow', frostfall: 'Drop a block of ice that freezes', glacial_bulwark: 'An ice wall that blocks everything',
+  skyward: 'Flash straight up, float down', blizzard: 'A cone of snow that freezes and pushes',
+  hex_shards: 'Glyphs that curve in from the sides', sanguine_lash: 'A blood bolt that heals you as it hits', black_death: 'A blood shroud that turns hits into healing',
+  mirror_step: 'Dash and split off two decoys', night_cage: 'A ring of spikes nobody can cross',
+  sling: 'Stones that hit harder the further they fly', battering_ram: 'A ram charges straight ahead', ram_guard: 'Three rams circle you and take your hits',
+  ram_ride: 'Gallop on a ram, knocking them flat', stampede: 'A herd of rams thunders down a lane',
+  potion_toss: 'Arcing potions that splash', toxic_flask: 'A pool of poison that lingers', smoke_flask: 'Purple smoke that eats incoming spells',
+  flask_step: 'Teleport to where your flask lands', berserker_brew: 'Heal, hit harder, halve your cooldowns',
+  telekinesis: 'Lift a crate or barrel, then hurl it', spark: 'Fast bolts, long reach', ward: 'Block spells from the front',
 };
 const firstSentence = (s) => (s || '').split(/(?<=\.)\s/)[0];
-const cardLine = (s) => CARD_LINE[s.id] || firstSentence(s.blurb);
-// The tags a card shows, most telling first (the tooltip lists them all; fit() drops any that don't fit).
-const TAG_ORDER = ['Combo', 'Stuns', 'Roots', 'Knockdown', 'Slows', 'Heal', 'Teleport', 'Dodge', 'Channel', 'Summon', 'Lob', 'Area',
-  'Wind-up', 'Dash', 'Shield', 'Hitscan-like', 'Interrupts', 'Projectile'];
-const tagRank = (t) => { const i = TAG_ORDER.indexOf(t); return i < 0 ? TAG_ORDER.length : i; };
-// The stat symbols (an SVG mask each, so they look the same on every system) and their legend.
-const STATS = [['dmg', 'Damage'], ['cd', 'Cooldown'], ['rng', 'Range'], ['dur', 'Duration'], ['wu', 'Wind-up']];
-// a stat on a card: its number and unit kept together by a narrow space ("0.45 s" -> "0.45 s", narrower)
-const tight = (v) => String(v).replace(/(\d) (s|m|s\/|%)/g, '$1\u202f$2');
-const tagHTML = (t) => `<i${t === 'Combo' ? ' class="combo"' : ''}>${esc(t)}</i>`;
-// Phases a hovered card demonstrates, in order of preference (a primary shows its magazine's shots in turn).
+const spellName = (id) => C.SPELLBOOK[id]?.name || id;   // (F is Arcane Grasp for every wizard: the id stays `telekinesis`)
+// The spell the preview casts when a wizard is hovered: the one that says the most about it.
+const SIGNATURE = { cinder: 'fireball', rime: 'frostfall', gale: 'cyclone', vesper: 'sanguine_lash', embibe: 'potion_toss', jeb: 'battering_ram' };
+// Phases a cast demonstrates, in order of preference (a primary shows its magazine's shots in turn).
 const DEMO = ['windup', 'cast', 'release', 'channel', 'loop', 'hold'];
+
+const presetOf = (id) => C.PRESETS.find(p => p.id === id) || null;
+// The wizard a loadout (or id) belongs to: its kit exactly, else spells' mapping when there is one, else the kit with the same
+// primary, else the Pyromancer (the server's rule for old saved custom loadouts).
+export function wizardOf(x) {
+  if (typeof x === 'string') return presetOf(x) ? x : C.DEFAULT_WIZARD || 'cinder';
+  const lo = C.sanitizeLoadout(x);
+  if (!lo) return C.PRESETS[0].id;
+  const exact = C.PRESETS.find(p => C.sameLoadout(p.loadout, lo));
+  if (exact) return exact.id;
+  for (const f of [C.wizardOfLoadout, C.wizardForLoadout, C.kitOf]) {
+    if (typeof f !== 'function') continue;
+    const r = f(lo), id = typeof r === 'string' ? r : r?.id;
+    if (presetOf(id)) return id;
+  }
+  return C.PRESETS.find(p => p.loadout.primary === lo.primary)?.id || C.PRESETS[0].id;
+}
+export function wizardName(x) { return presetOf(wizardOf(x))?.name || 'Pyromancer'; }
+const kitOf = (id) => ({ ...(presetOf(id) || C.PRESETS[0]).loadout });
+const wizColor = (id) => hex(lookOf(kitOf(id)).color);
 
 function builderHTML() {
   return `<div class="sb-top">
-      <div class="sb-group sb-presets" role="group" aria-label="Ready-made wizards"><span class="sb-label">Pick a wizard</span>${C.PRESETS.map(p =>
-        `<button type="button" class="sb-chip" data-preset="${p.id}" style="--el:${hex(lookOf(p.loadout).color)}" title="${esc(p.name)}: ${esc(C.LOADOUT_SLOTS.map(s => C.SPELLBOOK[p.loadout[s]]?.name).join(', '))}">${esc(p.name)}</button>`).join('')}
-        <button type="button" class="sb-chip sb-random" data-random title="A random spell in every slot">🎲 Randomize</button>
+      <div class="sb-group sb-menu" role="group" aria-label="More">
         <button type="button" class="sb-chip sb-howto" data-howto title="Controls and the goal">How to play</button>
         <button type="button" class="sb-chip sb-stats-btn" data-stats title="Your stats and the leaderboard">📊 Stats</button>
         <button type="button" class="sb-chip sb-wd-btn" data-wardrobe title="Robes, hats, staff glows and spell trails you've unlocked">🎩 Wardrobe <i class="sb-wd-lv"></i></button></div>
-      <div class="sb-group sb-saved" role="group" aria-label="Saved loadouts"><span class="sb-label">Saved</span>${Array.from({ length: MAX_SAVED }, (_, i) =>
-        `<span class="sb-slotbtn" data-saved="${i}"><button type="button" class="sb-chip sb-load"></button><button type="button" class="sb-save" title="Save the current loadout here">Save</button></span>`).join('')}</div>
     </div>
     <div class="sb-main">
-      <div class="sb-rows" role="grid" aria-label="Spells">${C.LOADOUT_SLOTS.map(slot => `
-        <div class="sb-row" role="row" data-slot="${slot}">
-          <div class="sb-slot" role="rowheader"><kbd>${esc(C.SLOT_INFO[slot].key)}</kbd><span>${esc(C.SLOT_INFO[slot].label)}</span></div>
-          <div class="sb-cards" role="radiogroup" aria-label="${esc(C.SLOT_INFO[slot].label)}" style="--n:${C.SPELL_POOL[slot].length}">${C.SPELL_POOL[slot].map(cardHTMLFor).join('')}</div>
-        </div>`).join('')}
-      </div>
-      <div class="sb-wardrobe" role="region" aria-label="Wardrobe"></div>
-      <div class="sb-wizards" role="radiogroup" aria-label="Wizards"></div>
-      <div class="sb-side">
-        <div class="sb-preview" aria-hidden="true"><div class="sb-caption"></div></div>
-        <div class="sb-summary">
-          <div class="sb-mixbar" aria-hidden="true"></div>
-          <div class="sb-mix"></div>
-          <div class="sb-combos"></div>
+      <section class="wg-gallery" aria-label="Wizards">
+        <div class="wg-head"><span class="wg-label">Choose your wizard</span><span class="wg-next"></span></div>
+        <div class="wg-grid" role="radiogroup" aria-label="Wizards">${C.PRESETS.map(p => `
+          <button type="button" class="wg-card" role="radio" aria-checked="false" tabindex="-1" data-wizard="${p.id}" style="--el:${wizColor(p.id)}">
+            <span class="wg-pt" aria-hidden="true"><img alt="" draggable="false" hidden></span>
+            <span class="wg-info"><b class="wg-name">${esc(p.name)}</b><span class="wg-role">${esc(WIZARDS[p.id]?.role || '')}</span><span class="wg-st"></span></span>
+          </button>`).join('')}
         </div>
+      </section>
+      <div class="sb-wardrobe" role="region" aria-label="Wardrobe"></div>
+      <section class="wg-detail" aria-live="polite">
+        <div class="sb-preview" aria-hidden="true"></div>
+        <div class="wg-about"></div>
+      </section>
+      <div class="sb-side">
         <div class="sb-prog" hidden></div>
       </div>
     </div>
     <div class="sb-foot">
       <div class="sb-group sb-voice" role="radiogroup" aria-label="Voice"><span class="sb-label">Voice</span>${C.VOICES.map(v =>
         `<button type="button" class="sb-chip" role="radio" data-voice="${v}">${v === 'male' ? 'Male' : 'Female'}</button>`).join('')}</div>
-      <div class="sb-legend" aria-label="Stat symbols">${STATS.map(([k, t]) => `<span class="st-${k}">${t}</span>`).join('')}</div>
       <div class="sb-extra"></div>
     </div>
-    <div class="sb-tip" role="tooltip" hidden></div>
     <div class="sb-desktop" role="note"><b>Best played on a desktop with a keyboard and mouse</b>
       <span>Wizard Arena needs a wider window, WASD and a mouse. Make the window wider, or come back on a computer.</span></div>`;
 }
 
-function cardHTMLFor(id) {
-  const s = C.spellInfo(id);
-  const stats = [['dmg', 'Damage', s.damage], ['cd', 'Cooldown', s.cooldown], s.range ? ['rng', 'Range', s.range] : ['dur', 'Duration', s.duration], ['wu', 'Wind-up', s.windup]]
-    .filter(([, , v]) => v).map(([k, t, v]) => `<span class="st-${k}" title="${t}: ${esc(v)}">${esc(tight(v))}</span>`).join('');
-  const tags = s.tags.slice().sort((a, b) => tagRank(a) - tagRank(b)).map(tagHTML).join('');
-  return `<div class="sb-card" role="radio" tabindex="-1" data-spell="${id}"${s.combos.length ? ' data-combo' : ''} aria-label="${esc(s.name)}" style="--el:${hex(s.color)}">
-      <div class="sb-head"><img class="sb-icon" src="${iconOf(id)}" alt="" draggable="false"><b class="sb-name">${esc(s.name)}</b></div>
-      <div class="sb-blurb">${esc(cardLine(s))}</div>
-      <div class="sb-stats">${stats}</div>
-      <div class="sb-tags">${tags}</div>
-    </div>`;
-}
-
-function tipHTML(id) {
-  const s = C.spellInfo(id);
-  const row = (k, v, st) => v ? `<dt class="st-${st}">${k}</dt><dd>${esc(v)}</dd>` : '';
-  return `<div class="tip-head" style="--el:${hex(s.color)}"><img src="${iconOf(id)}" alt=""><div><b>${esc(s.name)}</b><span>${esc(C.ELEMENTS[s.element].name)} · ${esc(C.SLOT_INFO[s.slot].label)} (${esc(C.SLOT_INFO[s.slot].key)})</span></div></div>
-    <p>${esc(s.blurb)}</p>
-    <dl>${row('Damage', s.damage, 'dmg')}${row('Cooldown', s.cooldown, 'cd')}${row('Range', s.range, 'rng')}${row('Duration', s.duration, 'dur')}${row('Wind-up', s.windup, 'wu')}</dl>
-    <div class="sb-tags">${s.tags.slice().sort((a, b) => tagRank(a) - tagRank(b)).map(tagHTML).join('')}</div>
-    ${s.combos.map(c => `<div class="tip-combo"><b>Combo: ${esc(c.name)}</b> with ${esc(c.spells.filter(x => x !== id).map(x => C.SPELLBOOK[x].name).join(', '))}. ${esc(c.text)}</div>`).join('')}`;
+// The detail panel's text for wizard `id`: name and role, a lock line when it's locked, the six abilities and the tip.
+function aboutHTML(id, { locked, unlockXp, toGo, mine } = {}) {
+  const p = presetOf(id), w = WIZARDS[id] || {};
+  const rows = C.LOADOUT_SLOTS.map(slot => {
+    const sid = p.loadout[slot], s = C.SPELLBOOK[sid] || {};
+    return `<li data-spell="${sid}" style="--el:${hex(s.color ?? C.spellInfo?.(sid)?.color ?? 0xffc857)}"><kbd>${esc(C.SLOT_INFO[slot].key)}</kbd>
+      <img src="${iconOf(sid)}" alt="" draggable="false"><span><b>${esc(spellName(sid))}</b><em>${esc(ABILITY_LINE[sid] || s.line || firstSentence(s.blurb))}</em></span></li>`;
+  }).join('');
+  const state = locked ? `<div class="wg-lock">🔒 Unlocks at ${unlockXp} XP${toGo > 0 ? ` · ${toGo} XP to go` : ''}</div>`
+    : mine ? '<div class="wg-mine">✓ Your wizard</div>' : '<div class="wg-pick">Click to play this wizard</div>';
+  return `<div class="wg-title" style="--el:${wizColor(id)}"><b>${esc(p.name)}</b><span>${esc(w.role || '')}</span></div>${state}
+    <ul class="wg-abil" aria-label="${esc(p.name)}'s spells">${rows}</ul>
+    ${w.tip ? `<p class="wg-tip"><b>Tip</b> ${esc(w.tip)}</p>` : ''}`;
 }
 
 // ---------------------------------------------------------------- the preview (one small WebGL canvas)
@@ -132,28 +134,41 @@ function makeBuilderPreview(el) {
   const key = new THREE.DirectionalLight(0xfff0dd, 2.2); key.position.set(2, 3, 3); scene.add(key);
   const rim = new THREE.DirectionalLight(0xffffff, 2.5); rim.position.set(-2, 2, -2.5); scene.add(rim);
   const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 30);
-  const pv = { renderer, scene, camera, rim, body: null, mixer: null, idle: null, cur: null, until: 0, demo: null, raf: 0, last: 0, visible: false, gone: false, yaw: 0.5 };
+  const pv = { tall: 3.0, wide: 2.8, renderer, scene, camera, rim, body: null, mixer: null, idle: null, cur: null, until: 0, demo: null, raf: 0, last: 0, visible: false, gone: false, yaw: 0.5 };
   let ready = false;
   looksReady().then(() => { ready = true; pv.onReady?.(); });
 
+  // Round 27: hovering across the gallery swaps wizards often, so each loadout's body (and its mixer) is made once and kept.
+  const bodies = new Map();
+  let eqNow = null;
   pv.setLoadout = (lo) => {
     if (!ready) { pv.onReady = () => pv.setLoadout(lo); return; }
-    const body = makeWizardBody(lo, { aura: 'full', cos: getView().equipped });   // (the preview shows the whole look on every graphics tier)
+    const key = C.LOADOUT_SLOTS.map(s => lo[s]).join('|');
+    let b = bodies.get(key);
+    if (!b) {
+      const body = makeWizardBody(lo, { aura: 'full', cos: eqNow || getView().equipped });   // (the preview shows the whole look on every graphics tier)
+      const mixer = new THREE.AnimationMixer(body.model);
+      b = { body, mixer, idle: mixer.clipAction(body.clips.idle), eq: eqNow };
+      bodies.set(key, b);
+    } else if (b.eq !== eqNow && eqNow) { b.body.setCosmetics?.(eqNow); b.eq = eqNow; }
+    if (pv.body === b.body) return;
     if (pv.body) { scene.remove(pv.body.model); pv.mixer.stopAllAction(); }
-    pv.body = body;
-    body.model.rotation.y = pv.yaw;
-    scene.add(body.model);
-    pv.mixer = new THREE.AnimationMixer(body.model);
-    pv.idle = pv.mixer.clipAction(body.clips.idle);
-    pv.idle.play();
+    pv.body = b.body; pv.mixer = b.mixer; pv.idle = b.idle;
+    b.body.model.rotation.y = pv.yaw;
+    scene.add(b.body.model);
+    pv.idle.reset().play();
     pv.cur = pv.idle;
-    rim.color.setHex(body.look.color);
-    el.style.setProperty('--el', hex(body.look.color));
+    rim.color.setHex(b.body.look.color);
+    el.style.setProperty('--el', hex(b.body.look.color));
     if (pv.demo) pv.play(pv.demo.id, pv.demo.lo);
   };
-  // Round 26: the Wardrobe dresses the preview in place.
-  pv.setCosmetics = (eq) => pv.body?.setCosmetics?.(eq);
-  // Play spell `id`'s cast (from the clip set of loadout `lo`, which has it equipped), on repeat while hovered.
+  // Round 26: the Wardrobe dresses the preview in place (and any kept body when it's shown again).
+  pv.setCosmetics = (eq) => {
+    eqNow = eq;
+    const b = [...bodies.values()].find(x => x.body === pv.body);
+    if (b) { b.body.setCosmetics?.(eq); b.eq = eq; }
+  };
+  // Play spell `id`'s cast (from the clip set of loadout `lo`, which has it equipped), on repeat while it's asked for.
   pv.play = (id, lo) => {
     pv.demo = id ? { id, lo, step: 0, next: 0 } : null;
     if (!id && pv.cur !== pv.idle && pv.idle) { pv.cur.crossFadeTo(pv.idle.reset().play(), 0.3, false); pv.cur = pv.idle; }
@@ -205,14 +220,54 @@ function makeBuilderPreview(el) {
     // frame the whole body: the Mage with its hat (2.2 m), the staff raised overhead or held out in front (2.7 m tall, 2.3 m
     // wide, with a margin), whatever the panel's shape
     const span = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
-    camera.position.set(0, 1.25, Math.max(3.0 / span, 2.8 / (span * camera.aspect)));
+    camera.position.set(0, 1.25, Math.max(pv.tall / span, pv.wide / (span * camera.aspect)));
     camera.lookAt(0, 1.15, 0);
     camera.updateProjectionMatrix();
     renderer.render(scene, camera);
   }
   pv.setVisible = (v) => { pv.visible = v; if (v && !pv.raf) { pv.last = performance.now(); pv.raf = requestAnimationFrame(frame); } };
-  pv.destroy = () => { pv.gone = true; pv.mixer?.stopAllAction(); renderer.dispose(); renderer.forceContextLoss(); };
+  pv.destroy = () => { pv.gone = true; for (const b of bodies.values()) b.mixer.stopAllAction(); bodies.clear(); renderer.dispose(); renderer.forceContextLoss(); };
   return pv;
+}
+
+
+// Round 27: the gallery cards' portraits. Each wizard in its element look (no cosmetics), knees up, rendered once into a PNG by a
+// throwaway renderer that's gone again before the match (so it costs the game's renderer nothing). Shared by every gallery.
+let portraitsP = null;
+function portraits() {
+  return portraitsP ||= looksReady().then(() => {
+    const W = 320, H = 400, out = new Map();
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+    try {
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.05;
+      renderer.setClearColor(0x000000, 0);
+      renderer.setPixelRatio(1);
+      renderer.setSize(W, H, false);
+      const scene = new THREE.Scene();
+      scene.add(new THREE.HemisphereLight(0xdfe6ff, 0x3a2a40, 1.6));
+      const key = new THREE.DirectionalLight(0xfff0dd, 2.4); key.position.set(2, 3, 3); scene.add(key);
+      const rim = new THREE.DirectionalLight(0xffffff, 3); rim.position.set(-2, 2, -2.5); scene.add(rim);
+      const camera = new THREE.PerspectiveCamera(28, W / H, 0.1, 30);
+      camera.position.set(0, 1.42, 4.1); camera.lookAt(0, 1.2, 0);
+      for (const p of C.PRESETS) {
+        const body = makeWizardBody(p.loadout, { aura: 'full' });
+        const mixer = new THREE.AnimationMixer(body.model);
+        mixer.clipAction(body.clips.idle).play();
+        mixer.update(0.7);
+        body.updateGrip?.(1);
+        body.model.rotation.y = 0.42;
+        rim.color.setHex(body.look.color);
+        scene.add(body.model);
+        renderer.render(scene, camera);
+        out.set(p.id, renderer.domElement.toDataURL('image/png'));
+        scene.remove(body.model);
+        mixer.stopAllAction();
+      }
+    } finally { renderer.dispose(); renderer.forceContextLoss(); }
+    return out;
+  }).catch((e) => { console.warn('[select] portraits', e?.message); return new Map(); });
 }
 
 // ---------------------------------------------------------------- round 26: the Wardrobe and the progress block
@@ -243,184 +298,163 @@ function wardrobeHTML(v) {
   };
   return `<div class="wd-head">${levelHTML(v)}
       <div class="wd-next">${next ? `Next unlock: <b>${esc(next.name)}</b> at level ${next.level}` : all.length ? 'Every unlock is yours' : ''}</div>
-      <button type="button" class="sb-chip wd-back" data-wd-back>‹ Spells</button></div>
+      <button type="button" class="sb-chip wd-back" data-wd-back>‹ Wizards</button></div>
     <div class="wd-rows">${SLOTS.map(slot => `<div class="wd-row"><div class="wd-slot">${esc(SLOT_NAMES[slot])}</div>
       <div class="wd-items">${chip(slot, null)}${all.filter(u => u.slot === slot).map(u => chip(slot, u)).join('')}</div></div>`).join('')}</div>
     <p class="wd-note">Cosmetic only: every unlock changes how you look, never how you play. Everyone in the match sees them.${all.length ? '' : ' (Unlocks arrive with the next server update.)'}</p>`;
 }
 
-// Round 26b: a small preview of a wizard casting its primary on repeat (the XP panel's "New wizard unlocked!"). { destroy() }.
+// Round 26b: a small preview of a wizard casting its signature spell on repeat (the XP panel's "New wizard unlocked!"). { destroy() }.
 export function mountWizardPreview(el, loadout) {
   if (!el) return null;
-  const pv = makeBuilderPreview(el), lo = C.sanitizeLoadout(loadout) || { ...C.DEFAULT_LOADOUT };
-  pv.setLoadout(lo); pv.play(lo.primary, lo); pv.setVisible(true);
+  const pv = makeBuilderPreview(el), id = wizardOf(loadout), lo = kitOf(id);
+  pv.setLoadout(lo); pv.play(SIGNATURE[id] || lo.primary, lo); pv.setVisible(true);
   return { destroy: () => pv.destroy() };
 }
 
-// ---------------------------------------------------------------- the builder
+
+// ---------------------------------------------------------------- the gallery
 
 export function mountSpellBuilder(container, { loadout, voice, onChange, onVoice, footer } = {}) {
-  let paintWizards = null;
-  let cur = C.sanitizeLoadout(loadout) || { ...C.DEFAULT_LOADOUT };
+  const asked = typeof loadout === 'string' ? null : C.sanitizeLoadout(loadout);
+  let wiz = wizardOf(loadout ?? C.DEFAULT_LOADOUT);   // (a loadout that isn't a kit maps to the nearest; the ladder is checked below)
+  let cur = kitOf(wiz);
   let vox = C.sanitizeVoice(voice);
   const root = document.createElement('div');
-  root.className = 'spell-builder';
+  root.className = 'spell-builder wizard-gallery';
   const inJoin = !!container.closest('#join');
-  root.classList.add(inJoin ? 'sb-join' : 'sb-pause');   // round 21: the join screen's emphasis; the pause menu's "Try another wizard"
+  root.classList.add(inJoin ? 'sb-join' : 'sb-pause');   // round 21: the join screen's emphasis; the pause menu's compact "Try another wizard"
   root.innerHTML = builderHTML();
   container.appendChild(root);
   const $ = (s) => root.querySelector(s), $$ = (s) => [...root.querySelectorAll(s)];
-  const tip = $('.sb-tip');
   const pv = makeBuilderPreview($('.sb-preview'));
-  const caption = $('.sb-caption');
+  pv.tall = 2.55;   // (a wide, short panel: a little closer than the full 3 m, the staff's top may brush the edge mid-cast)
+  if (!inJoin) pv.wide = 2.0;   // (the Esc menu's: tall and narrow, beside the abilities)
   if (footer) $('.sb-extra').appendChild(footer);
-  let saved = loadSaved();
+  if (!inJoin) $('.sb-top').appendChild($('.sb-voice'));   // (the Esc menu: one bar on top, the height goes to the gallery)
+  const cards = $$('.wg-card');
+  let acc = wizardAccess();
   let focusCard = null;      // the card with tabindex 0
+  const rung = (id) => acc.list.find(u => u.id === id);
+  const isOpen = (id) => acc.unlocked.has(id) || !rung(id);   // (a wizard the ladder doesn't list is open)
+
+  const paintCards = () => {
+    const xp = getView().xp;
+    for (const c of cards) {
+      const id = c.dataset.wizard, open = isOpen(id), on = id === wiz, u = rung(id), name = presetOf(id).name;
+      c.classList.toggle('locked', !open);
+      c.classList.toggle('on', on);
+      c.setAttribute('aria-checked', String(on));
+      if (open) c.removeAttribute('aria-disabled'); else c.setAttribute('aria-disabled', 'true');
+      c.setAttribute('aria-label', open ? `${name}: ${WIZARDS[id]?.role || ''}` : `${name}, locked: unlocks at ${u.xp} XP`);
+      let st;
+      if (open) st = on ? '<em class="wg-on">✓ Your wizard</em>' : '<em>Play this wizard</em>';
+      else {
+        const prev = acc.list[acc.list.indexOf(u) - 1]?.xp ?? 0, k = Math.max(0, Math.min(1, (xp - prev) / Math.max(1, u.xp - prev)));
+        st = `<em>🔒 <span class="wg-at">Unlocks at </span>${u.xp} XP</em><i class="wg-bar"><i style="width:${(k * 100).toFixed(0)}%"></i></i>`;
+      }
+      c.querySelector('.wg-st').innerHTML = st;
+    }
+    if (!focusCard || !root.contains(focusCard)) focusCard = cards.find(c => c.dataset.wizard === wiz);
+    for (const c of cards) c.tabIndex = c === focusCard ? 0 : -1;
+    const nx = acc.next;
+    $('.wg-next').innerHTML = nx ? `Next: <b>${esc(nx.name)}</b> in ${nx.toGo} XP <small>· play matches to earn XP</small>` : '';
+  };
+
+  // The detail panel: the hovered or focused wizard (`hover`), else ours. The preview casts the shown wizard's signature spell
+  // while one is hovered, or an ability row's spell while that row is; ours at rest just idles.
+  let hover = null, aboutFor = null;
+  const showAbout = (id = hover || wiz, { force } = {}) => {
+    if (id !== aboutFor || force) {
+      aboutFor = id;
+      const u = rung(id), open = isOpen(id);
+      $('.wg-about').innerHTML = aboutHTML(id, { locked: !open, unlockXp: u?.xp, toGo: (u?.xp ?? 0) - Math.floor(getView().xp), mine: id === wiz });
+      const d = $('.wg-detail');
+      d.style.setProperty('--el', wizColor(id));
+      d.classList.toggle('locked', !open);
+      d.classList.toggle('peek', id !== wiz);
+      pv.setLoadout(kitOf(id));
+    }
+    pv.play(hover ? SIGNATURE[id] : null, kitOf(id));
+  };
+  const setHover = (id) => { if (id === hover) return; hover = id; showAbout(); };
 
   const paint = () => {
-    for (const card of $$('.sb-card')) {
-      const slot = card.closest('.sb-row').dataset.slot, on = cur[slot] === card.dataset.spell;
-      card.classList.toggle('selected', on);
-      card.setAttribute('aria-checked', on);
-    }
-    if (!focusCard || !root.contains(focusCard)) focusCard = $(`.sb-row[data-slot="${C.LOADOUT_SLOTS[0]}"] .sb-card.selected`);
-    for (const card of $$('.sb-card')) card.tabIndex = card === focusCard ? 0 : -1;
-    const acc = wizardAccess();
-    for (const b of $$('[data-preset]')) {
-      b.classList.toggle('active', C.sameLoadout(C.PRESETS.find(p => p.id === b.dataset.preset).loadout, cur));
-      const locked = !acc.unlocked.has(b.dataset.preset);   // round 26b: the ladder
-      b.disabled = locked; b.classList.toggle('sb-locked', locked);
-    }
-    paintWizards?.(acc);
+    acc = wizardAccess();
+    paintCards();
+    root.style.setProperty('--accent', wizColor(wiz));
     for (const b of $$('[data-voice]')) { const on = b.dataset.voice === vox; b.classList.toggle('active', on); b.setAttribute('aria-checked', on); }
-    $$('[data-saved]').forEach((el, i) => {
-      const s = saved[i], load = el.querySelector('.sb-load');
-      load.textContent = s ? s.name : `Slot ${i + 1}: empty`;
-      load.disabled = !s;
-      load.title = s ? `Load: ${C.LOADOUT_SLOTS.map(k => C.SPELLBOOK[s.loadout[k]]?.name).join(', ')}` : 'Nothing saved here yet';
-      load.classList.toggle('active', !!s && C.sameLoadout(s.loadout, cur));
-      el.querySelector('.sb-save').title = s ? `Save the current loadout here (replaces ${s.name})` : 'Save the current loadout here';
-    });
-    // the summary: element mix (a bar and counts) and active combos
-    const look = lookOf(cur);
-    root.style.setProperty('--accent', hex(look.color));
-    $('.sb-mixbar').innerHTML = look.mix.map(e => `<i style="flex:${e.count};background:${hex(C.ELEMENTS[e.element].color)}"></i>`).join('');
-    $('.sb-mix').innerHTML = look.mix.map(e => `<span style="--el:${hex(C.ELEMENTS[e.element].color)}"><b>${e.count}</b> ${esc(C.ELEMENTS[e.element].name)}</span>`).join('');
-    const combos = C.combosOf(cur);
-    $('.sb-combos').innerHTML = `<h4>Combos active</h4>` + (combos.length
-      ? combos.map(c => `<div class="sb-combo"><b>${esc(c.name)}</b> <span>${esc(c.spells.map(x => C.SPELLBOOK[x].name).join(' + '))}</span><p>${esc(c.text)}</p></div>`).join('')
-      : `<p class="sb-none">None. Cards tagged <i class="combo">Combo</i> work together.</p>`);
+    showAbout(undefined, { force: true });
   };
 
-  const setLoadout = (lo, { silent } = {}) => {
-    const clean = C.sanitizeLoadout(lo);
-    if (!clean) return;
-    const changed = !C.sameLoadout(clean, cur);
-    cur = clean;
+  // Our wizard: `x` is a loadout or a wizard id. A locked one falls back to the first open wizard (the Pyromancer).
+  const setWizard = (x, { silent } = {}) => {
+    acc = wizardAccess();
+    let id = wizardOf(x);
+    if (!isOpen(id)) id = C.PRESETS.find(p => isOpen(p.id))?.id || C.PRESETS[0].id;
+    const changed = id !== wiz;
+    wiz = id; cur = kitOf(id);
     if (inJoin) lastJoinLoadout = { ...cur };   // (the controls strip names its primary and power)
     paint();
-    pv.setLoadout(cur);
-    if (changed && !silent) onChange?.({ ...cur });
+    if (changed && !silent) onChange?.({ ...cur }, { wizard: id });
+    return changed;
   };
   const pick = (card) => {
-    const slot = card.closest('.sb-row').dataset.slot;
     focusCard = card;
-    setLoadout({ ...cur, [slot]: card.dataset.spell });
-  };
-
-  // hover / focus: the tooltip, and the preview plays the card's cast (as if it were equipped)
-  let tipFor = null;
-  const showTip = (card) => {
-    if (!card) { tip.hidden = true; tipFor = null; pv.play(null); caption.textContent = ''; return; }
-    if (tipFor === card) return;
-    tipFor = card;
-    const id = card.dataset.spell, slot = card.closest('.sb-row').dataset.slot;
-    tip.innerHTML = tipHTML(id);
-    tip.hidden = false;
-    const r = card.getBoundingClientRect(), box = root.getBoundingClientRect();
-    const tw = tip.offsetWidth, th = tip.offsetHeight;
-    let x = r.left - box.left + r.width / 2 - tw / 2, y = r.bottom - box.top + 6;
-    if (y + th > box.height - 4) y = r.top - box.top - th - 6;
-    x = Math.max(4, Math.min(box.width - tw - 4, x));
-    tip.style.transform = `translate(${Math.round(x)}px, ${Math.round(Math.max(4, y))}px)`;
-    pv.play(id, { ...cur, [slot]: id });
-    caption.textContent = C.SPELLBOOK[id].name;
+    if (card.classList.contains('locked')) { card.classList.remove('nope'); void card.offsetWidth; card.classList.add('nope'); showAbout(card.dataset.wizard); return; }
+    setWizard(card.dataset.wizard);
+    $('.wg-gallery').classList.remove('sb-try');
   };
 
   root.addEventListener('click', (e) => {
-    const card = e.target.closest('.sb-card');
+    const card = e.target.closest('.wg-card');
     if (card) { pick(card); card.focus({ preventScroll: true }); return; }
     const b = e.target.closest('button');
     if (!b) return;
-    if (b.dataset.preset) { setLoadout(C.PRESETS.find(p => p.id === b.dataset.preset).loadout); $('.sb-presets').classList.remove('sb-try'); }
-    else if ('random' in b.dataset) setLoadout(C.randomLoadout());
-    else if ('howto' in b.dataset) openHowToPlay();
+    if ('howto' in b.dataset) openHowToPlay();
     else if ('stats' in b.dataset) openStats();
-    else if (b.dataset.wizard) { if (!b.classList.contains('locked')) setLoadout(C.PRESETS.find(p => p.id === b.dataset.wizard)?.loadout); }
-    else if ('wardrobe' in b.dataset || 'wdBack' in b.dataset) setTab(root.classList.contains('sb-wd') ? 'spells' : 'wardrobe');
+    else if ('wardrobe' in b.dataset || 'wdBack' in b.dataset) setTab(root.classList.contains('sb-wd') ? 'wizards' : 'wardrobe');
     else if (b.dataset.wdSlot) { if (!b.classList.contains('locked')) equip(b.dataset.wdSlot, b.dataset.wdId || null); }
     else if (b.dataset.voice) { if (b.dataset.voice !== vox) { vox = b.dataset.voice; paint(); onVoice?.(vox); } }
-    else if (b.classList.contains('sb-load')) { const s = saved[+b.parentElement.dataset.saved]; if (s) setLoadout(s.loadout); }
-    else if (b.classList.contains('sb-save')) {
-      // the store keeps a plain list, so empty slots fill from the left
-      const i = Math.min(+b.parentElement.dataset.saved, saved.length);
-      const look = lookOf(cur);
-      const next = saved.slice();
-      next[i] = { name: `${[look.main, look.second].filter(Boolean).map(e => C.ELEMENTS[e].name).join(' + ')} ${i + 1}`, loadout: { ...cur } };
-      saved = saveSaved(next);
-      paint();
-      const done = $$('[data-saved] .sb-save')[i];
-      done.textContent = 'Saved ✓'; setTimeout(() => { done.textContent = 'Save'; }, 900);
-    }
   });
-  root.addEventListener('pointerover', (e) => showTip(e.target.closest('.sb-card')));
-  root.addEventListener('pointerleave', () => showTip(root.contains(document.activeElement) ? document.activeElement.closest('.sb-card') : null));
-  root.addEventListener('focusin', (e) => { const c = e.target.closest('.sb-card'); if (c) { focusCard = c; for (const k of $$('.sb-card')) k.tabIndex = k === c ? 0 : -1; } showTip(c); });
-  root.addEventListener('focusout', (e) => { if (!root.contains(e.relatedTarget)) showTip(null); });
+  // hover: a card shows its wizard (kept while the pointer reads the panel); an ability row casts its spell
+  const main = $('.sb-main');
+  main.addEventListener('pointerover', (e) => {
+    if (root.classList.contains('sb-wd')) return;
+    const card = e.target.closest('.wg-card');
+    if (card) { setHover(card.dataset.wizard); return; }
+    const li = e.target.closest('.wg-abil li');
+    if (li) pv.play(li.dataset.spell, kitOf(aboutFor));
+    else if (e.target.closest('.wg-detail')) pv.play(hover ? SIGNATURE[aboutFor] : null, kitOf(aboutFor));
+  });
+  main.addEventListener('pointerleave', () => setHover(root.contains(document.activeElement) ? document.activeElement.closest('.wg-card')?.dataset.wizard || null : null));
+  root.addEventListener('focusin', (e) => {
+    const c = e.target.closest('.wg-card');
+    if (!c) return;
+    focusCard = c;
+    for (const k of cards) k.tabIndex = k === c ? 0 : -1;
+    setHover(c.dataset.wizard);
+  });
+  root.addEventListener('focusout', (e) => { if (!e.relatedTarget?.closest?.('.wg-card') && !main.matches(':hover')) setHover(null); });
   root.addEventListener('keydown', (e) => {
-    const card = e.target.closest('.sb-card');
+    const card = e.target.closest('.wg-card');
     if (!card) { if (e.key !== 'Tab' && e.key !== 'Escape') e.stopPropagation(); return; }
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); pick(card); return; }
-    const rows = $$('.sb-row');
-    const ri = rows.indexOf(card.closest('.sb-row'));
-    const cards = [...rows[ri].querySelectorAll('.sb-card')], ci = cards.indexOf(card);
+    // a grid: as many columns as cards share the first card's row
+    const i = cards.indexOf(card), cols = Math.max(1, cards.filter(c => c.offsetTop === cards[0].offsetTop).length);
+    const step = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -cols, ArrowDown: cols }[e.key];
     let next = null;
-    if (e.key === 'ArrowLeft') next = cards[(ci - 1 + cards.length) % cards.length];
-    else if (e.key === 'ArrowRight') next = cards[(ci + 1) % cards.length];
-    else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-      const row = rows[(ri + (e.key === 'ArrowUp' ? -1 : 1) + rows.length) % rows.length];
-      const list = [...row.querySelectorAll('.sb-card')];
-      next = list[Math.min(ci, list.length - 1)];
-    } else if (e.key === 'Home') next = cards[0];
+    if (step) next = cards[(i + step + cards.length) % cards.length];
+    else if (e.key === 'Home') next = cards[0];
     else if (e.key === 'End') next = cards[cards.length - 1];
+    if (e.key !== 'Tab' && e.key !== 'Escape') e.stopPropagation();
     if (!next) return;
-    e.preventDefault(); e.stopPropagation();
+    e.preventDefault();
     next.focus();
   });
 
-  // Nothing on a card is cut off (the tooltip has everything): tags that don't fit on its one line are left off whole;
-  // a card still too full (a short screen) drops its tag row, or its description instead if that's enough. A combo
-  // card would rather keep its Combo tag, so it tries dropping the description first.
-  const over = (c) => c.scrollHeight > c.clientHeight + 1;
-  const fit = () => {
-    const cards = $$('.sb-card').filter(c => c.offsetParent);
-    for (const c of cards) { c.classList.remove('tight', 'notags'); for (const i of c.querySelectorAll('.sb-tags i')) i.hidden = false; }
-    for (const c of cards) {
-      const row = c.querySelector('.sb-tags'), w = row.clientWidth;
-      for (const i of row.querySelectorAll('i')) if (i.offsetLeft - row.offsetLeft + i.offsetWidth > w + 0.5) i.hidden = true;
-    }
-    const first = (c) => 'combo' in c.dataset ? 'tight' : 'notags', second = (c) => 'combo' in c.dataset ? 'notags' : 'tight';
-    for (const c of cards.filter(over)) c.classList.add(first(c));
-    for (const c of cards.filter(over)) c.classList.replace(first(c), second(c));
-    for (const c of cards.filter(over)) c.classList.add(first(c));
-  };
-  const ro = new ResizeObserver(() => requestAnimationFrame(fit));
-  ro.observe($('.sb-rows'));
-
-  paint();
-  pv.setLoadout(cur);
   const sub = container.closest('#join')?.querySelector('.sub');
-  if (sub) sub.textContent = JOIN_SUB(matchTarget);     // (index.html's own line said 10)
+  if (sub) sub.textContent = JOIN_SUB(matchTarget);
   // One-click start (CrazyGames): a first visit isn't stopped by the how-to-play card. Once the player enters the arena from the
   // join screen (or round 21's auto-join submits the form), the controls strip shows over the first match instead
   // (showControlsStrip), without taking any input.
@@ -440,21 +474,26 @@ export function mountSpellBuilder(container, { loadout, voice, onChange, onVoice
   const io = new IntersectionObserver((en) => pv.setVisible(en[en.length - 1].isIntersecting));
   io.observe(root);
 
-  // round 18: the CrazyGames profile chip in the top bar, and the saved list redrawn when the profile's customs arrive
+  // round 18: the CrazyGames profile chip in the top bar
   const profileEl = document.createElement('div');
   profileEl.className = 'sb-profile';
   profileEl.hidden = true;
   $('.sb-top').appendChild(profileEl);
-  const hook = { profile: () => paintProfile(profileEl), saved: () => { saved = loadSaved(); paint(); } };
+  const hook = { profile: () => paintProfile(profileEl), saved: () => {} };
   builders.add(hook);
   hook.profile();
 
-  // round 26: the Wardrobe (in place of the spell rows) and the level and today's challenges under the summary
+  // the portraits, once they're drawn
+  portraits().then((m) => {
+    for (const c of cards) { const src = m.get(c.dataset.wizard), img = c.querySelector('.wg-pt img'); if (src && img) { img.src = src; img.hidden = false; } }
+  });
+
+  // round 26: the Wardrobe (in place of the gallery; the preview shows our wizard dressed) and the level and today's challenges
   const setTab = (tab) => {
     const wd = tab === 'wardrobe';
     root.classList.toggle('sb-wd', wd);
     $('.sb-wd-btn').classList.toggle('active', wd);
-    if (wd) paintWardrobe(getView());
+    if (wd) { hover = null; showAbout(wiz); paintWardrobe(getView()); }
   };
   const paintWardrobe = (v) => {
     if (!root.classList.contains('sb-wd')) return;
@@ -466,40 +505,23 @@ export function mountSpellBuilder(container, { loadout, voice, onChange, onVoice
     el.innerHTML = progHTML(v);
     $('.sb-wd-lv').textContent = `Lv ${v.level}`;
   };
-  // round 26b: the wizard ladder. Until "Build your own" opens, the presets (a gallery in place of the spell grid; locked ones with
-  // their XP and a bar) and no grid, saved loadouts or Randomize; a loadout that isn't an open preset falls back to the Pyromancer.
-  paintWizards = (acc = wizardAccess()) => {
-    root.classList.toggle('sb-ladder', !acc.custom);
-    if (acc.custom) return;
-    const xp = getView().xp;
-    const card = (u) => {
-      const p = C.PRESETS.find(q => q.id === u.id), on = p && C.sameLoadout(p.loadout, cur);
-      const prev = acc.list[acc.list.indexOf(u) - 1]?.xp ?? 0, k = Math.max(0, Math.min(1, (xp - prev) / Math.max(1, u.xp - prev)));
-      const col = p ? hex(lookOf(p.loadout).color) : '#ffc857';
-      const spells = p ? C.LOADOUT_SLOTS.map(sl => C.SPELLBOOK[p.loadout[sl]]?.name).filter(Boolean).join(' · ') : 'Pick every spell yourself: 35 cards, six slots';
-      return `<button type="button" class="wz-card${u.open ? '' : ' locked'}${on ? ' on' : ''}${p ? '' : ' wz-custom'}" ${p ? `data-wizard="${p.id}"` : 'data-custom'} style="--el:${col}"${on ? ' aria-checked="true"' : ''}>
-        <b>${u.open ? '' : '🔒 '}${esc(u.name)}</b><span>${esc(spells)}</span>
-        ${u.open ? (on ? '<em>✓ Your wizard</em>' : '<em>Play this wizard</em>') : `<em>Unlocks at ${u.xp} XP</em><i class="wz-bar"><i style="width:${(k * 100).toFixed(0)}%"></i></i>`}</button>`;
-    };
-    const nx = acc.next;
-    $('.sb-wizards').innerHTML = `<div class="wz-head">${nx ? `<div>Next: <b>${esc(nx.name)}</b> in ${nx.toGo} XP</div>` : ''}<small>Play matches to earn XP; every wizard and then your own spell builder unlock as you go.</small></div>
-      <div class="wz-grid">${acc.list.map(card).join('')}</div>`;
-    if (!C.PRESETS.some(p => acc.unlocked.has(p.id) && C.sameLoadout(p.loadout, cur))) {
-      const first = C.PRESETS.find(p => acc.unlocked.has(p.id));
-      if (first) setLoadout(first.loadout);
-    }
-  };
-  const unProgress = onProgress((v) => { paintWardrobe(v); paintProg(v); pv.setCosmetics(v.equipped); paint(); });
+  // The ladder can change under us (the welcome's progress, an unlock): repaint, and if our wizard is locked now, the Pyromancer.
+  const unProgress = onProgress((v) => { paintWardrobe(v); paintProg(v); pv.setCosmetics(v.equipped); setWizard(wiz); });
   paintProg(getView());
-  paint();
+  pv.setCosmetics(getView().equipped);
+  // A saved loadout that isn't an open wizard's kit (an old custom build, a locked wizard) becomes one: tell main.js once it has
+  // finished mounting its pickers.
+  const fixed = setWizard(wiz, { silent: true });
+  if (fixed || (asked && !C.sameLoadout(asked, cur))) setTimeout(() => onChange?.({ ...cur }, { wizard: wiz }), 0);
 
   return {
-    set(lo) { setLoadout(lo, { silent: true }); },
+    set(lo) { setWizard(lo, { silent: true }); },
     setVoice(v) { vox = C.sanitizeVoice(v); paint(); },
     footer: $('.sb-foot'),
     get loadout() { return { ...cur }; },
+    get wizard() { return wiz; },
     get voice() { return vox; },
-    destroy() { unProgress(); builders.delete(hook); io.disconnect(); ro.disconnect(); pv.destroy(); root.remove(); },
+    destroy() { unProgress(); builders.delete(hook); io.disconnect(); pv.destroy(); root.remove(); },
   };
 }
 
@@ -513,13 +535,13 @@ const KEYS = {
   Moving: [[['W', 'A', 'S', 'D'], 'Move'], [['Mouse'], 'Look and aim'], [['Space'], 'Jump'], [['Space', '×2'], 'Double jump'],
     [['Shift'], 'Sprint'], [['C'], 'Crouch']],
   'Your six spells': [[['LMB'], 'Primary: a magazine, then a reload'], [['RMB'], 'Power'], [['R'], 'Shield (hold or tap)'],
-    [['E'], 'Mobility'], [['F'], 'Utility'], [['Q'], 'Ultimate, once charged']],
+    [['E'], 'Mobility'], [['F'], 'Arcane Grasp: lift and hurl'], [['Q'], 'Ultimate, once charged']],
 };
-const MORE_KEYS = [['T', 'Reload early'], ['M', 'Mute'], ['Esc', 'Menu and your loadout']];
+const MORE_KEYS = [['T', 'Reload early'], ['M', 'Mute'], ['Esc', 'Menu and your wizard']];
 // The kill target for the join header and the how-to-play texts. The server's FFA.target (server/match.js) is the truth; this is its
 // client copy until the match tells us (setMatchTarget(match.target) from main.js on a match state).
 let matchTarget = 10;   // round 22: first to 10 (was 15)
-const JOIN_SUB = (n) => `Build your wizard from any spells: one per slot. Four wizards, first to ${n} kills.`;
+const JOIN_SUB = (n) => `Pick your wizard and fight${wizardAccess().all ? '' : ': more unlock as you play'}. Four wizards, first to ${n} kills.`;
 export function setMatchTarget(n) {
   if (!(n > 0) || n === matchTarget) return;
   matchTarget = n;
@@ -546,9 +568,8 @@ export function openHowToPlay() {
       <div class="htp-arena"><b>Runes and jump pads.</b> Grab a glowing rune for <i class="rn-haste">Haste</i>, <i class="rn-fury">Fury</i>,
         an <i class="rn-aegis">Aegis</i> shield or an ultimate <i class="rn-surge">Surge</i>; they return after 25 s. Jump pads fling you up to the
         walls. The arenas take turns: the <b>Courtyard</b>, then the <b>Sky Ruins</b>, where a fall into the clouds is fatal.</div>
-      <div class="htp-build"><b>Build your wizard: one spell per slot.</b> Each row of cards is a slot with its own key.
-        Hover a card for its full stats; cards tagged <i class="combo">Combo</i> work together.
-        <div class="sb-legend">${STATS.map(([k, t]) => `<span class="st-${k}">${t}</span>`).join('')}</div></div>
+      <div class="htp-build"><b>Pick a wizard.</b> Each has six spells of its own, one per key; hover a wizard to see them and
+        watch it cast. You start as the Pyromancer: play matches to earn XP and unlock the other five.</div>
       <div class="htp-keys">${Object.entries(KEYS).map(([h, list]) => `<dl><h3>${h}</h3>${list.map(([ks, t]) =>
         `<dt>${ks.map(k => k.startsWith('×') ? `<span>${k}</span>` : `<kbd>${k}</kbd>`).join('')}</dt><dd>${esc(t)}</dd>`).join('')}</dl>`).join('')}</div>
       <div class="htp-more">${MORE_KEYS.map(([k, t]) => `<span><kbd>${k}</kbd> ${esc(t)}</span>`).join('')}</div>
@@ -663,8 +684,8 @@ export function showChangeWizardHint({ reason, unlocked } = {}) {
   el.className = 'wa-esc-hint';
   el.setAttribute('role', 'status');
   const got = (unlocked || []).map(u => u.name).filter(Boolean);
-  el.innerHTML = got.length && !acc.custom ? `<div class="eh-main">Press <kbd>Esc</kbd> to change your wizard</div><div class="eh-sub">${esc(got.join(' and '))} unlocked</div>`
-    : `<div class="eh-main">Press <kbd>Esc</kbd> to change your wizard and spells</div><div class="eh-sub">Six ready-made wizards, or build your own</div>`;
+  el.innerHTML = `<div class="eh-main">Press <kbd>Esc</kbd> to change your wizard</div><div class="eh-sub">${got.length ? `${esc(got.join(' and '))} unlocked`
+    : acc.all ? 'Six wizards, each with its own spells' : 'More wizards unlock as you play'}</div>`;
   document.body.appendChild(el);
   hintEl = el;
   requestAnimationFrame(() => el.classList.add('on'));
@@ -709,7 +730,7 @@ function watchMenu() {
     const open = !menu.classList.contains('hidden');
     if (open === wasOpen) return;
     wasOpen = open;
-    const presets = menu.querySelector('.sb-pause .sb-presets'), label = presets?.querySelector('.sb-label'), respawn = menu.querySelector('#respawnBtn');
+    const presets = menu.querySelector('.sb-pause .wg-gallery'), label = presets?.querySelector('.wg-label'), respawn = menu.querySelector('#respawnBtn');
     if (open && !menuSeen) {
       menuSeen = true;
       document.body.classList.add('wa-menu-seen');
@@ -922,7 +943,7 @@ function paintProfile(el) {
   if (!profile) { el.innerHTML = ''; return; }
   const st = profile.stats || {}, n = (v) => Math.max(0, Math.round(+v || 0));
   const kd = (n(st.kills) / Math.max(1, n(st.deaths))).toFixed(2);
-  el.title = 'Your CrazyGames profile: your spells, settings and match stats are saved';
+  el.title = 'Your CrazyGames profile: your progress, settings and match stats are saved';
   el.innerHTML = `<span class="sp-user">${esc(profile.username)}</span>
     <span><b>${n(st.matches)}</b> ${n(st.matches) === 1 ? 'match' : 'matches'}</span>
     <span><b>${n(st.wins)}</b> ${n(st.wins) === 1 ? 'win' : 'wins'}</span>

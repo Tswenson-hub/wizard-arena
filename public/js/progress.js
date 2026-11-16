@@ -96,17 +96,17 @@ export function joinFields() {
 }
 
 // ---------------------------------------------------------------- round 26b: the wizard ladder (Ty)
-// New players start with the Pyromancer; total XP unlocks the other presets and then "Build your own" (the full spell grid). The
-// thresholds are spells' C.WIZARD_UNLOCKS when it exists ([{ id, xp }] or { id: xp }; 'custom' is the builder), else the brief's.
-// Enforced here, client-side (the server stays lenient: no gameplay advantage). Anyone who played before this release keeps
-// everything: decided once, at the page's load, before this visit writes any sign of play, and remembered (`wa-ladder`).
-const LADDER_FALLBACK = [['cinder', 0], ['rime', 50], ['gale', 200], ['vesper', 350], ['embibe', 500], ['jeb', 650], ['custom', 650]];
+// New players start with the Pyromancer; total XP unlocks the other wizards. Round 27: there's no "Build your own" any more (the
+// game is the six wizards), so the ladder is the wizards only. The thresholds are spells' C.WIZARD_UNLOCKS when it exists
+// ([{ id, xp }] or { id: xp }), else the brief's. Enforced here, client-side (the server checks accounts). Anyone who played before
+// round 26b keeps every wizard: decided once, at the page's load, before this visit writes any sign of play, and remembered (`wa-ladder`).
+const LADDER_FALLBACK = [['cinder', 0], ['rime', 50], ['gale', 200], ['vesper', 350], ['embibe', 500], ['jeb', 650]];
 const KEY_LADDER = 'wa-ladder';
+const isWizardId = (id) => (C.PRESETS || []).some(p => p.id === id);
 export function wizardLadder() {
   const W = C.WIZARD_UNLOCKS;
   const list = Array.isArray(W) ? W.map(u => [u.id ?? u.preset, +u.xp || 0]) : W && typeof W === 'object' ? Object.entries(W).map(([k, v]) => [k, +(v?.xp ?? v) || 0]) : LADDER_FALLBACK;
-  if (W && Number.isFinite(C.BUILDER_UNLOCK_XP) && !list.some(([id]) => id === 'custom')) list.push(['custom', C.BUILDER_UNLOCK_XP]);   // (spells: the builder apart)
-  return list.filter(([id]) => id).sort((a, b) => a[1] - b[1] || (a[0] === 'custom') - (b[0] === 'custom')).map(([id, xp]) => ({ id, xp, name: id === 'custom' ? 'Build your own' : (C.PRESETS || []).find(p => p.id === id)?.name || id }));
+  return list.filter(([id]) => isWizardId(id)).sort((a, b) => a[1] - b[1]).map(([id, xp]) => ({ id, xp, name: (C.PRESETS || []).find(p => p.id === id)?.name || id }));
 }
 function playedBefore() {
   try {
@@ -130,16 +130,16 @@ export function grandfather() {
   try { localStorage.setItem(KEY_LADDER, 'all'); } catch { /* this visit only */ }
   emit();
 }
-// { all, unlocked: Set of preset ids (and 'custom'), custom, list (the ladder with `open`), next: { id, name, xp, toGo, from } | null }
+// { all, unlocked: Set of wizard ids, custom: false (round 27: no builder), list (the ladder with `open`), next: { id, name, xp, toGo, from } | null }
 export function wizardAccess(xp = getView().xp) {
   const list = wizardLadder().map(u => ({ ...u, open: ladderAll || xp >= u.xp }));
   const unlocked = new Set(list.filter(u => u.open).map(u => u.id));
   if (ladderAll) for (const p of C.PRESETS || []) unlocked.add(p.id);
   const i = list.findIndex(u => !u.open), nx = i >= 0 ? list[i] : null;
-  return { all: ladderAll || !nx, unlocked, custom: unlocked.has('custom'), list,
+  return { all: ladderAll || !nx, unlocked, custom: false, list,
     next: nx && { id: nx.id, name: nx.name, xp: nx.xp, toGo: nx.xp - xp, from: i > 0 ? list[i - 1].xp : 0 } };
 }
-// The wizards (presets, and 'custom') that `before` → `after` total XP opened.
+// The wizards that `before` → `after` total XP opened.
 export const wizardsOpened = (before, after) => ladderAll ? [] : wizardLadder().filter(u => u.xp > before && u.xp <= after);
 
 // The "Bot taunts" setting (the Esc menu's toggle, select.js): the bots' speech bubbles and their emotes. On by default.
@@ -350,7 +350,7 @@ export function mountProgress({ sfx, net: n, players, myId, me, taunts } = {}) {
     if (!got.length && (acc.all || !acc.next)) return;
     const nextLine = acc.next ? `<div class="xw-next"><b>${esc(acc.next.name)}</b>: ${acc.next.toGo} XP to go</div>` : '';
     if (!got.length) { box.hidden = false; box.innerHTML = nextLine; return; }
-    const w = got.find(u => u.id !== 'custom') || got[0], preset = (C.PRESETS || []).find(q => q.id === w.id);
+    const w = got[0], preset = (C.PRESETS || []).find(q => q.id === w.id);
     box.hidden = false;
     box.innerHTML = `<div class="xw-big">New wizard unlocked!</div><div class="xw-name">${esc(got.map(u => u.name).join(' + '))}</div>
       ${preset ? '<div class="xw-pv"></div>' : ''}<div class="xw-how">Press <kbd>Esc</kbd> to switch</div>${nextLine}`;

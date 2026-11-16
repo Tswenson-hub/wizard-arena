@@ -19,7 +19,7 @@
 <body>
 <canvas id="game"></canvas>
 
-<!-- Join screen (round 11): the spell builder fills the screen; name, bots and Enter sit in its footer -->
+<!-- Join screen (round 27): the wizard gallery fills the screen; name, bots and Play sit in its footer -->
 <div id="join" class="overlay">
   <div class="join-full">
     <header class="join-head">
@@ -41,11 +41,11 @@
     <div id="joinHelp" class="join-help hidden">
       <div class="controls">
         <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move &nbsp; <kbd>Mouse</kbd> look &nbsp; <kbd>LMB</kbd> <kbd>RMB</kbd> <kbd>R</kbd> <kbd>E</kbd> <kbd>F</kbd> <kbd>Q</kbd> your six spells &nbsp; <kbd>Space</kbd> jump &nbsp; <kbd>C</kbd> / <kbd>Ctrl</kbd> crouch &nbsp; <kbd>Shift</kbd> sprint</div>
-        <div><kbd>R</kbd> your shield: hold a Ward (blocks spells from the front, drains stamina), or tap the one you picked (an ice wall, a wind veil, a firewall...)</div>
-        <div><kbd>F</kbd> Telekinesis: aim at an object to lift it, <kbd>F</kbd> again to hurl it. It shields you while held. <kbd>Q</kbd> your ultimate, once charged</div>
+        <div><kbd>R</kbd> your wizard's shield: a firewall, an ice wall, a wind veil, a blood shroud, smoke or a ring of rams</div>
+        <div><kbd>F</kbd> Arcane Grasp (every wizard): aim at an object to lift it, <kbd>F</kbd> again to hurl it. It shields you while held. <kbd>Q</kbd> your ultimate, once charged</div>
         <div>A charging ram (a Sling, a Ram Guard, a Battering Ram) flattens you unless your ward (<kbd>R</kbd>) faces it. Get out of its line</div>
         <div><kbd>LMB</kbd> fires a magazine, then reloads (<kbd>T</kbd> to reload early). The last shot stuns and breaks a wind-up</div>
-        <div><kbd>G</kbd> set it down &nbsp; <kbd>Tab</kbd> scoreboard &nbsp; <kbd>M</kbd> mute &nbsp; <kbd>Esc</kbd> menu (and your loadout)</div>
+        <div><kbd>G</kbd> set it down &nbsp; <kbd>Tab</kbd> scoreboard &nbsp; <kbd>M</kbd> mute &nbsp; <kbd>Esc</kbd> menu (and your wizard)</div>
       </div>
       <p class="credits">Spell sounds: Magic Spell Full Pack by Leonardo Calvo (thesoundrack), <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>. Music: “Medieval: The Old Tower Inn” by RandomMind (CC0). Also CC0 sounds and particles by Kenney, lentikula and OpenGameArt contributors; spell icons by Raven. <a href="./sounds/CREDITS.md" target="_blank" rel="noopener">All credits</a></p>
     </div>
@@ -101,8 +101,8 @@
       <div class="pause-top">
         <h2>Paused</h2>
         <button id="resumeBtn" class="primary">Resume</button>
-        <button id="respawnBtn" class="respawn" title="Back into the fight now, with the spells picked below">Respawn with these spells</button>
-        <button id="leaveBtn" class="ghost" title="Leave the match and go back to the spell builder">Leave match</button>
+        <button id="respawnBtn" class="respawn" title="Back into the fight now, as the wizard picked below">Respawn</button>
+        <button id="leaveBtn" class="ghost" title="Leave the match and go back to the wizards">Leave match</button>
         <span class="book-note" id="pickNote">a change applies at your next respawn</span>
         <div class="pause-group"><span class="pause-label">Bots <span id="botTally"></span></span>
           <div class="btn-row" title="Bots fill the match to 4; swap one in at another difficulty">
@@ -122,7 +122,7 @@
       <div class="pause-keys" aria-label="Controls">
         <span><kbd>WASD</kbd> move</span><span><kbd>Space</kbd> jump, again in the air</span><span><kbd>Shift</kbd> sprint</span><span><kbd>C</kbd> crouch</span>
         <span><kbd>LMB</kbd> primary</span><span><kbd>RMB</kbd> power</span><span><kbd>R</kbd> shield</span><span><kbd>E</kbd> mobility</span>
-        <span><kbd>F</kbd> utility</span><span><kbd>Q</kbd> ultimate</span><span><kbd>T</kbd> reload</span><span><kbd>Tab</kbd> scores</span><span><kbd>M</kbd> mute</span>
+        <span><kbd>F</kbd> Arcane Grasp</span><span><kbd>Q</kbd> ultimate</span><span><kbd>T</kbd> reload</span><span><kbd>Tab</kbd> scores</span><span><kbd>M</kbd> mute</span>
       </div>
       <div class="wizard-pick pause-builder" id="pausePicker"></div>
     </div>
