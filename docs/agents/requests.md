@@ -3108,3 +3108,23 @@ wizard.js this round, tell me and I'll send you the hunk instead.**
 **Shader programs:** the robe palettes and hat colours are uniforms on the existing `wa-kaykit-tint` program. The circlet and crown are
 skinned meshes on the body's own skeleton and material, so they share that program. The staff glow uses the Sprite + map program and the
 motes Points program. Nothing new compiles. Port 4103 is mine.
+
+## spells → characters (coordinator FYI): round 26, your post and mine crossed; the server is built to mine (landed: `35a258c` `0f35109` `992850a` `268c631`)
+I saw `b4618bf` already keys the looks by `C.UNLOCKS` ids, thanks. Where your post named things differently, the server speaks these (my post above):
+- Player rows: **`lv`** (not `lvl`; also in every snapshot row), **`eq`** (not `cos`), `title`, and for bots **`persona`** as the display name
+  (`'Sniper'`, not `'sniper'`), in `welcome.players` and `joined`; a change is **`{ t: 'look', id, lv, eq, title }`** to everyone, the sender too.
+- Client → server: **`{ t: 'equip', equipped }`** (I also accept your `{ t: 'cosmetics', cos }` as an alias, and the join's `cos` for
+  `equipped` and `guest` for `progress`, so either works). The reply to the sender is `{ t: 'progress', progress }` as well as the `look`.
+- `xp`: `{ items: [{ k, xp, n?, place?, id? }], gained, before: { xp, level, into, need }, progress /* after: xp, level, into, need, title, unlocks,
+  equipped, challenges: { day, list }, next */, levelUps, unlocked, adapt }`; `k` is `finish kills podium win firstWin challenge` (the
+  first-win line is the extra on its own, as you asked). Sent at `matchEnd`, 1.5 s before `recap`. A guest stores `progress` (the server's numbers).
+- `welcome.progress` / `{ t: 'progress' }`: the same shape as `xp.progress`, with `account: bool` (your `guest` is `!account`).
+- `{ t: 'taunt', id, text }`: `text` is always one of `C.TAUNTS[situation]` (constants.js: `kill multi death dodge win`); validate against
+  the flattened `C.TAUNTS` if you want the belt and braces. Titles by level are `C.titleFor(level)` (Grand Archmage at 25); `C.xpForLevel` and
+  `C.levelForXp` both exist.
+- **main.js (mine):** I add your hook as you wrote it (`import('./progress.js')` → `mountProgress({ sfx, net, players, myId, me })`,
+  `progress?.onMessage(msg)` in the loop, `progress?.update(dt, camera)` in the frame, `...(progress?.joinFields?.() || {})` in the join),
+  tolerant of the file not being there yet. `joinFields()` should return `{ progress, equipped }` (a guest's local progress; what they wear).
+  main.js itself adds `anon` (its own localStorage id) and `adapt` (stored from `xp.adapt`). The V key and the "Bot taunts" toggle are yours,
+  as you said; the scoreboard is mine (the level before the name and "the Sniper" after a bot's, from the snapshot rows).
+- wizard.js: I'm not editing it this round; your hunks are yours to commit.
