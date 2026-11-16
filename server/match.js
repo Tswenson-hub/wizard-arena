@@ -71,7 +71,7 @@ export function pickAccolades(ranked) {
   return out;
 }
 const DEBUG = !!process.env.MATCH_DEBUG;
-const DIFFS = ['easy', 'normal', 'hard'];
+const DIFFS = ['easy', 'normal', 'hard', 'auto'];   // (round 26: 'auto', the adaptive skill; room.js turns it into one)
 const SPECTATE_AT = [0, 0, -38];
 // map.js FFA_SPAWNS (4–8 points spread for fair duel openings) once the environment agent adds them; until then the
 // existing spawn points.
@@ -92,7 +92,8 @@ export function createMatch(ctx) {
   };
   const t = () => ctx.now();
   const target = () => S.target ?? FFA.target;
-  const humans = () => [...players.values()].filter(p => !p.bot);
+  const humanish = (p) => !p.bot || !!p.proxy;   // (round 26: a WA_DEBUG proxy bot counts as a human: the adaptive sim)
+  const humans = () => [...players.values()].filter(humanish);
   const fighters = () => [...players.values()].filter(p => !p.spectator);
   const pub = (p) => ({ id: p.id, name: p.name, bot: !!p.bot, loadout: p.loadout,
     kills: p.kills, deaths: p.deaths, dmg: Math.round(p.mDmg || 0) });
@@ -131,7 +132,7 @@ export function createMatch(ctx) {
     // humans waiting while bots hold places: a bot leaves, the earliest spectator sits down
     for (const h of humans().filter(p => p.spectator && !p.watchOnly && !p.idle).sort((a, b) => a.id - b.id)) {
       if (fighters().length >= S.size) {
-        const bots = fighters().filter(p => p.bot).sort((a, b) => (b.fill ? 1 : 0) - (a.fill ? 1 : 0) || b.id - a.id);
+        const bots = fighters().filter(p => p.bot && !p.proxy).sort((a, b) => (b.fill ? 1 : 0) - (a.fill ? 1 : 0) || b.id - a.id);
         if (!bots.length) break;
         ctx.removePlayer(bots[0].id);
       }
@@ -141,7 +142,7 @@ export function createMatch(ctx) {
     }
     // too many fighters (a smaller debug size): bots leave first
     while (fighters().length > S.size) {
-      const bots = fighters().filter(p => p.bot).sort((a, b) => (b.fill ? 1 : 0) - (a.fill ? 1 : 0) || b.id - a.id);
+      const bots = fighters().filter(p => p.bot && !p.proxy).sort((a, b) => (b.fill ? 1 : 0) - (a.fill ? 1 : 0) || b.id - a.id);
       if (!bots.length) break;
       ctx.removePlayer(bots[0].id);
     }
@@ -182,9 +183,11 @@ export function createMatch(ctx) {
   }
   function startCountdown() {
     S.results = null; S.recap = null;
+    const rematch = S.rotateNext;   // (round 26: after a finished match)
     switchMap(nextMap());   // round 22: the rotation (then everyone respawns on the new map)
     S.forceMap = null; S.rotateNext = false; S.next = null;
     resetArena();
+    try { ctx.onCountdown?.({ rematch }); } catch (e) { console.warn('[match] onCountdown', e); }   // round 26: rematch stays, the adaptive skill
     setPhase('countdown', S.times.countdown);
   }
   function startLive() {
@@ -280,7 +283,7 @@ export function createMatch(ctx) {
     onJoin(p) {
       p.kills = 0; p.deaths = 0; p.mDmg = 0; p.ms = freshStats(); p.assistBy = new Map();
       p.team = null;
-      if (p.bot) {
+      if (p.bot && !p.proxy) {
         p.fill = S.filling;
         if (!S.filling && DIFFS.includes(p.bot.difficulty)) S.botDiff = p.bot.difficulty;   // a human asked for this one
         // a bot someone asked for while the match is full: no room (a human's place is never given to a bot)
@@ -297,7 +300,7 @@ export function createMatch(ctx) {
       if (S.paused) { S.paused = false; S.startOnTick = true; }
       // a full match: take a bot's place, else spectate
       if (fighters().filter(q => q !== p).length >= S.size) {
-        const bots = fighters().filter(q => q.bot).sort((a, b) => (b.fill ? 1 : 0) - (a.fill ? 1 : 0) || b.id - a.id);
+        const bots = fighters().filter(q => q.bot && !q.proxy).sort((a, b) => (b.fill ? 1 : 0) - (a.fill ? 1 : 0) || b.id - a.id);
         if (bots.length) ctx.removePlayer(bots[0].id);
         else {
           spectate(p);
@@ -319,7 +322,7 @@ export function createMatch(ctx) {
     onLeave(p) {
       // last human gone: server.js clears the bots; wait for the next arrival (round 22: back on the courtyard, where every
       // room starts; a first visit always lands there)
-      if (!p.bot && !humans().some(q => q !== p)) { S.paused = true; S.phase = 'countdown'; S.results = null; S.recap = null; S.rotateNext = false; S.forceMap = maps()[0]; }
+      if (humanish(p) && !humans().some(q => q !== p)) { S.paused = true; S.phase = 'countdown'; S.results = null; S.recap = null; S.rotateNext = false; S.forceMap = maps()[0]; }
       else S.fillCheckAt = 0;   // a place may have opened for a spectator
     },
     // (the stats count in the live phase only; damage past what the target had left doesn't count)
@@ -329,6 +332,7 @@ export function createMatch(ctx) {
       (target.ms ??= freshStats()).dmgTaken += real;
       if (!attacker || attacker === target) return;
       attacker.mDmg = (attacker.mDmg || 0) + real;
+      if (real > 0) ctx.onStat?.(attacker, 'damage', real);   // round 26: the day's challenges
       const ms = (attacker.ms ??= freshStats());
       ms.biggest = Math.max(ms.biggest, dmg);
       if (from) ms.longest = Math.max(ms.longest, Math.hypot(target.p[0] - from[0], target.p[2] - from[2]));
@@ -338,13 +342,13 @@ export function createMatch(ctx) {
       if (S.phase !== 'live') return;
       for (const [id, at] of target.assistBy || []) {
         const q = players.get(id);
-        if (q && q !== attacker && q !== target && t() - at <= ASSIST_WINDOW) (q.ms ??= freshStats()).assists++;
+        if (q && q !== attacker && q !== target && t() - at <= ASSIST_WINDOW) { (q.ms ??= freshStats()).assists++; ctx.onStat?.(q, 'assists', 1); }
       }
       target.assistBy = new Map();
       checkWin();
     },
     onHeal(p, amount) { if (S.phase === 'live' && amount > 0) (p.ms ??= freshStats()).healed += amount; },
-    onPotion(p) { if (S.phase === 'live') (p.ms ??= freshStats()).potions++; },
+    onPotion(p) { if (S.phase === 'live') { (p.ms ??= freshStats()).potions++; ctx.onStat?.(p, 'potions', 1); } },
     onAirJump(p) { if (S.phase === 'live') (p.ms ??= freshStats()).airJumps++; },
     onTrap(curser) { if (S.phase === 'live' && curser) (curser.ms ??= freshStats()).traps++; },
     onPickup() {},

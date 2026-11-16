@@ -2,8 +2,9 @@
 // server.js keeps the sockets, the rooms and matchmaking; each room runs the whole simulation on its own, so nothing
 // (hits, snapshots, the kill feed) crosses between rooms. Moved here from server.js unchanged apart from the wrapper.
 import * as C from '../public/shared/constants.js';
-import { createBot, updateBots, botKnockback, botNoteRelic, botDash, botPull, BOT_LIMIT } from './bots.js';
+import { createBot, updateBots, botKnockback, botNoteRelic, botDash, botPull, setBotSkill, BOT_LIMIT } from './bots.js';
 import { createMatch } from './match.js';
+import * as Prog from './progress.js';   // round 26: XP, levels, daily challenges
 
 // ---------------------------------------------------------------- helpers
 const now = () => performance.now() / 1000;
@@ -132,10 +133,17 @@ export function createRoom(opts) {
       ride: p.ride ? (now() < p.ride.rideAt ? 'mount' : now() < p.ride.dismountAt ? 'ride' : 'dismount') : null,
       ramGuard: p.ramGuardUntil > now(),
       prot: p.protUntil > now(),   // round 14: spawn protection
-      bot: p.bot ? p.bot.difficulty : undefined,
+      bot: p.bot && !p.proxy ? p.bot.difficulty : undefined,
+      lv: p.prog ? p.prog.level : p.botLv,   // round 26: the level beside the name (a bot's is made up)
       // round 22: rune buffs (characters' auras: { haste?: 1, fury?: 1, aegis?: shield HP }), a pad flight (the launch pose), the streak
       buffs: buffsOf(p), pad: p.pad ? true : undefined, streak: p.streak > 0 ? p.streak : undefined,
     };
+  }
+
+  // round 26: what welcome / joined / look carry beyond the snapshot's row: the equipped cosmetics, the level's title, a bot's personality
+  function playerFull(p) {
+    return { ...playerPublic(p), eq: p.prog?.equipped || p.botEq || {}, title: C.titleFor(p.prog ? p.prog.level : p.botLv || 1),
+      ...(p.persona && !p.proxy ? { persona: C.PERSONAS[p.persona].name } : {}) };
   }
 
   const buffsOf = (p) => {
@@ -193,6 +201,7 @@ export function createRoom(opts) {
     if (lo === undefined) return true;
     const clean = C.sanitizeLoadout(lo);
     if (!clean) return false;
+    if (!p.bot && !C.sameLoadout(clean, p.pendingLoadout || p.loadout)) ev(p, 'loadout_change', {});   // round 26
     p.pendingLoadout = C.sameLoadout(clean, p.loadout) ? null : clean;
     if (p.dead) flushPendingLoadout(p);
     return true;
@@ -210,6 +219,68 @@ export function createRoom(opts) {
     broadcast({ t: 'loadout', id: p.id, loadout: lo, voice: p.voice, color: p.color });
   }
   const hasCombo = (p, id) => C.hasCombo(p.loadout, id);
+
+  // ---------------------------------------------------------------- round 26: drop-off events, challenges, emotes
+  const humanish = (q) => !q.bot || !!q.proxy;   // (a WA_DEBUG proxy: a bot brain the progression treats as a human, for the adaptive sim)
+  // A drop-off event for a human's session (server.js: Saves.logEvent; bots and proxies have no session)
+  function ev(p, event, details = {}) {
+    if (!p || p.bot || !p.session) return;
+    try { opts.logEvent?.(p.session, event, details, pubMapId(mapId)); } catch (e) { console.warn('[events]', e); }
+  }
+  // A challenge counter moved for `p` (live matches only): saved when one completes, ticked to a 26+ client
+  function chal(p, stat, n = 1) {
+    if (!p || !humanish(p) || !p.prog || match.state().phase !== 'live') return;
+    noteChallenges(p, Prog.bump(p, stat, n));
+  }
+  function noteChallenges(p, moved) {
+    if (!moved.length) return;
+    if (p.proto >= 26) {
+      const t = now();
+      p.chalSentAt ??= {};
+      for (const { newly, ...m } of moved) {
+        if (!newly && t - (p.chalSentAt[m.id] || 0) < 2) continue;   // (damage moves every hit: one tick per 2 s, a completion at once)
+        p.chalSentAt[m.id] = t;
+        send(p.id, { t: 'challenge', ...m });
+      }
+    }
+    if (moved.some(m => m.newly)) saveProgress(p);
+  }
+  function saveProgress(p) {
+    if (!p.progAccount) return;
+    try { opts.saveProgress?.(p, Prog.progressRow(p)); } catch (e) { console.warn('[progress] save', e); }
+  }
+  // The V key's emotes (C.EMOTES), and the bots' after a kill: everyone sees { t: 'emote', id, e }
+  function emote(p, e) {
+    if (!C.EMOTES.includes(e) || p.dead || p.spectator) return false;
+    const t = now();
+    if (t < (p.emoteAt ?? -1e9) + C.EMOTE_COOLDOWN) return false;
+    p.emoteAt = t;
+    broadcast({ t: 'emote', id: p.id, e });
+    return true;
+  }
+  // The Wardrobe: equip unlocked cosmetics (anything locked or unknown is dropped); everyone sees { t: 'look' }
+  function equip(p, eq) {
+    if (p.bot || !p.prog) return;
+    p.prog.equipped = C.sanitizeEquipped(eq, p.prog.level);
+    broadcast({ t: 'look', id: p.id, lv: p.prog.level, eq: p.prog.equipped, title: C.titleFor(p.prog.level) });
+    if (p.proto >= 26) send(p.id, { t: 'progress', progress: Prog.progressOf(p) });
+    saveProgress(p);
+  }
+  // A bot's emote or speech bubble, sometimes (C.TAUNT_RULES): after a kill or a multikill, its death, a win. Rare: a per-bot
+  // and a room-wide cooldown; a Showboat far more often, a Healer less. The client may hide them (its settings).
+  let tauntAt = -1e9;
+  function botChatter(p, kind) {
+    if (!p?.bot || p.proxy || !p.persona) return;
+    const R = C.TAUNT_RULES, t = now();
+    if (t < (p.chatAt ?? -1e9) + R.botCooldown) return;
+    const mult = C.PERSONAS[p.persona].taunt * (kind === 'multi' || kind === 'win' ? 2 : kind === 'death' ? 0.5 : 1);
+    if (kind !== 'death' && Math.random() < R.emoteChance * mult && emote(p, kind === 'kill' && Math.random() < 0.5 ? 'taunt' : 'cheer')) p.chatAt = t;
+    if (t >= tauntAt + R.roomCooldown && Math.random() < R.chance * mult) {
+      const lines = C.TAUNTS[kind] || C.TAUNTS.kill;
+      broadcast({ t: 'taunt', id: p.id, text: lines[Math.floor(Math.random() * lines.length)] });
+      tauntAt = p.chatAt = t;
+    }
+  }
 
   function send(id, msg) {
     const ws = sockets.get(id);
@@ -434,6 +505,20 @@ export function createRoom(opts) {
     if (target.carrying) dropProp(target, true);
     if (attacker && attacker.id !== target.id) { attacker.kills++; addUltCharge(attacker, C.ULT_CHARGE.kill); }
     noteStreaks(target, attacker, now());
+    // round 26: the day's challenges, the first kill / death events, the deaths in a row (a quit after a death streak), the bots' chatter
+    if (attacker && attacker !== target) {
+      if (humanish(attacker)) {
+        chal(attacker, 'kills');
+        if (spellOf(kind, attacker, spell) === attacker.loadout?.primary) chal(attacker, 'primaryKills');
+        if (cause === 'void') chal(attacker, 'voidKos');
+        attacker.deathsInRow = 0;
+        if (!attacker.firstKillAt) { attacker.firstKillAt = now(); ev(attacker, 'first_kill', { s: Math.round(now() - attacker.joinedAt) }); }
+      } else if (match.state().phase === 'live') botChatter(attacker, (attacker.killTimes?.length || 0) >= 2 ? 'multi' : 'kill');
+    }
+    if (humanish(target)) {
+      target.deathsInRow = (target.deathsInRow || 0) + 1;
+      if (!target.firstDeathAt) { target.firstDeathAt = now(); ev(target, 'first_death', { s: Math.round(now() - target.joinedAt) }); }
+    } else if (attacker && attacker !== target && match.state().phase === 'live') botChatter(target, 'death');
     match.onKill(target, attacker, cause);
     broadcast({ t: 'death', id: target.id, killer: attacker ? attacker.id : null, cause, kind, ...(spell ? { spell } : {}) });
   }
@@ -688,6 +773,7 @@ export function createRoom(opts) {
     else if (type === 'aegis') { q.shield = R.shield; q.shieldUntil = t + R.time; }
     else if (type === 'surge') addUltCharge(q, R.ult);
     match.onRune?.(q, type);
+    chal(q, 'runes');   // round 26
   }
   function updateRunes(t) {
     for (const r of runes) {
@@ -1460,6 +1546,7 @@ export function createRoom(opts) {
       broadcast({ t: 'mrainLeap', id: p.id, p: [p.p[0], p.mrain.y0, p.p[2]], top: MRAIN.height, rise: MRAIN.rise, hover: MRAIN.hover, seed: p.mrain.seed });
     }
     broadcast({ t: 'ult', id: p.id, ult: U });
+    chal(p, 'ults');   // round 26
   }
 
   // Rime, Blizzard: a cone of snow along his facing (it turns toward where he looks at BLIZ.turnRate). Enemies in it
@@ -1621,6 +1708,7 @@ export function createRoom(opts) {
     console.log(`[idle] ${p.name} (#${p.id}) disconnected for inactivity`);
     if (ws) setTimeout(() => ws.close(4000, 'inactivity'), 150);
     p.lastInputAt = Infinity;   // (once)
+    ev(p, 'idle_kick', { s: Math.round(now() - p.joinedAt) });   // round 26
   }
 
   function simulate(dt) {
@@ -2489,7 +2577,7 @@ export function createRoom(opts) {
         if (p.bot) break;
         const n = [...players.values()].filter(q => q.bot).length;
         if (n >= BOT_LIMIT) break;
-        addBot(['easy', 'normal', 'hard'].includes(msg.difficulty) ? msg.difficulty : 'normal', msg.loadout);
+        addBot(['easy', 'normal', 'hard', 'auto'].includes(msg.difficulty) ? msg.difficulty : 'normal', msg.loadout, { proxy: !!process.env.WA_DEBUG && msg.proxy === true });   // (round 26: 'auto', a test's proxy)
         break;
       }
       case 'removeBots': {
@@ -2513,24 +2601,36 @@ export function createRoom(opts) {
   ];
   // `loadout` (optional) pins what it casts: a PRESETS id or a full loadout. Otherwise C.botLoadout: half the time an
   // old hero kit, half the time fully random.
-  function addBot(difficulty, loadout = null) {
+  // Round 26 (§3): every bot has a personality (C.PERSONAS: one the room's other bots don't have, when there's one left) and its
+  // loadout, unless one is asked for; 'auto' plays at the room's adaptive skill; a made-up level and a staff glow or trail.
+  // opts.proxy (WA_DEBUG): an Easy brain the progression and the adaptive skill treat as a human (the new-player sim).
+  function addBot(difficulty, loadout = null, { proxy = false } = {}) {
     if (opts.canAddBot && !opts.canAddBot()) return;   // round 17: the server-wide bot cap (rooms fill with fewer bots)
     const id = allocId();
     const taken = new Set([...players.values()].map(q => q.name));
     const free = BOT_NAMES.filter(([n]) => !taken.has(n));
     const [name, body] = free.length ? free[Math.floor(Math.random() * free.length)] : [`Bones ${id}`, 'skeleton_minion'];
     const preset = typeof loadout === 'string' ? C.PRESETS.find(k => k.id === loadout)?.loadout : null;
-    const p = newPlayer(id, name, preset || C.sanitizeLoadout(loadout) || C.botLoadout(), Math.random() < 0.5 ? 'male' : 'female');
+    const used = new Set([...players.values()].map(q => q.persona).filter(Boolean));
+    const left = C.PERSONA_IDS.filter(k => !used.has(k)), pool = left.length ? left : C.PERSONA_IDS;
+    const persona = pool[Math.floor(Math.random() * pool.length)];
+    const p = newPlayer(id, name, preset || C.sanitizeLoadout(loadout) || { ...C.PERSONAS[persona].loadout }, Math.random() < 0.5 ? 'male' : 'female');
     const sp = C.SPAWN_POINTS[Math.floor(Math.random() * C.SPAWN_POINTS.length)];
     p.p = [sp[0], sp[1] || 0, sp[2]];
-    p.bot = createBot(difficulty);
+    const skill = difficulty === 'auto' ? roomSkill() : null;
+    p.bot = createBot(difficulty, { skill, persona });
+    p.persona = persona;
+    p.botLv = Math.max(2, Math.round(3 + (skill ?? { easy: 0.15, normal: 0.5, hard: 0.85 }[p.bot.difficulty] ?? 0.5) * 18 + (Math.random() - 0.5) * 8));
+    const pick = (slot) => { const l = C.UNLOCKS.filter(u => u.slot === slot && u.level <= p.botLv); return Math.random() < 0.6 && l.length ? l[Math.floor(Math.random() * l.length)].id : undefined; };
+    p.botEq = Object.fromEntries([['staff', pick('staff')], ['trail', pick('trail')]].filter(([, v]) => v));
+    if (proxy) { p.proxy = true; p.botPref = 'auto'; Prog.initProgress(p, null, { firstVisit: true }); }
     p.body = body;
     players.set(id, p);
     match.onJoin(p);
     if (!players.has(id)) return;   // the match had no room for it
     { const msp = match.spawnPointFor(p); if (msp) p.p = [msp[0], msp[1] || 0, msp[2]]; }
-    broadcast({ t: 'joined', player: playerPublic(p) });
-    console.log(`[+] bot ${name} (${difficulty}, ${C.LOADOUT_SLOTS.map(k => p.loadout[k]).join(' ')}) joined. ${players.size} online`);
+    broadcast({ t: 'joined', player: playerFull(p) });
+    console.log(`[+] bot ${name} the ${C.PERSONAS[persona].name}${proxy ? ' (proxy)' : ''} (${difficulty}${skill != null ? ` ${skill.toFixed(2)}` : ''}, ${C.LOADOUT_SLOTS.map(k => p.loadout[k]).join(' ')}) joined. ${players.size} online`);
   }
 
   function removePlayer(id) {
@@ -2552,7 +2652,9 @@ export function createRoom(opts) {
     players, props, now, broadcast, send, propPublic,
     addBot: (...a) => addBot(...a), removePlayer: (id) => removePlayer(id), respawn: (p) => respawn(p),
     addUltCharge: (p, pct) => addUltCharge(p, pct),
-    onMatchEnd: (list, info) => opts.onMatchEnd?.(list, { ...info, roomKind: opts.kind, roomId: room.id, map: pubMapId(mapId), legacy: LEGACY }),   // round 18: the saves; round 23: the Discord line
+    onMatchEnd: (list, info) => { awardMatch(list, info); opts.onMatchEnd?.(list.filter(q => !q.proxy), { ...info, roomKind: opts.kind, roomId: room.id, map: pubMapId(mapId), legacy: LEGACY }); },   // round 26: XP first
+    onCountdown: (info) => onCountdown(info),   // round 26: the rematch stays, the adaptive skill
+    onStat: (p, stat, n) => chal(p, stat, n),   // round 26: assists, damage, potions (match.js counts them)   // round 18: the saves; round 23: the Discord line
     resetUlt: (p) => { p.ult = 0; },
     // between matches: every ram goes
     resetRams: () => { for (const r of [...rams]) despawnRam(r); },
@@ -2562,6 +2664,33 @@ export function createRoom(opts) {
     pubMap: (id) => pubMap(id),
   });
   world.match = match;
+  // Round 26: a match is over. Each human who finished it: the match_end event, the XP (progress.js; a 26+ client gets { t: 'xp' }
+  // for the post-match screen), the saved progress; the winner bot cheers, sometimes.
+  function awardMatch(list, { seconds }) {
+    const winner = match.state().results?.winner ?? null;
+    const humansN = list.filter(humanish).length, botsN = list.length - humansN;
+    list.forEach((q, i) => {
+      if (!humanish(q)) { if (q.id === winner) botChatter(q, 'win'); return; }
+      ev(q, 'match_end', { place: i + 1, kills: q.kills || 0, deaths: q.deaths || 0, s: seconds, humans: humansN, bots: botsN });
+      if (!q.prog) return;
+      const { msg } = Prog.finishMatch(q, { place: i + 1, of: list.length, won: q.id === winner, map: pubMapId(mapId), kills: q.kills || 0, deaths: q.deaths || 0 });
+      if (q.proto >= 26) send(q.id, msg);
+      if (q.proxy) console.log(`[adapt] proxy ${q.name}: place ${i + 1}/${list.length}, ${q.kills}-${q.deaths}, rating ${q.adapt.r}`);
+      saveProgress(q);
+    });
+    lastFinished = new Set(list.filter(q => !q.bot).map(q => q.id));
+  }
+  let lastFinished = new Set();
+  // The next countdown: who stayed into the rematch; the 'auto' bots move to the humans' rating now (never mid-match); a bot waves, sometimes
+  function onCountdown({ rematch }) {
+    if (rematch) for (const id of lastFinished) { const q = players.get(id); if (q) ev(q, 'rematch_stay', {}); }
+    lastFinished = new Set();
+    const s = roomSkill();
+    for (const q of players.values()) if (q.bot?.auto) setBotSkill(q.bot, s);
+    const bots = [...players.values()].filter(q => q.bot && !q.proxy && !q.spectator);
+    if (bots.length && Math.random() < 0.3) emote(bots[Math.floor(Math.random() * bots.length)], 'wave');
+    roomChanged();
+  }
   // Round 22: the room moves to another map (the rotation, at a countdown): map.js reads it, the props, potions, runes and pads are
   // rebuilt from it, everything a spell left behind goes (it would hang in the air over the other map), and everyone hears
   // { t: 'map', ... } (the client swaps its world, then the respawns put everyone on the new spawns).
@@ -2637,12 +2766,15 @@ export function createRoom(opts) {
   // Its own players, sockets and observers. server.js picks the room; everything below is this room only.
   const MAX_HUMANS = 4;
   const room = { id: opts.id, kind: opts.kind, code: opts.code || null, host: null, emptySince: now() };
-  const humans = () => [...players.values()].filter(q => !q.bot);
+  const humans = () => [...players.values()].filter(humanish);
+  // round 26 (§3): the adaptive bots' skill (0 Easy – 1 Hard): the humans' mean rating (C.ADAPT); it changes between matches only
+  const roomSkill = () => { const hs = humans().filter(q => !q.watchOnly); return hs.length ? hs.reduce((s, q) => s + (q.adapt?.r ?? C.ADAPT.start), 0) / hs.length : C.ADAPT.start; };
   function info() {
     const n = humans().length;
     return { id: room.id, code: room.code, private: room.kind === 'private', humans: n, max: MAX_HUMANS, joinable: n < MAX_HUMANS,
       host: room.kind === 'private' ? room.host : null, bots: match.state().botDiff,
-      map: pubMapId(mapId), lock: match.mapLock(), maps: mapsAvail().map(pubMapId), gen: GEN, ...(LEGACY ? { legacy: true } : {}) };   // round 22 / 24
+      map: pubMapId(mapId), lock: match.mapLock(), maps: mapsAvail().map(pubMapId), gen: GEN, ...(LEGACY ? { legacy: true } : {}),   // round 22 / 24
+      ...(match.state().botDiff === 'auto' ? { skill: +roomSkill().toFixed(2) } : {}) };   // round 26: the adaptive bots' skill (0 Easy – 1 Hard)
   }
   let lastInfo = '';
   function roomChanged() {
@@ -2653,9 +2785,9 @@ export function createRoom(opts) {
   }
   // The host's bot difficulty: the fill bots switch at once (a new brain at that level; their place and score stay).
   function setBots(d) {
-    if (!['easy', 'normal', 'hard'].includes(d)) return;
+    if (!['easy', 'normal', 'hard', 'auto'].includes(d)) return;   // (round 26: 'auto', the adaptive skill)
     match.setBotDiff(d);
-    for (const q of players.values()) if (q.bot && q.fill && q.bot.difficulty !== d) q.bot = createBot(d);
+    for (const q of players.values()) if (q.bot && q.fill && (q.bot.auto ? 'auto' : q.bot.difficulty) !== d) q.bot = createBot(d, { skill: d === 'auto' ? roomSkill() : null, persona: q.persona });
     roomChanged();
   }
 
@@ -2669,6 +2801,14 @@ export function createRoom(opts) {
     const lo = C.sanitizeLoadout(msg.loadout);
     const p = newPlayer(id, name, lo || C.DEFAULT_LOADOUT, msg.voice);
     p.proto = Number.isFinite(msg.proto) ? msg.proto : 0;   // round 22: 0 = the live CrazyGames build (server.js put it in a legacy room)
+    // round 26: the drop-off events' session (server.js, Saves.startSession); the progress (a guest's own from the join, or the
+    // account's once loaded), the cosmetics they wear, the adaptive-difficulty rating (client-held)
+    p.joinedAt = now();
+    p.session = ws.session || null;
+    p.guestRaw = msg.progress && typeof msg.progress === 'object' ? msg.progress : null;
+    Prog.initProgress(p, p.guestRaw, { firstVisit: msg.firstVisit === true, adapt: msg.adapt });
+    if (ws.accountProgress) Prog.setAccountProgress(p, ws.accountProgress);
+    if (msg.equipped !== undefined) p.prog.equipped = C.sanitizeEquipped(msg.equipped, p.prog.level);
     // round 23: Ty's admin key (verified by server.js's notifier; never stored or echoed) and where the client runs ('crazygames' | 'web')
     p.admin = typeof opts.isAdmin === 'function' && opts.isAdmin(msg.admin);
     p.platform = msg.platform === 'crazygames' || msg.platform === 'web' ? msg.platform : (LEGACY || ws.account ? 'crazygames' : undefined);
@@ -2678,8 +2818,9 @@ export function createRoom(opts) {
     // `firstVisit`) alone in a public room gets Easy bots, so they can win their first fights; one joining other humans
     // leaves the room's difficulty alone. Private rooms and invites are unchanged.
     const first = msg.firstVisit === true && room.kind === 'public';
-    if (first) { if (!humans().length) p.botPref = 'easy'; }
-    else if (['easy', 'normal', 'hard'].includes(msg.difficulty) && (room.kind !== 'private' || room.host === id)) p.botPref = msg.difficulty;
+    // Round 26: a 26+ client's first visit gets 'auto' instead (its rating starts at Easy and moves with each match); 'auto' is a pick too.
+    if (first) { if (!humans().length) p.botPref = p.proto >= 26 ? 'auto' : 'easy'; }
+    else if (['easy', 'normal', 'hard', 'auto'].includes(msg.difficulty) && (room.kind !== 'private' || room.host === id)) p.botPref = msg.difficulty;
     if (ws.account) p.account = ws.account;   // round 18: an auth that came before the join
     players.set(id, p);
     sockets.set(id, ws);
@@ -2688,7 +2829,7 @@ export function createRoom(opts) {
     { const sp = match.spawnPointFor(p); if (sp) p.p = [sp[0], sp[1] || 0, sp[2]]; }
     ws.send(JSON.stringify({
       t: 'welcome', id,
-      players: [...players.values()].map(playerPublic),
+      players: [...players.values()].map(playerFull),
       props: [...props.values()].map(propPublic),
       rams: rams.map(ramPublic),
       stampedes: [...stampedes.values()].map(st => ({ id: st.id, owner: st.owner, p: st.p, dir: st.dir, left: Math.max(0, st.at - now()), width: STAMP.width, length: STAMP.length })),
@@ -2706,9 +2847,11 @@ export function createRoom(opts) {
       decoys: [...decoys.values()].map(decoyPublic),
       ...match.welcomeExtras(p),
       room: info(),
+      ...(p.proto >= 26 ? { progress: Prog.progressOf(p) } : {}),   // round 26
       ...extra,
     }));
-    broadcast({ t: 'joined', player: playerPublic(p) });
+    ev(p, 'join', { room: room.kind });   // round 26
+    broadcast({ t: 'joined', player: playerFull(p) });
     if (msg.loadout !== undefined && !lo) send(id, { t: 'loadoutRejected', reason: 'That loadout is not valid: you have the default one.' });
     console.log(`[+] ${name} (#${id}) joined ${room.id}. ${players.size} in the room`);
     roomChanged();
@@ -2728,7 +2871,10 @@ export function createRoom(opts) {
       if (process.env.WA_DEBUG) for (const k of ['spectate', 'waiting', 'kick']) if (Number.isFinite(msg[k])) idleCfg[k] = msg[k];
       return;
     }
-    if (msg.t === 'menu' || msg.t === 'activity') return;
+    if (msg.t === 'menu') { if (msg.open && now() - (p.menuEvAt ?? -1e9) > 10) { p.menuEvAt = now(); ev(p, 'menu_open', {}); } return; }   // round 26
+    if (msg.t === 'activity') return;
+    if (msg.t === 'emote') { emote(p, msg.e); return; }    // round 26: V
+    if (msg.t === 'equip') { equip(p, msg.equipped); return; }   // round 26: the Wardrobe
     if (msg.t === 'roomBots') { if (room.kind !== 'private' || room.host === id) setBots(msg.difficulty); return; }
     if (msg.t === 'roomMap') { if (!LEGACY && (room.kind !== 'private' || room.host === id) && match.setMapLock(msg.map)) roomChanged(); return; }   // round 22: the host locks a map ('rotate' lifts it)
     handle(p, msg);
@@ -2775,7 +2921,29 @@ export function createRoom(opts) {
     observe(ws) { observers.add(ws); room.emptySince = null; },
     unobserve(ws) { observers.delete(ws); if (!observers.size && !humans().length) room.emptySince ??= now(); },
     observerCount: () => observers.size,
-    observerMessage(msg) { if (msg.t === 'addBot' || msg.t === 'removeBots') { useMap(); handle({ bot: null }, msg); } },
+    observerMessage(msg) {
+      if (msg.t === 'addBot' || msg.t === 'removeBots') { useMap(); handle({ bot: null }, msg); }
+      else if (msg.t === 'matchDebug' && room.kind === 'lab') match.handle({ bot: null }, msg);   // round 26: the adaptive sim (MATCH_DEBUG only, match.js checks)
+    },
+    // round 26: a verified account's progress (Saves.loadProgress / mergeGuestProgress) for a player in this room
+    setProgress(id, raw, merged = false) {
+      const p = players.get(id);
+      if (!p || !raw) return;
+      useMap();
+      const eq = p.prog?.equipped;
+      Prog.setAccountProgress(p, raw);
+      if (!Object.keys(p.prog.equipped).length && eq) p.prog.equipped = C.sanitizeEquipped(eq, p.prog.level);   // (a fresh account keeps what this browser wore)
+      broadcast({ t: 'look', id, lv: p.prog.level, eq: p.prog.equipped, title: C.titleFor(p.prog.level) });
+      if (p.proto >= 26) send(id, { t: 'progress', progress: Prog.progressOf(p), ...(merged ? { merged: true } : {}) });
+    },
+    guestProgress: (id) => players.get(id)?.guestRaw ?? null,
+    // round 26: the disconnect event's details: { state: 'menu' | 'live' | 'podium' | 'lobby', kills, deaths (this match), streak (deaths since their last kill) }
+    playerState(id) {
+      const p = players.get(id);
+      if (!p) return { state: 'lobby' };
+      const ph = match.state().phase;
+      return { state: p.spectator ? 'lobby' : p.inMenu ? 'menu' : ph === 'end' || ph === 'recap' ? 'podium' : 'live', kills: p.kills || 0, deaths: p.deaths || 0, streak: p.deathsInRow || 0 };
+    },
     legacy: LEGACY, gen: GEN, map: () => pubMapId(mapId),
   });
 }
