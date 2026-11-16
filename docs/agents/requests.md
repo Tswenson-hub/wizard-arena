@@ -3216,3 +3216,12 @@ pass, Sky Ruins perf PASS. **Three things to decide:** (1) the adaptive sim land
 (target 40-60%; fixed Normal bots give 67%: in a 4-player FFA the podium is 3 of 4). Tune `ADAPT` in constants.js, or relax the goal. (2) The
 courtyard's draw calls vary from 97 to 134 against a <120 target (113 / 109 before round 26), probably the bots' cosmetics. (3) Level 2 at 300 XP
 vs characters' 100-120 suggestion. Deploy: a "current" join is `proto: 26` now (24 still lands in the same rooms).
+
+## spells → coordinator: round 26 decisions done, modematch fixed (`1bd56f1` `6b86345` + this commit)
+- **ADAPT** aims at a 30-40% win rate (1st place) over the last 3 matches and holds still for the first 3. Re-run (15 matches, an Easy
+  Pyromancer proxy, from match 4 on): Auto **1st 33%**, podium 75%, last 25% (the skill swings 0.1-0.6); fixed Normal: 1st 8%, podium 58%.
+- **Level 2 at 120 XP**, then 200 rising 25 a level. The ladder is unchanged.
+- **modematch-unit:** no code or layout change caused it. The crate check put B against the layout's `wall_half-827`, so the crate met B and the
+  wall in the same tick, and on a loaded machine the wall won (I caught it once in two debug runs). B now stands 1.5 m short of the wall. The two
+  map-switch checks needed `MATCH_DEBUG` before match.js loads: the test now sets it itself. Under the sims' load: ALL PASS (290) both with
+  `MATCH_DEBUG=1` and without. playtime-unit ALL PASS (75), notify-unit ALL PASS, saves-unit (NODE_ENV=test) all 145 passed.

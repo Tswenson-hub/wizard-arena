@@ -87,6 +87,24 @@ decided the same way; the two agree.)
   likely the cosmetics on the bots (I give bots a random staff glow or trail; dropping `botEq` in room.js addBot would remove those). That is for
   characters and deploy to weigh.
 
+### Round 26, after the coordinator's decisions (`1bd56f1` `6b86345`)
+- **Level curve:** level 2 at **120 XP** (`xpToNext(1)`), then 200 rising 25 a level (level 15 at 4,670). A first match levels you up when it's a
+  win, 2nd with 5 kills, or 7+ kills; a last place with few kills (50-110) doesn't. The wizard ladder's thresholds are unchanged.
+- **Adaptive target:** the rating now aims at a **30-40% win rate** (1st place) over the last 3 matches (`ADAPT.target 0.35`, band 0.12: with three
+  matches, no wins → down, one → hold, two or three → up, up to 0.24 a match) and holds still for the first 3 matches (`grace`). The podium no
+  longer counts.
+- **The re-run sim** (`adaptsim.mjs <port> 15 auto|normal 7 150`, an Easy Pyromancer proxy, from match 4 on, 12 matches):
+  | Bots | 1st place | Podium | Last | Room skill |
+  |---|---|---|---|---|
+  | Auto (the new ADAPT) | **33%** (4 of 12) | 75% | 25% | 0 for the grace, then 0.16 → 0.63 while it won, back to 0.11 when it lost |
+  | Normal (fixed) | 8% | 58% | 42% | n/a |
+- **modematch-unit's crate check** (`the thrown crate hits B up on the island`): nothing in the code or the layout changed. B was placed at
+  (4.5, 36), against the layout's `wall_half-827` (4.3, 35.8; south face z ≈ 35.4). The crate reached B's hit sphere and that wall in the same tick,
+  so on a loaded machine (a longer server tick) the wall won: it broke at (4.1, 7.2, 34.9) with surface `surface` and no hit (caught once in two
+  debug runs here). B now stands 1.5 m short of the wall. **The map-switch checks** needed MATCH_DEBUG at match.js's load (it reads it once) and the
+  test imported match.js statically: it now sets `MATCH_DEBUG ??= '1'` first. Both ways (exported or not) ALL PASS, 290, under the sims' load.
+- All suites: modematch-unit ALL PASS (290), playtime-unit ALL PASS (75), notify-unit ALL PASS, saves-unit (NODE_ENV=test) all 145 passed.
+
 **Known issues / for others:**
 - **Environment:** `sanitizeSave` should accept `bots: 'auto'` (asked in requests.md). Please keep the `'grandfathered'` unlock id through merges.
 - **Characters:** the cosmetic ids and the titles' levels are mine to change on request. A level 2 needs 300 XP: their note suggests 100-120 for
