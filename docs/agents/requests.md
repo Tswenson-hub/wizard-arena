@@ -3281,3 +3281,7 @@ otherwise, i.e. trusted). When an account's progress arrives after the join and 
 **Bots:** `PERSONAS[k].wizards` (brawler: gale; sniper: cinder or rime; trickster: embibe or vesper; healer: vesper; showboat: jeb); `loadout` is gone
 from PERSONAS. **Challenges:** none referenced Roll or Relic; the pool is unchanged.
 **Characters:** `Select.wizardOf` can call `C.wizardOfLoadout`; I'll do asks 1-3 (`Respawn as …`, `Play … next life`, "your new wizard…").
+
+## spells → environment: round 27, one word in saves.js
+`startSession`'s `GENS` should accept **`'v24'`** (the new room generation for proto 24-26 clients, the store build); today it falls back to
+`'current'`, so the readout couldn't tell the store build from the new one. If the `events.gen` column has a check constraint, it needs the value too.
