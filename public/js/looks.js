@@ -10,7 +10,7 @@ import * as THREE from 'three';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { WIZARDS, ELEMENTS, SPELLBOOK, SPELL_INFO, loadoutElements } from '../shared/constants.js';
-import { COSMETIC, sanitizeCosmetics } from '../shared/cosmetics.js';
+import { LOOKS, lookEquipped } from '../shared/cosmetics.js';
 import { SPELL_ANIMS, COMMON_ANIMS, SKELETON_ANIMS, legacyKey } from './spellanim.js';
 import * as Q from './quality.js';
 
@@ -313,13 +313,29 @@ vec3 wa_tint(vec3 lin, vec2 uv) {
   return lin;
 }
 `;
+// Round 26, the wide-brim hat: the hat's vertices (the robe swatch above uHatY) past the crown's radius spread out by up to
+// uBrim.x and dip a little at the rim, in the bind pose before skinning. uBrim: (spread, r0, r1, dip) in the geometry's units,
+// uHatC the hat's axis (x, z); spread 1 leaves every vertex where it is.
+const BRIM_GLSL = /* glsl */`
+uniform vec4 uBrim, uRobeRV;
+uniform vec2 uHatC;
+uniform float uHatYV;
+vec3 wa_brim(vec3 p, vec2 uv) {
+  if (uBrim.x == 1.0 || p.y < uHatYV || uv.x < uRobeRV.x || uv.x >= uRobeRV.z || uv.y < uRobeRV.y || uv.y >= uRobeRV.w) return p;
+  vec2 d = p.xz - uHatC;
+  float k = smoothstep(uBrim.y, uBrim.z, length(d));
+  p.xz = uHatC + d * mix(1.0, uBrim.x, k);
+  p.y -= k * uBrim.w * (uBrim.x - 1.0);
+  return p;
+}
+`;
 function tintMaterial(src, u) {
   const m = src.clone();
   m.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, u);
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying float vWaY;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvWaY = position.y;');
+      .replace('#include <common>', '#include <common>\nvarying float vWaY;\n' + BRIM_GLSL)
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvWaY = position.y;\n\ttransformed = wa_brim(transformed, uv);');
     sh.fragmentShader = sh.fragmentShader
       .replace('void main() {', TINT_GLSL + '\nvoid main() {')
       .replace('#include <map_fragment>', '#include <map_fragment>\n\tdiffuseColor.rgb = wa_tint(diffuseColor.rgb, vMapUv);');
@@ -340,6 +356,7 @@ const tintUniforms = () => ({
   uGem: { value: new THREE.Color() },
   uRobeR: { value: new THREE.Vector4(...REGIONS.robe) }, uCapeR: { value: new THREE.Vector4(...REGIONS.cape) }, uGemR: { value: new THREE.Vector4(...REGIONS.gem) },
   uHat: { value: new THREE.Vector3(0, -1, 1) }, uHatY: { value: 9 },
+  uBrim: { value: new THREE.Vector4(1, 1, 2, 0) }, uRobeRV: { value: new THREE.Vector4(...REGIONS.robe) }, uHatC: { value: new THREE.Vector2() }, uHatYV: { value: 9 },
 });
 
 // The look of a loadout: { main, second (or null), mix: [{ element, count }], color }.
@@ -354,10 +371,11 @@ export function lookOf(loadout) {
 // Round 26: a robe palette (cosmetics.js) replaces both, a hat colour tints the hat alone, a staff glow sets the gem.
 function lookUniforms(look, u, cos = {}) {
   const r = ROBES[look.main] || ROBES.arcane, c = look.second ? ROBES[look.second] : r;
-  const pal = COSMETIC[cos.robe], hat = COSMETIC[cos.hat], glow = COSMETIC[cos.staff]?.glow;
+  const pal = LOOKS[cos.robe], hat = LOOKS[cos.hat], glow = LOOKS[cos.staff]?.glow;
   u.uRobe.value.set(...(pal?.robe || r.robe || [0, -1, 1]));
   u.uCape.value.set(...(pal?.cape || (look.second ? c.robe : r.cape) || [0, -1, 1]));
   u.uHat.value.set(...(hat?.hat || [0, -1, 1]));
+  u.uBrim.value.x = hat?.wide || 1;
   u.uGem.value.setHex(glow ?? ELEMENTS[look.main].bolt);
 }
 
@@ -723,6 +741,8 @@ function modelToGeo(geo) {
 const UV_GOLD = [0.31, 0.79], UV_GEM = [0.56, 0.86];
 // The band round the hat's crown just above the brim, in model units: centre, the bottom and top heights and radii. Tuned on renders.
 const BAND = { x: 0, z: 0.05, y0: 2.1, y1: 2.27, r0: 0.535, r1: 0.47 };
+// The wide brim: vertices from r0 out (the crown is under 0.55) spread fully by r1; the rim dips `dip` per unit of spread. Model units.
+const BRIM = { r0: 0.58, r1: 0.9, dip: 0.35 };
 // A gold circlet (a plain band) or a crown (the band, six points and six red gems) round the hat, as one skinned geometry on the
 // head bone: drawn with the body's own material and skeleton, so it is the same shader program as the body and moves with the head.
 const bandGeos = {};
@@ -785,7 +805,7 @@ function trailSparks(host, body, color, k) {
   } }));
 }
 // The trail accent of a wizard's cosmetics for the spells' own trails (effects.js may mix it in): a hex colour or null.
-export const trailAccent = (cos) => COSMETIC[cos?.trail]?.trail ?? null;
+export const trailAccent = (cos) => LOOKS[cos?.trail]?.trail ?? null;
 
 // ---------------------------------------------------------------- bodies
 
@@ -875,12 +895,18 @@ export function makeWizardBody(loadout = {}, opts = {}) {
   // Round 26: the cosmetics (cosmetics.js ids by slot). The robe palette, the hat colour and the gem are the tint's uniforms; the
   // hat band is a skinned mesh on the body's skeleton; the staff glow and the trail sparks are motes on the staff head.
   const geoOf = !skel && skin ? modelToGeo(skin.geometry) : null;
-  if (geoOf) u.uHatY.value = geoOf(new THREE.Vector3(0, HAT_FROM, 0)).y;
-  body.cos = sanitizeCosmetics(opts.cos);
+  if (geoOf) {
+    const v = new THREE.Vector3();
+    u.uHatY.value = u.uHatYV.value = geoOf(v.set(0, HAT_FROM, 0)).y;
+    const c = geoOf(v.set(0, 2.1, BAND.z)).clone(), unit = geoOf(v.set(1, 2.1, BAND.z)).x - c.x;   // (the geometry's units per model unit)
+    u.uHatC.value.set(c.x, c.z);
+    u.uBrim.value.set(1, BRIM.r0 * unit, BRIM.r1 * unit, BRIM.dip * unit);
+  }
+  body.cos = lookEquipped(opts.cos);
   let band = null, cosFx = null;
   const dressCosmetics = () => {
     const cos = body.cos;
-    const want = !skel && skin && COSMETIC[cos.hat]?.band;
+    const want = !skel && skin && LOOKS[cos.hat]?.band;
     if (band && band.userData.kind !== want) { band.removeFromParent(); band = null; }
     if (want && !band) {
       const head = skin.skeleton.bones.findIndex(b => b.name === BONES.head);
@@ -894,7 +920,7 @@ export function makeWizardBody(loadout = {}, opts = {}) {
       }
     }
     if (cosFx) { for (const o of cosFx.userData.onBones || []) { o.removeFromParent(); o.material.dispose(); } cosFx.removeFromParent(); cosFx.traverse(o => { if (o.isPoints) o.geometry.dispose(); }); cosFx = null; }
-    const glowC = COSMETIC[cos.staff]?.glow, trailC = COSMETIC[cos.trail]?.trail;
+    const glowC = LOOKS[cos.staff]?.glow, trailC = LOOKS[cos.trail]?.trail;
     if ((glowC != null || trailC != null) && body.staff !== false) {
       cosFx = new THREE.Group(); cosFx.name = 'cosmetics';
       const level = fixedLevel || auraLevel, k = level === 'full' ? 1 : level === 'cheap' ? 0.5 : 0;
@@ -904,7 +930,7 @@ export function makeWizardBody(loadout = {}, opts = {}) {
     }
   };
   body.setCosmetics = (cos) => {
-    body.cos = sanitizeCosmetics(cos);
+    body.cos = lookEquipped(cos);
     if (body.look) lookUniforms(body.look, u, body.cos);
     dressCosmetics();
   };
