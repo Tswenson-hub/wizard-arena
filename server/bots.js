@@ -1554,7 +1554,7 @@ function moveBot(me, dt, world, t) {
     }
     // round 22 (Sky Ruins): never walk off an island. If the floor a step ahead is below the void, turn along the edge
     // (the least turn that keeps a floor under us), else stop
-    if (VOID_Y != null && !flying && !b.hop && !walkway) {
+    if (VOID_Y != null && (!flying || me.flightUntil > t) && !b.hop && !walkway) {   // (round 26: a Skyward float's drift too: Snipers carry it)
       // the reach: how far the bot gets before it can turn (a sprint needs about 0.3 s), at least 1.4 m; three probes along it
       const reach = Math.max(1.4, Math.hypot(b.vel[0], b.vel[1]) * 0.35 + 0.6);
       const dbRisky = (x, z, y) => { if (b.dbFlee > t - 0.5 || typeof C.drawbridgeUnder !== 'function') return false; const db = C.drawbridgeUnder(x, z, y); if (!db) return false; const P = C.drawbridgePhase(t); return db.a > 0.02 || P.phase !== 'down' || C.DRAWBRIDGE.down - P.at < 2.5; };   // (round 24: a tilting bridge, or one about to rise, is no floor to step onto)
