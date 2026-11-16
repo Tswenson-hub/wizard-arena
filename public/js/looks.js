@@ -10,6 +10,7 @@ import * as THREE from 'three';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { WIZARDS, ELEMENTS, SPELLBOOK, SPELL_INFO, loadoutElements } from '../shared/constants.js';
+import { COSMETIC, sanitizeCosmetics } from '../shared/cosmetics.js';
 import { SPELL_ANIMS, COMMON_ANIMS, SKELETON_ANIMS, legacyKey } from './spellanim.js';
 import * as Q from './quality.js';
 
@@ -282,6 +283,9 @@ const TINT_GLSL = /* glsl */`
 uniform float uOn;
 uniform vec3 uRobe, uCape, uGem;   // hue, sat, value scale (uRobe.y < 0: keep the texel); uGem: a colour
 uniform vec4 uRobeR, uCapeR, uGemR;
+uniform vec3 uHat;                 // round 26: the hat's own colour (y < 0: as the robe); the hat is the robe swatch above uHatY
+uniform float uHatY;
+varying float vWaY;                // the bind-pose height (the geometry's own units)
 vec3 wa_hsv(vec3 c) {
   vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
   vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
@@ -300,7 +304,10 @@ vec3 wa_rehue(vec3 lin, vec3 t) {
 }
 vec3 wa_tint(vec3 lin, vec2 uv) {
   if (uOn < 0.5) return lin;
-  if (uRobe.y >= 0.0 && wa_in(uv, uRobeR)) return wa_rehue(lin, uRobe);
+  if (wa_in(uv, uRobeR)) {
+    if (uHat.y >= 0.0 && vWaY > uHatY) return wa_rehue(lin, uHat);
+    return uRobe.y >= 0.0 ? wa_rehue(lin, uRobe) : lin;
+  }
   if (uCape.y >= 0.0 && wa_in(uv, uCapeR)) return wa_rehue(lin, uCape);
   if (wa_in(uv, uGemR)) { float l = dot(lin, vec3(0.3, 0.55, 0.15)); return uGem * (0.35 + l * 2.2); }
   return lin;
@@ -310,6 +317,9 @@ function tintMaterial(src, u) {
   const m = src.clone();
   m.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, u);
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying float vWaY;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvWaY = position.y;');
     sh.fragmentShader = sh.fragmentShader
       .replace('void main() {', TINT_GLSL + '\nvoid main() {')
       .replace('#include <map_fragment>', '#include <map_fragment>\n\tdiffuseColor.rgb = wa_tint(diffuseColor.rgb, vMapUv);');
@@ -329,6 +339,7 @@ const tintUniforms = () => ({
   uOn: { value: 1 }, uRobe: { value: new THREE.Vector3(0, -1, 1) }, uCape: { value: new THREE.Vector3(0, -1, 1) },
   uGem: { value: new THREE.Color() },
   uRobeR: { value: new THREE.Vector4(...REGIONS.robe) }, uCapeR: { value: new THREE.Vector4(...REGIONS.cape) }, uGemR: { value: new THREE.Vector4(...REGIONS.gem) },
+  uHat: { value: new THREE.Vector3(0, -1, 1) }, uHatY: { value: 9 },
 });
 
 // The look of a loadout: { main, second (or null), mix: [{ element, count }], color }.
@@ -340,11 +351,14 @@ export function lookOf(loadout) {
 }
 
 // The robe takes the dominant element; the cape the second one (when two or more spells share it), else the dominant's own cape.
-function lookUniforms(look, u) {
+// Round 26: a robe palette (cosmetics.js) replaces both, a hat colour tints the hat alone, a staff glow sets the gem.
+function lookUniforms(look, u, cos = {}) {
   const r = ROBES[look.main] || ROBES.arcane, c = look.second ? ROBES[look.second] : r;
-  u.uRobe.value.set(...(r.robe || [0, -1, 1]));
-  u.uCape.value.set(...((look.second ? c.robe : r.cape) || [0, -1, 1]));
-  u.uGem.value.setHex(ELEMENTS[look.main].bolt);
+  const pal = COSMETIC[cos.robe], hat = COSMETIC[cos.hat], glow = COSMETIC[cos.staff]?.glow;
+  u.uRobe.value.set(...(pal?.robe || r.robe || [0, -1, 1]));
+  u.uCape.value.set(...(pal?.cape || (look.second ? c.robe : r.cape) || [0, -1, 1]));
+  u.uHat.value.set(...(hat?.hat || [0, -1, 1]));
+  u.uGem.value.setHex(glow ?? ELEMENTS[look.main].bolt);
 }
 
 // ---------------------------------------------------------------- attachments (element auras)
@@ -694,6 +708,85 @@ export function emoteClips() {
   return emotes;
 }
 
+// ---------------------------------------------------------------- cosmetics (round 26)
+
+// The KayKit Mage's own extents (model units, from the pack's parts). The build quantizes the joined body's positions into [-1, 1]
+// (the scale goes into the bind matrices), so a height on the model maps to the geometry through its bounding box.
+const MAGE_BOX = new THREE.Box3(new THREE.Vector3(-0.971, -0.002, -0.967), new THREE.Vector3(0.971, 2.653, 1.0));
+const HAT_FROM = 1.33;          // the hat is the robe swatch above this height (the robe and sleeves end at 1.31)
+function modelToGeo(geo) {
+  if (!geo.boundingBox) geo.computeBoundingBox();
+  const bb = geo.boundingBox, s = bb.getSize(new THREE.Vector3()).divide(MAGE_BOX.getSize(new THREE.Vector3()));
+  return (v) => v.sub(MAGE_BOX.min).multiply(s).add(bb.min);
+}
+// Atlas texels (glTF uv) the gold band and its gems sample: outside every tint region, so they keep KayKit's colours.
+const UV_GOLD = [0.31, 0.79], UV_GEM = [0.56, 0.86];
+// The band round the hat's crown just above the brim, in model units: centre, the bottom and top heights and radii. Tuned on renders.
+const BAND = { x: 0, z: 0.05, y0: 2.1, y1: 2.27, r0: 0.535, r1: 0.47 };
+// A gold circlet (a plain band) or a crown (the band, six points and six red gems) round the hat, as one skinned geometry on the
+// head bone: drawn with the body's own material and skeleton, so it is the same shader program as the body and moves with the head.
+const bandGeos = {};
+function bandGeometry(kind, geoOf, headIndex) {
+  const key = kind + '|' + headIndex;
+  if (bandGeos[key]) return bandGeos[key];
+  const parts = [];
+  const uvAll = (g, uv) => { const a = g.attributes.uv; for (let i = 0; i < a.count; i++) a.setXY(i, uv[0], uv[1]); return g; };
+  const B = BAND, h = B.y1 - B.y0;
+  parts.push(uvAll(new THREE.CylinderGeometry(B.r1, B.r0, h, 24, 1, true).translate(B.x, B.y0 + h / 2, B.z), UV_GOLD));
+  if (kind === 'crown') {
+    for (let i = 0; i < 6; i++) {
+      const a = i / 6 * Math.PI * 2 + 0.26, r = B.r1 - 0.01;
+      const spike = new THREE.ConeGeometry(0.075, 0.2, 4).translate(0, 0.1, 0)
+        .translate(B.x + Math.sin(a) * r, B.y1 - 0.01, B.z + Math.cos(a) * r);
+      parts.push(uvAll(spike.toNonIndexed(), UV_GOLD));
+      const gem = new THREE.OctahedronGeometry(0.045, 0).translate(B.x + Math.sin(a + 0.52) * (B.r0 + 0.02), B.y0 + h * 0.5, B.z + Math.cos(a + 0.52) * (B.r0 + 0.02));
+      parts.push(uvAll(gem, UV_GEM));
+    }
+  }
+  const g = mergeGeometries(parts.map(p => p.index ? p.toNonIndexed() : p));
+  const pos = g.attributes.position, v = new THREE.Vector3(), map = geoOf;
+  for (let i = 0; i < pos.count; i++) { map(v.fromBufferAttribute(pos, i)); pos.setXYZ(i, v.x, v.y, v.z); }
+  const n = pos.count;     // (the normals keep their directions: the mapping only scales, near enough uniformly)
+  g.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(new Uint16Array(n * 4).fill(0).map((_, i) => i % 4 === 0 ? headIndex : 0), 4));
+  g.setAttribute('skinWeight', new THREE.Float32BufferAttribute(new Float32Array(n * 4).map((_, i) => i % 4 === 0 ? 1 : 0), 4));
+  g.userData.shared = true;
+  return (bandGeos[key] = g);
+}
+
+// The staff glow (a halo on the staff head and sparks circling it) and the trail accent (sparks dropping off the staff head like a
+// sparkler): the motes program, like the auras. `k` scales the sparks (0: the halo alone).
+function staffGlow(host, body, color, k) {
+  const tip = bone(body, 'tip') || bone(body, 'hand');
+  if (!tip) return;
+  // the halo: a soft additive sprite on the staff head (the Fury glow's program), wider than the gem, which hides its middle
+  const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTexture(), color, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.7 }));
+  body.updateMatrixWorld(true);
+  const ws = tip.getWorldScale(new THREE.Vector3()).x / (body.getWorldScale(new THREE.Vector3()).x || 1);
+  halo.scale.setScalar(0.85 / (ws || 1)); halo.renderOrder = 3;
+  halo.onBeforeRender = () => { halo.material.opacity = 0.6 + 0.15 * Math.sin(performance.now() / 200); };
+  tip.add(halo);
+  host.userData.onBones = [halo];
+  if (k > 0) host.add(motes(Math.round(6 * k), { size: 0.13, color, place: (i, t, p) => {
+    inModel(body, tip, p);
+    const a = t * 2.4 + i * 1.047, r = 0.3 + 0.05 * Math.sin(t * 3 + i);
+    p.x += Math.cos(a) * r; p.z += Math.sin(a) * r; p.y += Math.sin(t * 2 + i * 2.1) * 0.08;
+    return 0.9;
+  } }));
+}
+function trailSparks(host, body, color, k) {
+  const tip = bone(body, 'tip') || bone(body, 'hand');
+  if (!tip || k <= 0) return;
+  host.add(motes(Math.round(14 * k), { size: 0.22, color, place: (i, t, p) => {
+    const q = fract(t * 1.4 + rand(i, 4));
+    inModel(body, tip, p);
+    const a = rand(i, 5) * 6.283;
+    p.x += Math.cos(a) * q * 0.25; p.z += Math.sin(a) * q * 0.25; p.y += q * 0.15 - q * q * 0.9;
+    return (1 - q) * 0.95;
+  } }));
+}
+// The trail accent of a wizard's cosmetics for the spells' own trails (effects.js may mix it in): a hex colour or null.
+export const trailAccent = (cos) => COSMETIC[cos?.trail]?.trail ?? null;
+
 // ---------------------------------------------------------------- bodies
 
 // The walking-staff grip (round 15): KayKit's hand slot holds a staff like a sword, so with the arm hanging (idle, walk, run) its
@@ -755,9 +848,10 @@ export function makeWizardBody(loadout = {}, opts = {}) {
   const skel = kind !== 'mage';
   const u = tintUniforms();
   const glow = [];
+  let skin = null;     // the body's skinned mesh (round 26: the hat band is bound to its skeleton)
   inner.traverse(o => {
     if (!o.isMesh) return;
-    if (o.isSkinnedMesh) o.customDepthMaterial = skinDepth();
+    if (o.isSkinnedMesh) { o.customDepthMaterial = skinDepth(); if (!skin || o.name === 'Body') skin = o; }
     if (!skel) o.material = tintMaterial(o.material, u);
     else if (o.material.name === 'Glow') { o.material = o.material.clone(); glow.push(o.material); }
     else o.material = o.material.clone();     // every body owns its materials (wizard.js fades and ghosts them)
@@ -778,10 +872,46 @@ export function makeWizardBody(loadout = {}, opts = {}) {
   }
   body.staff = kind === 'mage' || kind === 'skeleton_mage';
   body.updateGrip = (w) => updateGrip(body, w);
+  // Round 26: the cosmetics (cosmetics.js ids by slot). The robe palette, the hat colour and the gem are the tint's uniforms; the
+  // hat band is a skinned mesh on the body's skeleton; the staff glow and the trail sparks are motes on the staff head.
+  const geoOf = !skel && skin ? modelToGeo(skin.geometry) : null;
+  if (geoOf) u.uHatY.value = geoOf(new THREE.Vector3(0, HAT_FROM, 0)).y;
+  body.cos = sanitizeCosmetics(opts.cos);
+  let band = null, cosFx = null;
+  const dressCosmetics = () => {
+    const cos = body.cos;
+    const want = !skel && skin && COSMETIC[cos.hat]?.band;
+    if (band && band.userData.kind !== want) { band.removeFromParent(); band = null; }
+    if (want && !band) {
+      const head = skin.skeleton.bones.findIndex(b => b.name === BONES.head);
+      if (head >= 0) {
+        band = new THREE.SkinnedMesh(bandGeometry(want, geoOf, head), skin.material);
+        band.name = 'hatBand'; band.userData.kind = want;
+        band.bind(skin.skeleton, skin.bindMatrix);
+        band.frustumCulled = false; band.castShadow = skin.castShadow; band.receiveShadow = skin.receiveShadow;
+        band.customDepthMaterial = skinDepth();
+        skin.parent.add(band);
+      }
+    }
+    if (cosFx) { for (const o of cosFx.userData.onBones || []) { o.removeFromParent(); o.material.dispose(); } cosFx.removeFromParent(); cosFx.traverse(o => { if (o.isPoints) o.geometry.dispose(); }); cosFx = null; }
+    const glowC = COSMETIC[cos.staff]?.glow, trailC = COSMETIC[cos.trail]?.trail;
+    if ((glowC != null || trailC != null) && body.staff !== false) {
+      cosFx = new THREE.Group(); cosFx.name = 'cosmetics';
+      const level = fixedLevel || auraLevel, k = level === 'full' ? 1 : level === 'cheap' ? 0.5 : 0;
+      if (glowC != null) staffGlow(cosFx, model, glowC, k);
+      if (trailC != null) trailSparks(cosFx, model, trailC, Math.max(k, 0.5));
+      model.add(cosFx);
+    }
+  };
+  body.setCosmetics = (cos) => {
+    body.cos = sanitizeCosmetics(cos);
+    if (body.look) lookUniforms(body.look, u, body.cos);
+    dressCosmetics();
+  };
   body.setLook = (lo) => {
     body.loadout = lo || {};
     const look = body.look = lookOf(body.loadout);
-    lookUniforms(look, u);
+    lookUniforms(look, u, body.cos);
     // skeletons: the eyes burn in the element colour
     for (const m of glow) { m.color.setHex(0x000000); m.emissive.setHex(ELEMENTS[look.main].bolt); m.emissiveIntensity = 2.2; }
     if (aura) {
@@ -795,6 +925,7 @@ export function makeWizardBody(loadout = {}, opts = {}) {
       level === 'full' && look.second && AURA[look.second]?.(aura, model, 0.5, false, 0.5)].flat().filter(Boolean);
     model.add(aura);
     model.userData.look = look;
+    dressCosmetics();
   };
   // Round 22: the rune buffs' auras (main.js: body.setBuffs(snapshot.buffs) every snap; it diffs). `buffs`: { haste?: 1, fury?: 1,
   // aegis?: <shield HP left> } or nothing. Gameplay information, so they show on every tier (fewer motes below 'full').
