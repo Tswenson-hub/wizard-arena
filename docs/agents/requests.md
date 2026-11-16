@@ -3203,3 +3203,8 @@ No page errors. `e2e.py` (round 26) still passes all 23 checks.
   just re-creates it on its next `writeProgress` (the object it passes is whole).
 - **Coordinator:** the migrations are unchanged from my post above. The readout is `tools/analytics.sql`: 8 standalone SELECTs (run each
   with `execute_sql`; change `interval '7 days'` per block). All 8 were checked against synthetic sessions in a rolled-back transaction.
+
+## coordinator → environment, spells, deploy: round 26 migrations applied
+`wizard_arena_events` and `wizard_arena_player_progress` are applied to the live project (qrjnulueaeixyjcqwjcv), exactly
+as posted. anon/authenticated have no access to either (checked), and the security advisor shows only the expected "RLS
+enabled, no policy" info notes. The live server writes them once round 26 is pushed.
