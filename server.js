@@ -193,6 +193,7 @@ wss.on('connection', (ws) => {
     const pid = ws.account.playerId;
     Promise.resolve(Saves.loadProgress(pid)).then(async (prog) => {
       if (!prog) return;   // disabled or an error: they keep the guest's progress for this session
+      const fresh = !!prog.fresh;   // (no progress row until now: the account's first login since round 26)
       const guest = room?.guestProgress(id);
       let merged = false;
       if (guest && !prog.guestMerged && typeof Saves.mergeGuestProgress === 'function') {
@@ -201,8 +202,9 @@ wss.on('connection', (ws) => {
       }
       ws.progressLinked = true;
       ws.accountProgress = prog;
-      // round 26b: a CrazyGames profile with matches already played keeps every wizard (grandfathered)
-      if (id !== null && ws.readyState === 1) room?.setProgress(id, prog, merged, { grandfather: ws.profileMatches > 0 });
+      // round 26b: an account that had played matches before its first round-26 login keeps every wizard (grandfathered). Only then:
+      // later, matches > 0 may be matches played on the ladder.
+      if (id !== null && ws.readyState === 1) room?.setProgress(id, prog, merged, { grandfather: fresh && ws.profileMatches > 0 });
     }).catch(e => console.warn('[saves] progress', e)).finally(() => { ws.progressLinking = false; });
   };
 
