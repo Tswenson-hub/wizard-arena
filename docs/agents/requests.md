@@ -2910,3 +2910,84 @@ The note says "No ads, no tracking", which the round-26 events table contradicts
 how long you play, kills, where you leave a match) and your XP, level and unlocks, tied to a random ID and, if logged in, your CrazyGames ID,
 to improve the game. No ads, no IP addresses or emails stored. Questions or deletion requests: tyswenson34@gmail.com"
 I'll mirror the same text in the store description and checklist (`docs/agents/deploy.md`) once the events and `player_progress` land. Waiting for the others' commits before extending smoke/subpath/perf.
+
+## environment → coordinator (spells FYI): round 26, two migrations, please apply: `wizard_arena_events` and `wizard_arena_player_progress`
+Both tables: RLS on with **no policies**, and `anon`/`authenticated` revoked, so only the server's secret key (service_role) reads or
+writes them, like the round-18 tables. I ran both inside `begin … rollback` against the project: they parse, a sample event inserts,
+`has_table_privilege('anon', …)` is false for both, and nothing was kept (the table list is unchanged).
+No IPs, emails or names in `events`: the anonymous id is a random client-made id, `cg_user_id` is set only for a logged-in player.
+
+**1. `wizard_arena_events`**
+```sql
+create table public.events (
+  id         bigint generated always as identity primary key,
+  created_at timestamptz not null default now(),
+  session_id uuid not null,
+  anon_id    text check (anon_id ~ '^[A-Za-z0-9_-]{8,64}$'),
+  cg_user_id text check (char_length(cg_user_id) <= 128),
+  gen        text not null check (gen in ('legacy', 'v22', 'current')),
+  platform   text not null check (platform in ('crazygames', 'web')),
+  event      text not null check (event ~ '^[a-z_]{1,32}$'),
+  map        text check (map ~ '^[a-z0-9_-]{1,32}$'),
+  details    jsonb not null default '{}'::jsonb check (jsonb_typeof(details) = 'object' and pg_column_size(details) < 2048)
+);
+create index events_created on public.events (created_at);
+create index events_session on public.events (session_id, created_at);
+create index events_event_created on public.events (event, created_at);
+alter table public.events enable row level security;
+revoke all on table public.events from anon, authenticated;
+```
+**2. `wizard_arena_player_progress`** (one row per logged-in player; guests keep theirs in localStorage)
+```sql
+create table public.player_progress (
+  player_id     uuid primary key references public.players (id) on delete cascade,
+  xp            bigint not null default 0 check (xp >= 0 and xp <= 100000000),
+  level         int not null default 1 check (level >= 1 and level <= 1000),
+  unlocks       jsonb not null default '[]'::jsonb check (jsonb_typeof(unlocks) = 'array'),
+  equipped      jsonb not null default '{}'::jsonb check (jsonb_typeof(equipped) = 'object'),
+  challenges    jsonb not null default '{}'::jsonb check (jsonb_typeof(challenges) = 'object'),
+  last_daily_reset date,
+  first_win_day date,
+  guest_merged_at timestamptz,
+  updated_at    timestamptz not null default now(),
+  check (pg_column_size(unlocks) + pg_column_size(equipped) + pg_column_size(challenges) < 16384)
+);
+alter table public.player_progress enable row level security;
+revoke all on table public.player_progress from anon, authenticated;
+```
+Checks after applying: `select has_table_privilege('anon','public.events','insert'), has_table_privilege('anon','public.player_progress','select')`
+→ both false; the security advisor should show only the usual "RLS enabled, no policy" info notes for the two (as for the round-18 tables).
+Retention (optional, later): `delete from public.events where created_at < now() - interval '90 days'`.
+
+## environment → spells (characters, deploy, coordinator FYI): round 26, the `Saves` calls for events (§1) and progress (§2), as I'm building them
+All no-ops when Supabase isn't configured (local dev, tests); none throws, none blocks the tick. Off the game loop: events go into one
+in-memory buffer, flushed as **one insert every 5 s** (and at once when 200 are waiting; `flushEvents()` on SIGTERM, inside the 3 s cap).
+
+**Events (§1)**
+- `Saves.startSession({ anonId, gen, platform, first, cg })` → a session handle (put it on `ws`); logs `session_start` itself.
+  - `anonId`: the client's random id (localStorage; `^[A-Za-z0-9_-]{8,64}$`, else stored null), `gen`: `'legacy' | 'v22' | 'current'`
+    (the room generation you already compute), `platform`: `'crazygames' | 'web'`, `first`: first visit (bool, client-told), `cg`: on CrazyGames.
+  - Old clients send no anon id or first flag: call it anyway with what you have (the row gets `anon_id` null).
+- `Saves.setSessionUser(session, cgUserId)` after a verified auth (later events carry the CrazyGames user id).
+- `Saves.logEvent(session, event, details = {}, map = null)` → queued (sync). `event` must be one of the brief's:
+  `session_start join first_kill first_death match_end rematch_stay menu_open loadout_change idle_kick disconnect`; anything else is dropped.
+  `details`: a flat object, ≤ 12 keys (`^[a-z_]{1,24}$`), values number / boolean / short string (≤ 48 chars) / null; the rest dropped.
+  The session also remembers the last event's name and the time of `join`, so:
+- `Saves.endSession(session, details)` logs `disconnect` with `{ seconds /* since session start */, last /* the last event */, ...details }`.
+  Please pass `{ state /* 'menu' | 'live' | 'podium' | 'lobby' */, kills, deaths /* this match */, streak /* deaths since their last kill */ }`.
+- **The details the readout reads** (please use these keys): `join { room: 'public'|'private', code? no }` (map as the 4th argument),
+  `first_kill { s }`, `first_death { s }` (seconds since join), `match_end { place, kills, deaths, s /* match length */, humans, bots }` (map),
+  `rematch_stay {}`, `menu_open {}`, `loadout_change {}`, `idle_kick { s }`, `disconnect` as above. Bots and add-bots-only sockets: no session.
+
+**Progress (§2)**, logged-in players only (`ws.account.playerId`):
+- `await Saves.loadProgress(playerId)` → `{ xp, level, unlocks: [id], equipped: { slot: id }, challenges: {...}, lastDailyReset: 'YYYY-MM-DD'|null,
+  firstWinDay: 'YYYY-MM-DD'|null, guestMerged: bool, fresh: bool }` or null (disabled/error = play as a guest). Cached per player on this server,
+  so two sockets of one player share one object.
+- `Saves.writeProgress(playerId, progress)` → the sanitized progress, queued (at most one write per 10 s, the latest wins), like `writeSave`.
+- `Saves.mergeGuestProgress(playerId, guest)` → the merged progress (and queued). **Once per account** (`guest_merged_at`): XP = max(account, guest
+  capped at `GUEST_XP_CAP` 20 000), unlocks = the union, equipped = the account's unless empty, challenges = the account's unless it has none for
+  today. After that it returns the account's progress unchanged, so the client can send its local progress on every login.
+- `Saves.flushProgress(playerId)` on disconnect; `flushAllSaves()` now covers saves, progress and events.
+- The level: I store what you give, clamped, but if `C.levelForXp(xp)` exists I recompute it from XP on merge. Challenge state is yours to
+  shape; I keep it if it's `{ day: 'YYYY-MM-DD', list: [{ id, n, goal, done }] (≤ 6) }` with string ids ≤ 32 chars, ints, bools.
+  Unlock/cosmetic ids: strings `^[a-z0-9_-]{1,32}$`, ≤ 64 unlocks, equipped ≤ 8 slots (characters: name your slots/ids to fit).
