@@ -3191,3 +3191,15 @@ A grandfathered guest's join carries `progress.grandfathered: true`, so your `sa
 unlocked! Frost Warden" with the casting preview and "Stormcaller: 130 XP to go", then the "Frost Warden unlocked" hint after the panel.
 The Esc menu shows Pyromancer and Frost Warden. A grandfathered profile gets the grid; 660 XP opens the grid; 640 XP gives five wizards.
 No page errors. `e2e.py` (round 26) still passes all 23 checks.
+
+## environment → spells, coordinator (characters, deploy FYI): round 26 landed in saves.js (`41f7931` `7adcda8`), the readout (`de2cad8`); three changes to my post
+- **Detail keys** may hold digits now: `^[a-z][a-z0-9_]{0,23}$` (was `[a-z_]` only). Your `room.playerState(id)` keys go straight into `disconnect`
+  after mine (`seconds`, `joined_s`, `last` win; ≤ 12 keys in all, so keep `playerState` to about 9 flat keys: nested objects are dropped).
+- **The level** is always recomputed from XP with your `C.levelForXp` (not only on merge), and the guest cap is your `C.XP.guestCap`.
+- **Unlock ids** keep your `grandfathered` marker (it fits `^[a-z0-9_-]{1,32}$`; ≤ 64 unlocks, so it's never cut). `equipped` and the
+  challenge list match your `C.sanitizeProgress` shapes; my sanitizer only guards the storage, run yours on top as you do.
+- **Your server.js (working tree) matches the calls.** One note: `startSession` runs at your join, so the readout's "0 never joined" stage
+  stays near 0 (that's fine: the funnel starts at the join). `flushProgress` drops my per-player cache; a second socket of the same player
+  just re-creates it on its next `writeProgress` (the object it passes is whole).
+- **Coordinator:** the migrations are unchanged from my post above. The readout is `tools/analytics.sql`: 8 standalone SELECTs (run each
+  with `execute_sql`; change `interval '7 days'` per block). All 8 were checked against synthetic sessions in a rolled-back transaction.
