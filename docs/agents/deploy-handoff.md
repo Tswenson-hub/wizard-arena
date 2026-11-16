@@ -212,6 +212,30 @@ configured in this server, so no rows were written (the events batching runs in 
 - **Unit:** `playtime-unit`, `notify-unit`, `saves-unit` ALL PASS. **`modematch-unit` needs `MATCH_DEBUG=1` exported** (without it the two map-switch checks fail); with it **one check fails, every run:**
   "the thrown crate hits B up on the island and breaks there": the crate flies and breaks at (4.1, 7.2, 34.9) with no `hit` message (spells' hand-off says 290 pass; something between).
 
+## Round 27 (deploy's part): status and the store text
+**Status:** waiting on the spells (kits, Arcane Grasp, Roll and Relic removed) and characters (the gallery) commits; at the brief's commit (`9644d94`) neither has landed.
+When they do: `smoke.py`, `subpath_test.py`, `legacy_test.py` (legacy, v22, v24) and `perf_test.py` on both maps, then the zip from the final commit.
+`smoke.py` and `subpath_test.py` still check the spell builder (`.sb-row` / `.sb-card`); they move to the gallery's selectors once characters post them.
+
+**Short description** (round 27):
+```
+Start as the Pyromancer, level up to unlock five more wizards, then duel three rivals in fast free-for-alls across two arenas: a castle courtyard and the Sky Ruins.
+```
+
+**Description** (round 27, draft: six fixed wizards, no spell builder, Arcane Grasp for all):
+```
+Start as the Pyromancer, win duels, level up and unlock more wizards with XP: the Frost Warden after your first match, then the Stormcaller, the Hemomancer, the Alchemist and finally the Beastcaller. Six wizards, six very different kits. Hurl fireballs and call down a meteor rain, freeze a rival mid-dash and wall off a corridor with ice, blink through a storm, drain a rival with Blood Siphon to heal yourself, throw potions that poison and a brew that makes you berserk, or ram through the arena as the Beastcaller. Hover a wizard on the select screen to see all six of its abilities before you pick.
+
+Every wizard has Arcane Grasp: press F to seize a crate, a barrel or a loose rock with your mind and hurl it at a rival, or break it on the courtyard walls and the Sky Ruins' stones to get the drop on the other wizards.
+
+Earn XP every match for finishing, for kills, for a podium place and for a win, and finish the three daily challenges for a bonus. Each level unlocks a cosmetic for your wizard: robe colours, hats, staff glows and spell trails, shown on your nameplate with your level and title. Equip them in the Wardrobe.
+
+Matches are four-wizard free-for-alls, first to 10 kills or the most kills in five minutes, after a three-second countdown. Skeleton bots with their own personalities (the Brawler, the Sniper, the Trickster, the Healer and the Showboat) fill any empty seat instantly, so there is always a fight, and they adjust to how you play. Grab the runes that spawn at the contested spots (Haste, Arcane Fury, Aegis and Surge), ride the jump pads onto the towers and across the courtyard, and chain kills for First Blood, Double Kill and streak call-outs. Press V to cheer or taunt.
+
+Two arenas take turns: the castle courtyard, and the Sky Ruins, a broken mage tower on floating islands where a knockback spell can send a rival into the void. Dodge, double-jump, take the high ground and time your shield to turn the duel.
+```
+(Removed: "35 spells", the six slots, "build your own wizard", Roll. Please check "Dodge, double-jump" against the final controls: Roll is gone.)
+
 ## CrazyGames submission checklist (round 17)
 Sources: docs.crazygames.com, "Technical requirements", "Gameplay requirements", "Game covers" and "Multiplayer" (read 2026-10-30).
 
