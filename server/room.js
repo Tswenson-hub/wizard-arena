@@ -2805,10 +2805,11 @@ export function createRoom(opts) {
     // account's once loaded), the cosmetics they wear, the adaptive-difficulty rating (client-held)
     p.joinedAt = now();
     p.session = ws.session || null;
-    p.guestRaw = msg.progress && typeof msg.progress === 'object' ? msg.progress : null;
+    const gp = msg.progress ?? msg.guest, wear = msg.equipped ?? msg.cos;   // (`guest` / `cos`: characters' first names for them)
+    p.guestRaw = gp && typeof gp === 'object' ? gp : null;
     Prog.initProgress(p, p.guestRaw, { firstVisit: msg.firstVisit === true, adapt: msg.adapt });
     if (ws.accountProgress) Prog.setAccountProgress(p, ws.accountProgress);
-    if (msg.equipped !== undefined) p.prog.equipped = C.sanitizeEquipped(msg.equipped, p.prog.level);
+    if (wear !== undefined) p.prog.equipped = C.sanitizeEquipped(wear, p.prog.level);
     // round 23: Ty's admin key (verified by server.js's notifier; never stored or echoed) and where the client runs ('crazygames' | 'web')
     p.admin = typeof opts.isAdmin === 'function' && opts.isAdmin(msg.admin);
     p.platform = msg.platform === 'crazygames' || msg.platform === 'web' ? msg.platform : (LEGACY || ws.account ? 'crazygames' : undefined);
@@ -2874,7 +2875,7 @@ export function createRoom(opts) {
     if (msg.t === 'menu') { if (msg.open && now() - (p.menuEvAt ?? -1e9) > 10) { p.menuEvAt = now(); ev(p, 'menu_open', {}); } return; }   // round 26
     if (msg.t === 'activity') return;
     if (msg.t === 'emote') { emote(p, msg.e); return; }    // round 26: V
-    if (msg.t === 'equip') { equip(p, msg.equipped); return; }   // round 26: the Wardrobe
+    if (msg.t === 'equip' || msg.t === 'cosmetics') { equip(p, msg.equipped ?? msg.cos); return; }   // round 26: the Wardrobe
     if (msg.t === 'roomBots') { if (room.kind !== 'private' || room.host === id) setBots(msg.difficulty); return; }
     if (msg.t === 'roomMap') { if (!LEGACY && (room.kind !== 'private' || room.host === id) && match.setMapLock(msg.map)) roomChanged(); return; }   // round 22: the host locks a map ('rotate' lifts it)
     handle(p, msg);

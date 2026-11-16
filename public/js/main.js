@@ -269,7 +269,8 @@ async function warmUp() {
 try {
   ui.name.value = localStorage.getItem('wizardName') || '';
   const bots = JSON.parse(localStorage.getItem('wizardBots') || 'null');
-  if (bots?.difficulty) ui.botDiff.value = bots.difficulty;
+  // round 26: "Auto" (adaptive bots) is the new default; a pick saved before it (no `v`) moves to Auto once, a later pick stays
+  if (bots?.difficulty && bots.v >= 26) ui.botDiff.value = bots.difficulty;
 } catch {}
 ui.joinBtn.disabled = true;
 
@@ -295,7 +296,7 @@ ui.form.addEventListener('submit', async (e) => {
   const name = ui.name.value.trim() || 'Wizard';
   try {
     localStorage.setItem('wizardName', name);
-    localStorage.setItem('wizardBots', JSON.stringify({ difficulty: ui.botDiff.value }));
+    localStorage.setItem('wizardBots', JSON.stringify({ difficulty: ui.botDiff.value, v: 26 }));
   } catch {}
   ui.joinBtn.disabled = true; ui.loadStatus.textContent = 'Connecting…';
   sfx.init(); sfx.resume();
@@ -303,7 +304,8 @@ ui.form.addEventListener('submit', async (e) => {
     const room = ui.form.dataset.room || undefined;   // round 17: select.js's buttons ('' public, 'new', a code); the launch's auto-join
     // fill bots play at this difficulty; round 21: a first-timer's own new public room gets Easy ones (the server's rule)
     const welcome = await net.connect(name, { loadout: wantLoadout, voice: wantVoice }, ui.botDiff.value, room,
-      { ...(firstVisit ? { firstVisit: true } : {}), ...(adminKey() ? { admin: adminKey() } : {}), platform: PLATFORM });   // (round 23: the admin key and the source)
+      { ...(firstVisit ? { firstVisit: true } : {}), ...(adminKey() ? { admin: adminKey() } : {}), platform: PLATFORM,   // (round 23: the admin key and the source)
+        ...playtimeJoin() });   // round 26: the anonymous id, the adaptive rating, characters' progress and cosmetics
     onWelcome(welcome);
   } catch (err) {
     ui.loadStatus.textContent = err.message || 'Connection failed';
@@ -488,6 +490,24 @@ async function autoJoin() {
 const URLQ = (() => { try { return new URLSearchParams(location.search); } catch { return new URLSearchParams(); } })();
 const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch { /* not remembered */ } };
+// Round 26: the join's extras. `anon`: a random id for the drop-off events (no name, no IP; kept in this browser), `adapt`: the
+// adaptive bots' rating for this player (the server sends it back after each match, in { t: 'xp' }), and characters' progress.js
+// fields (a guest's progress, what they wear).
+const ANON_KEY = 'waAnon', ADAPT_KEY = 'waAdapt';
+function anonId() {
+  let id = lsGet(ANON_KEY);
+  if (!/^[A-Za-z0-9_-]{8,64}$/.test(id || '')) {
+    const b = new Uint8Array(12); crypto.getRandomValues(b);
+    id = [...b].map(x => x.toString(36).padStart(2, '0')).join('').slice(0, 20);
+    lsSet(ANON_KEY, id);
+  }
+  return id;
+}
+function playtimeJoin() {
+  let adapt; try { adapt = JSON.parse(lsGet(ADAPT_KEY) || 'null') || undefined; } catch {}
+  let extra = {}; try { extra = progress?.joinFields?.() || {}; } catch (e) { console.warn('[progress] joinFields', e); }
+  return { anon: anonId(), ...(adapt ? { adapt } : {}), ...extra };
+}
 const PLAYED_KEY = 'waPlayedOnce', VISITS_KEY = 'waVisits', VISIT_SESSION_KEY = 'waVisitAt';
 // Round 23: Ty's admin key. `?admin=<key>` stores it (and is taken off the address bar); `?admin=1` means "use the stored one" (the
 // Discord alert's join link). The join carries it; the server verifies it (no alert for Ty's own joins, and he may join a public
@@ -586,9 +606,9 @@ function applySave(s) {
   if (Number.isFinite(st.volume)) { sfx.volume = st.volume; ui.volume.value = Math.round(st.volume * 100); }
   if (typeof st.muted === 'boolean') { sfx.muted = st.muted; ui.mute.checked = st.muted; }
   updateSoundInd();
-  if (['easy', 'normal', 'hard'].includes(st.bots)) {
+  if (['easy', 'normal', 'hard', 'auto'].includes(st.bots)) {
     ui.botDiff.value = st.bots;
-    try { localStorage.setItem('wizardBots', JSON.stringify({ difficulty: st.bots })); } catch {}
+    try { localStorage.setItem('wizardBots', JSON.stringify({ difficulty: st.bots, v: 26 })); } catch {}
   }
   if (st.howto) try { localStorage.setItem(HOWTO_KEY, '1'); } catch {}
   if (Q.SETTINGS.includes(st.graphics)) { Q.setSetting(st.graphics); updateGfxUI(); }
@@ -634,6 +654,10 @@ const matchUI = mountMatchUI({ scene, camera, net, players, props, myId: () => m
 // Round 22: characters' banners, rune line, "Next map" chip and the map fade (callouts.js), and the rune and pad visuals
 // (pickups.js). Loaded by name, so main.js runs without them.
 let callouts = null, pickups = null, pickupsMod = null;
+// Round 26: characters' progression UI (progress.js: the challenge tracker and toasts, the post-match XP bar, the Wardrobe's live equip,
+// emotes on V, the taunt bubbles); it reads the server's welcome, xp, challenge, progress, look, emote and taunt messages
+let progress = null;
+import('./progress.js').then(m => { progress = m.mountProgress?.({ sfx, net, players, myId: () => myId, me: () => me }) || null; }).catch(e => console.warn('[progress] not loaded', e?.message));
 import('./callouts.js').then(m => { callouts = m.mountCallouts({ sfx, players, myId: () => myId }); }).catch(e => console.warn('[callouts] not loaded', e?.message));
 import('./pickups.js').then(m => { pickupsMod = m; mountPickupsFor(serverPads); }).catch(e => console.warn('[pickups] not loaded', e?.message));
 let serverPads = [];   // the room's pads from the welcome / map message: { i, id, x, y, z, r, to, yaw, time, h }
@@ -705,7 +729,7 @@ function onWelcome(msg) {
   for (const pt of msg.potions || []) setPotion(pt);
   noteMap(msg.map);   // round 22
   mountPickupsFor(msg.pads || []);
-  callouts?.onMessage(msg); pickups?.onMessage(msg);
+  callouts?.onMessage(msg); pickups?.onMessage(msg); progress?.onMessage?.(msg);
   me = players.get(myId);
   for (const d of msg.decoys || []) spawnDecoy(d);
   local.pos.set(me.targetPos.x, me.targetPos.y, me.targetPos.z);
@@ -756,6 +780,7 @@ function makeWizard(info, isLocal) {
   const w = new Wizard({ ...info, bot: null, body: info.body || 'mage' }, scene, isLocal);
   w.botLevel = info.bot || null;
   w.bodyKind = info.body || 'mage';   // (w.body is looks.js's body object)
+  w.lv = info.lv; w.eq = info.eq || {}; w.title = info.title; w.persona = info.persona || null;   // round 26: the level, cosmetics, a bot's personality
   scene.remove(w.chargeLight);   // round 20: its glow is lent by effects.lights (a light of its own changes the light count: recompiles)
   return w;
 }
@@ -770,7 +795,8 @@ function addPlayer(info) {
 // A player's loadout changed (at a respawn): rebuild their Wizard (the look follows the spell mix), keeping its state.
 function rebuildWizard(w, loadout, color, voice = w.voice) {
   const g = w.group.position;
-  const info = { id: w.id, name: w.name, color: color ?? C.loadoutColor(loadout), bot: w.botLevel, body: w.bodyKind, loadout, voice, p: [g.x, g.y, g.z], yaw: w.group.rotation.y };
+  const info = { id: w.id, name: w.name, color: color ?? C.loadoutColor(loadout), bot: w.botLevel, body: w.bodyKind, loadout, voice, p: [g.x, g.y, g.z], yaw: w.group.rotation.y,
+    lv: w.lv, eq: w.eq, title: w.title, persona: w.persona };   // (round 26)
   stopWizardAudio(w);
   w.dispose(scene);
   const n = makeWizard(info, w === me);
@@ -793,6 +819,7 @@ function applySnapshot(w, s) {
     w.netAnim = s.anim;
   }
   w.hp = s.hp; w.st = s.st; w.kills = s.kills; w.deaths = s.deaths; w.ping = s.ping;
+  if (Number.isFinite(s.lv)) w.lv = s.lv;   // round 26
   if (!!s.spectator !== !!w.spectator) { w.spectator = !!s.spectator; if (w !== me) w.group.visible = !w.spectator; }   // a 5th human watching
   if (s.blocking && !w.blocking && !w.dead && w.loadout?.guard === 'black_death') sfx.play('black_death_cast', { pos: wpos(w), vol: 0.6, jitter: 0.05 });   // raising Sanguine Aegis
   w.blocking = s.blocking; w.charging = s.charging; w.stunned = s.stun;
@@ -1032,7 +1059,10 @@ function wpos(w) { return w.group.position.clone().setY(w.group.position.y + 1.1
 
 function handleMessage(msg) {
   callouts?.onMessage(msg); pickups?.onMessage(msg);   // round 22 (both ignore what isn't theirs)
+  try { progress?.onMessage?.(msg); } catch (e) { console.warn('[progress]', e); }   // round 26
   switch (msg.t) {
+    case 'xp': if (msg.adapt) lsSet(ADAPT_KEY, JSON.stringify(msg.adapt)); break;   // round 26: the adaptive bots' rating rides back
+    case 'look': { const w = players.get(msg.id); if (w) { if (Number.isFinite(msg.lv)) w.lv = msg.lv; w.eq = msg.eq || {}; w.title = msg.title; } break; }
     case 'map': onMapChange(msg); break;   // round 22: the rotation moved the room to another map
     case 'pad': {   // round 22: someone (maybe us) stepped on a jump pad
       const w = players.get(msg.id);
@@ -2156,7 +2186,9 @@ function updateScoreboard() {
   // round 20: each human's round trip (ours measured here, the others' as they report it); bots have none
   const pingOf = (w) => w.botLevel ? null : w === me ? net.ping : w.ping;
   const pingCell = (ms) => ms == null ? '<td class="ping">–</td>' : `<td class="ping${ms > 200 ? ' slow' : ''}">${Math.round(ms)} ms</td>`;
-  ui.scoreBody.innerHTML = rows.map(w => `<tr class="${w === me ? 'me' : ''}"><td style="color:#${w.color.toString(16).padStart(6, '0')}">${esc(w.name)}${w.botLevel ? `<span class="bot">${w.botLevel} bot</span>` : ''}</td><td class="wiz">${esc(loadoutLine(w.loadout))}</td><td>${w.kills}</td><td>${w.deaths}</td>${pingCell(pingOf(w))}</tr>`).join('');
+  // round 26: the level before the name, a bot's personality after it ("Grimshank the Sniper")
+  const lvTag = (w) => Number.isFinite(w.lv) ? `<span class="lvl">${w.lv}</span>` : '';
+  ui.scoreBody.innerHTML = rows.map(w => `<tr class="${w === me ? 'me' : ''}"><td style="color:#${w.color.toString(16).padStart(6, '0')}">${lvTag(w)}${esc(w.name)}${w.persona ? `<span class="persona"> the ${esc(w.persona)}</span>` : ''}${w.botLevel ? `<span class="bot">${w.botLevel} bot</span>` : ''}</td><td class="wiz">${esc(loadoutLine(w.loadout))}</td><td>${w.kills}</td><td>${w.deaths}</td>${pingCell(pingOf(w))}</tr>`).join('');
 }
 
 // ---------------------------------------------------------------- local player update
@@ -3250,7 +3282,7 @@ function frame(t) {
   if (me) {
     for (const msg of net.drain()) handleMessage(msg);
     if (Podium.active()) {   // the podium recap: its own stage and camera; the game waits (no input, nothing else drawn)
-      matchUI.update(dt); callouts?.update(dt); updateMusic(); Podium.frame(dt); input.endFrame();
+      matchUI.update(dt); callouts?.update(dt); progress?.update?.(dt, camera); updateMusic(); Podium.frame(dt); input.endFrame();
       return;
     }
     // round 16: the end's 1.5 s gap plays the others' animations and the effects in slow motion (the last kill sinking in)
@@ -3280,6 +3312,7 @@ function frame(t) {
     updateHud(dt);
     matchUI.update(dt);
     callouts?.update(dt); pickups?.update(dt, camera);   // round 22
+    progress?.update?.(dt, camera);   // round 26
     if (input.justPressed('KeyM')) toggleMute();
     sfx.setListener(camera);
     updateMusic();

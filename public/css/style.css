@@ -305,3 +305,6 @@ body.clip:not(.clip-hud) #chargeRing, body.clip:not(.clip-hud) #bars, body.clip:
 body.clip:not(.clip-hud) #killfeed, body.clip:not(.clip-hud) #feed, body.clip:not(.clip-hud) #killMarker,
 body.clip:not(.clip-hud) #status, body.clip #hint, body.clip #soundInd, body.clip #scoreboard,
 body.clip #matchUI, body.clip #idleNote, body.clip .htp-float, body.clip #helpBtn { display: none !important; }
+/* round 26: the level before a name and a bot's personality on the scoreboard */
+#scoreboard .lvl { display: inline-block; min-width: 18px; margin-right: 6px; padding: 0 4px; border-radius: 4px; font-size: 10px; font-weight: 700; text-align: center; background: rgba(255, 210, 92, 0.18); color: #ffd25c; }
+#scoreboard .persona { color: var(--dim); font-size: 11px; }
