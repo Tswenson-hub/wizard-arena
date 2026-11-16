@@ -8,6 +8,9 @@
 // call is a no-op that resolves to null, so local dev, the tests and the guest path behave exactly as before.
 // Nothing here throws or blocks: a slow or down Supabase means a guest-like session (each request times out after 5 s).
 // Talks to PostgREST with plain fetch (no supabase-js); `jose` is imported lazily, so a missing package is a disabled feature.
+// Round 26: drop-off analytics (startSession / logEvent / endSession: the `events` table, batched, one insert per 5 s) and
+// progression storage (loadProgress / writeProgress / mergeGuestProgress: the `player_progress` table, logged-in players only).
+import { randomUUID } from 'node:crypto';
 import * as C from '../public/shared/constants.js';
 
 const JWKS_URL = 'https://userportal.crazygames.com/.well-known/jwks.json';
@@ -117,9 +120,9 @@ export function sanitizeSave(x) {
   }
   return JSON.stringify(out).length <= MAX_SAVE_BYTES ? out : null;
 }
-// A display name: no control characters, trimmed, at most 24 characters (as loadout-store.js names).
-function cleanName(s) {
-  return typeof s === 'string' ? s.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2066-\u2069]/g, '').trim().slice(0, 24) : '';
+// A display name: no control characters, trimmed, at most 24 characters (as loadout-store.js names; `max` for event strings).
+function cleanName(s, max = 24) {
+  return typeof s === 'string' ? s.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2066-\u2069]/g, '').trim().slice(0, max) : '';
 }
 
 // playerId → { pending, timer, last, writing }
@@ -163,8 +166,8 @@ export async function flushSave(playerId) {
   else if (q.writing) await q.writing;
   queue.delete(playerId);
 }
-// On shutdown (SIGTERM): every pending save.
-export const flushAllSaves = () => Promise.all([...queue.keys()].map(flushSave));
+// On shutdown (SIGTERM): every pending save, progress row and event.
+export const flushAllSaves = () => Promise.all([...[...queue.keys()].map(flushSave), ...[...progress.keys()].map(flushProgress), flushEvents()]);
 
 // ---------------------------------------------------------------- matches
 const int = (v, max) => Math.max(0, Math.min(max, Math.round(Number(v) || 0)));
@@ -289,6 +292,231 @@ export async function getStats(playerId = null) {
   }
 }
 
+// ---------------------------------------------------------------- events (round 26, drop-off analytics)
+// One session per human socket (bots and add-bots-only sockets get none). Rows go into one in-memory buffer, written as one
+// bulk insert every EVENT_FLUSH_MS (at once when EVENT_BATCH are waiting), so nothing touches the network on the game loop.
+// No IPs, emails or names: anon_id is the client's random id, cg_user_id only after a verified auth. EVENTS_OFF=1 turns it off.
+export const EVENTS = ['session_start', 'join', 'first_kill', 'first_death', 'match_end', 'rematch_stay', 'menu_open', 'loadout_change',
+  'idle_kick', 'disconnect'];
+const EVENT_SET = new Set(EVENTS);
+export const EVENT_FLUSH_MS = 5000;
+export const EVENT_BATCH = 200;          // rows per insert (and the "write now" threshold)
+export const EVENT_BUFFER_MAX = 2000;    // a down Supabase drops the oldest beyond this
+const GENS = ['legacy', 'v22', 'current'];
+const ANON_RE = /^[A-Za-z0-9_-]{8,64}$/;
+const DKEY_RE = /^[a-z][a-z0-9_]{0,23}$/;
+const MAP_RE = /^[a-z0-9_-]{1,32}$/;
+const eventsOn = () => savesEnabled() && process.env.EVENTS_OFF !== '1';
+
+// A flat details object: ≤ 12 keys (lower case, digits, _; ≤ 24 chars); numbers (finite, 2 decimals), booleans, null, strings (≤ 48 chars). The rest dropped.
+export function sanitizeDetails(d) {
+  const out = {};
+  if (!d || typeof d !== 'object' || Array.isArray(d)) return out;
+  let n = 0;
+  for (const [k, v] of Object.entries(d)) {
+    if (n >= 12) break;
+    if (!DKEY_RE.test(k)) continue;
+    if (typeof v === 'number') { if (!Number.isFinite(v)) continue; out[k] = Math.round(v * 100) / 100; }
+    else if (typeof v === 'boolean' || v === null) out[k] = v;
+    else if (typeof v === 'string') out[k] = cleanName(v, 48);
+    else continue;
+    n++;
+  }
+  return out;
+}
+
+// A new session → its handle (keep it on the socket). opts: { anonId, gen: 'legacy' | 'v22' | 'current', platform: 'crazygames' | 'web',
+// first: first visit (client-told), cg: on CrazyGames }. Logs session_start. Works (as a no-op) when disabled.
+export function startSession({ anonId, gen, platform, first, cg } = {}) {
+  const s = { id: randomUUID(), anonId: typeof anonId === 'string' && ANON_RE.test(anonId) ? anonId : null, cgUserId: null,
+    gen: GENS.includes(gen) ? gen : 'current', platform: platform === 'crazygames' ? 'crazygames' : 'web',
+    start: Date.now(), joinedAt: 0, last: null, ended: false };
+  logEvent(s, 'session_start', { platform: s.platform, first: !!first, cg: !!cg });
+  return s;
+}
+// After a verified auth: the session's later events carry the CrazyGames user id.
+export function setSessionUser(s, cgUserId) {
+  if (s && (typeof cgUserId === 'string' || typeof cgUserId === 'number')) s.cgUserId = String(cgUserId).slice(0, 128) || null;
+}
+
+const evBuf = [];
+const retried = new WeakSet();
+let evTimer = null, evWriting = null;
+// Queue one event (sync). Unknown events, ended or missing sessions are dropped. Returns true if queued.
+export function logEvent(s, event, details = {}, map = null) {
+  if (!s || s.ended || !EVENT_SET.has(event)) return false;
+  if (event === 'join' && !s.joinedAt) s.joinedAt = Date.now();
+  s.last = event;
+  if (!eventsOn()) return false;
+  evBuf.push({ created_at: new Date().toISOString(), session_id: s.id, anon_id: s.anonId, cg_user_id: s.cgUserId, gen: s.gen,
+    platform: s.platform, event, map: typeof map === 'string' && MAP_RE.test(map) ? map : null, details: sanitizeDetails(details) });
+  if (evBuf.length > EVENT_BUFFER_MAX) evBuf.splice(0, evBuf.length - EVENT_BUFFER_MAX);
+  if (evBuf.length >= EVENT_BATCH) flushEvents();
+  else if (!evTimer) { evTimer = setTimeout(flushEvents, EVENT_FLUSH_MS); evTimer.unref?.(); }
+  return true;
+}
+// The socket closed: logs `disconnect` with { seconds (since the session started), joined_s (since the first join, null if never),
+// last (the event before this one), ...details } (spells passes { state, kills, deaths, streak }). Later events are dropped.
+export function endSession(s, details = {}) {
+  if (!s || s.ended) return false;
+  const now = Date.now();
+  const d = { seconds: Math.round((now - s.start) / 1000), joined_s: s.joinedAt ? Math.round((now - s.joinedAt) / 1000) : null, last: s.last };
+  for (const [k, v] of Object.entries(sanitizeDetails(details))) if (!(k in d) && Object.keys(d).length < 12) d[k] = v;
+  const queued = logEvent(s, 'disconnect', d);
+  s.ended = true;
+  return queued;
+}
+// Write what's buffered (EVENT_BATCH rows per insert, one insert at a time). A failed batch is put back once, then dropped.
+export async function flushEvents() {
+  if (evTimer) { clearTimeout(evTimer); evTimer = null; }
+  while (evWriting) await evWriting;
+  if (!evBuf.length || !eventsOn()) return;
+  evWriting = (async () => {
+    while (evBuf.length) {
+      const rows = evBuf.splice(0, EVENT_BATCH);
+      try {
+        await rest('events', { method: 'POST', prefer: 'return=minimal', body: rows });
+      } catch (e) {
+        log('events', e.message);
+        const again = rows.filter(r => !retried.has(r));
+        again.forEach(r => retried.add(r));
+        if (again.length && evBuf.length + again.length <= EVENT_BUFFER_MAX) evBuf.unshift(...again);
+        if (evBuf.length && !evTimer) { evTimer = setTimeout(flushEvents, EVENT_FLUSH_MS); evTimer.unref?.(); }
+        break;
+      }
+    }
+  })();
+  try { await evWriting; } finally { evWriting = null; }
+}
+
+// ---------------------------------------------------------------- progress (round 26, XP, levels, unlocks, daily challenges)
+// Logged-in players only; the XP maths and the challenge rules are spells' (constants.js / room.js): this stores and validates.
+// One shared object per player on this server (two sockets of one player see the same one); written at most once per 10 s.
+export const GUEST_XP_CAP = 20_000;      // a guest's client-held XP merged into an account is capped (cosmetic only)
+const ID_RE = /^[a-z0-9_-]{1,32}$/;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_UNLOCKS = 64, MAX_SLOTS = 8, MAX_CHALLENGES = 6;
+const utcDay = (t = Date.now()) => new Date(t).toISOString().slice(0, 10);
+const date = (v) => typeof v === 'string' && DATE_RE.test(v.slice(0, 10)) ? v.slice(0, 10) : null;
+const maxDate = (a, b) => (a && b ? (a > b ? a : b) : a || b || null);
+function levelOf(xp, given) {
+  const L = typeof C.levelForXp === 'function' ? C.levelForXp(xp) : undefined;
+  const l = typeof L === 'number' ? L : L?.level;
+  return Number.isFinite(l) ? Math.max(1, Math.min(1000, Math.round(l))) : Math.max(1, Math.min(1000, Math.round(Number(given) || 1)));
+}
+// Any progress-ish object (a row's camelCased fields, the client's guest progress) → the stored shape:
+// { xp, level, unlocks: [id], equipped: { slot: id }, challenges: { day, list: [{ id, n, goal, done }] } | {}, lastDailyReset, firstWinDay }.
+// The level comes from C.levelForXp(xp) when spells exports it, else the given one (clamped). null if not an object.
+export function sanitizeProgress(x) {
+  if (!x || typeof x !== 'object' || Array.isArray(x)) return null;
+  const xp = int(x.xp, 1e8);
+  const unlocks = Array.isArray(x.unlocks) ? [...new Set(x.unlocks.filter(u => typeof u === 'string' && ID_RE.test(u)))].slice(0, MAX_UNLOCKS) : [];
+  const equipped = {};
+  if (x.equipped && typeof x.equipped === 'object' && !Array.isArray(x.equipped)) {
+    for (const [k, v] of Object.entries(x.equipped)) {
+      if (Object.keys(equipped).length >= MAX_SLOTS) break;
+      if (ID_RE.test(k) && typeof v === 'string' && ID_RE.test(v)) equipped[k] = v;
+    }
+  }
+  let challenges = {};
+  const ch = x.challenges;
+  if (ch && typeof ch === 'object' && date(ch.day) && Array.isArray(ch.list)) {
+    challenges = { day: date(ch.day), list: ch.list.filter(c => c && typeof c.id === 'string' && ID_RE.test(c.id)).slice(0, MAX_CHALLENGES)
+      .map(c => ({ id: c.id, n: int(c.n, 1e6), goal: int(c.goal, 1e6), done: c.done === true })) };
+  }
+  return { xp, level: levelOf(xp, x.level), unlocks, equipped, challenges, lastDailyReset: date(x.lastDailyReset), firstWinDay: date(x.firstWinDay) };
+}
+const fromRow = (r) => sanitizeProgress({ xp: r.xp, level: r.level, unlocks: r.unlocks, equipped: r.equipped, challenges: r.challenges,
+  lastDailyReset: r.last_daily_reset, firstWinDay: r.first_win_day });
+
+// playerId → { p (the shared object), loading, pending, timer, last, writing, mergedAt }
+const progress = new Map();
+const entryOf = (playerId) => {
+  let e = progress.get(playerId);
+  if (!e) progress.set(playerId, e = { p: null, loading: null, pending: false, timer: null, last: 0, writing: null, mergedAt: null });
+  return e;
+};
+// → the player's progress { ...sanitizeProgress, guestMerged, fresh (no row yet) }, or null (disabled or an error: play as a guest).
+export async function loadProgress(playerId) {
+  if (!savesEnabled() || !playerId) return null;
+  const e = entryOf(playerId);
+  if (e.p) return e.p;
+  e.loading ??= rest(`player_progress?player_id=eq.${playerId}&select=xp,level,unlocks,equipped,challenges,last_daily_reset,first_win_day,guest_merged_at`)
+    .then(rows => {
+      const r = Array.isArray(rows) ? rows[0] : null;
+      if (!e.p) e.p = r ? { ...fromRow(r), guestMerged: !!r.guest_merged_at, fresh: false } : { ...sanitizeProgress({}), guestMerged: false, fresh: true };
+      return e.p;
+    }, err => { log('loadProgress', err.message); return null; })
+    .finally(() => { e.loading = null; if (!e.p && !e.pending && !e.timer) progress.delete(playerId); });
+  return e.loading;
+}
+// Store the player's progress (the whole object; sanitized; written at once if the last write was 10 s ago, else when they're up).
+// Updates the shared object in place and returns it, or null if disabled or not an object.
+export function writeProgress(playerId, data) {
+  if (!savesEnabled() || !playerId) return null;
+  const clean = sanitizeProgress(data);
+  if (!clean) return null;
+  const e = entryOf(playerId);
+  if (e.p) Object.assign(e.p, clean, { fresh: false });
+  else e.p = { ...clean, guestMerged: false, fresh: false };
+  e.pending = true;
+  if (!e.timer) {
+    e.timer = setTimeout(() => { e.timer = null; writeProgressNow(playerId, e); }, Math.max(0, e.last + SAVE_EVERY_MS - Date.now()));
+    e.timer.unref?.();
+  }
+  return e.p;
+}
+async function writeProgressNow(playerId, e) {
+  if (!e.pending || !e.p) return;
+  e.pending = false; e.last = Date.now();
+  const p = e.p;
+  const w = (async () => {
+    try {
+      await rest('player_progress?on_conflict=player_id', { method: 'POST', prefer: 'resolution=merge-duplicates,return=minimal',
+        body: { player_id: playerId, xp: p.xp, level: p.level, unlocks: p.unlocks, equipped: p.equipped, challenges: p.challenges,
+          last_daily_reset: p.lastDailyReset, first_win_day: p.firstWinDay, updated_at: new Date().toISOString(),
+          ...(e.mergedAt ? { guest_merged_at: e.mergedAt } : {}) } });   // (left out, an upsert keeps the stored guest_merged_at)
+    } catch (err) { log('writeProgress', err.message); }
+  })();
+  e.writing = w;
+  await w;
+  if (e.writing === w) e.writing = null;
+}
+// The client's guest progress (localStorage) on login → the account's progress after merging it, once per account (guest_merged_at):
+// XP = max(account, guest capped at GUEST_XP_CAP), unlocks = the union, equipped = the account's unless it has none, challenges =
+// the account's if they're today's (UTC), else the guest's if theirs are, the dates the later of the two. Already merged → the
+// account's progress unchanged (so the client can send its local progress on every login). null if disabled or on an error.
+export async function mergeGuestProgress(playerId, guest, now = Date.now()) {
+  const acc = await loadProgress(playerId);
+  if (!acc) return null;
+  if (acc.guestMerged) return acc;
+  const g = sanitizeProgress(guest) || sanitizeProgress({});
+  const today = utcDay(now);
+  const merged = {
+    xp: Math.max(acc.xp, Math.min(g.xp, GUEST_XP_CAP)),
+    unlocks: [...new Set([...acc.unlocks, ...g.unlocks])],
+    equipped: Object.keys(acc.equipped).length ? acc.equipped : g.equipped,
+    challenges: acc.challenges.day === today || g.challenges.day !== today ? acc.challenges : g.challenges,
+    lastDailyReset: maxDate(acc.lastDailyReset, g.lastDailyReset),
+    firstWinDay: maxDate(acc.firstWinDay, g.firstWinDay),
+    level: Math.max(acc.level, g.level),
+  };
+  const e = entryOf(playerId);
+  e.mergedAt = new Date(now).toISOString();
+  acc.guestMerged = true;
+  return writeProgress(playerId, merged);
+}
+// On disconnect: write what's pending now (ignores the 10 s) and forget the player. Resolves when written.
+export async function flushProgress(playerId) {
+  const e = progress.get(playerId);
+  if (!e) return;
+  if (e.timer) { clearTimeout(e.timer); e.timer = null; }
+  if (e.loading) await e.loading;
+  if (e.pending) await writeProgressNow(playerId, e);
+  else if (e.writing) await e.writing;
+  progress.delete(playerId);
+}
+
 // ---------------------------------------------------------------- rate limit
 // Per socket (or any object): a burst of 2 auths, then one per 30 s. authAllowed(ws) → true to go ahead.
 const authBuckets = new WeakMap();
@@ -305,6 +533,13 @@ export function authAllowed(key, now = Date.now()) {
 export const _test = TEST ? {
   async useJwks(set) { jose ??= await import('jose'); testJwks = set ? jose.createLocalJWKSet(set) : null; },
   useFetch(fn) { fetchFn = fn || ((...a) => fetch(...a)); },
-  reset() { for (const q of queue.values()) if (q.timer) clearTimeout(q.timer); queue.clear(); boards.clear(); },
+  reset() {
+    for (const q of queue.values()) if (q.timer) clearTimeout(q.timer);
+    for (const e of progress.values()) if (e.timer) clearTimeout(e.timer);
+    if (evTimer) clearTimeout(evTimer);
+    queue.clear(); boards.clear(); progress.clear(); evBuf.length = 0; evTimer = null;
+  },
   queued: (id) => queue.get(id),
+  progressEntry: (id) => progress.get(id),
+  events: () => evBuf,
 } : null;

@@ -3,6 +3,8 @@
 // JWKS (good token, bad signature, expired, wrong kid, wrong alg, wrong gameId, junk); save validation and the size cap; the
 // record_match arguments; the debounce (one write per 10 s, the latest data wins, a flush on disconnect) against a stubbed
 // PostgREST; and the no-op path with no SUPABASE_* in the environment (nothing is fetched).
+// Round 26: events (sanitizing, batching into one insert, the disconnect row, a failed batch retried once, nothing on the game
+// loop) and player_progress (load, the debounced write, the guest-to-account merge once per account, flush).
 import { generateKeyPair, exportJWK, SignJWT } from 'jose';
 import * as C from '../../public/shared/constants.js';
 
@@ -14,7 +16,7 @@ let fails = 0;
 const ok = (cond, what) => { console.log(`${cond ? 'ok  ' : 'FAIL'} ${what}`); if (!cond) fails++; };
 const calls = [];
 let failNext = 0;
-S._test.useFetch(async (url, init) => {
+const stubFetch = async (url, init) => {
   calls.push({ url, method: init.method, body: init.body ? JSON.parse(init.body) : undefined, headers: init.headers });
   if (failNext > 0) { failNext--; return new Response('boom', { status: 500 }); }
   const path = new URL(url).pathname;
@@ -24,11 +26,13 @@ S._test.useFetch(async (url, init) => {
   if (path.endsWith('/rpc/leaderboard')) return Response.json(stub.board(JSON.parse(init.body)));
   if (path.endsWith('/rpc/player_rank')) return Response.json(stub.rank(JSON.parse(init.body)));
   if (path.endsWith('/match_results')) return Response.json(stub.recent);
+  if (path.endsWith('/player_progress') && init.method === 'GET') return Response.json(stub.progress ? [stub.progress] : []);
   return new Response(null, { status: 204 });
-});
+};
+S._test.useFetch(stubFetch);
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
 // round 19's endpoints (the stats tests set these)
-const stub = { board: () => [], rank: () => [], recent: [] };
+const stub = { board: () => [], rank: () => [], recent: [], progress: null };   // (+ round 26's player_progress row)
 
 // ---------------------------------------------------------------- no environment: everything is a no-op
 {
@@ -274,6 +278,151 @@ process.env.SUPABASE_SECRET_KEY = 'sb_secret_TEST';
   delete process.env.SUPABASE_URL;
   calls.length = 0;
   ok(await S.getStats(ME) === null && calls.length === 0, 'no environment: null, nothing fetched');
+}
+
+// ---------------------------------------------------------------- round 26: events (drop-off analytics)
+{
+  process.env.SUPABASE_URL = 'https://stub.supabase.co/';
+  S._test.useFetch(stubFetch);   // (round 19's section swapped in its own)
+  S._test.reset(); calls.length = 0;
+  const d = S.sanitizeDetails({ place: 2, s: 12.3456, ok: true, none: null, name: 'x'.repeat(80) + '\u0007', Bad: 1, 'a-b': 2, obj: {}, arr: [1],
+    nan: NaN, k1: 1, k2: 2, k3: 3, k4: 4, k5: 5, k6: 6, k7: 7, k8: 8 });
+  ok(d.place === 2 && d.s === 12.35 && d.ok === true && d.none === null && d.name.length === 48, 'details: numbers rounded, strings capped');
+  ok(!('Bad' in d) && !('a-b' in d) && !('obj' in d) && !('arr' in d) && !('nan' in d) && Object.keys(d).length === 12, 'details: bad keys/values dropped, ≤ 12 keys');
+  ok(Object.keys(S.sanitizeDetails([1, 2])).length === 0 && Object.keys(S.sanitizeDetails(null)).length === 0, 'details: non-objects → {}');
+
+  const sess = S.startSession({ anonId: 'anon_abcdef12', gen: 'v22', platform: 'crazygames', first: true, cg: true });
+  const bad = S.startSession({ anonId: 'no spaces allowed!', gen: 'v99', platform: 'ios' });
+  ok(sess.anonId === 'anon_abcdef12' && sess.gen === 'v22' && sess.platform === 'crazygames' && /^[0-9a-f-]{36}$/.test(sess.id), 'a session: anon id, gen, platform, a uuid');
+  ok(bad.anonId === null && bad.gen === 'current' && bad.platform === 'web', 'a bad anon id → null, unknown gen/platform → the defaults');
+  ok(S.logEvent(sess, 'join', { room: 'public' }, 'courtyard') === true, 'join queued');
+  S.setSessionUser(sess, 12345);
+  ok(S.logEvent(sess, 'first_kill', { s: 31 }) && !S.logEvent(sess, 'hack_the_planet', {}) && !S.logEvent(null, 'join'), 'unknown events and no session dropped');
+  ok(S.logEvent(sess, 'match_end', { place: 1, kills: 7 }, 'Bad Map!') === true, 'match_end queued (a bad map → null)');
+  ok(calls.length === 0, 'logging made no request (buffered, off the game loop)');
+  const buf = S._test.events();
+  ok(buf.length === 5 && buf[0].event === 'session_start' && buf[0].details.first === true && buf[0].details.cg === true, 'session_start logged by startSession');
+  ok(buf[2].map === 'courtyard' && buf[2].cg_user_id === null && buf[3].cg_user_id === '12345' && buf[4].map === null, 'map and the user id after auth');
+  await wait(20);
+  ok(S.endSession(sess, { state: 'live', kills: 1, deaths: 4, streak: 3, seconds: 999 }) === true, 'endSession logs disconnect');
+  const disc = buf.at(-1);
+  ok(disc.event === 'disconnect' && disc.details.seconds === 0 && disc.details.joined_s === 0 && disc.details.last === 'match_end'
+    && disc.details.state === 'live' && disc.details.streak === 3, 'disconnect: seconds (not overridable), joined_s, last event, the state');
+  ok(!S.logEvent(sess, 'menu_open') && !S.endSession(sess), 'an ended session logs nothing more');
+  ok(!buf.some(r => 'ip' in r || 'username' in r) && Object.keys(buf[0]).sort().join() ===
+    'anon_id,cg_user_id,created_at,details,event,gen,map,platform,session_id', 'rows carry only the table\'s columns (no ip, no name)');
+
+  await S.flushEvents();
+  const ins = calls.filter(c => c.url.includes('/rest/v1/events'));
+  ok(ins.length === 1 && ins[0].method === 'POST' && ins[0].body.length === 6 && ins[0].headers.Prefer === 'return=minimal', 'one bulk insert of all 6 rows');
+  ok(S._test.events().length === 0, 'the buffer is empty after the flush');
+
+  // the timer: one insert after EVENT_FLUSH_MS for a trickle of events
+  calls.length = 0;
+  const s2 = S.startSession({});
+  S.logEvent(s2, 'menu_open'); S.logEvent(s2, 'loadout_change');
+  await wait(S.EVENT_FLUSH_MS + 200);
+  ok(calls.filter(c => c.url.includes('/events')).length === 1 && calls[0].body.length === 3, `the trickle → one insert after ${S.EVENT_FLUSH_MS} ms`);
+
+  // a full batch is written at once, in EVENT_BATCH chunks
+  calls.length = 0;
+  for (let i = 0; i < S.EVENT_BATCH; i++) S.logEvent(s2, 'menu_open');
+  await wait(20);
+  ok(calls.length === 1 && calls[0].body.length === S.EVENT_BATCH, `${S.EVENT_BATCH} waiting → written at once`);
+
+  // a failed insert is put back once, then dropped
+  calls.length = 0; failNext = 1;
+  S.logEvent(s2, 'menu_open'); await S.flushEvents();
+  ok(S._test.events().length === 1, 'a failed batch goes back in the buffer');
+  await S.flushEvents();
+  ok(calls.length === 2 && S._test.events().length === 0, 'the retry writes it');
+  calls.length = 0; failNext = 2;
+  S.logEvent(s2, 'menu_open'); await S.flushEvents(); await S.flushEvents();
+  ok(calls.length === 2 && S._test.events().length === 0, 'failing twice → dropped (no endless retries)');
+
+  // the buffer is capped
+  S._test.reset(); failNext = 1e9;
+  for (let i = 0; i < S.EVENT_BUFFER_MAX + 50; i++) S.logEvent(s2, 'menu_open');
+  ok(S._test.events().length <= S.EVENT_BUFFER_MAX, 'the buffer is capped when Supabase is down');
+  S._test.reset(); failNext = 0;
+
+  // EVENTS_OFF and no environment: nothing queued, nothing fetched
+  calls.length = 0;
+  process.env.EVENTS_OFF = '1';
+  ok(!S.logEvent(S.startSession({}), 'join') && S._test.events().length === 0, 'EVENTS_OFF=1 → nothing queued');
+  delete process.env.EVENTS_OFF;
+  delete process.env.SUPABASE_URL;
+  const s3 = S.startSession({});
+  ok(!S.logEvent(s3, 'join') && S.endSession(s3) === false && S._test.events().length === 0, 'no environment → nothing queued');
+  await S.flushEvents();
+  ok(calls.length === 0, 'no environment → nothing fetched');
+}
+
+// ---------------------------------------------------------------- round 26: player_progress
+{
+  process.env.SUPABASE_URL = 'https://stub.supabase.co/';
+  S._test.reset(); calls.length = 0;
+  const P = '00000000-0000-4000-8000-0000000000aa';
+  const sp = S.sanitizeProgress({ xp: -5, level: 'x', unlocks: ['robe-emerald', 'robe-emerald', 'BAD ID', 7], equipped: { robe: 'robe-emerald', hat: 3, 'Bad Slot': 'x' },
+    challenges: { day: '2026-11-16', list: [{ id: 'kills5', n: 3.4, goal: 5, done: 1 }, { id: 'no way!', n: 1 }], extra: 1 }, lastDailyReset: '2026-11-16T00:00:00Z', firstWinDay: 'nope' });
+  ok(sp.xp === 0 && sp.level >= 1 && sp.unlocks.join() === 'robe-emerald' && JSON.stringify(sp.equipped) === '{"robe":"robe-emerald"}', 'progress: xp, unlocks and equipped sanitized');
+  ok(sp.challenges.list.length === 1 && sp.challenges.list[0].n === 3 && sp.challenges.list[0].done === false && !('extra' in sp.challenges), 'progress: challenges sanitized');
+  ok(sp.lastDailyReset === '2026-11-16' && sp.firstWinDay === null && S.sanitizeProgress(null) === null && S.sanitizeProgress([]) === null, 'progress: dates, non-objects');
+  if (typeof C.levelForXp === 'function') ok(S.sanitizeProgress({ xp: 5000, level: 1 }).level === (C.levelForXp(5000)?.level ?? C.levelForXp(5000)), 'the level comes from C.levelForXp');
+  else ok(S.sanitizeProgress({ xp: 5000, level: 7.2 }).level === 7, 'no C.levelForXp yet: the given level, clamped');
+
+  // a new player: no row → fresh defaults, nothing written yet
+  stub.progress = null;
+  const a = await S.loadProgress(P);
+  ok(a && a.fresh === true && a.xp === 0 && a.guestMerged === false && calls.length === 1 && calls[0].method === 'GET', 'no row → fresh defaults (one GET, no write)');
+  ok(await S.loadProgress(P) === a && calls.length === 1, 'cached: the same shared object, no second GET');
+
+  // the merge: once per account
+  const g = { xp: 999999, level: 40, unlocks: ['hat-crown'], equipped: { hat: 'hat-crown' }, challenges: { day: new Date().toISOString().slice(0, 10), list: [{ id: 'kills5', n: 2, goal: 5 }] } };
+  const m = await S.mergeGuestProgress(P, g);
+  ok(m === a && m.xp === S.GUEST_XP_CAP && m.unlocks.includes('hat-crown') && m.equipped.hat === 'hat-crown' && m.challenges.list[0].n === 2 && m.guestMerged, 'merge: guest XP capped, unlocks, equipped, today\'s challenges');
+  await wait(20);
+  const w1 = calls.filter(c => c.url.includes('/player_progress?on_conflict=player_id'));
+  ok(w1.length === 1 && w1[0].body.player_id === P && w1[0].body.xp === S.GUEST_XP_CAP && typeof w1[0].body.guest_merged_at === 'string', 'the merge is written at once with guest_merged_at');
+  const m2 = await S.mergeGuestProgress(P, { xp: 1e6, unlocks: ['robe-void'] });
+  ok(m2.xp === S.GUEST_XP_CAP && !m2.unlocks.includes('robe-void'), 'a second merge does nothing');
+
+  // the debounce: the latest wins, at most one write per 10 s, flushed on disconnect
+  calls.length = 0;
+  const base = { ...m };
+  S.writeProgress(P, { ...base, xp: base.xp + 50 });
+  S.writeProgress(P, { ...base, xp: base.xp + 60 });
+  ok(a.xp === S.GUEST_XP_CAP + 60 && calls.length === 0, 'writes inside 10 s are queued, the shared object updated in place');
+  ok(S._test.progressEntry(P).timer, 'a write is scheduled');
+  await S.flushProgress(P);
+  const w2 = calls.filter(c => c.url.includes('/player_progress?'));
+  ok(w2.length === 1 && w2[0].body.xp === S.GUEST_XP_CAP + 60 && w2[0].body.guest_merged_at, 'flushProgress writes the latest at once');
+  ok(!S._test.progressEntry(P), 'the player is forgotten after the flush');
+
+  // an existing row (merged before): loaded as stored, merge is a no-op
+  S._test.reset(); calls.length = 0;
+  stub.progress = { xp: 1200, level: 4, unlocks: ['robe-crimson'], equipped: { robe: 'robe-crimson' }, challenges: {}, last_daily_reset: '2026-11-15',
+    first_win_day: null, guest_merged_at: '2026-11-15T10:00:00Z' };
+  const b = await S.loadProgress(P);
+  ok(b.xp === 1200 && b.unlocks[0] === 'robe-crimson' && b.guestMerged && !b.fresh && b.lastDailyReset === '2026-11-15', 'a stored row loads');
+  ok((await S.mergeGuestProgress(P, { xp: 5000 })).xp === 1200 && calls.length === 1, 'already merged → unchanged, nothing written');
+  // a row that was never merged: XP is the max, the account's equipped and challenges kept
+  S._test.reset(); calls.length = 0;
+  stub.progress = { ...stub.progress, guest_merged_at: null, challenges: { day: '2020-01-01', list: [] } };
+  const c = await S.mergeGuestProgress(P, { xp: 300, unlocks: ['robe-gold'], equipped: { robe: 'robe-gold' } });
+  ok(c.xp === 1200 && c.unlocks.join() === 'robe-crimson,robe-gold' && c.equipped.robe === 'robe-crimson', 'merge: max XP, union, the account\'s equipped');
+  await S.flushAllSaves();
+  ok(calls.filter(c => c.url.includes('/player_progress?on_conflict')).length === 1 && !S._test.progressEntry(P), 'flushAllSaves covers progress');
+
+  // errors and the no-op path
+  S._test.reset(); calls.length = 0; failNext = 1;
+  ok(await S.loadProgress(P) === null && !S._test.progressEntry(P), 'a load error → null (a guest), nothing cached');
+  delete process.env.SUPABASE_URL;
+  calls.length = 0;
+  ok(await S.loadProgress(P) === null && S.writeProgress(P, { xp: 1 }) === null && await S.mergeGuestProgress(P, {}) === null, 'no environment → null');
+  await S.flushProgress(P);
+  ok(calls.length === 0, 'no environment → nothing fetched');
+  stub.progress = null;
 }
 
 console.log(fails ? `\n${fails} FAILED` : '\nall saves checks passed');
