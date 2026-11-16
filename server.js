@@ -51,9 +51,12 @@ const ROOM_EMPTY_TTL = +process.env.ROOM_EMPTY_TTL || 60;
 // with a current client. Round 24: three generations of client, each in rooms of its own (a private code of another generation is
 // refused): 'legacy' (no proto), 'v22' (proto 22-23: the round-23 build pending at CrazyGames bundles the OLD Sky Ruins layout, so its
 // rooms stay on the courtyard with runes, pads and the current pace, no rotation), 'current' (proto >= PROTO: the rebuilt Sky Ruins).
-export const PROTO = 24;
+// Round 26: PROTO 26 (XP, challenges, cosmetics, emotes: new messages go only to 26+ players), but the rooms still split at 24:
+// a 24 and a 26 client share 'current' rooms.
+export const PROTO = 26;
+export const CURRENT_FROM = 24;
 export const GENERATIONS = ['legacy', 'v22', 'current'];
-export const genOf = (msg) => !Number.isFinite(msg.proto) ? 'legacy' : msg.proto >= PROTO ? 'current' : 'v22';
+export const genOf = (msg) => !Number.isFinite(msg.proto) ? 'legacy' : msg.proto >= CURRENT_FROM ? 'current' : 'v22';
 export const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';   // no 0 O 1 I L
 const now = () => performance.now() / 1000;
 const rooms = new Map();   // id ('public-3' or the private code) -> room
@@ -76,6 +79,15 @@ function onMatchEnd(list, { roomKind, seconds, roomId, map, legacy }) {
 function onHumanJoin(ev) {
   try { notifier.onHumanJoin(ev); } catch (e) { console.warn('[notify] join', e); }
 }
+// round 26 (§1, §2): the drop-off events (Saves batches them off the loop) and a logged-in player's progress (one write per 10 s at most)
+function logEvent(session, event, details, map) {
+  if (!session || typeof Saves.logEvent !== 'function') return;
+  try { Saves.logEvent(session, event, details, map); } catch (e) { console.warn('[events]', e); }
+}
+function saveProgress(p, row) {
+  if (!p.account || typeof Saves.writeProgress !== 'function') return;
+  try { Saves.writeProgress(p.account.playerId, row); } catch (e) { console.warn('[saves] progress', e); }
+}
 function makeRoom(kind, gen = 'current') {
   if (rooms.size >= MAX_ROOMS) return null;
   let id, code = null;
@@ -83,7 +95,8 @@ function makeRoom(kind, gen = 'current') {
     do { code = Array.from({ length: 4 }, () => CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)]).join(''); } while (rooms.has(code));
     id = code;
   } else id = `${kind}-${nextPublic++}`;
-  const room = createRoom({ id, kind, code, allocId, canAddBot, onMatchEnd, onHumanJoin, isAdmin: (k) => notifier.isAdmin(k), legacy: gen === 'legacy', gen });
+  const room = createRoom({ id, kind, code, allocId, canAddBot, onMatchEnd, onHumanJoin, isAdmin: (k) => notifier.isAdmin(k), legacy: gen === 'legacy', gen,
+    logEvent, saveProgress });   // round 26: the drop-off events and a logged-in player's progress (Saves, environment's)
   rooms.set(id, room);
   console.log(`[room] ${id} opened${gen !== 'current' ? ` (${gen})` : ''} (${rooms.size} rooms)`);
   return room;
@@ -172,6 +185,25 @@ wss.on('connection', (ws) => {
   let id = null, room = null, watching = null;
   ws.isAlive = true;
   ws.on('pong', () => { ws.isAlive = true; });
+  // round 26: a logged-in player's progress, once both the auth and the join are in: the account's (Saves.loadProgress), with this
+  // browser's guest progress merged into it the first time (Saves.mergeGuestProgress: once per account, environment's rule)
+  const linkProgress = () => {
+    if (!ws.account || id === null || ws.progressLinked || ws.progressLinking || typeof Saves.loadProgress !== 'function') return;
+    ws.progressLinking = true;
+    const pid = ws.account.playerId;
+    Promise.resolve(Saves.loadProgress(pid)).then(async (prog) => {
+      if (!prog) return;   // disabled or an error: they keep the guest's progress for this session
+      const guest = room?.guestProgress(id);
+      let merged = false;
+      if (guest && !prog.guestMerged && typeof Saves.mergeGuestProgress === 'function') {
+        const m = await Saves.mergeGuestProgress(pid, guest);
+        if (m) { prog = m; merged = true; }
+      }
+      ws.progressLinked = true;
+      ws.accountProgress = prog;
+      if (id !== null && ws.readyState === 1) room?.setProgress(id, prog, merged);
+    }).catch(e => console.warn('[saves] progress', e)).finally(() => { ws.progressLinking = false; });
+  };
 
   ws.on('message', (raw) => {
     let msg;
@@ -188,6 +220,8 @@ wss.on('connection', (ws) => {
         const p = id !== null && room?.players.get(id);
         if (p) p.account = ws.account;
         ws.send(JSON.stringify({ t: 'profile', username: r.cg.username, save: r.acc.save, stats: r.acc.stats }));
+        if (ws.session) try { Saves.setSessionUser?.(ws.session, r.cg.userId); } catch (e) { console.warn('[events]', e); }   // round 26
+        linkProgress();
       }).catch(e => console.warn('[saves] auth', e));
       return;
     }
@@ -219,7 +253,15 @@ wss.on('connection', (ws) => {
       if (watching) { watching.unobserve(ws); watching = null; }
       if (pick.error) { ws.send(JSON.stringify({ t: 'roomError', ...pick.error })); console.log(`[room] ${pick.error.reason} '${pick.error.code}': to ${room.id}`); }
       if (gen !== 'current') console.log(`[room] a ${gen} join (proto ${msg.proto ?? 'none'}) -> ${room.id}`);
+      // round 26 (§1): the drop-off session, one per socket (environment's Saves.startSession logs session_start)
+      if (!ws.session && typeof Saves.startSession === 'function') {
+        const cgPlat = msg.platform === 'crazygames' || gen === 'legacy' || !!ws.account;
+        try { ws.session = Saves.startSession({ anonId: typeof msg.anon === 'string' ? msg.anon : null, gen, platform: cgPlat ? 'crazygames' : 'web', first: msg.firstVisit === true, cg: cgPlat }) || null; }
+        catch (e) { console.warn('[events]', e); }
+        if (ws.session && ws.account) try { Saves.setSessionUser?.(ws.session, ws.account.userId); } catch {}
+      }
       id = room.join(ws, msg, pick.error ? { roomError: pick.error } : {});
+      linkProgress();
       return;
     }
     room.message(id, msg);
@@ -228,7 +270,9 @@ wss.on('connection', (ws) => {
   ws.on('close', () => {
     watching?.unobserve(ws);
     if (ws.account) Saves.flushSave(ws.account.playerId).catch(() => {});
+    if (ws.account && typeof Saves.flushProgress === 'function') Promise.resolve(Saves.flushProgress(ws.account.playerId)).catch(() => {});   // round 26
     if (id === null) return;
+    if (ws.session && typeof Saves.endSession === 'function') try { Saves.endSession(ws.session, room.playerState(id)); } catch (e) { console.warn('[events]', e); }   // round 26: the disconnect event
     room.leave(id);
   });
 });
