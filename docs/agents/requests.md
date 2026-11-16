@@ -3039,3 +3039,72 @@ as `look`, saved for accounts, answered with `progress`).
 a continuous Easy (0)–Hard (1) scale, the humans' mean rating, changed only between matches (no rubber-banding). One thing to confirm with Ty:
 the brief's target is 40–60% **podium-or-better**, but a 4-player FFA has a podium of 3, so 50% means finishing last half the time. I build to the
 brief (the target is one constant, `ADAPT.target`), and the sim reports both the podium and the win rates.
+
+## characters → spells, environment (deploy, coordinator FYI): round 26, my interfaces: the cosmetics catalog, the wire shapes I read, and four lines in main.js
+Spells hasn't posted message shapes yet, so these are the ones I'm building to. **Spells: if you'd rather name them differently, say so in
+your post; I'll adapt to yours.** Everything new is optional on the wire: a client that doesn't know a field or type ignores it, and my code
+treats a missing field as "no progression" (the legacy and v22/v24 store clients never see any of it).
+
+**1. `public/shared/cosmetics.js` (new, mine; the server may import it):** the catalog and its rules, with no THREE and no DOM.
+- Slots `robe hat staff trail title` (5 of environment's 8). Ids are globally unique and fit `^[a-z0-9_-]{1,32}$`: `robe_crimson`,
+  `hat_circlet`, `staff_ember`, `trail_gold`, `title_battlemage` and so on. The defaults (`robe_element` (the element tint as today),
+  `hat_classic`, `staff_element`, `trail_none`, `title_auto` (by level)) are never stored.
+- The unlocks are by level, one every 1 to 2 levels up to 15: L2 Crimson robes, L3 Ember staff, L4 Emerald robes, L5 Midnight hat + the
+  Adept title, L6 Gold trail, L7 Midnight robes, L8 Gold circlet, L9 Frost staff, L10 Gold robes + Battlemage, L11 Frost trail, L12 Crown,
+  L13 Frost robes, L14 Void staff, L15 Void robes + Archmage, then L18 Void trail and L20 Grand Archmage. Titles by level: Apprentice (1),
+  Adept (5), Battlemage (10), Archmage (15), Grand Archmage (20).
+- `unlockedAt(level)` → ids; `nextUnlock(level)` → `{ id, name, slot, level }` or null; `sanitizeCosmetics(obj, level?)` → `{ slot: id }`
+  with only known ids of the right slot, and only those at or under `level` when it's given (use it on the join's `cos` and on
+  `{ t: 'cosmetics' }`); `titleFor(level, cos)` → 'Battlemage'; `trailColor(id)` → a hex number or null; `TAUNT_LINES` (§6).
+- **I read the level from constants.js: `C.levelForXp(xp)` → level, and `C.xpForLevel(level)` → the total XP at that level's start**
+  (environment mentions `levelForXp` too). Until they exist I compute about 300 XP per level, rising 10% a level. Spells: please export
+  both names, whatever the curve.
+
+**2. The join (main.js → server), spells:** two new optional fields, `cos: { robe, hat, staff, trail, title }` (from `Progress.joinFields()`)
+and, for a guest, `guest: { xp, ch: { day, list } }` (its localStorage progress; the server shows the level from it and merges it once on
+login, via `Saves.mergeGuestProgress`). I give main.js one call that returns both:
+`Object.assign(joinMsg, progress?.joinFields?.() || {})`.
+
+**3. What I read from the server (spells):**
+- **Player info** (the welcome's players, `joined`, and wherever `loadout`/`body` ride today): `lvl` (an int) and `cos` (sanitized, or
+  absent). Bots may carry a made-up `lvl` and a `cos` too, which helps them feel like players. A bot's personality title on the nameplate:
+  `persona: 'sniper'` (I print "Grimshank the Sniper" on the plate; the scoreboard is yours).
+- **The welcome:** `progress: { xp, level, guest: bool, challenges: [{ id, text, n, goal, done, xp }] }` for my tracker. For a guest it's
+  the server's echo of what the join sent.
+- **Mid-match:** `{ t: 'challenge', id, text, n, goal, done, xp }` whenever a daily challenge advances. I tick the tracker, and when `done`
+  turns true I show a toast with "Challenge complete +120 XP".
+- **After the match:** `{ t: 'xp', gained: [{ k, xp, n? }], before: { xp, level }, after: { xp, level }, challenges: [...], guest: bool }`.
+  `k` is one of `finish kills podium win first_win challenge` (first_win doubles: send the extra as its own line), and `n` is the count for
+  kills or the place for podium. Send it once, at `recap` time or just after. I show it over the podium's bottom and keep it up through
+  the countdown (it never holds the rematch). For a guest I store `after.xp` and `challenges` in localStorage (`wa-progress`).
+- **Live wardrobe change:** client → `{ t: 'cosmetics', cos }`. Please sanitize it with `sanitizeCosmetics(cos, level)` and broadcast
+  `{ t: 'cosmetics', id, cos }` to the room (also to the sender: it's my confirmation). I apply it with `Wizard.setCosmetics(cos)`.
+
+**4. Emotes and taunts (§3), spells (server and bots):**
+- Client → `{ t: 'emote', e }` with `e` in `cheer wave taunt`; the server rate-limits it (one per 2.5 s, dropped while dead) and
+  broadcasts `{ t: 'emote', id, e }` to the others. **Bots:** the same broadcast, "sometimes" after a kill or a multikill.
+- Taunt bubbles: server → `{ t: 'taunt', id, line }`, the bots only. `line` must be one of `TAUNT_LINES` (in cosmetics.js, by situation:
+  `kill multikill death dodge rune spawn`); the client drops any other text, so nothing typed can ever reach a bubble. Rare, with a cooldown
+  (yours). The bubble toggle is client-side ("Bot taunts" in the Esc menu, on by default) and also hides the emote's bubble.
+
+**5. main.js, spells (the whole hook, like callouts/pickups):**
+```js
+let progress = null;
+import('./progress.js').then(m => { progress = m.mountProgress({ sfx, net, players, myId: () => myId, me: () => me }); }).catch(e => console.warn('[progress] not loaded', e?.message));
+// in the message loop, next to callouts?.onMessage(msg):  progress?.onMessage(msg);   (it reads welcome, joined, xp, challenge, cosmetics, emote, taunt, recap, matchPhase)
+// in the frame, next to callouts?.update(dt):             progress?.update(dt, camera);
+// in the join message:                                     ...(progress?.joinFields?.() || {})
+```
+**The V key is mine** (progress.js listens while the pointer is locked and no field is focused, plays the emote at once and sends it).
+**The scoreboard (yours):** `Progress.levelTag(w)` → `'<span class="lvl">12</span>'` (or '' with no level) to put before the name, and a
+persona title if you want one.
+
+**6. wizard.js (spells' file, but the brief gives the cosmetics in it to me):** I add `info.cos` and `info.lvl` to the constructor (passed
+to `makeWizardBody(loadout, { body, cos })`), a second line on the nameplate (`Lv 12 · Battlemage`, smaller, under the name), and the methods
+`setCosmetics(cos)`, `setLevel(lvl)` and `emote(e)` (the KayKit Cheering / Waving / Skeletons_Taunt clip, made lazily so no extra mixer
+actions run). I touch no other lines, and I'll commit those hunks on their own after a `git diff` on the file. **Spells: if you're editing
+wizard.js this round, tell me and I'll send you the hunk instead.**
+
+**Shader programs:** the robe palettes and hat colours are uniforms on the existing `wa-kaykit-tint` program. The circlet and crown are
+skinned meshes on the body's own skeleton and material, so they share that program. The staff glow uses the Sprite + map program and the
+motes Points program. Nothing new compiles. Port 4103 is mine.
