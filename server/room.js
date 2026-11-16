@@ -23,6 +23,9 @@ const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 export function createRoom(opts) {
   const { allocId } = opts;
   const GEN = opts.gen || (opts.legacy ? 'legacy' : 'current'), LEGACY = GEN === 'legacy';
+  // Round 27: a current room plays the six wizards' fixed kits only (a join names a wizard; any loadout maps to a kit, C.kitLoadout).
+  // The older rooms (legacy, v22, v24: the store builds) keep their free loadouts, Roll and Trapped Relic included.
+  const KITS = GEN === 'current';
   // a legacy room runs on map.js's frozen copy of the courtyard ('legacy': what the live build bundles), shown to clients as 'courtyard'
   let mapId = LEGACY && C.MAPS?.legacy ? 'legacy' : 'courtyard';
   // (round 24: and put the drawbridge where the clock says, so every query this tick or message sees the moving surface)
@@ -74,10 +77,10 @@ export function createRoom(opts) {
   // grunts. A loadout change made in game waits in pendingLoadout until the next respawn.
   function newPlayer(id, name, loadout = C.DEFAULT_LOADOUT, voice = 'male') {
     const sp = C.SPAWN_POINTS[(id - 1) % C.SPAWN_POINTS.length];
-    loadout = C.sanitizeLoadout(loadout) || { ...C.DEFAULT_LOADOUT };
+    loadout = cleanLoadout(loadout) || { ...C.DEFAULT_LOADOUT };
     return {
       id, name, lastInputAt: now(),
-      loadout, pendingLoadout: null, voice: C.sanitizeVoice(voice),
+      loadout, wizard: C.wizardOfLoadout(loadout), pendingLoadout: null, voice: C.sanitizeVoice(voice),
       color: C.loadoutColor(loadout),
       p: [sp[0], sp[1] || 0, sp[2]], yaw: 0, anim: 'idle',
       jump: null, crouch: false,    // round 9: { start, y0, n } while a jump is in the air (n 2: the air jump); crouched (C / Ctrl)
@@ -120,7 +123,7 @@ export function createRoom(opts) {
       blocking: p.blocking, charging: p.charging,
       stun: p.stunUntil > now(), dead: p.dead,
       carrying: p.carrying, kills: p.kills, deaths: p.deaths,
-      loadout: p.loadout, voice: p.voice, pendingLoadout: !!p.pendingLoadout, siphoning: !!p.siphon,
+      loadout: p.loadout, wizard: p.wizard, voice: p.voice, pendingLoadout: !!p.pendingLoadout, siphoning: !!p.siphon,
       veil: p.veilUntil > now(), liftCd: p.cd.lift > now() ? +(p.cd.lift - now()).toFixed(2) : 0,
       ammo: p.ammo, reload: p.reloadUntil > now() ? +(p.reloadUntil - now()).toFixed(2) : 0,
       slow: p.slowUntil > now(), bound: p.silenceUntil > now(), rooted: p.rootUntil > now(), frozen: p.frozenUntil > now(),
@@ -175,8 +178,8 @@ export function createRoom(opts) {
     'cast', 'jump', 'teleport', 'skyward', 'smoke', 'mirror', 'flaskStep', 'roll']);
   const kit = (p) => p.loadout;
   const CYCLONE = C.SPELLBOOK.cyclone, SKY = C.SPELLBOOK.skyward, SIPHON = C.SPELLBOOK.sanguine_lash;   // (Blood Siphon keeps the Lash's id)
-  const MIRROR = C.SPELLBOOK.mirror_step, BULWARK = C.SPELLBOOK.glacial_bulwark, RELIC = C.SPELLBOOK.trapped_relic;
-  const ROLL = C.SPELLBOOK.roll;
+  const MIRROR = C.SPELLBOOK.mirror_step, BULWARK = C.SPELLBOOK.glacial_bulwark, RELIC = C.RETIRED_SPELLS.trapped_relic;   // (round 27: Relic and Roll, old rooms only)
+  const ROLL = C.RETIRED_SPELLS.roll;
   const SKIM = C.SPELLBOOK.glacial_skim, FROST = C.SPELLBOOK.frostfall, SMOKE = C.SPELLBOOK.smoke_screen, VEIL = C.SPELLBOOK.tempest_veil;
   const isVeiled = (p) => p.veilUntil > now();
   // Round 14: spawn protection (C.SPAWN_PROTECT): no damage taken for a moment after a respawn, ended early by an attack.
@@ -194,12 +197,33 @@ export function createRoom(opts) {
   const enemyOf = (ownerId, q) => enemies(players.get(ownerId), q);
 
   // ---------------------------------------------------------------- loadouts
+  // Round 27: what a room accepts. A current room: a wizard id or any loadout becomes a whole kit (C.kitLoadout: the kit with the
+  // same primary, else the Pyromancer); an older room: any valid loadout (C.sanitizeLoadout, Roll and Relic included), else null.
+  const cleanLoadout = (x) => KITS ? (x == null ? null : C.kitLoadout(x).loadout) : C.sanitizeLoadout(x);
+  // The wizards a human may play (a current room): an account's unlocks when logged in, the join's own progress for a guest (trusted, as
+  // in round 26). Bots and the older rooms may play anything.
+  const mayPlay = (p, wizard) => !KITS || !!p.bot || !p.prog || C.isWizardUnlocked(wizard, p.prog.xp, p.prog.grandfathered);
+  // A current room's request (a wizard id, or a loadout from an older client) → { loadout } or { refused: reason }. A locked wizard is
+  // refused (the join falls back to the Pyromancer).
+  function kitRequest(p, x) {
+    if (typeof x === 'string' && !C.isWizard(x)) return { refused: 'unknown' };
+    if (x == null || (typeof x !== 'string' && (typeof x !== 'object' || Array.isArray(x)))) return { refused: 'unknown' };
+    const { wizard, loadout } = C.kitLoadout(x);
+    return mayPlay(p, wizard) ? { wizard, loadout } : { refused: 'locked', want: wizard };
+  }
+  const refuseWizard = (p, want, reason) => { if (p.proto >= 27) send(p.id, { t: 'wizardRefused', want: want ?? null, wizard: C.wizardOfLoadout(p.pendingLoadout || p.loadout), reason }); };
+
   // Round 11: a loadout changes only between lives. Sent while alive, it waits for the respawn; sent while dead, it
-  // applies at once (the next life starts with it).
+  // applies at once (the next life starts with it). Round 27: in a current room `lo` may be a wizard id, and becomes a kit.
   function requestLoadout(p, lo, voice) {
     if (voice !== undefined) p.voice = C.sanitizeVoice(voice);
     if (lo === undefined) return true;
-    const clean = C.sanitizeLoadout(lo);
+    let clean;
+    if (KITS) {
+      const k = kitRequest(p, lo);
+      if (k.refused) { refuseWizard(p, k.want ?? (typeof lo === 'string' ? lo : null), k.refused); return 'refused'; }
+      clean = k.loadout;
+    } else clean = C.sanitizeLoadout(lo);
     if (!clean) return false;
     if (!p.bot && !C.sameLoadout(clean, p.pendingLoadout || p.loadout)) ev(p, 'loadout_change', {});   // round 26
     p.pendingLoadout = C.sameLoadout(clean, p.loadout) ? null : clean;
@@ -211,12 +235,13 @@ export function createRoom(opts) {
     const lo = p.pendingLoadout;
     p.pendingLoadout = null;
     p.loadout = lo;
+    p.wizard = C.wizardOfLoadout(lo);
     p.color = C.loadoutColor(lo);
     if (p.blocking && !C.isWard(kit(p).guard)) { p.blocking = false; p.blockReleasedAt = now(); }
     if (kit(p).utility !== 'trapped_relic') clearCurse(p);
     if (kit(p).power !== 'sanguine_lash') p.lashBonus = 0;
     p.ammo = C.primaryMag(kit(p).primary).magazine; p.reloadUntil = 0;   // a fresh pouch or magazine for the new primary
-    broadcast({ t: 'loadout', id: p.id, loadout: lo, voice: p.voice, color: p.color });
+    broadcast({ t: 'loadout', id: p.id, loadout: lo, wizard: p.wizard, voice: p.voice, color: p.color });
   }
   const hasCombo = (p, id) => C.hasCombo(p.loadout, id);
 
@@ -477,10 +502,10 @@ export function createRoom(opts) {
     hex: 'hex_shards', meteor_rain_hit: 'meteor_rain', meteor_rain_splash: 'meteor_rain', blizzard_chip: 'blizzard', blizzard_freeze: 'blizzard',
     firewall_burn: 'firewall', bulwark_frost: 'glacial_bulwark', cage_burn: 'night_cage', eye_burst: 'eye_of_storm' };
   function spellOf(kind, attacker, spell = null) {
-    if (spell && C.SPELLBOOK[spell]) return spell;
+    if (spell && C.spellDef(spell)) return spell;
     if (kind === 'fast') return attacker?.loadout?.primary || null;
     const id = SPELL_OF_KIND[kind] || kind;
-    return id && C.SPELLBOOK[id] ? id : null;
+    return id && C.spellDef(id) ? id : null;
   }
   function notePerSpell(p, id, key, v) {
     if (!p || p.bot || !id || !(v > 0) || match.state().phase !== 'live') return;
@@ -1812,7 +1837,7 @@ export function createRoom(opts) {
       }
       // telekinesis: however we let go of something (thrown, set down, knocked away, dropped), the next lift waits
       const held = holding(p);
-      if (p.wasHolding && !held) p.cd.lift = t + C.SPELLBOOK[kit(p).utility].liftCooldown;
+      if (p.wasHolding && !held) p.cd.lift = t + C.spellDef(kit(p).utility).liftCooldown;
       p.wasHolding = held;
       if (p.veilUntil && t >= p.veilUntil) { p.veilUntil = 0; broadcast({ t: 'veilEnd', id: p.id }); }
       // primary magazine: a finished reload refills it; a partial one reloads after idling
@@ -2471,9 +2496,17 @@ export function createRoom(opts) {
         break;
       }
       case 'loadout': {
-        // round 11: { loadout?, voice? } from the builder; the loadout applies at the next respawn
-        if (!requestLoadout(p, msg.loadout, msg.voice)) send(p.id, { t: 'loadoutRejected', reason: 'Every slot needs a spell of that slot.' });
-        else if (msg.voice !== undefined && msg.loadout === undefined) broadcast({ t: 'loadout', id: p.id, loadout: p.loadout, voice: p.voice, color: p.color });
+        // round 11: { loadout?, voice? } from the builder; the loadout applies at the next respawn (round 27, a current room: as its kit)
+        const r = requestLoadout(p, msg.loadout, msg.voice);
+        if (!r) send(p.id, { t: 'loadoutRejected', reason: 'Every slot needs a spell of that slot.' });
+        else if (r === true && msg.voice !== undefined && msg.loadout === undefined) broadcast({ t: 'loadout', id: p.id, loadout: p.loadout, wizard: p.wizard, voice: p.voice, color: p.color });
+        break;
+      }
+      // Round 27: { t: 'wizard', id } (a current room): play this wizard from the next life (at once while dead). A locked or unknown one
+      // is refused ({ t: 'wizardRefused' }) and the current wizard stays.
+      case 'wizard': {
+        if (!KITS) break;
+        requestLoadout(p, typeof msg.id === 'string' ? msg.id : null);
         break;
       }
       // Round 16: the Esc menu's "Respawn with these spells": the loadout applies now; a free, instant respawn when we haven't
@@ -2482,7 +2515,10 @@ export function createRoom(opts) {
         if (p.spectator || p.watchOnly) break;
         const R = C.RESPAWN_NOW;
         if (t < (p.respawnNowAt || 0)) { send(p.id, { t: 'respawnNowRefused', left: +(p.respawnNowAt - t).toFixed(1) }); break; }
-        if (msg.loadout !== undefined && !requestLoadout(p, msg.loadout, msg.voice)) { send(p.id, { t: 'loadoutRejected', reason: 'Every slot needs a spell of that slot.' }); break; }
+        { const want = KITS && msg.wizard !== undefined ? (typeof msg.wizard === 'string' ? msg.wizard : null) : msg.loadout;   // (round 27: `wizard`)
+          const r = want !== undefined ? requestLoadout(p, want, msg.voice) : true;
+          if (r === 'refused') break;
+          if (!r) { send(p.id, { t: 'loadoutRejected', reason: 'Every slot needs a spell of that slot.' }); break; } }
         if (p.dead) break;   // (dead already: the loadout simply starts with the coming respawn)
         p.respawnNowAt = t + R.cooldown;
         if (t - (p.lastDamagedAt ?? -Infinity) < R.safeAfter) {
@@ -2620,7 +2656,9 @@ export function createRoom(opts) {
     const used = new Set([...players.values()].map(q => q.persona).filter(Boolean));
     const left = C.PERSONA_IDS.filter(k => !used.has(k)), pool = left.length ? left : C.PERSONA_IDS;
     const persona = proxy ? null : pool[Math.floor(Math.random() * pool.length)];   // (a proxy plays like a plain Easy bot: no personality)
-    const p = newPlayer(id, name, preset || C.sanitizeLoadout(loadout) || (persona ? { ...C.PERSONAS[persona].loadout } : C.botLoadout()), Math.random() < 0.5 ? 'male' : 'female');
+    // round 27: a personality plays one of its wizards' kits (one the room's other players don't have, when it can)
+    const takenWiz = new Set([...players.values()].map(q => q.wizard));
+    const p = newPlayer(id, name, preset || (loadout && typeof loadout === 'object' ? cleanLoadout(loadout) : null) || (persona ? C.kitFor(C.personaWizard(persona, takenWiz)) : C.botLoadout()), Math.random() < 0.5 ? 'male' : 'female');
     const sp = C.SPAWN_POINTS[Math.floor(Math.random() * C.SPAWN_POINTS.length)];
     p.p = [sp[0], sp[1] || 0, sp[2]];
     const skill = difficulty === 'auto' ? roomSkill() : null;
@@ -2804,7 +2842,7 @@ export function createRoom(opts) {
     if (ws.account?.username) msg = { ...msg, name: ws.account.username };   // round 18: a verified CrazyGames name
     let name = String(msg.name || 'Wizard').replace(/[^\w \-'!?.]/g, '').trim().slice(0, C.MAX_NAME_LEN) || `Wizard${id}`;
     if (rudeName(name)) name = `Wizard${id}`;   // round 15 (CrazyGames: a profanity filter on names other players see)
-    const lo = C.sanitizeLoadout(msg.loadout);
+    const lo = KITS ? null : C.sanitizeLoadout(msg.loadout);   // (round 27: a current room picks the kit below, once the progress is known)
     const p = newPlayer(id, name, lo || C.DEFAULT_LOADOUT, msg.voice);
     p.proto = Number.isFinite(msg.proto) ? msg.proto : 0;   // round 22: 0 = the live CrazyGames build (server.js put it in a legacy room)
     // round 26: the drop-off events' session (server.js, Saves.startSession); the progress (a guest's own from the join, or the
@@ -2816,6 +2854,16 @@ export function createRoom(opts) {
     Prog.initProgress(p, p.guestRaw, { firstVisit: msg.firstVisit === true, adapt: msg.adapt });
     if (ws.accountProgress) Prog.setAccountProgress(p, ws.accountProgress);
     if (wear !== undefined) p.prog.equipped = C.sanitizeEquipped(wear, p.prog.level);
+    // round 27 (a current room): the join's wizard (or an older client's loadout, mapped to a kit). Locked or unknown: the Pyromancer.
+    let refused = null;
+    if (KITS) {
+      const want = msg.wizard !== undefined ? msg.wizard : msg.loadout;
+      const k = want === undefined ? null : kitRequest(p, want);
+      if (k && !k.refused) { p.loadout = k.loadout; p.wizard = k.wizard; }
+      else { p.loadout = C.kitFor(C.DEFAULT_WIZARD); p.wizard = C.DEFAULT_WIZARD; if (k) refused = { want: k.want ?? (typeof want === 'string' ? want : null), reason: k.refused }; }
+      p.color = C.loadoutColor(p.loadout);
+      p.ammo = C.primaryMag(p.loadout.primary).magazine;
+    }
     // round 23: Ty's admin key (verified by server.js's notifier; never stored or echoed) and where the client runs ('crazygames' | 'web')
     p.admin = typeof opts.isAdmin === 'function' && opts.isAdmin(msg.admin);
     p.platform = msg.platform === 'crazygames' || msg.platform === 'web' ? msg.platform : (LEGACY || ws.account ? 'crazygames' : undefined);
@@ -2859,7 +2907,8 @@ export function createRoom(opts) {
     }));
     ev(p, 'join', { room: room.kind });   // round 26
     broadcast({ t: 'joined', player: playerFull(p) });
-    if (msg.loadout !== undefined && !lo) send(id, { t: 'loadoutRejected', reason: 'That loadout is not valid: you have the default one.' });
+    if (!KITS && msg.loadout !== undefined && !lo) send(id, { t: 'loadoutRejected', reason: 'That loadout is not valid: you have the default one.' });
+    if (refused) refuseWizard(p, refused.want, refused.reason);
     console.log(`[+] ${name} (#${id}) joined ${room.id}. ${players.size} in the room`);
     roomChanged();
     // round 23: the Discord alert (server.js decides; the live counts are looked up when a held post goes out)
@@ -2945,6 +2994,13 @@ export function createRoom(opts) {
       if (!Object.keys(p.prog.equipped).length && eq) p.prog.equipped = C.sanitizeEquipped(eq, p.prog.level);   // (a fresh account keeps what this browser wore)
       broadcast26({ t: 'look', id, lv: p.prog.level, eq: p.prog.equipped, title: C.titleFor(p.prog.level) });
       if (p.proto >= 26) send(id, { t: 'progress', progress: Prog.progressOf(p), ...(merged ? { merged: true } : {}) });
+      // round 27: the account doesn't have the wizard this guest picked: the next life is the Pyromancer
+      const wantWiz = C.wizardOfLoadout(p.pendingLoadout || p.loadout);
+      if (!mayPlay(p, wantWiz)) {
+        p.pendingLoadout = C.sameLoadout(p.loadout, C.kitFor(C.DEFAULT_WIZARD)) ? null : C.kitFor(C.DEFAULT_WIZARD);
+        if (p.dead) flushPendingLoadout(p);
+        refuseWizard(p, wantWiz, 'locked');
+      }
     },
     guestProgress: (id) => players.get(id)?.guestRaw ?? null,
     // round 26: the disconnect event's details: { state: 'menu' | 'live' | 'podium' | 'lobby', kills, deaths (this match), streak (deaths since their last kill) }

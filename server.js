@@ -53,10 +53,13 @@ const ROOM_EMPTY_TTL = +process.env.ROOM_EMPTY_TTL || 60;
 // rooms stay on the courtyard with runes, pads and the current pace, no rotation), 'current' (proto >= PROTO: the rebuilt Sky Ruins).
 // Round 26: PROTO 26 (XP, challenges, cosmetics, emotes: new messages go only to 26+ players), but the rooms still split at 24:
 // a 24 and a 26 client share 'current' rooms.
-export const PROTO = 26;
-export const CURRENT_FROM = 24;
-export const GENERATIONS = ['legacy', 'v22', 'current'];
-export const genOf = (msg) => !Number.isFinite(msg.proto) ? 'legacy' : msg.proto >= CURRENT_FROM ? 'current' : 'v22';
+// Round 27: PROTO 27 (six wizards with fixed kits; Roll and Trapped Relic gone). The store build (proto 24-26: free loadouts, Roll and
+// Relic) gets rooms of its own, 'v24', with its old rules (room.js: only 'current' rooms play kits). No 26 client ever shipped.
+export const PROTO = 27;
+export const CURRENT_FROM = 27;
+export const V24_FROM = 24;
+export const GENERATIONS = ['legacy', 'v22', 'v24', 'current'];
+export const genOf = (msg) => !Number.isFinite(msg.proto) ? 'legacy' : msg.proto >= CURRENT_FROM ? 'current' : msg.proto >= V24_FROM ? 'v24' : 'v22';
 export const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';   // no 0 O 1 I L
 const now = () => performance.now() / 1000;
 const rooms = new Map();   // id ('public-3' or the private code) -> room
@@ -117,7 +120,7 @@ const ROOM_ERRORS = {
   unknown: (c) => `There's no room ${c}. You're in a public match instead.`,
   full: (c) => `Room ${c} is full. You're in a public match instead.`,
   busy: () => `The server is too busy for a new private room right now. You're in a public match instead.`,
-  version: (c, gen) => gen !== 'current' ? `Room ${c} runs a newer version of the game: reload the page to join it. You're in a public match instead.`
+  version: (c, gen, roomGen) => GENERATIONS.indexOf(gen) < GENERATIONS.indexOf(roomGen) ? `Room ${c} runs a newer version of the game: reload the page to join it. You're in a public match instead.`
     : `Room ${c} runs an older version of the game. You're in a public match instead.`,
 };
 // Where a join goes: { room, error } (error: a private room that couldn't be had; the player lands in a public room).
@@ -126,22 +129,23 @@ const ROOM_ERRORS = {
 // anyone else naming one gets today's public match.
 function roomFor(want, gen = 'current', firstVisit = false, admin = false) {
   const code = cleanCode(want);
-  let reason = null;
+  let reason = null, roomGen = null;
   if (code === 'NEW') { const r = makeRoom('private', gen); if (r) return { room: r }; reason = 'busy'; }
   else if (admin && /^PUBLIC-\d+$/.test(code)) {
     const r = rooms.get(code.toLowerCase());
     if (r && r.kind === 'public' && r.gen === gen && r.humanCount() < 4) return { room: r };
     reason = !r || r.kind !== 'public' ? 'unknown' : r.gen !== gen ? 'version' : 'full';
+    roomGen = r?.gen;
   }
   else if (code && code !== 'PUBLIC') {
     const r = rooms.get(code);
     if (!r || r.kind !== 'private') reason = 'unknown';
-    else if (r.gen !== gen) reason = 'version';
+    else if (r.gen !== gen) { reason = 'version'; roomGen = r.gen; }
     else if (r.humanCount() >= 4) reason = 'full';
     else return { room: r };
   }
   const room = publicRoom(gen, firstVisit);
-  return { room, error: reason && { code: code === 'NEW' ? null : code, reason, text: ROOM_ERRORS[reason](code, gen) } };
+  return { room, error: reason && { code: code === 'NEW' ? null : code, reason, text: ROOM_ERRORS[reason](code, gen, roomGen) } };
 }
 // A socket that sends addBot / removeBots without joining (`node bot.js`, the balance tools): the room it names, else the
 // busiest public room with humans in it, else a lab room of its own (bots only, nobody can join it).
