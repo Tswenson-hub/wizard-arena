@@ -569,10 +569,10 @@ function countVisit() {
 function tickPlay(dt) {
   playT += dt;
   if (!playedOnce && playT >= FIRST.playedAfter) { playedOnce = true; lsSet(PLAYED_KEY, '1'); }
-  if (playT >= FIRST.hintAfter) changeWizardHint('time');
+  if (playT >= FIRST.hintAfter && grandfathered()) changeWizardHint('time');   // (round 26b: a new player gets it when a second wizard unlocks)
 }
 function changeWizardHint(reason) {
-  if (hintShown || menuEverOpened || visitNo > FIRST.hintVisits) return;
+  if (hintShown || ((menuEverOpened || visitNo > FIRST.hintVisits) && reason !== 'unlock')) return;
   hintShown = true;
   if (typeof Select.showChangeWizardHint === 'function') Select.showChangeWizardHint({ reason });
 }
@@ -1069,7 +1069,11 @@ function handleMessage(msg) {
   callouts?.onMessage(msg); pickups?.onMessage(msg);   // round 22 (both ignore what isn't theirs)
   try { progress?.onMessage?.(msg); } catch (e) { console.warn('[progress]', e); }   // round 26
   switch (msg.t) {
-    case 'xp': if (msg.adapt) lsSet(ADAPT_KEY, JSON.stringify(msg.adapt)); break;   // round 26: the adaptive bots' rating rides back
+    case 'xp':
+      if (msg.adapt) lsSet(ADAPT_KEY, JSON.stringify(msg.adapt));   // round 26: the adaptive bots' rating rides back
+      // round 26b: the first time a second wizard unlocks, "Press Esc to change your wizard" (instead of at 75 s)
+      if (msg.wizardsUnlocked?.some(w => w.id !== 'builder') && msg.before?.wizards?.unlocked?.length === 1) changeWizardHint('unlock');
+      break;
     case 'look': { const w = players.get(msg.id); if (w) { if (Number.isFinite(msg.lv)) w.lv = msg.lv; w.eq = msg.eq || {}; w.title = msg.title; } break; }
     case 'map': onMapChange(msg); break;   // round 22: the rotation moved the room to another map
     case 'pad': {   // round 22: someone (maybe us) stepped on a jump pad

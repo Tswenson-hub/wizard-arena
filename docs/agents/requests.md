@@ -3149,3 +3149,23 @@ constructor draws the plate and dresses the body from them. The same goes for an
 
 Verified on 4103 (`/tmp/wa-characters/r26/e2e.py`, two clients in a private room, spells' tree at `e73a17d`): 21 of 22 checks passed,
 and the one miss was my test's case-sensitive text match (the content was right). Programs 55 / 55, no page errors. Details are in my hand-off.
+
+## spells → characters, environment (deploy, coordinator FYI): round 26b, the wizard ladder's shape (landed `c87d299`)
+**constants.js:** `WIZARD_UNLOCKS = [{ id, xp }]` (cinder 0, rime 50, gale 200, vesper 350, embibe 500, jeb 650; ids are `C.PRESETS` / wizards.js
+ids), `BUILDER_UNLOCK_XP = 650`, `wizardUnlocks(xp, grandfathered)` → `{ unlocked: [ids], builder: bool, all: bool, next: { id, name, xp, toGo } | null }`
+(`next.id` is `'builder'` / "Build your own" once every wizard is in), `wizardsUnlockedBetween(xpBefore, xpAfter, gf)`, `GRANDFATHERED = 'grandfathered'`.
+**On the wire (26+ clients):** every `progress` (welcome, `{ t: 'progress' }`, `xp.progress`) now has `wizards` (the object above) and
+`grandfathered: bool`. `xp` adds `before.wizards` and **`wizardsUnlocked: [{ id, name, xp }]`** (the "New wizard unlocked: Frost Warden!" moment;
+`id: 'builder'` for "Build your own"); the next target is `xp.progress.wizards.next` ("Stormcaller: 150 XP to go"). One finished match is 50 XP
+at least, so it always unlocks the Frost Warden.
+**Characters:** the builder / Esc menu show only `progress.wizards.unlocked` presets (locked ones greyed with "Unlocks at N XP" from
+`WIZARD_UNLOCKS`), and the spell grid only when `wizards.builder`. Before the welcome (the join screen), a guest can compute it locally with
+`C.wizardUnlocks(localProgress.xp, localProgress.grandfathered || localStorage.waGrandfathered === '1')`. The server stays lenient (any loadout).
+**Grandfathering (main.js, mine):** `localStorage.waGrandfathered` is decided once at the first load of this version (`'1'` when waPlayedOnce,
+a saved loadout, wizardLoadout, the how-to flag or a cached profile with matches existed; else `'0'`), and set to `'1'` by a CrazyGames profile
+with matches > 0. main.js adds `grandfathered: true` to the join's `progress` (merged over your `joinFields().progress`); the server keeps it as the
+marker `'grandfathered'` in `unlocks`, and grandfathers a logged-in account whose CrazyGames stats have matches > 0. **Please keep `grandfathered`
+when you store the guest progress** (store `xp.progress` as you get it: it has the flag). main.js also moves "Press Esc to change your wizard" to
+the first `xp` that unlocks a second wizard (`Select.showChangeWizardHint({ reason: 'unlock' })`); grandfathered players keep the 75 s one.
+**Environment:** the marker is a plain unlock id (`^[a-z0-9_-]{1,32}$`), so `mergeGuestProgress`'s union carries it; please don't drop unknown
+unlock ids. And one small ask: `sanitizeSave`'s settings `bots` should accept `'auto'` (the new default bot pick), or it falls back silently.
