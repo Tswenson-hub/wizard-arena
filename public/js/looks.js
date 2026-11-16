@@ -773,33 +773,32 @@ function bandGeometry(kind, geoOf, headIndex) {
   return (bandGeos[key] = g);
 }
 
-// The staff glow (a halo on the staff head and sparks circling it) and the trail accent (sparks dropping off the staff head like a
-// sparkler): the motes program, like the auras. `k` scales the sparks (0: the halo alone).
-function staffGlow(host, body, color, k) {
+// The staff glow (a halo on the staff head) and the sparks: the glow's circling the gem and the trail's dropping off the staff head like
+// a sparkler, in one Points object (one draw call for both). `k` scales the sparks (0: none; the halo stays).
+function staffHalo(body, color) {
   const tip = bone(body, 'tip') || bone(body, 'hand');
-  if (!tip) return;
-  // the halo: a soft additive sprite on the staff head (the Fury glow's program), wider than the gem, which hides its middle
+  if (!tip) return null;
+  // a soft additive sprite on the staff head (the Fury glow's program), wider than the gem, which hides its middle
   const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTexture(), color, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.7 }));
   body.updateMatrixWorld(true);
   const ws = tip.getWorldScale(new THREE.Vector3()).x / (body.getWorldScale(new THREE.Vector3()).x || 1);
   halo.scale.setScalar(0.85 / (ws || 1)); halo.renderOrder = 3;
   halo.onBeforeRender = () => { halo.material.opacity = 0.6 + 0.15 * Math.sin(performance.now() / 200); };
   tip.add(halo);
-  host.userData.onBones = [halo];
-  if (k > 0) host.add(motes(Math.round(6 * k), { size: 0.13, color, place: (i, t, p) => {
-    inModel(body, tip, p);
-    const a = t * 2.4 + i * 1.047, r = 0.3 + 0.05 * Math.sin(t * 3 + i);
-    p.x += Math.cos(a) * r; p.z += Math.sin(a) * r; p.y += Math.sin(t * 2 + i * 2.1) * 0.08;
-    return 0.9;
-  } }));
+  return halo;
 }
-function trailSparks(host, body, color, k) {
+function staffSparks(host, body, glow, trail, k) {
   const tip = bone(body, 'tip') || bone(body, 'hand');
-  if (!tip || k <= 0) return;
-  host.add(motes(Math.round(14 * k), { size: 0.22, color, place: (i, t, p) => {
-    const q = fract(t * 1.4 + rand(i, 4));
+  const nG = glow != null ? Math.round(6 * k) : 0, nT = trail != null ? Math.round(14 * k) : 0;
+  if (!tip || nG + nT === 0) return;
+  host.add(motes(nG + nT, { size: 0.16, color: 0xffffff, tint: (i) => (i < nG ? glow : trail), place: (i, t, p) => {
     inModel(body, tip, p);
-    const a = rand(i, 5) * 6.283;
+    if (i < nG) {
+      const a = t * 2.4 + i * 1.047, r = 0.3 + 0.05 * Math.sin(t * 3 + i);
+      p.x += Math.cos(a) * r; p.z += Math.sin(a) * r; p.y += Math.sin(t * 2 + i * 2.1) * 0.08;
+      return 0.9;
+    }
+    const q = fract(t * 1.4 + rand(i, 4)), a = rand(i, 5) * 6.283;
     p.x += Math.cos(a) * q * 0.25; p.z += Math.sin(a) * q * 0.25; p.y += q * 0.15 - q * q * 0.9;
     return (1 - q) * 0.95;
   } }));
@@ -923,9 +922,11 @@ export function makeWizardBody(loadout = {}, opts = {}) {
     const glowC = LOOKS[cos.staff]?.glow, trailC = LOOKS[cos.trail]?.trail;
     if ((glowC != null || trailC != null) && body.staff !== false) {
       cosFx = new THREE.Group(); cosFx.name = 'cosmetics';
-      const level = fixedLevel || auraLevel, k = level === 'full' ? 1 : level === 'cheap' ? 0.5 : 0;
-      if (glowC != null) staffGlow(cosFx, model, glowC, k);
-      if (trailC != null) trailSparks(cosFx, model, trailC, Math.max(k, 0.5));
+      const level = fixedLevel || auraLevel;
+      // (a body is at most three more draw calls: the halo, the sparks, the hat band; no sparks on the 'off' tier)
+      const halo = glowC != null ? staffHalo(model, glowC) : null;
+      cosFx.userData.onBones = halo ? [halo] : [];
+      staffSparks(cosFx, model, glowC, trailC, level === 'full' ? 1 : level === 'cheap' ? 0.5 : 0);
       model.add(cosFx);
     }
   };
