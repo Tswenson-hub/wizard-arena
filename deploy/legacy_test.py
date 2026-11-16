@@ -13,7 +13,7 @@
 #   --gen v22  round 24: the page is the round-23 build (`--ref 21a31ef`, proto 22, the OLD Sky Ruins bundled): it must land in a 'v22'
 #              room (room.gen), the courtyard WITH runes and pads, and stay on the courtyard through the rematch (no rotation)
 # Checks: the welcome and the HUD agree on the target; a legacy room when the server has them (room.legacy, the courtyard,
-# no runes or pads); the match goes live, ends (target or cap), the recap shows (the podium), the rematch countdown follows;
+# no runes or pads); round 26: none of the XP / progress / emote messages arrive; the match goes live, ends (target or cap), the recap shows (the podium), the rematch countdown follows;
 # the socket stays open; no console or page errors; the SDK shim's gameplayStart fired.
 import asyncio, json, sys, time
 from playwright.async_api import async_playwright
@@ -21,7 +21,7 @@ from playwright.async_api import async_playwright
 GL_ARGS = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] if '--swiftshader' in sys.argv else ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist']
 FAST = '--fast' in sys.argv
 FIRST = '--first' in sys.argv
-GEN = sys.argv[sys.argv.index('--gen') + 1] if '--gen' in sys.argv else 'legacy'   # round 24: 'legacy' (no proto) or 'v22' (proto 22)
+GEN = sys.argv[sys.argv.index('--gen') + 1] if '--gen' in sys.argv else 'legacy'   # round 24: 'legacy' (no proto), 'v22' (proto 22) or 'v24' (a proto-24 build)
 SECONDS = float(sys.argv[sys.argv.index('--seconds') + 1]) if '--seconds' in sys.argv else 420
 args = [a for i, a in enumerate(sys.argv[1:], 1) if a not in ('--fast', '--first', '--swiftshader', '--seconds', '--gen') and sys.argv[i - 1] not in ('--seconds', '--gen')]
 PAGE = args[0]
@@ -200,6 +200,9 @@ async def main():
     if GEN == 'v22':
         mids = sorted({(mm.get('map') or {}).get('id') if isinstance(mm.get('map'), dict) else mm.get('map') for _, _, mm in S['phases'] if mm.get('map')} | {(x or {}).get('id') if isinstance(x, dict) else x for x in S.get('maps', [])})
         check(mids == ['courtyard'], f"the courtyard in every match message, through the rematch, and no map change ({mids}; map messages {len(S.get('maps', []))})")
+    # round 26: an older build (no proto, 22, 24) never receives the XP / progress / challenge / emote / taunt / look messages, nor a welcome.progress
+    new26 = sorted(S['types'] & {'xp', 'progress', 'challenge', 'emote', 'taunt', 'look'})
+    check(not new26 and 'progress' not in (S['welcome'] or {}), f"no round-26 messages for this older client (saw {new26 or 'none'}; welcome.progress {'present' if 'progress' in (S['welcome'] or {}) else 'absent'})")
     check(S['closed'] is None, 'the socket stayed open' if S['closed'] is None else f"the socket closed after {S['closed'] - t0:.0f} s")
     check(len(S['bots']) >= 1 and len(S['names']) >= 4, '4 in the match (bots filled the seats)')
     starts = sum('gameplayStart' in c for c in cg)

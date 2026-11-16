@@ -116,3 +116,28 @@ def report_v22(res, current_name, current_saw, name='v22join'):
     check(current_name not in res.get('names', []), f'{current_name!r} (a proto-24 client) is not in the v22 room')
     check(name not in (current_saw or set()), f"{current_name!r} never saw {name!r} in its own room's snapshots")
     return ok
+
+# Round 26: messages and welcome fields only a proto-26 client knows; an older store build (no proto, 22, 24) must never receive them
+NEW26_MSGS = ('xp', 'progress', 'challenge', 'emote', 'taunt', 'look')
+
+def report_no26(res, name):
+    """An older client's connection saw none of the round-26 messages (xp, progress, challenge, emote, taunt, look) and its welcome
+    has no `progress`. Prints the check; True when it passes."""
+    w = res.get('welcome') or {}
+    seen = sorted(set(res.get('msgs', [])) & set(NEW26_MSGS))
+    ok = not seen and 'progress' not in w
+    print(('  ok   ' if ok else '  FAIL ') + f"{name!r} got no round-26 messages (saw {seen or 'none'}; welcome.progress {'present' if 'progress' in w else 'absent'}; {len(res.get('msgs', []))} message kinds)")
+    return ok
+
+def report_v24(res, current_name, name='v24join'):
+    """A `proto: 24` join (the round-24/25 build) shares the current rooms with proto 26, gets a welcome and snapshots, and no round-26 messages."""
+    w = res.get('welcome')
+    print(f'v24 join (proto 24) as {name!r}:')
+    ok = w is not None and not res.get('error') and res.get('snaps', 0) > 5
+    print(('  ok   ' if ok else '  FAIL ') + f"the server answered the proto-24 join with a welcome ({res.get('snaps')} snapshots{'; ' + res['error'] if res.get('error') else ''})")
+    if not w: return False
+    room = w.get('room') or {}
+    g = room.get('gen')
+    gen_ok = g in (None, 'current') and not room.get('legacy')
+    print(('  ok   ' if gen_ok else '  FAIL ') + f"a current-generation room (room.gen {g!r}, legacy {room.get('legacy')!r})")
+    return ok and gen_ok and report_no26(res, name)

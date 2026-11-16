@@ -19,7 +19,7 @@ import asyncio, os, re, sys, time
 from urllib.parse import urlparse
 from playwright.async_api import async_playwright
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from legacyjoin import legacy_join, report as legacy_report, report_code as legacy_report_code   # round 22: a join without `proto` (the live CrazyGames build)
+from legacyjoin import legacy_join, report as legacy_report, report_code as legacy_report_code, report_no26, report_v24   # round 22: a join without `proto` (the live CrazyGames build)
 
 # GPU by default (ANGLE on Metal: macOS); --swiftshader for software GL (slow: it can stall several seconds compiling the castle's shaders)
 GL_ARGS = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] if '--swiftshader' in sys.argv else ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist']
@@ -242,6 +242,12 @@ async def main():
             lj = await legacy_join(b, cfg['server'], 'legacyjoin', seconds=6)
             await pg.wait_for_timeout(1000)
             legacy_ok = legacy_report(lj, 'subpath', seen_names)
+            # round 26: the older builds get none of the XP / progress / emote messages; a proto-24 join is a plain current-room client
+            legacy_ok = report_no26(lj, 'legacyjoin') and legacy_ok
+            legacy_ok = report_v24(await legacy_join(b, cfg['server'], 'v24join', seconds=6, proto=24), 'subpath') and legacy_ok
+            # and this build (proto 26) was told its progress: the page keeps a guest's progress store and loaded the progress module
+            prog = await pg.evaluate("({ ls: Object.keys(localStorage).filter(k => /prog|xp|wa-/i.test(k)) })")
+            print('  progress keys in localStorage:', prog['ls'])
         rooms_ok = True
         await pg.close()   # (round 21: out of its public room, so the rooms' first-visit player can start an empty one)
         if ROOMS: rooms_ok, _ = await rooms(b, cfg.get('server'))

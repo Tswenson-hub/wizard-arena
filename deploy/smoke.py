@@ -6,7 +6,7 @@
 import asyncio, json, os, sys, time, urllib.request
 from playwright.async_api import async_playwright
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from legacyjoin import legacy_join, report as legacy_report, report_v22 as legacy_report_v22   # round 22: a join without `proto` (the live CrazyGames build); round 24: a proto-22 join (the round-23 build)
+from legacyjoin import legacy_join, report as legacy_report, report_v22 as legacy_report_v22, report_no26, report_v24   # round 22: a join without `proto` (the live CrazyGames build); round 24: a proto-22 join (the round-23 build)
 
 # GPU by default (ANGLE on Metal: macOS); --swiftshader for software GL (slow: it can stall several seconds compiling the castle's shaders)
 GL_ARGS = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] if '--swiftshader' in sys.argv else ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist']
@@ -96,6 +96,17 @@ async def main():
         vj = await legacy_join(b, ws_url, 'v22join', seconds=6, proto=22)
         await pg.wait_for_timeout(1000)
         ok = ok and legacy_report_v22(vj, 'smoketest', seen_names)
+        # round 26: neither older client may receive the new messages (xp, progress, challenge, emote, taunt, look); a proto-24 join is a normal current-room client
+        ok = report_no26(lj, 'legacyjoin') and ok
+        ok = report_no26(vj, 'v22join') and ok
+        v24 = await legacy_join(b, ws_url, 'v24join', seconds=6, proto=24)
+        ok = report_v24(v24, 'smoketest') and ok
+        # round 26: a proto-26 join gets the progress block in its welcome and a `progress` message (a guest: level 1, 0 XP, today's challenges), and the events path doesn't break it
+        v26 = await legacy_join(b, ws_url, 'v26join', seconds=4, proto=26)
+        w26 = (v26.get('welcome') or {}).get('progress') or {}
+        p26 = bool(w26) and all(k in w26 for k in ('xp', 'level', 'title', 'challenges'))
+        print(('  ok   ' if p26 else '  FAIL ') + f"a proto-26 join's welcome carries progress (level {w26.get('level')}, {w26.get('xp')} XP, title {w26.get('title')!r}, {len(w26.get('challenges', {}).get('list', []))} challenges)")
+        ok = ok and p26
         # round 21: a first visit (a fresh context, no ?builder) is in a match with no click, as the Pyromancer, with Easy bots.
         # The first player leaves first: a first-timer joining other humans keeps their room's difficulty, by design.
         await pg.close(); await asyncio.sleep(1.5)
