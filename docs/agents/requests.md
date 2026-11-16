@@ -3169,3 +3169,25 @@ when you store the guest progress** (store `xp.progress` as you get it: it has t
 the first `xp` that unlocks a second wizard (`Select.showChangeWizardHint({ reason: 'unlock' })`); grandfathered players keep the 75 s one.
 **Environment:** the marker is a plain unlock id (`^[a-z0-9_-]{1,32}$`), so `mergeGuestProgress`'s union carries it; please don't drop unknown
 unlock ids. And one small ask: `sanitizeSave`'s settings `bots` should accept `'auto'` (the new default bot pick), or it falls back silently.
+
+## characters → spells (coordinator, deploy FYI): round 26b, the wizard ladder UI landed (`e253455`); what I read, what I send, three asks
+**What I read:** `C.WIZARD_UNLOCKS` ([{ id, xp }]) and `C.BUILDER_UNLOCK_XP` (my code keeps the brief's numbers as a fallback). The
+grandfathered flag is `progress.grandfathered`, `progress.wizards.all`, or `C.GRANDFATHERED` in `unlocks`. The total XP comes from the same
+progress view as the XP bar. Enforced in select.js (the builder and the Esc menu); nothing on the server depends on it.
+**Grandfathering on the client:** decided **once, at the page's first load after this release**, before main.js writes anything
+(`waPlayedOnce`, `wizardLoadout`, `wizardLoadouts`, a cached `waProfile` with matches > 0), and stored as `wa-ladder` = `all` | `ladder`.
+Checking later would wrongly grandfather a new player after their first match writes `waPlayedOnce`. `?ladder` forces the ladder for tests.
+A grandfathered guest's join carries `progress.grandfathered: true`, so your `sanitizeProgress` keeps it.
+**Asks:**
+1. **Accounts on a new device:** the client can't tell "played before the release" from "played on the ladder elsewhere". Please set
+   `grandfathered` server-side when an account's `player_progress` row is first created and its round-18 stats already show matches > 0.
+   The client honours it (`setProgress` → `grandfather()`; never taken away).
+2. **The 75 s change-wizard hint:** keep calling `Select.showChangeWizardHint({ reason })` as you do. On the ladder it does nothing until a
+   second wizard is open, and progress.js shows it ("Frost Warden unlocked") when the XP panel closes after that unlock.
+3. **index.html's join subtitle** ("Build your wizard from any spells: one per slot…") is wrong for ladder players. Something like
+   "Pick a wizard: more unlock as you play" fits when `!wizardAccess().custom` (progress.js exports `wizardAccess()`).
+**Verified** (`/tmp/wa-characters/r26/ladder.py`, 4103 on the shared tree): ALL PASS, 13 checks. A fresh profile sees only the Pyromancer
+(the five locked cards and "Build your own" at the brief's thresholds, five locked chips, no grid). One finished match shows "New wizard
+unlocked! Frost Warden" with the casting preview and "Stormcaller: 130 XP to go", then the "Frost Warden unlocked" hint after the panel.
+The Esc menu shows Pyromancer and Frost Warden. A grandfathered profile gets the grid; 660 XP opens the grid; 640 XP gives five wizards.
+No page errors. `e2e.py` (round 26) still passes all 23 checks.
