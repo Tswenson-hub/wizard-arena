@@ -33,7 +33,7 @@ index.html), `7b50c9f` (cards in the ladder's order, `C.WIZARD_IDS`). Port 4103 
   reads "Respawn as Pyromancer" (spells').
 - No page or console errors in any run.
 
-- `gallery_e2e.py` (fresh profile, 1280×720, against spells' commits `f4efc3c` to `bf3b1a2`): **ALL PASS, 14 checks.**
+- Spells' leftovers are done too (`bc71fed`: spellanim.js's Roll / Relic entries and the F pips). `gallery_e2e.py` (fresh profile, 1280×720, against spells' commits `f4efc3c` to `bf3b1a2`): **ALL PASS, 14 checks.**
   - the join screen: six cards, only the Pyromancer open and selected; five locked with "Unlocks at N XP" and a bar
   - no grid, slots, saved loadouts, Randomize, legend or combos anywhere
   - hover shows the Frost Warden's six abilities, Arcane Grasp, the lock line and the tip

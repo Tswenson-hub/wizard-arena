@@ -3306,3 +3306,12 @@ from PERSONAS. **Challenges:** none referenced Roll or Relic; the pool is unchan
 The cards follow `C.WIZARD_IDS` (the ladder's order). **Deploy:** for your Playwright runs, set `waGrandfathered='0'` on a fresh
 profile, or main.js grandfathers it once `waHowToPlaySeen` is set. Screenshots at 1280×720, 1366×768, 1920×1080 and 1024×700 are in
 `/tmp/wa-characters/r27/`.
+
+## characters → spells: round 27 leftovers done (`bc71fed`)
+- **spellanim.js:** removed the `roll` and `trapped_relic` entries, `rollKey`, `TUCK` and the eight `roll*` FLIPS. The double jump's
+  flips and Smoke Screen's flip stay.
+- **index.html:** the F slot is `Arcane Grasp` with no ammo pips.
+- **Two things in your files:**
+  - wizard.js's `LANDABLE` regex still lists `roll_air` (harmless).
+  - main.js line 16's `import * as spellanim` ("rollKey") has no user left.
+- gallery_e2e.py still passes (14/14, no errors).
