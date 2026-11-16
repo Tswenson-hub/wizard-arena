@@ -1276,3 +1276,179 @@ export const loadoutBolt = (lo) => ELEMENTS[primaryElement(lo)].bolt;
 // Hurt and death voices: the builder's choice (audio.js has a grunt set for each).
 export const VOICES = ['male', 'female'];
 export const sanitizeVoice = (v) => VOICES.includes(v) ? v : 'male';
+
+// ---------------------------------------------------------------- round 26: progression (XP, levels, unlocks, daily challenges)
+// Server-authoritative for logged-in players (server/progress.js, Supabase player_progress); a guest's progress lives in their
+// localStorage, but the server still works out every award (the client only stores what it's told). Cosmetic only.
+export const XP = { finish: 50, kill: 10, podium: [30, 20, 10], win: 50, firstWinMult: 2, guestCap: 20000 };
+export const LEVEL_MAX = 999;
+// XP from `level` to the next: a gentle curve, 300 at level 1, rising 25 a level
+export const xpToNext = (level) => 300 + 25 * (Math.max(1, level) - 1);
+// The total XP that reaches `level` (level 1 = 0)
+export const xpForLevel = (level) => { const L = Math.max(1, Math.min(LEVEL_MAX, Math.floor(level))) - 1; return 300 * L + 25 * L * (L - 1) / 2; };
+export function levelForXp(xp) {
+  xp = Math.max(0, Math.floor(+xp || 0));
+  let L = Math.max(1, Math.floor((Math.sqrt(Math.max(0, (575 / 25) ** 2 + 8 * xp / 25)) - 575 / 25) / 2) + 1);   // (the inverse of xpForLevel, then fixed up)
+  while (L > 1 && xpForLevel(L) > xp) L--;
+  while (L < LEVEL_MAX && xpForLevel(L + 1) <= xp) L++;
+  return L;
+}
+// { level, into (XP into this level), need (XP this level needs) }
+export function levelInfo(xp) {
+  xp = Math.max(0, Math.floor(+xp || 0));
+  const level = levelForXp(xp);
+  return { level, into: xp - xpForLevel(level), need: xpToNext(level) };
+}
+export const TITLES = [{ level: 1, title: 'Apprentice' }, { level: 5, title: 'Adept' }, { level: 10, title: 'Battlemage' }, { level: 15, title: 'Archmage' }, { level: 25, title: 'Grand Archmage' }];
+export const titleFor = (level) => [...TITLES].reverse().find(t => level >= t.level).title;
+// Cosmetic unlocks, one a level from 2 to 16 (characters agent's looks.js draws them, keyed by id).
+export const COSMETIC_SLOTS = ['robe', 'hat', 'staff', 'trail'];
+export const UNLOCKS = [
+  { level: 2, id: 'robe_crimson', slot: 'robe', name: 'Crimson robes' },
+  { level: 3, id: 'staff_ember', slot: 'staff', name: 'Ember staff glow' },
+  { level: 4, id: 'robe_emerald', slot: 'robe', name: 'Emerald robes' },
+  { level: 5, id: 'trail_gold', slot: 'trail', name: 'Gold spell trails' },
+  { level: 6, id: 'hat_wide', slot: 'hat', name: 'Wide-brim hat' },
+  { level: 7, id: 'robe_midnight', slot: 'robe', name: 'Midnight robes' },
+  { level: 8, id: 'staff_frost', slot: 'staff', name: 'Frost staff glow' },
+  { level: 9, id: 'trail_violet', slot: 'trail', name: 'Violet spell trails' },
+  { level: 10, id: 'robe_gold', slot: 'robe', name: 'Gold robes' },
+  { level: 11, id: 'hat_circlet', slot: 'hat', name: 'Circlet' },
+  { level: 12, id: 'staff_void', slot: 'staff', name: 'Void staff glow' },
+  { level: 13, id: 'robe_frost', slot: 'robe', name: 'Frost robes' },
+  { level: 14, id: 'trail_frost', slot: 'trail', name: 'Frost spell trails' },
+  { level: 15, id: 'robe_void', slot: 'robe', name: 'Void robes' },
+  { level: 16, id: 'hat_crown', slot: 'hat', name: 'Crown' },
+];
+export const unlocksFor = (level) => UNLOCKS.filter(u => u.level <= level).map(u => u.id);
+export const nextUnlock = (level) => UNLOCKS.find(u => u.level > level) || null;
+// Equipped cosmetics from anything: { slot: id } with each id an unlock of that slot reached by `level` (null: trust it, a guest)
+export function sanitizeEquipped(eq, level = null) {
+  const out = {};
+  if (!eq || typeof eq !== 'object' || Array.isArray(eq)) return out;
+  for (const slot of COSMETIC_SLOTS) {
+    const u = UNLOCKS.find(k => k.id === eq[slot] && k.slot === slot);
+    if (u && (level == null || u.level <= level)) out[slot] = u.id;
+  }
+  return out;
+}
+// Daily challenges: three a day from the pool, a seeded pick from the UTC date (the same for everyone), never two map-bound ones.
+// stat: the counter that moves it (server/progress.js bumps them in live matches only).
+export const DAILY_POOL = [
+  { id: 'primary_kills', stat: 'primaryKills', goal: 5, xp: 120, text: 'Get 5 kills with your primary' },
+  { id: 'win_sky', stat: 'winSky', goal: 1, xp: 150, text: 'Win a match on Sky Ruins', map: 'sky' },
+  { id: 'runes', stat: 'runes', goal: 3, xp: 100, text: 'Take 3 runes' },
+  { id: 'void_ko', stat: 'voidKos', goal: 1, xp: 130, text: 'Knock someone into the void', map: 'sky' },
+  { id: 'ults', stat: 'ults', goal: 3, xp: 120, text: 'Use your ultimate 3 times' },
+  { id: 'podiums', stat: 'podiums', goal: 2, xp: 120, text: 'Finish on the podium twice' },
+  { id: 'kills', stat: 'kills', goal: 12, xp: 120, text: 'Get 12 kills' },
+  { id: 'matches', stat: 'matches', goal: 3, xp: 100, text: 'Finish 3 matches' },
+  { id: 'wins', stat: 'wins', goal: 1, xp: 150, text: 'Win a match' },
+  { id: 'damage', stat: 'damage', goal: 2500, xp: 120, text: 'Deal 2,500 damage' },
+  { id: 'potions', stat: 'potions', goal: 3, xp: 100, text: 'Drink 3 health potions' },
+  { id: 'assists', stat: 'assists', goal: 4, xp: 110, text: 'Get 4 assists' },
+];
+export const dayKey = (d = new Date()) => new Date(d).toISOString().slice(0, 10);   // UTC 'YYYY-MM-DD'
+export function dailyChallenges(day = dayKey()) {
+  let h = 2166136261;
+  for (const ch of String(day)) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); }
+  const rnd = () => { h += 0x6D2B79F5; let x = h; x = Math.imul(x ^ (x >>> 15), x | 1); x ^= x + Math.imul(x ^ (x >>> 7), x | 61); return ((x ^ (x >>> 14)) >>> 0) / 4294967296; };
+  const pool = DAILY_POOL.slice(), out = [];
+  while (out.length < 3 && pool.length) {
+    const c = pool.splice(Math.floor(rnd() * pool.length), 1)[0];
+    if (c.map && out.some(o => o.map)) continue;
+    out.push(c);
+  }
+  return out;
+}
+// One match's XP: [{ k, xp, n?, place? }] and the total. place: 1-based; won: placed first outright; firstWin: the day's first win.
+export function matchXp({ kills = 0, place = 0, won = false, firstWin = false } = {}) {
+  const items = [{ k: 'finish', xp: XP.finish }];
+  if (kills > 0) items.push({ k: 'kills', n: kills, xp: kills * XP.kill });
+  if (place >= 1 && place <= XP.podium.length) items.push({ k: 'podium', place, xp: XP.podium[place - 1] });
+  if (won) items.push({ k: 'win', xp: XP.win });
+  const base = items.reduce((s, i) => s + i.xp, 0);
+  if (won && firstWin) items.push({ k: 'firstWin', xp: base * (XP.firstWinMult - 1) });
+  return { items, total: items.reduce((s, i) => s + i.xp, 0) };
+}
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+// A clean progress object from anything (a guest's localStorage, a join, a Supabase row): the one shape everywhere
+// { xp, level, unlocks, equipped, challenges: { day, list: [{ id, n, goal, done }] }, firstWinDay, guestMerged }.
+// The level and unlocks always follow from the XP. The challenges are today's (another day's are dropped).
+export function sanitizeProgress(x, day = dayKey()) {
+  const o = x && typeof x === 'object' && !Array.isArray(x) ? x : {};
+  const xp = Math.max(0, Math.min(1e8, Math.floor(Number(o.xp) || 0)));
+  const level = levelForXp(xp);
+  const today = dailyChallenges(day);
+  const had = o.challenges && o.challenges.day === day && Array.isArray(o.challenges.list) ? o.challenges.list : [];
+  const list = today.map(c => {
+    const h = had.find(e => e && e.id === c.id);
+    const n = Math.max(0, Math.min(c.goal, Math.floor(Number(h?.n) || 0)));
+    return { id: c.id, n, goal: c.goal, done: !!h?.done || n >= c.goal };
+  });
+  return { xp, level, unlocks: unlocksFor(level), equipped: sanitizeEquipped(o.equipped, level),
+    challenges: { day, list }, firstWinDay: typeof o.firstWinDay === 'string' && DAY_RE.test(o.firstWinDay) ? o.firstWinDay : null,
+    guestMerged: !!o.guestMerged };
+}
+// What a client is told about its progress (adds the display fields)
+export function progressPublic(prog, account = false) {
+  const { level, into, need } = levelInfo(prog.xp);
+  return { xp: prog.xp, level, into, need, title: titleFor(level), unlocks: unlocksFor(level), equipped: prog.equipped || {},
+    challenges: { day: prog.challenges.day, list: prog.challenges.list.map(e => { const c = DAILY_POOL.find(k => k.id === e.id); return { ...e, text: c?.text ?? e.id, xp: c?.xp ?? 0 }; }) },
+    next: nextUnlock(level), account: !!account };
+}
+
+// ---------------------------------------------------------------- round 26: bots that feel alive
+// Adaptive difficulty: a human's rating r (0 = Easy, 0.5 = Normal, 1 = Hard bots) moves after each match toward keeping their
+// podium-or-better rate over the last `window` matches near `target`; public "Auto" rooms play the humans' mean rating.
+export const ADAPT = { target: 0.5, band: 0.1, window: 3, step: 0.12, kdWeight: 0.35, first: 0, start: 0.4 };
+// adapt: { r, h: [[place, of, kills, deaths], ...] } (client-held); the result of one match appended, r nudged
+export function sanitizeAdapt(a, firstVisit = false) {
+  const r = Number.isFinite(a?.r) ? Math.max(0, Math.min(1, a.r)) : firstVisit ? ADAPT.first : ADAPT.start;
+  const h = Array.isArray(a?.h) ? a.h.filter(e => Array.isArray(e) && e.length === 4 && e.every(Number.isFinite)).slice(-ADAPT.window).map(e => e.map(v => Math.max(0, Math.min(999, Math.round(v))))) : [];
+  return { r: +r.toFixed(3), h };
+}
+// How well the last few matches went, 0..1: the podium rate, blended with the K/D (0.5 at even)
+export function adaptScore(h) {
+  if (!h.length) return null;
+  const pod = h.filter(([place, of]) => place <= Math.min(3, of - 1)).length / h.length;
+  const k = h.reduce((s, e) => s + e[2], 0), d = h.reduce((s, e) => s + e[3], 0);
+  const kd = (k + 1) / (k + d + 2);
+  return pod * (1 - ADAPT.kdWeight) + kd * ADAPT.kdWeight;
+}
+export function adaptAfter(a, place, of, kills, deaths) {
+  const s = sanitizeAdapt(a);
+  const h = [...s.h, [place, of, kills, deaths]].slice(-ADAPT.window);
+  const score = adaptScore(h);
+  let r = s.r;
+  if (score > ADAPT.target + ADAPT.band) r += ADAPT.step * Math.min(2, (score - ADAPT.target) / ADAPT.band) / 2;
+  else if (score < ADAPT.target - ADAPT.band) r -= ADAPT.step * Math.min(2, (ADAPT.target - score) / ADAPT.band) / 2;
+  return { r: +Math.max(0, Math.min(1, r)).toFixed(3), h };
+}
+// Personalities: one per bot, a loadout to match and how it fights (server/bots.js reads the numbers).
+//   range: × the preferred distance; aggr: + aggression; healAt: HP under which it walks to a potion; runeR: how far it goes for
+//   a rune; dodge: + dodge chance; high: likes high ground; taunt: × the chance of a taunt line or an emote after a kill
+export const PERSONAS = {
+  brawler: { name: 'Brawler', loadout: { primary: 'gale_shear', power: 'cyclone', guard: 'tempest_veil', mobility: 'blink', utility: 'roll', ultimate: 'eye_of_storm' },
+    range: 0.6, aggr: 0.1, healAt: 40, runeR: 10, dodge: 0, taunt: 1 },
+  sniper: { name: 'Sniper', loadout: { primary: 'spark', power: 'meteor', guard: 'ward', mobility: 'skyward', utility: 'telekinesis', ultimate: 'meteor_rain' },
+    range: 1.45, aggr: 0, healAt: 55, runeR: 12, dodge: 0.05, high: true, taunt: 0.8 },
+  trickster: { name: 'Trickster', loadout: { primary: 'hex_shards', power: 'frostfall', guard: 'smoke_flask', mobility: 'mirror_step', utility: 'trapped_relic', ultimate: 'blizzard' },
+    range: 1, aggr: 0, healAt: 50, runeR: 12, dodge: 0.15, taunt: 1.2 },
+  healer: { name: 'Healer', loadout: { primary: 'potion_toss', power: 'sanguine_lash', guard: 'black_death', mobility: 'flask_step', utility: 'telekinesis', ultimate: 'night_cage' },
+    range: 1.1, aggr: -0.05, healAt: 70, runeR: 12, dodge: 0.05, taunt: 0.6 },
+  showboat: { name: 'Showboat', loadout: { primary: 'fireball', power: 'battering_ram', guard: 'firewall', mobility: 'ram_ride', utility: 'telekinesis', ultimate: 'stampede' },
+    range: 1, aggr: 0.05, healAt: 50, runeR: 22, dodge: 0, pads: true, taunt: 2.5 },
+};
+export const PERSONA_IDS = Object.keys(PERSONAS);
+// Emotes (the KayKit Cheering, Waving and Skeletons_Taunt clips) and the bots' speech bubbles: short, harmless lines.
+export const EMOTES = ['cheer', 'wave', 'taunt'];
+export const EMOTE_COOLDOWN = 2.5;
+export const TAUNTS = {
+  kill: ['Too slow!', 'My fireball!', 'Back to the spawn with you!', 'Is that all?', 'Rattled you, did I?', 'Bones before wizards!', 'Gotcha!', 'Boo!'],
+  multi: ['Who\'s next?', 'Two for one!', 'I\'m on a roll!', 'Unstoppable!'],
+  death: ['I\'ll be back!', 'Lucky shot!', 'Nice one!', 'Ouch, my ribs!', 'Rematch!'],
+  dodge: ['Nice dodge!', 'Missed me!', 'Close one!'],
+  win: ['GG!', 'Good game, wizards!', 'Well fought!'],
+};
+export const TAUNT_RULES = { chance: 0.18, botCooldown: 25, roomCooldown: 8, emoteChance: 0.3 };
