@@ -1,5 +1,79 @@
 # Characters hand-off
 
+## Round 26: cosmetics, levels on the plates, the post-match XP panel, the Wardrobe, challenges, emotes and taunts; 26b: the wizard ladder
+Commits: `e9a5feb` (requests: interfaces), `bc094b2` + `b4618bf` (cosmetics.js + looks.js), `0e8f6f2` (progress.js, progress.css,
+wizard.js), `4c35aa2` (select.js Wardrobe and tracker, podium.js, the privacy note), `63dfecf` (requests: the decoy tell),
+`e253455` (26b ladder UI), `94b2908` (requests: 26b), `42400a3` (sparks in one draw call), and this hand-off. Port 4103 is stopped.
+
+### What's built
+- **`public/shared/cosmetics.js`**: the looks only, keyed by spells' `C.UNLOCKS` ids (spells owns the levels, names, titles and
+  `sanitizeEquipped`): six robe palettes, `hat_wide` / `hat_circlet` / `hat_crown`, three staff glows, three trail colours, a swatch each.
+- **looks.js `body.setCosmetics(eq)`** (and `makeWizardBody(lo, { cos })`). All on existing programs:
+  - **Robes and hat colour:** uniforms on the `wa-kaykit-tint` program. The hat is the robe swatch above a bind-pose height.
+  - **Wide brim:** a vertex-shader spread of the hat's rim, in the bind pose before skinning.
+  - **Circlet and crown:** a skinned mesh bound to the head bone with the body's own material, its UVs on the atlas's gold and red swatches.
+  - **Staff glow:** the gem colour plus a halo Sprite on the staff head.
+  - **Glow and trail sparks:** one motes Points object.
+  - The body positions are meshopt-quantized into [-1, 1], so heights map through the geometry's bounding box (`MAGE_BOX`).
+- **wizard.js** (spells said these hunks are mine):
+  - The nameplate's second line, "Lv 12 · Battlemage", with a bot's persona in place of the title ("Lv 8 · Sniper").
+  - `setLevel(lv, title)`, `setCosmetics(eq)` and `emote(e)` (KayKit Cheering / Waving / Skeletons_Taunt; the action is made lazily).
+- **progress.js + progress.css** (main.js mounts it, as spells wired it):
+  - **The store:** the progress view; a guest's progress in localStorage (`wa-progress`) and the equipped look (`wa-equipped`);
+    `joinFields()`, `equip()`.
+  - **The XP panel:** lines tick in, the bar fills across levels, then the level-up fanfare, the unlock, the next-unlock teaser and the
+    daily challenges. It sits top right over the podium, moves left for the countdown, and closes 1.2 s after the match goes live.
+  - **Toasts and emotes:** a challenge toast mid-match; V cycles cheer / wave / taunt (2.5 s cooldown).
+  - **Bubbles:** bots' taunts in canvas-sprite bubbles, but only lines in `C.TAUNTS`. The "Bot taunts" toggle (`wa-taunts`) hides
+    the bubbles and the bots' emotes.
+  - **The podium:** recap rows get `lv` / `eq` / `title` / `persona` from the live wizards, since the server rows don't carry them.
+- **select.js + select.css:**
+  - **The Wardrobe:** a chip next to Stats replaces the spell grid with four rows (locked items show "🔒 Lv N"); the preview dresses live.
+  - **The tracker:** the level bar and today's challenges under the summary, on the join screen and in the Esc menu.
+  - **The Esc menu and privacy:** the Bot taunts toggle is in the Esc menu; the privacy note uses deploy's wording.
+  - **podium.js:** "Lv N · title" on the plates, and the top three wear their cosmetics.
+- **26b, the wizard ladder** (enforced client-side; thresholds from `C.WIZARD_UNLOCKS` / `C.BUILDER_UNLOCK_XP`):
+  - **Presets only:** until 650 XP the builder and the Esc menu show a presets gallery in place of the grid. Locked wizards and "Build
+    your own" show a lock, "Unlocks at N XP" and a bar; the locked chips are disabled; there are no saved loadouts or Randomize; a locked
+    loadout falls back to the Pyromancer.
+  - **The XP panel:** "New wizard unlocked! Frost Warden", with a fanfare, a small preview of that wizard casting
+    (`Select.mountWizardPreview`) and "Stormcaller: 130 XP to go".
+  - **The change-wizard hint** waits for the second wizard; it shows when the panel closes ("Frost Warden unlocked").
+  - **Grandfathering** is decided once, at the first page load after the release, from local signs of play, and stored in `wa-ladder`.
+    It is also taken from the server's `grandfathered` flag and sent with a guest's progress. `?ladder` forces the ladder.
+
+### Verified (`/tmp/wa-characters/r26/`, port 4103, GPU Chromium)
+- `e2e.py` (two clients in a private room, a guest seeded at 280 XP): **ALL PASS, 23 checks**:
+  - the server echoes the guest's progress; three challenges arrive; B sees two-line plates (bots "Lv 8 · Showboat")
+  - V's emote plays locally and on B; a pool line makes one bubble and a non-pool line none; the challenge toast shows
+  - every cosmetic on every wizard compiles **no new program** (54 → 54)
+  - the match end: the XP panel over the podium ("Match finished +50", "1st place +30"), level up to 2 with "Unlocked: Crimson robes",
+    the teaser and the challenges; the podium plates show "Lv 2 · Apprentice" / "Lv 8 · Showboat"; the panel moves left through the
+    countdown and goes once live
+  - the Wardrobe: locked items show; equipping Crimson shows on A and on B (the `look`); the taunt toggle and the tracker are in the
+    Esc menu; programs 55 / 55; no page errors
+- `ladder.py`: **ALL PASS, 13 checks** (fresh profile, one match → Frost Warden, the hint, the Esc menu, grandfathered, 640 / 660 XP).
+- Shots: `studio_robes_row.png`, `studio_hats_row.png`, `studio_band_front.png`, `studio_darkstaff_row.png`, `e2e_A_xp_full.png`,
+  `e2e_A_wardrobe_equipped.png`, `e2e_A_toast.png`, `bubble_crop.png`, `ladder_fresh.png`, `ladder_unlocked_panel.png`, `ladder_hint.png`.
+- **perf_test** (30 s, 4103, against the pre-round commit `90b7275` on 4113):
+  - **Courtyard:** draw calls 105 / 107 now (97 / 98 before; 110–129 before I merged the sparks). The triangles < 120k miss also
+    happens on the baseline (128k / 121k there).
+  - **Sky Ruins:** draw calls swing 82–142 on both trees depending on the spawn view (the baseline hit 135 too).
+  - Programs < 60 and none compiled after 10 s on both maps.
+
+### Known issues / notes
+- **Spells (posted):**
+  - Mirror Step decoys need the owner's `lv/eq/title/persona` in `spawnDecoy`, or the decoy is a tell.
+  - Accounts on a new device need a server-side `grandfathered`.
+  - index.html's join subtitle still says "Build your wizard from any spells".
+- **Level 2 costs 300 XP.** A losing first match gives about 50–110 XP, so a first-match level-up only happens on a win (noted to
+  the coordinator). The first-match Frost Warden unlock always fires (50 XP).
+- **Trail sparks are faint:** motes draw smaller than their size suggests, which is why the staff halo is a Sprite. Spells could
+  also tint their own projectile trails with `trailAccent(eq)` (optional).
+- **Podium tags:** during the camera's pull-back (around 3.6 s) a 2nd or 3rd tag can briefly sit at the bottom centre over the winner's.
+  This was there before this round.
+- My runs used a scratch copy (`/tmp/wa-characters/tree`) while spells' tree didn't start; the final runs are on the shared tree.
+
 ## Round 24: the stepping-stone landing dust; the camera in the keep (checked, findings posted)
 Commits: `ba4f746` `33f7fe3` requests.md (the plan, the stones from `ISLANDS`, the camera grid note, the hook and three courtyard-era heights
 for spells), `01dac80` pickups.js first cut, `abf742a` pickups.js tuned from game-page shots, `363fe44` and the final hand-off commit (this
