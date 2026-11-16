@@ -53,13 +53,14 @@ const bots = () => fighters().filter(p => p.bot);
   const seen = Object.fromEntries(C.LOADOUT_SLOTS.map(s => [s, new Set()]));
   for (let i = 0; i < 2000; i++) { const r = C.randomLoadout(); allValid &&= !!C.sanitizeLoadout(r); for (const s of C.LOADOUT_SLOTS) seen[s].add(r[s]); }
   ok(allValid, 'random loadouts are always valid');
-  ok(C.LOADOUT_SLOTS.every(s => seen[s].size === C.SPELL_POOL[s].length), 'random loadouts reach every spell of every slot');
+  ok(C.LOADOUT_SLOTS.every(s => seen[s].size === C.LEGACY_POOL[s].length), 'random loadouts (the older rooms\' rules) reach every spell of every slot');
   ok(C.LOADOUT_SLOTS.every(s => C.SPELL_POOL[s].every(id => C.spellInfo(id)?.element && C.ELEMENTS[C.spellInfo(id).element])), 'every pickable spell has card data and an element');
   const lashLo = { ...L, power: 'sanguine_lash', guard: 'black_death' };
   ok(C.hasCombo(lashLo, 'blood_lash') && !C.hasCombo({ ...lashLo, guard: 'ward' }, 'blood_lash'), 'a combo needs both spells equipped');
   // round 13: Roll is a Utility (F) now; an old loadout with it in mobility moves it to a free utility slot, else drops it
-  ok(C.SPELLBOOK.roll.slot === 'utility' && C.SPELL_POOL.utility.includes('roll') && !C.SPELL_POOL.mobility.includes('roll') && C.SPELL_POOL.mobility.length === 6,
-    `Roll is in the Utility pool, Mobility has its other 6 (${C.SPELL_POOL.utility.join(', ')})`);
+  // (round 27: Roll is retired; these are the older rooms' rules, LEGACY_POOL)
+  ok(C.RETIRED_SPELLS.roll.slot === 'utility' && C.LEGACY_POOL.utility.includes('roll') && !C.LEGACY_POOL.mobility.includes('roll') && C.LEGACY_POOL.mobility.length === 6,
+    `Roll is in the older rooms' Utility pool, Mobility has its other 6 (${C.LEGACY_POOL.utility.join(', ')})`);
   const old = C.sanitizeLoadout({ ...L, mobility: 'roll' });
   ok(old && old.mobility === L.mobility && old.utility === L.utility, 'an old loadout with Roll in mobility gets the default mobility (its utility kept)');
   const oldFree = C.sanitizeLoadout({ ...L, mobility: 'roll', utility: undefined });
@@ -318,7 +319,7 @@ async function serverChecks() {
   const wait = (ms) => new Promise(r => setTimeout(r, ms));
   try {
     await new Promise((res, rej) => { srv.stdout.on('data', d => { if (/listening/.test(d)) res(); }); srv.on('exit', () => rej(new Error('server exited'))); });
-    const RELIC = C.SPELLBOOK.trapped_relic, ROLL = C.SPELLBOOK.roll;
+    const RELIC = C.RETIRED_SPELLS.trapped_relic, ROLL = C.RETIRED_SPELLS.roll;   // (round 27: retired; these checks run in v24 rooms, proto 24)
     const join = async (name, lo, room = undefined) => {   // (round 24: `room` 'new' or a code, for checks that want a room of their own)
       const ws = new WebSocket(`ws://localhost:${port}`);
       // (round 16: like the game's client, a state report echoes the server's last move of us it has seen, unless the test sets tp)
@@ -329,7 +330,7 @@ async function serverChecks() {
         if (m.id === c.id && typeof m.seq === 'number' && ['respawn', 'flaskArrive', 'mirror', 'mrainLand'].includes(m.t)) c.tp = m.seq;
         c.msgs.push(m); });
       await new Promise(r => ws.on('open', r));
-      c.send({ t: 'join', proto: 24, name, loadout: { ...C.DEFAULT_LOADOUT, primary: 'spark', ...lo }, ...(room ? { room } : {}) });   // (round 22 / 24: a current client, not a legacy or v22 room)
+      c.send({ t: 'join', proto: 24, name, loadout: { ...C.DEFAULT_LOADOUT, primary: 'spark', ...lo }, ...(room ? { room } : {}) });   // (round 22 / 24: not a legacy or v22 room; round 27: a v24 room, the store build's free loadouts)
       while (c.id == null) await wait(10);
       return c;
     };

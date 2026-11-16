@@ -92,11 +92,11 @@ ok(C.levelForXp(4670) === 15 && C.levelForXp(4669) === 14 && C.titleFor(1) === '
 
 // ---------------------------------------------------------------- round 26b: the wizard ladder
 {
-  ok(C.WIZARD_UNLOCKS.map(w => `${w.id}:${w.xp}`).join() === 'cinder:0,rime:50,gale:200,vesper:350,embibe:500,jeb:650' && C.BUILDER_UNLOCK_XP === 650,
-    'the ladder: Pyromancer 0, Frost Warden 50, Stormcaller 200, Hemomancer 350, Alchemist 500, Beastcaller 650, the builder at 650');
+  ok(C.WIZARD_UNLOCKS.map(w => `${w.id}:${w.xp}`).join() === 'cinder:0,rime:50,gale:200,vesper:350,embibe:500,jeb:650' && C.BUILDER_UNLOCK_XP === undefined,
+    'the ladder: Pyromancer 0, Frost Warden 50, Stormcaller 200, Hemomancer 350, Alchemist 500, Beastcaller 650 (round 27: no builder rung)');
   ok(C.WIZARD_UNLOCKS.every(w => C.PRESETS.some(k => k.id === w.id)) && C.PRESETS.every(k => C.WIZARD_UNLOCKS.some(w => w.id === k.id)), 'every wizard is on the ladder once');
   const fresh = C.progressPublic(C.sanitizeProgress(null));
-  ok(fresh.wizards.unlocked.join() === 'cinder' && !fresh.wizards.builder && fresh.wizards.next.id === 'rime' && fresh.wizards.next.toGo === 50, 'a fresh profile: only the Pyromancer, no builder, "Frost Warden: 50 XP to go"');
+  ok(fresh.wizards.unlocked.join() === 'cinder' && !('builder' in fresh.wizards) && fresh.wizards.next.id === 'rime' && fresh.wizards.next.toGo === 50, 'a fresh profile: only the Pyromancer, no builder, "Frost Warden: 50 XP to go"');
   const q = { id: 9 };
   Prog.initProgress(q, null);
   const one = Prog.finishMatch(q, { place: 4, of: 4, won: false, map: 'courtyard', kills: 0, deaths: 5 });
@@ -105,12 +105,12 @@ ok(C.levelForXp(4670) === 15 && C.levelForXp(4669) === 14 && C.titleFor(1) === '
   ok(one.msg.progress.wizards.next.id === 'gale' && one.msg.progress.wizards.next.toGo === 150, '"Stormcaller: 150 XP to go" after it');
   const at = (xp) => C.wizardUnlocks(xp);
   ok(at(199).unlocked.length === 2 && at(200).unlocked.length === 3 && at(349).unlocked.length === 3 && at(350).unlocked.length === 4 && at(500).unlocked.length === 5 && at(649).unlocked.length === 5 && at(650).unlocked.length === 6, 'each threshold unlocks exactly at its XP');
-  ok(!at(649).builder && at(649).next.id === 'jeb' && at(650).builder && at(650).next === null, 'the builder is hidden until 650 XP, then nothing is left');
-  ok(C.wizardsUnlockedBetween(600, 700).map(w => w.id).join() === 'jeb,builder', 'crossing 650: the Beastcaller and "Build your own" together');
+  ok(at(649).next.id === 'jeb' && at(650).next === null && !('builder' in at(650)), 'the Beastcaller is the last rung: nothing is left at 650 XP');
+  ok(C.wizardsUnlockedBetween(600, 700).map(w => w.id).join() === 'jeb', 'crossing 650: the Beastcaller only (round 27: no "Build your own")');
   const gf = C.sanitizeProgress({ xp: 0, grandfathered: true });
   const stored = C.sanitizeProgress({ xp: gf.xp, unlocks: gf.unlocks });   // (what comes back from Supabase or localStorage)
-  ok(gf.unlocks.includes(C.GRANDFATHERED) && stored.grandfathered && C.progressPublic(stored).wizards.all && C.progressPublic(stored).wizards.builder && C.progressPublic(stored).wizards.unlocked.length === 6,
-    'a grandfathered player has every wizard and the builder at 0 XP, and the mark survives storage');
+  ok(gf.unlocks.includes(C.GRANDFATHERED) && stored.grandfathered && C.progressPublic(stored).wizards.all && C.progressPublic(stored).wizards.unlocked.length === 6,
+    'a grandfathered player has every wizard at 0 XP, and the mark survives storage');
   const g = { id: 10 }; Prog.initProgress(g, { xp: 20, grandfathered: true });
   ok(Prog.finishMatch(g, { place: 1, of: 4, won: true, map: 'courtyard', kills: 3, deaths: 0 }).msg.wizardsUnlocked.length === 0, 'a grandfathered player never gets "New wizard unlocked" moments');
   const h = { id: 11 }; Prog.initProgress(h, { xp: 10 }); ok(Prog.grandfather(h) && h.prog.grandfathered && !Prog.grandfather(h), 'grandfather() marks an account once');
@@ -138,7 +138,7 @@ ok(C.levelForXp(4670) === 15 && C.levelForXp(4669) === 14 && C.titleFor(1) === '
   ok(b.auto && b.difficulty === 'easy' && b.cfg.range[1] > cfgFor(0.2).range[1] * 1.3, `an auto bot at 0.2 is labelled Easy; a Sniper keeps farther away (${b.cfg.range.map(v => v.toFixed(1))})`);
   setBotSkill(b, 0.9);
   ok(b.difficulty === 'hard' && b.cfg.aimErr < 5 && b.persona === 'sniper', 'setBotSkill moves it to Hard and keeps its personality');
-  ok(Object.values(C.PERSONAS).every(P => C.sanitizeLoadout(P.loadout)), 'every personality has a valid loadout');
+  ok(Object.values(C.PERSONAS).every(P => P.wizards?.length && P.wizards.every(C.isWizard) && !P.loadout), 'every personality plays wizards (round 27: kits, no free loadout)');
 }
 
 // ---------------------------------------------------------------- a room in this process
@@ -152,7 +152,7 @@ const NEW = ['xp', 'challenge', 'emote', 'taunt', 'look', 'progress'];
   const room = createRoom({ ...ROOMOPTS, id: 'test-1', gen: 'current' });
   const tick = setInterval(() => room.simulate(1 / 60), 1000 / 60);
   const w26 = fakeWs('S26'), w24 = fakeWs('S24');
-  const id26 = room.join(w26, { t: 'join', proto: 26, name: 'New', difficulty: 'auto', anon: 'abcdefgh', progress: { xp: 90 }, adapt: { r: 0.8, h: [] }, equipped: { robe: 'robe_crimson' } });
+  const id26 = room.join(w26, { t: 'join', proto: 27, wizard: 'cinder', name: 'New', difficulty: 'auto', anon: 'abcdefgh', progress: { xp: 90 }, adapt: { r: 0.8, h: [] }, equipped: { robe: 'robe_crimson' } });
   const id24 = room.join(w24, { t: 'join', proto: 24, name: 'Old', difficulty: 'normal' });
   const keepAwake = setInterval(() => { for (const id of [id26, id24]) room.message(id, { t: 'activity' }); }, 3000);   // (not idle: they stay seated)
   const wel26 = w26.got.find(m => m.t === 'welcome'), wel24 = w24.got.find(m => m.t === 'welcome');
@@ -162,8 +162,8 @@ const NEW = ['xp', 'challenge', 'emote', 'taunt', 'look', 'progress'];
   ok(!w24.got.some(m => m.t === 'look') && w26.got.some(m => m.t === 'look' && m.id === id26 && !Object.keys(m.eq).length), 'equip at level 1 drops the locked robes; the look goes to the 26 client only');
   room.message(id26, { t: 'menu', open: true }); room.message(id26, { t: 'menu', open: false }); room.message(id26, { t: 'menu', open: true });
   ok(events.filter(e => e.event === 'menu_open').length === 1, 'menu_open is logged once (repeats within 10 s are not)');
-  room.message(id26, { t: 'loadout', loadout: C.PRESETS[1].loadout });
-  ok(events.some(e => e.event === 'loadout_change' && e.s === 'S26'), 'a loadout change is logged');
+  room.message(id26, { t: 'wizard', id: 'rime' });   // (round 27: 90 XP has the Frost Warden)
+  ok(events.some(e => e.event === 'loadout_change' && e.s === 'S26'), 'a wizard change is logged (loadout_change)');
   await sleep(2500);   // (the bots fill in)
   const bots = [...room.players.values()].filter(q => q.bot);
   ok(bots.length === 2 && bots.every(q => q.persona && q.botLv >= 2) && new Set(bots.map(q => q.persona)).size === 2, `two fill bots, each with its own personality and a level (${bots.map(q => `${q.name} the ${C.PERSONAS[q.persona].name} lv${q.botLv}`).join(', ')})`);
