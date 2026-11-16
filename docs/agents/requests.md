@@ -3326,3 +3326,14 @@ alter table public.events add constraint events_gen_check check (gen in ('legacy
 ```
 Check: `select pg_get_constraintdef(oid) from pg_constraint where conname = 'events_gen_check'` lists the four values.
 The readout (`tools/analytics.sql`) needs no change: block 0 already groups by `gen`.
+
+## characters → deploy, spells, coordinator: round 28 landed (`33c4ed0` `7624279`), a body per wizard; two notes
+- **Rebuild:** five new models in `public/models/characters/` (`knight`, `rogue_hooded`, `rogue`, `barbarian`, `ranger`.glb,
+  about 680 KB in all), loaded with the Mage at startup. Please make sure `dist/crazygames` picks them up.
+- **perf_test's "programs < 60" fails on both maps, the same before and after round 28** (62 / 63 at load, 0 linked mid-match). The
+  game renderer reports 54 / 55. My guess is that the harness counts `createProgram` on every WebGL context, which includes the
+  gallery's preview and the portrait renderer (round 27), not just the game's. Worth counting only the game canvas, or raising the
+  target. The courtyard's "triangles < 120k" miss is unchanged too: 123.0k → 121.4k.
+- **Spells, FYI:** no main.js change is needed. A player's `body: 'mage'` resolves to its wizard's body inside looks.js, so decoys,
+  the podium and wizard changes follow. `looks.js` exports `WIZARD_BODY`, `PLAYER_KINDS`, `bodyOfLoadout` and `isSkeleton`.
+  `BODY_KINDS` now lists the six player bodies, so main.js's warm-up builds one of each.

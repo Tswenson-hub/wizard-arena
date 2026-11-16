@@ -1,5 +1,75 @@
 # Characters hand-off
 
+## Round 28: a distinct body per wizard
+Commits: `33c4ed0` (the five models and the build script) and `7624279` (looks.js, podium.js, select.js, select.css). Port 4103
+is stopped. Nothing is pushed.
+
+### What's built
+**Bodies** (KayKit Adventurers 2.0, CC0, all on Rig_Medium). Each gets its own swatch recolour on the one `wa-kaykit-tint`
+program, and its element aura as before:
+
+| Wizard | Body | Style | Props |
+|---|---|---|---|
+| Pyromancer | Mage | element look by loadout (fire), as before | staff |
+| Frost Warden | Knight | icy-blue armour, helmet and shield plate; a snow-white cape | staff and shield |
+| Stormcaller | Rogue_Hooded | storm-violet tunic and mask; a pale lavender hood and cape | wand |
+| Hemomancer | Rogue | blood-red tunic, near-black cape | wand, open spellbook |
+| Beastcaller | Barbarian | KayKit's furs and bear hat (already earthy) | staff, gem in earth gold |
+| Alchemist | Ranger | herb-green tunic and sleeves, acid-green scarf and cape | wand, flask (KayKit smokebomb, purple) |
+
+The Alchemist's flask glows in the purple of the Alchemist's own potions (the acid element's bolt colour).
+
+**How the body is chosen:**
+- **One map:** `looks.js WIZARD_BODY` maps each wizard to its body.
+- **Players:** a player's `body: 'mage'` (what the server sends) resolves to the body of its loadout's wizard
+  (`bodyOfLoadout`, using `C.wizardOfLoadout`).
+- **Where it applies:** in game, the gallery cards and preview, the podium, the Esc menu and Mirror Step decoys, all without
+  changes in main.js or wizard.js. A wizard change already rebuilds the body.
+- **Bots** stay Skeletons. Old clients keep their Mage.
+
+**Tinting:**
+- **Styles:** `BODY_STYLE` holds each body's swatch regions (measured from the uv of the parts) and fixed style.
+- **Wardrobe palettes:** robe palettes recolour every body.
+- **Props from another atlas:** a staff or wand on a non-Mage body, or the flask, gets its own uniforms, with only the gem
+  recoloured in the body's colour (`PROP_GEM`).
+
+**Hats:** the hat colour, wide brim, circlet and crown are the Mage's only. The Wardrobe's hat row says "Pyromancer only".
+
+**Build:** `node tools/build-characters.mjs` (`ONLY=knight,rogue_hooded,...` for some). The bodies are 5.8k to 8.9k triangles
+(the Mage is about 6.6k), 123 to 161 KB each, about 680 KB more to load in all.
+
+### Verified (`/tmp/wa-characters/r28/`, 4103, WA_DEBUG + MATCH_DEBUG, GPU Chromium)
+- **The gallery, six distinct wizards** (1280×720, no errors):
+  - `g720_gallery.png`
+  - the hover previews: `hover_strip.png`, `g720_hover_*.png`
+  - Crimson robes and the wide brim on all six (the brim on the Mage only): `crimson_strip.png`
+- **In game** (`ingame.py`: the real scene, a front camera by wrapping `renderer.render`):
+  - each wizard wears its own body, idle, cast and Arcane Grasp lifting a crate
+  - `game_<wizard>_{idle,cast,lift}.png`, sheet `game_sheet.png`
+  - all six pass; the Hemomancer once lost the lift to a bot refilling the room and knocking her flat, then passed alone
+  - game renderer programs: 54
+  - no console errors
+- **The podium** (three clients: Stormcaller 1st, Frost Warden 2nd, Alchemist 3rd): `podium_2500.png`. No errors.
+- **Mirror Step decoys** wear the owner's body (Rogue ×2): `decoy.py`.
+- **perf_test, 40 s, both maps, against a worktree at the pre-round-28 commit** (`babfc40`, on 4113):
+
+  | Map | Triangles (base → r28) | Draw calls (base → r28) | Programs (base → r28) |
+  |---|---|---|---|
+  | Courtyard | 123.0k → 121.4k | 102 → 99 | 62 → 62 |
+  | Sky Ruins | 96.2k → 97.1k | 112 → 84 | 63 → 63 |
+
+  - 60 fps on both maps.
+  - None compiled mid-match; the game renderer's own count is 54 / 55 on both trees.
+  - The harness's "programs < 60" and the courtyard's "triangles < 120k" fail identically on the baseline. See the requests note.
+- **Unit suites:**
+  - wizards-unit, notify-unit, modematch-unit (MATCH_DEBUG=1) and saves-unit (NODE_ENV=test): ALL PASS.
+  - playtime-unit: one run reported "1 FAILED", then three runs ALL PASS. My changes are client-only.
+
+### Notes
+- **The perf harness** plays a first-visit Pyromancer, so it doesn't measure the heavier bodies. The Ranger is the worst case:
+  at most about +2.3k triangles per human.
+- **Not done:** the Skeleton bots don't use the new bodies (as briefed). The KayKit Knight's helmet visor stays as modelled.
+
 ## Round 27 §1: the wizard gallery
 Commits: `2a44515` (requests: interfaces), `3e95df3` (wizards.js roles + tips), `b5d8f34` (select.js, select.css, progress.js, podium.js,
 index.html), `7b50c9f` (cards in the ladder's order, `C.WIZARD_IDS`). Port 4103 is stopped.
