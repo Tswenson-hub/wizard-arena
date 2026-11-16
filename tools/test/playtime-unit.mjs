@@ -16,15 +16,16 @@ const ok = (cond, what) => { console.log(`${cond ? 'ok  ' : 'FAIL'} ${what}`); i
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 // ---------------------------------------------------------------- XP and levels
-ok(C.xpForLevel(1) === 0 && C.xpForLevel(2) === 300 && C.xpToNext(1) === 300 && C.xpToNext(2) === 325, 'level 2 at 300 XP, then 325 more to level 3');
+ok(C.xpForLevel(1) === 0 && C.xpForLevel(2) === 120 && C.xpToNext(1) === 120 && C.xpToNext(2) === 200 && C.xpToNext(3) === 225, 'level 2 at 120 XP (one finished match with a kill or a podium), then 200, 225, ... a level');
+ok(C.matchXp({ kills: 0, place: 1, won: true }).total >= C.xpForLevel(2) && C.matchXp({ kills: 5, place: 2 }).total >= C.xpForLevel(2) && C.matchXp({ kills: 7, place: 4 }).total >= C.xpForLevel(2), 'a first match won, or 2nd with 5 kills, or 7 kills, is a level-up');
 let mono = true;
 for (let L = 1; L < 200; L++) {
   if (C.xpForLevel(L + 1) <= C.xpForLevel(L) || C.levelForXp(C.xpForLevel(L)) !== L || C.levelForXp(C.xpForLevel(L + 1) - 1) !== L) mono = false;
 }
 ok(mono, 'levelForXp is the exact inverse of xpForLevel for levels 1-200, and the curve rises');
 ok(C.levelForXp(-5) === 1 && C.levelForXp('abc') === 1 && C.levelForXp(1e12) <= C.LEVEL_MAX, 'levelForXp is safe on junk');
-{ const i = C.levelInfo(700); ok(i.level === 3 && i.into === 75 && i.need === 350, `levelInfo(700): level 3, 75 into 350 (${JSON.stringify(i)})`); }
-ok(C.levelForXp(6475) === 15 && C.titleFor(1) === 'Apprentice' && C.titleFor(10) === 'Battlemage' && C.titleFor(15) === 'Archmage', 'level 15 at 6,475 XP; titles by level');
+{ const i = C.levelInfo(700); ok(i.level === 4 && i.into === 155 && i.need === 250, `levelInfo(700): level 4, 155 into 250 (${JSON.stringify(i)})`); }
+ok(C.levelForXp(4670) === 15 && C.levelForXp(4669) === 14 && C.titleFor(1) === 'Apprentice' && C.titleFor(10) === 'Battlemage' && C.titleFor(15) === 'Archmage', 'level 15 at 4,670 XP; titles by level');
 {
   const u = C.UNLOCKS.filter(k => k.level <= 15);
   ok(u.length >= 7 && u.length <= 15 && new Set(C.UNLOCKS.map(k => k.id)).size === C.UNLOCKS.length && C.UNLOCKS.every(k => /^[a-z0-9_-]{1,32}$/.test(k.id) && C.COSMETIC_SLOTS.includes(k.slot)),
@@ -67,16 +68,16 @@ ok(C.levelForXp(6475) === 15 && C.titleFor(1) === 'Apprentice' && C.titleFor(10)
   // a challenge completed mid-match: its XP once, then listed in the match's award (the day pinned: 2026-12-26's are wins, podiums, void_ko)
   Prog.clock.day = () => '2026-12-26';
   const p = { id: 1 };
-  Prog.initProgress(p, { xp: 250 });
+  Prog.initProgress(p, { xp: 50 });
   ok(p.prog.challenges.list.map(e => e.id).join() === 'wins,podiums,void_ko', `the pinned day's challenges (${p.prog.challenges.list.map(e => e.id)})`);
   const moved = [...Prog.bump(p, 'voidKos'), ...Prog.bump(p, 'voidKos')];
-  ok(moved.filter(m => m.newly).length === 1 && p.prog.xp === 250 + 130 && p.prog.challenges.list[2].done, 'a void knockout completes "void_ko" once (+130 XP), a second does nothing');
+  ok(moved.filter(m => m.newly).length === 1 && p.prog.xp === 50 + 130 && p.prog.challenges.list[2].done, 'a void knockout completes "void_ko" once (+130 XP), a second does nothing');
   ok(Prog.bump(p, 'nothing').length === 0 && Prog.bump({ bot: {} }, 'kills').length === 0, 'unknown counters and bots move nothing');
   const r1 = Prog.finishMatch(p, { place: 2, of: 4, won: false, map: 'courtyard', kills: 13, deaths: 2 });
   const it = (k) => r1.msg.items.find(i => i.k === k);
   ok(it('finish').xp === 50 && it('kills').xp === 130 && it('podium').xp === 20 && it('challenge')?.xp === 130 && !it('win'), 'the award lists finish, kills, podium and the challenge done mid-match');
-  ok(r1.msg.before.xp === 250 && r1.msg.progress.xp === 250 + 130 + 50 + 130 + 20 && r1.msg.gained === 330, `before ${r1.msg.before.xp}, after ${r1.msg.progress.xp}, gained ${r1.msg.gained}`);
-  ok(r1.msg.levelUps.join() === '2' && r1.msg.unlocked.map(u => u.id).join() === 'robe_crimson', 'a level-up to 2 unlocks Crimson robes');
+  ok(r1.msg.before.xp === 50 && r1.msg.progress.xp === 50 + 130 + 50 + 130 + 20 && r1.msg.gained === 330, `before ${r1.msg.before.xp}, after ${r1.msg.progress.xp}, gained ${r1.msg.gained}`);
+  ok(r1.msg.levelUps.join() === '2,3' && r1.msg.unlocked.map(u => u.id).join() === 'robe_crimson,staff_ember', 'level-ups to 2 and 3 unlock Crimson robes and the Ember staff');
   ok(p.prog.challenges.list[1].n === 1 && !p.prog.challenges.list[1].done, 'the podium counts toward "finish on the podium twice"');
   const r2 = Prog.finishMatch(p, { place: 1, of: 4, won: true, map: 'sky', kills: 4, deaths: 0 });
   ok(r2.msg.items.some(i => i.k === 'firstWin') && r2.msg.items.filter(i => i.k === 'challenge').map(i => i.id).sort().join() === 'podiums,wins', "a win: the day's first-win bonus, and both 'podiums' and 'wins' complete");
@@ -119,11 +120,14 @@ ok(C.levelForXp(6475) === 15 && C.titleFor(1) === 'Apprentice' && C.titleFor(10)
 {
   let a = C.sanitizeAdapt(null, true);
   ok(a.r === C.ADAPT.first && C.sanitizeAdapt(null, false).r === C.ADAPT.start, `a first visit starts at ${C.ADAPT.first} (Easy), a returning player without a rating at ${C.ADAPT.start}`);
-  let up = { r: 0.5, h: [] }, down = { r: 0.5, h: [] }, mid = { r: 0.5, h: [] };
+  let up = { r: 0.5, h: [] }, down = { r: 0.5, h: [] }, mid = { r: 0.5, h: [] }, early = { r: 0, h: [] };
   for (let i = 0; i < 4; i++) { up = C.adaptAfter(up, 1, 4, 6, 1); down = C.adaptAfter(down, 4, 4, 0, 6); }
-  for (const pl of [2, 4, 3, 4]) mid = C.adaptAfter(mid, pl, 4, 2, 3);
-  ok(up.r > 0.75 && down.r < 0.25, `winning moves the rating up (${up.r}), losing moves it down (${down.r})`);
-  ok(Math.abs(mid.r - 0.5) < 0.15, `a player near the target band stays near (${mid.r})`);
+  for (const pl of [1, 3, 4, 1, 2, 4]) mid = C.adaptAfter(mid, pl, 4, 2, 3);
+  for (let i = 0; i < 2; i++) early = C.adaptAfter(early, 1, 4, 8, 0);
+  ok(early.r === 0 && early.n === 2, 'the first matches are generous: two wins in a row from a first visit move nothing yet');
+  ok(up.r > 0.75 && down.r < 0.25, `winning every match moves the rating up (${up.r}), never winning moves it down (${down.r})`);
+  ok(mid.r === 0.5, `winning one match in three (the 30-40% target) holds it (${mid.r})`);
+  { let pod = { r: 0.5, h: [] }; for (const pl of [2, 3, 2, 3]) pod = C.adaptAfter(pod, pl, 4, 3, 3); ok(pod.r < 0.5, `the podium without a win doesn't count as winning: the bots ease off (${pod.r})`); }
   let hi = { r: 0.99, h: [] }; for (let i = 0; i < 10; i++) hi = C.adaptAfter(hi, 1, 4, 9, 0);
   ok(hi.r <= 1 && hi.h.length === C.ADAPT.window, `the rating stays within 0-1 and keeps the last ${C.ADAPT.window} matches`);
   const e = cfgFor(0), n = cfgFor(0.5), h = cfgFor(1), q = cfgFor(0.25);
@@ -148,11 +152,11 @@ const NEW = ['xp', 'challenge', 'emote', 'taunt', 'look', 'progress'];
   const room = createRoom({ ...ROOMOPTS, id: 'test-1', gen: 'current' });
   const tick = setInterval(() => room.simulate(1 / 60), 1000 / 60);
   const w26 = fakeWs('S26'), w24 = fakeWs('S24');
-  const id26 = room.join(w26, { t: 'join', proto: 26, name: 'New', difficulty: 'auto', anon: 'abcdefgh', progress: { xp: 290 }, adapt: { r: 0.8, h: [] }, equipped: { robe: 'robe_crimson' } });
+  const id26 = room.join(w26, { t: 'join', proto: 26, name: 'New', difficulty: 'auto', anon: 'abcdefgh', progress: { xp: 90 }, adapt: { r: 0.8, h: [] }, equipped: { robe: 'robe_crimson' } });
   const id24 = room.join(w24, { t: 'join', proto: 24, name: 'Old', difficulty: 'normal' });
   const keepAwake = setInterval(() => { for (const id of [id26, id24]) room.message(id, { t: 'activity' }); }, 3000);   // (not idle: they stay seated)
   const wel26 = w26.got.find(m => m.t === 'welcome'), wel24 = w24.got.find(m => m.t === 'welcome');
-  ok(wel26.progress?.xp === 290 && wel26.progress.level === 1 && !wel24.progress, 'the 26 client gets its progress in the welcome; the 24 client gets none');
+  ok(wel26.progress?.xp === 90 && wel26.progress.level === 1 && !wel24.progress, 'the 26 client gets its progress in the welcome; the 24 client gets none');
   ok(events.filter(e => e.event === 'join').map(e => `${e.s}:${e.details.room}:${e.map}`).join() === 'S26:public:courtyard,S24:public:courtyard', 'each session logs join with the room kind and the map');
   room.message(id26, { t: 'equip', equipped: { robe: 'robe_crimson', staff: 'staff_ember' } });   // (level 1: neither is unlocked)
   ok(!w24.got.some(m => m.t === 'look') && w26.got.some(m => m.t === 'look' && m.id === id26 && !Object.keys(m.eq).length), 'equip at level 1 drops the locked robes; the look goes to the 26 client only');

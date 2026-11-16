@@ -1282,16 +1282,16 @@ export const sanitizeVoice = (v) => VOICES.includes(v) ? v : 'male';
 // localStorage, but the server still works out every award (the client only stores what it's told). Cosmetic only.
 export const XP = { finish: 50, kill: 10, podium: [30, 20, 10], win: 50, firstWinMult: 2, guestCap: 20000 };
 export const LEVEL_MAX = 999;
-// XP from `level` to the next: a gentle curve, 300 at level 1, rising 25 a level
-export const xpToNext = (level) => 300 + 25 * (Math.max(1, level) - 1);
+// XP from `level` to the next. Level 2 at 120 XP, so the first finished match (50 + kills + a podium) usually levels you up; then a
+// gentle curve: 200 from level 2, rising 25 a level (coordinator, round 26; it was 300 + 25 a level)
+export const xpToNext = (level) => level <= 1 ? 120 : 200 + 25 * (Math.floor(level) - 2);
 // The total XP that reaches `level` (level 1 = 0)
-export const xpForLevel = (level) => { const L = Math.max(1, Math.min(LEVEL_MAX, Math.floor(level))) - 1; return 300 * L + 25 * L * (L - 1) / 2; };
+export const xpForLevel = (level) => { const L = Math.max(1, Math.min(LEVEL_MAX, Math.floor(level))); return L <= 1 ? 0 : 120 + (L - 2) * 200 + 25 * (L - 2) * (L - 3) / 2; };
 export function levelForXp(xp) {
   xp = Math.max(0, Math.floor(+xp || 0));
-  let L = Math.min(LEVEL_MAX, Math.max(1, Math.floor((Math.sqrt(Math.max(0, (575 / 25) ** 2 + 8 * xp / 25)) - 575 / 25) / 2) + 1));   // (the inverse of xpForLevel, then fixed up)
-  while (L > 1 && xpForLevel(L) > xp) L--;
-  while (L < LEVEL_MAX && xpForLevel(L + 1) <= xp) L++;
-  return L;
+  let lo = 1, hi = LEVEL_MAX;   // (the highest level whose total is reached)
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (xpForLevel(mid) <= xp) lo = mid; else hi = mid - 1; }
+  return lo;
 }
 // { level, into (XP into this level), need (XP this level needs) }
 export function levelInfo(xp) {
@@ -1433,31 +1433,34 @@ export function progressPublic(prog, account = false) {
 }
 
 // ---------------------------------------------------------------- round 26: bots that feel alive
-// Adaptive difficulty: a human's rating r (0 = Easy, 0.5 = Normal, 1 = Hard bots) moves after each match toward keeping their
-// podium-or-better rate over the last `window` matches near `target`; public "Auto" rooms play the humans' mean rating.
-export const ADAPT = { target: 0.5, band: 0.1, window: 3, step: 0.12, kdWeight: 0.35, first: 0, start: 0.4 };
-// adapt: { r, h: [[place, of, kills, deaths], ...] } (client-held); the result of one match appended, r nudged
+// Adaptive difficulty: a human's rating r (0 = Easy, 0.5 = Normal, 1 = Hard bots) moves after each match to keep their WIN rate (1st place)
+// over the last `window` matches near `target` (a 4-player FFA: 30-40% wins puts the podium around 60-70%). It holds still until
+// `grace` matches are played (a first visit starts at Easy: the first matches stay generous). Public "Auto" rooms play the humans'
+// mean rating. (Coordinator, round 26: the podium rate was a weak target, 3 places of 4.)
+export const ADAPT = { target: 0.35, band: 0.12, window: 3, grace: 3, step: 0.12, first: 0, start: 0.4 };
+// adapt: { r, h: [[place, of, kills, deaths], ...] } (client-held; h keeps the last `window`), n: matches seen (for the grace)
 export function sanitizeAdapt(a, firstVisit = false) {
   const r = Number.isFinite(a?.r) ? Math.max(0, Math.min(1, a.r)) : firstVisit ? ADAPT.first : ADAPT.start;
   const h = Array.isArray(a?.h) ? a.h.filter(e => Array.isArray(e) && e.length === 4 && e.every(Number.isFinite)).slice(-ADAPT.window).map(e => e.map(v => Math.max(0, Math.min(999, Math.round(v))))) : [];
-  return { r: +r.toFixed(3), h };
+  const n = Number.isFinite(a?.n) ? Math.max(h.length, Math.min(1e6, Math.floor(a.n))) : h.length;
+  return { r: +r.toFixed(3), h, n };
 }
-// How well the last few matches went, 0..1: the podium rate, blended with the K/D (0.5 at even)
+// The win rate over the matches in `h` (1st place of more than one), or null with none
 export function adaptScore(h) {
   if (!h.length) return null;
-  const pod = h.filter(([place, of]) => place <= Math.min(3, of - 1)).length / h.length;
-  const k = h.reduce((s, e) => s + e[2], 0), d = h.reduce((s, e) => s + e[3], 0);
-  const kd = (k + 1) / (k + d + 2);
-  return pod * (1 - ADAPT.kdWeight) + kd * ADAPT.kdWeight;
+  return h.filter(([place, of]) => place === 1 && of > 1).length / h.length;
 }
 export function adaptAfter(a, place, of, kills, deaths) {
   const s = sanitizeAdapt(a);
-  const h = [...s.h, [place, of, kills, deaths]].slice(-ADAPT.window);
-  const score = adaptScore(h);
+  const h = [...s.h, [place, of, kills, deaths]].slice(-ADAPT.window), n = s.n + 1;
   let r = s.r;
-  if (score > ADAPT.target + ADAPT.band) r += ADAPT.step * Math.min(2, (score - ADAPT.target) / ADAPT.band) / 2;
-  else if (score < ADAPT.target - ADAPT.band) r -= ADAPT.step * Math.min(2, (ADAPT.target - score) / ADAPT.band) / 2;
-  return { r: +Math.max(0, Math.min(1, r)).toFixed(3), h };
+  if (n >= ADAPT.grace) {
+    const score = adaptScore(h);
+    // (with 3 matches: no wins → down, one in three → hold, two or three → up; the farther off, the bigger the step, up to 2×)
+    if (score > ADAPT.target + ADAPT.band) r += ADAPT.step * Math.min(2, (score - ADAPT.target) / (2 * ADAPT.band));
+    else if (score < ADAPT.target - ADAPT.band) r -= ADAPT.step * Math.min(2, (ADAPT.target - score) / (2 * ADAPT.band));
+  }
+  return { r: +Math.max(0, Math.min(1, r)).toFixed(3), h, n };
 }
 // Personalities: one per bot, a loadout to match and how it fights (server/bots.js reads the numbers).
 //   range: × the preferred distance; aggr: + aggression; healAt: HP under which it walks to a potion; runeR: how far it goes for
