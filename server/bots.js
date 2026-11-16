@@ -1742,6 +1742,8 @@ function highGoal(me, world, t, target) {
   let best = null, bs = Infinity;
   for (const n of routeGraph(world).nodes) {
     if (!(n.ramp || n.deck) || !(n.y >= target.p[1] + 1.5)) continue;   // (a stair top or a deck end; not a stone, a bank or a pad)
+    if (n.deck && /^(walkway|bridge)/.test(n.deck.name || '')) continue;   // (not out on a narrow deck over the void)
+    if (VOID_Y != null && crossesVoid([me.p[0], me.p[2]], n.p)) continue;   // (only a perch on our side of the gaps)
     const nm = dist2D(me.p, [n.p[0], 0, n.p[1]]), nt = dist2D(target.p, [n.p[0], 0, n.p[1]]);
     if (nm > 18 || nt < r0 || nt > r1 + 2) continue;
     if (!hasLOS([n.p[0], n.y + 1.3, n.p[1]], chest(target))) continue;
@@ -1761,7 +1763,7 @@ function padFunGoal(me, world, t, target) {
   if (me.padUntil > t - 0.5) { b.padFunAt = t + rand(15, 25); return null; }   // (just flew)
   let best = null, bd = 16;
   for (const pd of world.pads) {
-    if (Math.abs((pd.y || 0) - me.p[1]) > 1) continue;
+    if (Math.abs((pd.y || 0) - me.p[1]) > 1 || (VOID_Y != null && crossesVoid([me.p[0], me.p[2]], [pd.x, pd.z]))) continue;
     const d = Math.hypot(pd.x - me.p[0], pd.z - me.p[2]);
     if (d < bd) { bd = d; best = [pd.x, pd.z]; }
   }
