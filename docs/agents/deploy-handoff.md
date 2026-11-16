@@ -197,13 +197,28 @@ PORT=4105 node server.js &  node tools/serve-subpath.mjs dist/crazygames-local 4
 python3 deploy/subpath_test.py http://localhost:4199/game/ /tmp/wa-deploy/subpath.png --max-mb 20
 ```
 
+## Round 26 verification (HEAD `1c14c92`; `public/` and the server are `cb2508c`'s; private ports, 3000 untouched)
+Server `WA_DEBUG=1 MATCH_DEBUG=1 PORT=4105`; the 95aca29 / 21a31ef / 54d1a9a / HEAD builds on 4198 / 4197 / 4196 / 4199; all in `/tmp/wa-deploy/r26/`. Supabase isn't
+configured in this server, so no rows were written (the events batching runs in `playtime-unit` with stubbed hooks; the live write is the coordinator's check after the push).
+- **`smoke.py` PASS:** no-proto join in a legacy room, proto-22 join in a v22 room, **a proto-24 join in a current room**; **none of the three got an `xp`,
+  `progress`, `challenge`, `emote`, `taunt` or `look` message or a `welcome.progress`** (new `report_no26` / `report_v24` in `legacyjoin.py`); a proto-26 join's welcome
+  carries progress (level 1, 0 XP, "Apprentice", 3 challenges); first visit 0.8 s, Easy bots; no console errors.
+- **`subpath_test.py --max-mb 20` (the HEAD build) PASS:** 9.3 MB initial (was 9.2), rooms all ok, the older joins as above, no failed requests, no errors; the page keeps `wa-progress` / `wa-equipped` / `wa-ladder`.
+- **`legacy_test.py --fast` PASS** on the three older store builds: legacy (95aca29), `--gen v22` (21a31ef), new `--gen v24` (54d1a9a): the match, the recap and the rematch, and the check that none of the round-26 messages reached them.
+- **Characters' `e2e.py` (copied to 4105) ALL PASS:** a first match fills the XP bar (+50 finish, +30 podium), level 2 with Crimson robes, the next-unlock teaser, 3 challenges, a toast, V emote seen by a second client, the Wardrobe equip seen by it, programs 55.
+- **`perf_test` (CPU 4x, 1280x720, 60 s, 4 in the match):** sky **88.9k triangles (p95 98.5k) / 58 draw calls / 58 programs PASS** (60 fps, p95 18.3 ms, 0 compiled mid-match);
+  courtyard, three runs: **94 / 99 / 121 draw calls, 120.7k / 115.9k / 123.8k triangles**, 57 programs, 60 fps: the triangle overage is the pre-existing one (127k at `c0a4f41`,
+  123.5k in round 24), and the draw calls swing with the bots' cosmetics (the first run missed `< 120` by one).
+- **Unit:** `playtime-unit`, `notify-unit`, `saves-unit` ALL PASS. **`modematch-unit` needs `MATCH_DEBUG=1` exported** (without it the two map-switch checks fail); with it **one check fails, every run:**
+  "the thrown crate hits B up on the island and breaks there": the crate flies and breaks at (4.1, 7.2, 34.9) with no `hit` message (spells' hand-off says 290 pass; something between).
+
 ## CrazyGames submission checklist (round 17)
 Sources: docs.crazygames.com, "Technical requirements", "Gameplay requirements", "Game covers" and "Multiplayer" (read 2026-10-30).
 
 ### What to upload (zip from `c6e313a`, round 22; rebuild from the commit that's pushed to Render)
 | What | Path | Notes |
 |---|---|---|
-| **Game zip** | `dist/crazygames.zip` (gitignored; rebuild with `npm run build:crazygames -- --ref <sha>`) | **built from `54d1a9a`** (round 24: the rebuilt Sky Ruins, PROTO 24; 446 files, 10.5 MB unzipped, 7.1 MB zip, sha256 `ed1d4a991b42e9df…`; the server keeps the `95aca29` and `21a31ef` store builds playing in legacy and v22 rooms). Previously: **built from `c6e313a`** (round 22: first to 10, runes, jump pads, the dressed courtyard, Sky Ruins in rotation; rounds 19–21 stats, perf, first visit; its `public/` is `1d192c5`'s, the commit the quick set and a Sky Ruins perf run passed on; `c6e313a` itself changes `server/bots.js` only): **445 files, 10.4 MB unzipped, 7.1 MB zip**, sha256 `66223536280e56d0…`, no secrets (the build checks); talks to `wss://wizard-arena-76od.onrender.com`. **Round 22 is backward-compatible:** the server keeps the live build (`95aca29`, no `proto`) playing in legacy rooms, so Render can be pushed before the new zip is approved; players on the old version just don't see runes, pads or Sky Ruins until it is |
+| **Game zip** | `dist/crazygames.zip` (gitignored; rebuild with `npm run build:crazygames -- --ref <sha>`) | **built from `1c14c92`** (round 26: XP, levels, daily challenges, cosmetics, the wizard ladder, bot personalities, drop-off events; PROTO 26, `public/` is `cb2508c`'s; 449 files, 10.6 MB unzipped, 7.5 MB zip, sha256 `b43ca04558271626…`, no secrets; the server keeps the `95aca29`, `21a31ef` and `54d1a9a` store builds playing). Previously **`54d1a9a`** (round 24: the rebuilt Sky Ruins, PROTO 24; 446 files, 10.5 MB unzipped, 7.1 MB zip, sha256 `ed1d4a991b42e9df…`; the server keeps the `95aca29` and `21a31ef` store builds playing in legacy and v22 rooms). Previously: **built from `c6e313a`** (round 22: first to 10, runes, jump pads, the dressed courtyard, Sky Ruins in rotation; rounds 19–21 stats, perf, first visit; its `public/` is `1d192c5`'s, the commit the quick set and a Sky Ruins perf run passed on; `c6e313a` itself changes `server/bots.js` only): **445 files, 10.4 MB unzipped, 7.1 MB zip**, sha256 `66223536280e56d0…`, no secrets (the build checks); talks to `wss://wizard-arena-76od.onrender.com`. **Round 22 is backward-compatible:** the server keeps the live build (`95aca29`, no `proto`) playing in legacy rooms, so Render can be pushed before the new zip is approved; players on the old version just don't see runes, pads or Sky Ruins until it is |
 | **Cover, landscape 1920×1080** | `deploy/crazygames/store/covers/cover-hero-landscape-1920x1080.jpg` | recommended: the Mage up close in the courtyard |
 | **Cover, portrait 800×1200** | `deploy/crazygames/store/covers/cover-hero-portrait-800x1200.jpg` | same frame, cropped |
 | **Cover, square 800×800** | `deploy/crazygames/store/covers/cover-hero-square-800x800.jpg` | same frame, cropped |
@@ -228,22 +243,28 @@ picked by eye from four runs at `04fd64b` (round 16 changed spells and balance, 
 ### 2. The form (ready to paste)
 **Title:** `Wizard Arena`
 
-**Short description** (round 22):
+**Short description** (round 26):
 ```
-Build your own wizard from 35 spells and duel three rivals in fast free-for-alls across two arenas: a castle courtyard and the Sky Ruins.
+Unlock new wizards as you level up, then duel three rivals in fast free-for-alls across two arenas: a castle courtyard and the Sky Ruins.
 ```
 
-**Description** (round 22: first to 10, the 5-minute cap, runes, jump pads, two maps in rotation, streak call-outs):
+**Description** (round 26: XP, levels, daily challenges, cosmetics, the wizard ladder, bots with personalities; still first to 10, the 5-minute cap, runes, jump pads, two maps):
 ```
-Build your wizard, then prove it in the arena. Pick one spell for each of six slots (primary, power, shield, mobility, utility and ultimate) from a spellbook of 35, across fire, ice, wind, earth, blood, alchemy and arcane. Every combination plays differently: lob fireballs from the wall-walk, freeze a rival mid-dash, drain a rival with Blood Siphon to heal yourself, wrap yourself in Sanguine Aegis, lift a crate with telekinesis and hurl it, or curse a barrel and wait.
+Start as the Pyromancer, win duels, level up and unlock more wizards: the Frost Warden after your first match, then the Stormcaller, the Hemomancer, the Alchemist and the Beastcaller, and finally the spellbook itself, where you build your own wizard from 35 spells, one for each of six slots (primary, power, shield, mobility, utility and ultimate) across fire, ice, wind, earth, blood, alchemy and arcane. Every wizard plays differently: lob fireballs from the wall-walk, freeze a rival mid-dash, drain a rival with Blood Siphon to heal yourself, wrap yourself in Sanguine Aegis, lift a crate with telekinesis and hurl it, or curse a barrel and wait.
 
-Matches are four-wizard free-for-alls, first to 10 kills or the most kills in five minutes, after a three-second countdown. Skeleton bots fill any empty seat instantly, so there is always a fight, on easy, normal or hard. Grab the runes that spawn at the contested spots (Haste, Arcane Fury, Aegis and Surge), ride the jump pads onto the towers and across the courtyard, and chain kills for First Blood, Double Kill and streak call-outs.
+Earn XP every match for finishing, for kills, for a podium place and for a win, and finish the three daily challenges for a bonus. Each level unlocks a cosmetic for your wizard: robe colours, hats, staff glows and spell trails, shown on your nameplate with your level and title. Equip them in the Wardrobe.
+
+Matches are four-wizard free-for-alls, first to 10 kills or the most kills in five minutes, after a three-second countdown. Skeleton bots with their own personalities (the Brawler, the Sniper, the Trickster, the Healer and the Showboat) fill any empty seat instantly, so there is always a fight, and they adjust to how you play. Grab the runes that spawn at the contested spots (Haste, Arcane Fury, Aegis and Surge), ride the jump pads onto the towers and across the courtyard, and chain kills for First Blood, Double Kill and streak call-outs. Press V to cheer or taunt.
 
 Two arenas take turns: the castle courtyard, and the Sky Ruins, a broken mage tower on floating islands where a knockback spell can send a rival into the void. Dodge, double-jump, roll, take the high ground and time your shield to turn the duel.
-
-Want a different build? Change your spells from the menu and respawn at once.
 ```
-The previous text (first to 15, the courtyard only) is in git history (`95aca29`).
+The round-22 text (build from any spell at once) is in git history.
+
+**Privacy note** (round 26; the same text is in the game's "?" card, `Select.PRIVACY` in `select.js`; paste it into the form's privacy / data field if there is one):
+```
+Privacy: if you play logged in to CrazyGames, we store your CrazyGames username and ID, your saved spells and settings, and your match stats on our server to keep your progress. As a guest, your data stays in this browser and your name is used only for the match. CrazyGames usernames, levels and match stats appear on the in-game leaderboard. We also record anonymous gameplay events (when you join, how long you play, kills, where you leave a match) and your XP, level and unlocks, tied to a random ID and, if logged in, your CrazyGames ID, to improve the game. No ads, no IP addresses or emails stored. Questions or deletion requests: tyswenson34@gmail.com
+```
+(Copied verbatim from `Select.PRIVACY` at the round-26 HEAD; if select.js changes it, copy again.)
 
 **Controls** (matches the in-game how-to-play card, select.js `KEYS`):
 ```
@@ -278,7 +299,9 @@ Esc: menu and loadout
   calls (above), and the User module: `getUser()` (the username), `getUserToken({ signingKeyType: 'IN_GAME_AUTH' })` and
   `addAuthListener` (round 18 saves). No ads.
 - **Progress save:** [x] **"linked to a game account on the game's backend, associated with the CrazyGames User"** (round 18: Supabase,
-  through our server only; guests keep local saves in the browser).
+  through our server only; guests keep local saves in the browser). Round 26 adds XP, level, unlocks and daily challenges to the same
+  account row (`wizard_arena_player_progress`), and anonymous drop-off events (`wizard_arena_events`: session, join, kills, match end,
+  disconnect; no IPs or emails; the key stays on the server). Mention both in the form's data-collection answers.
 - **Age:** PEGI 12-friendly (fantasy magic, no blood; skeletons collapse). CrazyGames' audience is 13+.
 
 ### 3. Re-making the art
@@ -296,7 +319,7 @@ look at them and keep the best of each.
 - **Done:** names go through a profanity filter on the server (`rudeName` in `join`, spells). The goat tip in the how-to-play card is now
   the ram tip. No Pixabay files left (`public/sounds/CREDITS.md`, round 15 "Flasks and potions"); everything is CC0 or CC BY 4.0
   (Leonardo Calvo, credited in-game and in the README).
-- **Privacy note** (round 18, characters, behind the "?"): for logged-in CrazyGames users we store the CrazyGames username and ID,
+- **Privacy note** (round 18, updated round 26, characters, behind the "?"; the full text is in the form section above): for logged-in CrazyGames users we store the CrazyGames username and ID,
   saved spells and settings, and match stats, to keep their progress; guests' data stays in the browser; deletion requests to Ty's
   address. Check it's in the build before submitting.
 - **Done (round 17): "online with friends"** is required for an online multiplayer game, not optional: rooms, invite links and room
