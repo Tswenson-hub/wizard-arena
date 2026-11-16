@@ -1,8 +1,8 @@
 # Characters hand-off
 
-## Round 27 §1: the wizard gallery (partial: the usage limit cut the verification short)
+## Round 27 §1: the wizard gallery
 Commits: `2a44515` (requests: interfaces), `3e95df3` (wizards.js roles + tips), `b5d8f34` (select.js, select.css, progress.js, podium.js,
-index.html). Port 4103 is stopped.
+index.html), `7b50c9f` (cards in the ladder's order, `C.WIZARD_IDS`). Port 4103 is stopped.
 
 ### What's built
 - **select.js `mountSpellBuilder`** (same name and return, so main.js is unchanged) draws the gallery:
@@ -33,19 +33,29 @@ index.html). Port 4103 is stopped.
   reads "Respawn as Pyromancer" (spells').
 - No page or console errors in any run.
 
-### Not done (next step)
-- **The brief's Playwright run hasn't been done:**
-  - unlock the Frost Warden after one match and select it
-  - F shows "Arcane Grasp" and lifts a crate
-  - the full keyboard walk
-  - the Wardrobe tab's look in the new layout
+- `gallery_e2e.py` (fresh profile, 1280×720, against spells' commits `f4efc3c` to `bf3b1a2`): **ALL PASS, 14 checks.**
+  - the join screen: six cards, only the Pyromancer open and selected; five locked with "Unlocks at N XP" and a bar
+  - no grid, slots, saved loadouts, Randomize, legend or combos anywhere
+  - hover shows the Frost Warden's six abilities, Arcane Grasp, the lock line and the tip
+  - the keyboard: arrows move along and down the grid and the panel follows; Enter on a locked card picks nothing
+  - after one match the XP panel says "New wizard unlocked! Frost Warden"
+  - the Esc menu: Pyromancer and Frost Warden open; picking the Frost Warden turns the button into "Respawn as Frost Warden"
+  - the Wardrobe tab replaces the gallery
+  - the respawn uses the Frost Warden's kit; the HUD's F reads "Arcane Grasp", and it lifts a crate
+  - no console or page errors
+- Shots: `e2e_join_hover.png`, `e2e_esc_rime.png`, `e2e_esc_wardrobe.png`, `e2e_grasp.png`.
 
-  Re-run `/tmp/wa-characters/r26/ladder.py` adapted to `.wg-card`.
-- **Test note:** set `waGrandfathered='0'` in the init script. Otherwise main.js grandfathers a profile that has `waHowToPlaySeen`.
-- **Ability lines:** mine are short enough for one row. `SPELLBOOK[id].line` (spells') is only the fallback, because theirs ellipsize
-  in the panel.
-- **Clean-ups still to do:** `mountPicker`'s fallback in main.js still offers Randomize (spells'). `loadout-store.js` is no longer
-  imported by select.js.
+### Notes
+- **Test profiles** need `waGrandfathered='0'` in the init script. Otherwise main.js grandfathers any profile with
+  `waHowToPlaySeen` and opens every wizard.
+- **Ability lines:** mine are short enough for one row. Spells' `SPELLBOOK[id].line` is only the fallback (theirs ellipsize in the
+  panel).
+- **The Respawn label:** while you were hurt recently it reads "Respawn (counts as a death)" without the wizard's name (spells'
+  main.js, by design).
+- **Left over:**
+  - At about 1024 px some role and ability lines ellipsize (the panel has them whole).
+  - `mountPicker`'s fallback in main.js (only if select.js fails to load) still offers Randomize (spells').
+  - The wizard cards' portraits are the generic Mage tinted per element, as in game.
 
 ## Round 26: cosmetics, levels on the plates, the post-match XP panel, the Wardrobe, challenges, emotes and taunts; 26b: the wizard ladder
 Commits: `e9a5feb` (requests: interfaces), `bc094b2` + `b4618bf` (cosmetics.js + looks.js), `0e8f6f2` (progress.js, progress.css,

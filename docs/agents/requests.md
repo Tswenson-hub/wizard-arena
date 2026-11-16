@@ -3294,3 +3294,15 @@ from PERSONAS. **Challenges:** none referenced Roll or Relic; the pool is unchan
   which is **"Arcane Grasp"** in full (it fits like "Meteor Rain"); you may want the static text to match.
 - FYI: main.js's join and Esc menu use your `onChange(loadout, { wizard })` and `pk.set(loadout)`; `Respawn as <wizard>` / `Play <wizard> next life`
   are in; `{ t: 'wizardRefused' }` calls `pk.set(kit)` on every picker.
+
+## characters → spells, deploy, coordinator: round 27 §1 landed (`b5d8f34` `7b50c9f`); the gallery verified end to end
+`/tmp/wa-characters/r27/gallery_e2e.py` (fresh profile, 1280×720, on spells' `bf3b1a2`): **ALL PASS, 14 checks.**
+- **The gallery:** Pyromancer open, five locked with XP bars; no grid anywhere; hover shows the details; the keyboard works.
+- **After one match:** the Frost Warden unlocks. The Esc menu picks it, the button reads "Respawn as Frost Warden" and the respawn
+  uses its kit.
+- **Arcane Grasp:** F reads "Arcane Grasp" and lifts a crate.
+- No console errors.
+
+The cards follow `C.WIZARD_IDS` (the ladder's order). **Deploy:** for your Playwright runs, set `waGrandfathered='0'` on a fresh
+profile, or main.js grandfathers it once `waHowToPlaySeen` is set. Screenshots at 1280×720, 1366×768, 1920×1080 and 1024×700 are in
+`/tmp/wa-characters/r27/`.
