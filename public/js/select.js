@@ -4,7 +4,7 @@ import * as C from '../shared/constants.js';
 import { makeWizardBody, looksReady, lookOf, clipsFor } from './looks.js';
 import { spellPlay } from './spellanim.js';
 import { loadSaved, saveSaved, MAX_SAVED } from './loadout-store.js';
-import { getView, subscribe as onProgress, equip, unlockList, tauntsEnabled, setTauntsEnabled } from './progress.js';   // round 26: the Wardrobe and the tracker
+import { getView, subscribe as onProgress, equip, unlockList, tauntsEnabled, setTauntsEnabled, wizardAccess, grandfather } from './progress.js';   // round 26: the Wardrobe and the tracker
 import { LOOKS, SLOTS, SLOT_NAMES, DEFAULT_LOOK } from '../shared/cosmetics.js';
 
 const FPS = 30;
@@ -74,6 +74,7 @@ function builderHTML() {
         </div>`).join('')}
       </div>
       <div class="sb-wardrobe" role="region" aria-label="Wardrobe"></div>
+      <div class="sb-wizards" role="radiogroup" aria-label="Wizards"></div>
       <div class="sb-side">
         <div class="sb-preview" aria-hidden="true"><div class="sb-caption"></div></div>
         <div class="sb-summary">
@@ -248,9 +249,18 @@ function wardrobeHTML(v) {
     <p class="wd-note">Cosmetic only: every unlock changes how you look, never how you play. Everyone in the match sees them.${all.length ? '' : ' (Unlocks arrive with the next server update.)'}</p>`;
 }
 
+// Round 26b: a small preview of a wizard casting its primary on repeat (the XP panel's "New wizard unlocked!"). { destroy() }.
+export function mountWizardPreview(el, loadout) {
+  if (!el) return null;
+  const pv = makeBuilderPreview(el), lo = C.sanitizeLoadout(loadout) || { ...C.DEFAULT_LOADOUT };
+  pv.setLoadout(lo); pv.play(lo.primary, lo); pv.setVisible(true);
+  return { destroy: () => pv.destroy() };
+}
+
 // ---------------------------------------------------------------- the builder
 
 export function mountSpellBuilder(container, { loadout, voice, onChange, onVoice, footer } = {}) {
+  let paintWizards = null;
   let cur = C.sanitizeLoadout(loadout) || { ...C.DEFAULT_LOADOUT };
   let vox = C.sanitizeVoice(voice);
   const root = document.createElement('div');
@@ -275,7 +285,13 @@ export function mountSpellBuilder(container, { loadout, voice, onChange, onVoice
     }
     if (!focusCard || !root.contains(focusCard)) focusCard = $(`.sb-row[data-slot="${C.LOADOUT_SLOTS[0]}"] .sb-card.selected`);
     for (const card of $$('.sb-card')) card.tabIndex = card === focusCard ? 0 : -1;
-    for (const b of $$('[data-preset]')) b.classList.toggle('active', C.sameLoadout(C.PRESETS.find(p => p.id === b.dataset.preset).loadout, cur));
+    const acc = wizardAccess();
+    for (const b of $$('[data-preset]')) {
+      b.classList.toggle('active', C.sameLoadout(C.PRESETS.find(p => p.id === b.dataset.preset).loadout, cur));
+      const locked = !acc.unlocked.has(b.dataset.preset);   // round 26b: the ladder
+      b.disabled = locked; b.classList.toggle('sb-locked', locked);
+    }
+    paintWizards?.(acc);
     for (const b of $$('[data-voice]')) { const on = b.dataset.voice === vox; b.classList.toggle('active', on); b.setAttribute('aria-checked', on); }
     $$('[data-saved]').forEach((el, i) => {
       const s = saved[i], load = el.querySelector('.sb-load');
@@ -340,6 +356,7 @@ export function mountSpellBuilder(container, { loadout, voice, onChange, onVoice
     else if ('random' in b.dataset) setLoadout(C.randomLoadout());
     else if ('howto' in b.dataset) openHowToPlay();
     else if ('stats' in b.dataset) openStats();
+    else if (b.dataset.wizard) { if (!b.classList.contains('locked')) setLoadout(C.PRESETS.find(p => p.id === b.dataset.wizard)?.loadout); }
     else if ('wardrobe' in b.dataset || 'wdBack' in b.dataset) setTab(root.classList.contains('sb-wd') ? 'spells' : 'wardrobe');
     else if (b.dataset.wdSlot) { if (!b.classList.contains('locked')) equip(b.dataset.wdSlot, b.dataset.wdId || null); }
     else if (b.dataset.voice) { if (b.dataset.voice !== vox) { vox = b.dataset.voice; paint(); onVoice?.(vox); } }
@@ -449,8 +466,32 @@ export function mountSpellBuilder(container, { loadout, voice, onChange, onVoice
     el.innerHTML = progHTML(v);
     $('.sb-wd-lv').textContent = `Lv ${v.level}`;
   };
-  const unProgress = onProgress((v) => { paintWardrobe(v); paintProg(v); pv.setCosmetics(v.equipped); });
+  // round 26b: the wizard ladder. Until "Build your own" opens, the presets (a gallery in place of the spell grid; locked ones with
+  // their XP and a bar) and no grid, saved loadouts or Randomize; a loadout that isn't an open preset falls back to the Pyromancer.
+  paintWizards = (acc = wizardAccess()) => {
+    root.classList.toggle('sb-ladder', !acc.custom);
+    if (acc.custom) return;
+    const xp = getView().xp;
+    const card = (u) => {
+      const p = C.PRESETS.find(q => q.id === u.id), on = p && C.sameLoadout(p.loadout, cur);
+      const prev = acc.list[acc.list.indexOf(u) - 1]?.xp ?? 0, k = Math.max(0, Math.min(1, (xp - prev) / Math.max(1, u.xp - prev)));
+      const col = p ? hex(lookOf(p.loadout).color) : '#ffc857';
+      const spells = p ? C.LOADOUT_SLOTS.map(sl => C.SPELLBOOK[p.loadout[sl]]?.name).filter(Boolean).join(' · ') : 'Pick every spell yourself: 35 cards, six slots';
+      return `<button type="button" class="wz-card${u.open ? '' : ' locked'}${on ? ' on' : ''}${p ? '' : ' wz-custom'}" ${p ? `data-wizard="${p.id}"` : 'data-custom'} style="--el:${col}"${on ? ' aria-checked="true"' : ''}>
+        <b>${u.open ? '' : '🔒 '}${esc(u.name)}</b><span>${esc(spells)}</span>
+        ${u.open ? (on ? '<em>✓ Your wizard</em>' : '<em>Play this wizard</em>') : `<em>Unlocks at ${u.xp} XP</em><i class="wz-bar"><i style="width:${(k * 100).toFixed(0)}%"></i></i>`}</button>`;
+    };
+    const nx = acc.next;
+    $('.sb-wizards').innerHTML = `<div class="wz-head">${nx ? `<div>Next: <b>${esc(nx.name)}</b> in ${nx.toGo} XP</div>` : ''}<small>Play matches to earn XP; every wizard and then your own spell builder unlock as you go.</small></div>
+      <div class="wz-grid">${acc.list.map(card).join('')}</div>`;
+    if (!C.PRESETS.some(p => acc.unlocked.has(p.id) && C.sameLoadout(p.loadout, cur))) {
+      const first = C.PRESETS.find(p => acc.unlocked.has(p.id));
+      if (first) setLoadout(first.loadout);
+    }
+  };
+  const unProgress = onProgress((v) => { paintWardrobe(v); paintProg(v); pv.setCosmetics(v.equipped); paint(); });
   paintProg(getView());
+  paint();
 
   return {
     set(lo) { setLoadout(lo, { silent: true }); },
@@ -610,14 +651,20 @@ export function showControlsStrip({ loadout } = {}) {
 export const openFirstMatchTips = showControlsStrip;
 
 let hintEl = null;
-export function showChangeWizardHint() {
+export function showChangeWizardHint({ reason, unlocked } = {}) {
+  // round 26b: on the wizard ladder the hint waits for a second wizard (progress.js calls it with reason 'unlock' after the XP panel)
+  const acc = wizardAccess(), open = C.PRESETS.filter(p => acc.unlocked.has(p.id)).length;
+  if (!acc.all && open < 2 && reason !== 'unlock') return;
+  if (reason === 'unlock') hintShown = false;
   if (hintShown) return;
   hintShown = true;
   document.body.classList.add('wa-hinted');   // the death screen's line (index.html .ds-hint) until the menu has been opened
   const el = document.createElement('div');
   el.className = 'wa-esc-hint';
   el.setAttribute('role', 'status');
-  el.innerHTML = `<div class="eh-main">Press <kbd>Esc</kbd> to change your wizard and spells</div><div class="eh-sub">Six ready-made wizards, or build your own</div>`;
+  const got = (unlocked || []).map(u => u.name).filter(Boolean);
+  el.innerHTML = got.length && !acc.custom ? `<div class="eh-main">Press <kbd>Esc</kbd> to change your wizard</div><div class="eh-sub">${esc(got.join(' and '))} unlocked</div>`
+    : `<div class="eh-main">Press <kbd>Esc</kbd> to change your wizard and spells</div><div class="eh-sub">Six ready-made wizards, or build your own</div>`;
   document.body.appendChild(el);
   hintEl = el;
   requestAnimationFrame(() => el.classList.add('on'));

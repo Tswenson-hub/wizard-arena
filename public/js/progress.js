@@ -64,6 +64,7 @@ const emit = () => { for (const fn of subs) { try { fn(view); } catch (e) { cons
 export function setProgress(p) {
   if (!p || typeof p !== 'object') return;
   view = normalize({ ...p, fromServer: true });
+  if (p.grandfathered || p.wizards?.all || (Array.isArray(p.unlocks) && p.unlocks.includes(C.GRANDFATHERED || 'grandfathered'))) grandfather();   // round 26b: an account from before the ladder
   save(KEY_EQ, view.equipped);
   if (!view.account) {
     const old = load(KEY_GUEST) || {};
@@ -90,8 +91,56 @@ export function equip(slot, id) {
 // What the join carries: the look for everyone, a guest's whole progress (the server shows its level and merges it once on login).
 export function joinFields() {
   const v = getView(), g = load(KEY_GUEST);
-  return { equipped: v.equipped, ...(g && !v.account ? { progress: { ...g, equipped: v.equipped } } : {}) };
+  const gf = ladderAll ? { grandfathered: true } : {};   // (round 26b: the server keeps it with the progress; never taken away)
+  return { equipped: v.equipped, ...(!v.account && (g || ladderAll) ? { progress: { ...(g || {}), equipped: v.equipped, ...gf } } : {}) };
 }
+
+// ---------------------------------------------------------------- round 26b: the wizard ladder (Ty)
+// New players start with the Pyromancer; total XP unlocks the other presets and then "Build your own" (the full spell grid). The
+// thresholds are spells' C.WIZARD_UNLOCKS when it exists ([{ id, xp }] or { id: xp }; 'custom' is the builder), else the brief's.
+// Enforced here, client-side (the server stays lenient: no gameplay advantage). Anyone who played before this release keeps
+// everything: decided once, at the page's load, before this visit writes any sign of play, and remembered (`wa-ladder`).
+const LADDER_FALLBACK = [['cinder', 0], ['rime', 50], ['gale', 200], ['vesper', 350], ['embibe', 500], ['jeb', 650], ['custom', 650]];
+const KEY_LADDER = 'wa-ladder';
+export function wizardLadder() {
+  const W = C.WIZARD_UNLOCKS;
+  const list = Array.isArray(W) ? W.map(u => [u.id ?? u.preset, +u.xp || 0]) : W && typeof W === 'object' ? Object.entries(W).map(([k, v]) => [k, +(v?.xp ?? v) || 0]) : LADDER_FALLBACK;
+  if (W && Number.isFinite(C.BUILDER_UNLOCK_XP) && !list.some(([id]) => id === 'custom')) list.push(['custom', C.BUILDER_UNLOCK_XP]);   // (spells: the builder apart)
+  return list.filter(([id]) => id).sort((a, b) => a[1] - b[1] || (a[0] === 'custom') - (b[0] === 'custom')).map(([id, xp]) => ({ id, xp, name: id === 'custom' ? 'Build your own' : (C.PRESETS || []).find(p => p.id === id)?.name || id }));
+}
+function playedBefore() {
+  try {
+    const g = (k) => localStorage.getItem(k);
+    if (g('waPlayedOnce') || g('wizardLoadout')) return true;
+    if ((JSON.parse(g('wizardLoadouts') || 'null') || []).length) return true;
+    if ((JSON.parse(g('waProfile') || 'null')?.stats?.matches ?? 0) > 0) return true;
+  } catch { /* storage blocked: the ladder */ }
+  return false;
+}
+let ladderAll = (() => {
+  let v = null; try { v = localStorage.getItem(KEY_LADDER); } catch { /* blocked */ }
+  if (v !== 'all' && v !== 'ladder') { v = playedBefore() ? 'all' : 'ladder'; try { localStorage.setItem(KEY_LADDER, v); } catch { /* this visit only */ } }
+  return v === 'all';
+})();
+try { if (new URLSearchParams(location.search).has('ladder')) ladderAll = false; } catch { /* no URL */ }   // (tests: a fresh ladder)
+// Everything unlocked from now on (a grandfathered player found late: a CrazyGames profile with matches; the server saying so).
+export function grandfather() {
+  if (ladderAll) return;
+  ladderAll = true;
+  try { localStorage.setItem(KEY_LADDER, 'all'); } catch { /* this visit only */ }
+  emit();
+}
+// { all, unlocked: Set of preset ids (and 'custom'), custom, list (the ladder with `open`), next: { id, name, xp, toGo, from } | null }
+export function wizardAccess(xp = getView().xp) {
+  const list = wizardLadder().map(u => ({ ...u, open: ladderAll || xp >= u.xp }));
+  const unlocked = new Set(list.filter(u => u.open).map(u => u.id));
+  if (ladderAll) for (const p of C.PRESETS || []) unlocked.add(p.id);
+  const i = list.findIndex(u => !u.open), nx = i >= 0 ? list[i] : null;
+  return { all: ladderAll || !nx, unlocked, custom: unlocked.has('custom'), list,
+    next: nx && { id: nx.id, name: nx.name, xp: nx.xp, toGo: nx.xp - xp, from: i > 0 ? list[i - 1].xp : 0 } };
+}
+// The wizards (presets, and 'custom') that `before` → `after` total XP opened.
+export const wizardsOpened = (before, after) => ladderAll ? [] : wizardLadder().filter(u => u.xp > before && u.xp <= after);
 
 // The "Bot taunts" setting (the Esc menu's toggle, select.js): the bots' speech bubbles and their emotes. On by default.
 export function tauntsEnabled() { try { return localStorage.getItem(KEY_TAUNTS) !== '0'; } catch { return true; } }
@@ -214,7 +263,7 @@ export function mountProgress({ sfx, net: n, players, myId, me, taunts } = {}) {
   addEventListener('keydown', onKey);
 
   // ---- the post-match XP panel
-  let xpMsg = null, panel = null, panelT = 0, wait = 0, live = false;
+  let xpMsg = null, panel = null, panelT = 0, wait = 0, live = false, wizardHint = null;
   const ord = (n) => PLACE[n] || `${n}th`;
   function itemText(it) {
     if (it.k === 'kills') return `${it.n ?? ''} kill${it.n === 1 ? '' : 's'}`;
@@ -243,6 +292,7 @@ export function mountProgress({ sfx, net: n, players, myId, me, taunts } = {}) {
       <div class="xp-bar"><i></i><em></em></div>
       <div class="xp-items">${items.map((it, i) => `<div class="xp-item" data-i="${i}"><span>${esc(itemText(it))}</span><b>+${it.xp}</b></div>`).join('')}</div>
       <div class="xp-up" hidden></div>
+      <div class="xp-wiz" hidden></div>
       <div class="xp-next">${teaser(after.next)}</div>
       ${after.challenges.list.length ? `<div class="xp-chs"><div class="xp-chs-h">Daily challenges</div>${challengeRows(after.challenges.list)}</div>` : ''}`;
     document.body.appendChild(el);
@@ -251,6 +301,8 @@ export function mountProgress({ sfx, net: n, players, myId, me, taunts } = {}) {
     const gained = msg.gained ?? items.reduce((s, it) => s + (it.xp || 0), 0);
     panel = { el, msg, items, gained, after, from: before.xp ?? Math.max(0, after.xp - gained), shown: -1, level: before.level ?? levelInfo(before.xp ?? 0).level,
       ups: [...(msg.levelUps || [])], unlocked: [...(msg.unlocked || [])], t: 0 };
+    panel.wizards = wizardsOpened(panel.from, panel.from + gained);
+    panel.after = after;
     panelT = 0;
     paintBar(panel.from);
   }
@@ -289,12 +341,31 @@ export function mountProgress({ sfx, net: n, players, myId, me, taunts } = {}) {
     const xp = p.from + p.gained * ease;
     paintBar(xp);
     p.el.querySelector('.xp-gain b').textContent = Math.round(p.gained * ease);
-    if (fillK >= 1 && !p.done) { p.done = true; p.el.classList.add('done'); }
+    if (fillK >= 1 && !p.done) { p.done = true; p.el.classList.add('done'); newWizards(); }
+  }
+  // Round 26b: "New wizard unlocked: Frost Warden!" (the fanfare, the wizard casting in a small preview) and the next target
+  function newWizards() {
+    const p = panel, got = p.wizards || [];
+    const acc = wizardAccess(p.from + p.gained), box = p.el.querySelector('.xp-wiz');
+    if (!got.length && (acc.all || !acc.next)) return;
+    const nextLine = acc.next ? `<div class="xw-next"><b>${esc(acc.next.name)}</b>: ${acc.next.toGo} XP to go</div>` : '';
+    if (!got.length) { box.hidden = false; box.innerHTML = nextLine; return; }
+    const w = got.find(u => u.id !== 'custom') || got[0], preset = (C.PRESETS || []).find(q => q.id === w.id);
+    box.hidden = false;
+    box.innerHTML = `<div class="xw-big">New wizard unlocked!</div><div class="xw-name">${esc(got.map(u => u.name).join(' + '))}</div>
+      ${preset ? '<div class="xw-pv"></div>' : ''}<div class="xw-how">Press <kbd>Esc</kbd> to switch</div>${nextLine}`;
+    box.classList.remove('pop'); void box.offsetWidth; box.classList.add('pop');
+    p.el.classList.add('wizard');
+    bell([392, 523, 659, 784, 1047, 1319, 1568], { vol: 0.24, gap: 0.085, len: 1.1 });
+    if (preset) import('./select.js').then(S => { if (panel === p) p.preview = S.mountWizardPreview?.(box.querySelector('.xw-pv'), preset.loadout); }).catch(() => {});
+    wizardHint = got;
   }
   function closePanel(now) {
     const p = panel;
     if (!p) return;
     panel = null;
+    try { p.preview?.destroy(); } catch { /* gone */ }
+    if (wizardHint) { const got = wizardHint; wizardHint = null; import('./select.js').then(S => S.showChangeWizardHint?.({ reason: 'unlock', unlocked: got })).catch(() => {}); }
     if (now) { p.el.remove(); return; }
     p.el.classList.remove('on'); setTimeout(() => p.el.remove(), 400);
   }

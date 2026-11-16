@@ -50,7 +50,7 @@ body.recap-on .xp-panel { left: auto; right: 18px; top: 62px; }
 @media (max-height: 560px) { .xp-chs { display: none; } }
 
 /* ---- toasts: top left, under the status line and the sound chip */
-.wa-toasts { position: fixed; left: 20px; top: 84px; z-index: 40; display: grid; gap: 6px; pointer-events: none; }
+.wa-toasts { position: fixed; left: 20px; top: 128px; z-index: 40; display: grid; gap: 6px; pointer-events: none; }
 .wa-toast { min-width: 200px; max-width: 300px; padding: 8px 12px; border-radius: 10px; background: rgba(16, 12, 26, 0.9);
   border: 1px solid rgba(156, 255, 112, 0.55); color: #f4ecd8; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
   opacity: 0; transform: translateX(-14px); transition: opacity .3s, transform .3s; }
@@ -63,3 +63,16 @@ body.recap-on .wa-toasts { display: none; }
 /* ---- the scoreboard's level tag (main.js puts Progress.levelTag(w) before the name) */
 #scoreboard .lvl { display: inline-block; min-width: 18px; margin-right: 6px; padding: 0 4px; border-radius: 4px; font-size: 11px; font-weight: 800;
   text-align: center; background: rgba(255, 210, 92, 0.18); color: #ffd25a; vertical-align: 1px; }
+
+/* ---- round 26b: "New wizard unlocked!" in the XP panel (fanfare, the wizard casting) and the next target */
+.xp-wiz { margin-top: 8px; padding: 8px 10px; border-radius: 8px; text-align: center; background: rgba(127, 216, 255, 0.08); border: 1px solid rgba(127, 216, 255, 0.35); }
+.xp-panel.wizard .xp-wiz { background: radial-gradient(ellipse at center, rgba(156, 255, 112, 0.22), rgba(127, 216, 255, 0.06)); border-color: rgba(156, 255, 112, 0.6); }
+.xp-wiz.pop { animation: xpPop .7s cubic-bezier(.2, 1.6, .4, 1); }
+.xw-big { font-size: 18px; font-weight: 800; letter-spacing: .5px; color: #c8ffb0; text-shadow: 0 0 12px rgba(120, 255, 90, 0.7); }
+.xw-name { font-size: 20px; font-weight: 800; color: #fff; }
+.xw-pv { position: relative; height: 150px; margin: 4px auto 0; width: 150px; }
+.xw-pv canvas { width: 100% !important; height: 100% !important; }
+.xw-how { font-size: 12px; color: rgba(244, 236, 216, 0.75); }
+.xw-how kbd { padding: 0 5px; border-radius: 4px; border: 1px solid rgba(255, 210, 92, 0.6); color: #ffd25a; font: inherit; font-weight: 700; }
+.xw-next { margin-top: 4px; font-size: 12.5px; color: rgba(244, 236, 216, 0.8); }
+.xw-next b { color: #7fd8ff; }

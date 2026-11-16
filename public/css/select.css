@@ -492,3 +492,27 @@ body.wa-try #clickToPlay .pause-top #resumeBtn { background: transparent; color:
 .pg-ch.done span { color: #b8ff98; }
 .pg-ch.done i { background: #9cff70; }
 @media (max-width: 900px) { .wd-row { grid-template-columns: 1fr; gap: 4px; } }
+
+/* ---- round 26b: the wizard ladder. Until "Build your own" unlocks: the presets gallery in place of the grid; no saved loadouts or Randomize */
+.sb-wizards { display: none; min-height: 0; overflow: auto; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,0.03); border: 1px solid var(--line); }
+.spell-builder.sb-ladder .sb-rows, .spell-builder.sb-ladder .sb-saved, .spell-builder.sb-ladder .sb-random { display: none; }
+.spell-builder.sb-ladder:not(.sb-wd) .sb-wizards { display: flex; flex-direction: column; gap: 10px; }
+.sb-chip.sb-locked { opacity: 0.5; border-style: dashed; }
+.sb-chip.sb-locked::before { content: '🔒 '; font-size: 10px; }
+.wz-head { font-size: 13px; color: var(--dim); display: flex; flex-direction: column; gap: 2px; }
+.wz-head b { color: var(--accent); }
+.wz-head small { font-size: 11.5px; }
+.wz-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+.wz-card { font: inherit; text-align: left; color: var(--ink); cursor: pointer; display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; min-height: 92px;
+  border-radius: 11px; border: 1px solid rgba(255,255,255,0.12); border-top: 3px solid var(--el);
+  background: linear-gradient(165deg, color-mix(in srgb, var(--el) 18%, rgba(20,16,24,0.6)), rgba(255,255,255,0.02) 75%); transition: border-color .12s, transform .12s; }
+.wz-card b { font-size: 15px; }
+.wz-card span { font-size: 11.5px; color: var(--dim); line-height: 1.35; }
+.wz-card em { margin-top: auto; font-style: normal; font-size: 12px; font-weight: 700; color: var(--el); }
+.wz-card:hover:not(.locked) { transform: translateY(-1px); border-color: var(--el); }
+.wz-card.on { border-color: var(--el); box-shadow: 0 0 14px color-mix(in srgb, var(--el) 40%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--el) 55%, transparent); }
+.wz-card.locked { cursor: default; filter: grayscale(0.8); opacity: 0.62; border-style: dashed; border-top-style: solid; }
+.wz-card.locked em { color: var(--ink); }
+.wz-custom { --el: #ffc857; }
+.wz-bar { display: block; height: 5px; border-radius: 3px; background: rgba(255,255,255,0.1); overflow: hidden; }
+.wz-bar i { display: block; height: 100%; background: linear-gradient(90deg, #ffb13c, #ffd25a); }
