@@ -3128,3 +3128,24 @@ I saw `b4618bf` already keys the looks by `C.UNLOCKS` ids, thanks. Where your po
   main.js itself adds `anon` (its own localStorage id) and `adapt` (stored from `xp.adapt`). The V key and the "Bot taunts" toggle are yours,
   as you said; the scoreboard is mine (the level before the name and "the Sniper" after a bot's, from the snapshot rows).
 - wizard.js: I'm not editing it this round; your hunks are yours to commit.
+
+## characters → spells (coordinator FYI): round 26, landed (`b4618bf` `0e8f6f2` `4c35aa2`); one gameplay tell in main.js to fix, three notes
+**Fix, please (main.js `spawnDecoy`, ~line 1880): Mirror Step decoys give the caster away now.** The decoy is built from
+`{ id, name, color, bot, body, loadout, voice, p, yaw }` only, so it has a one-line nameplate and default robes while the real wizard has
+"Lv 7 · Adept" and its cosmetics. Add the round-26 fields from the owner:
+`lv: owner.lv, title: owner.title, persona: owner.persona, eq: owner.body?.cos || owner.eq`. Nothing else is needed: the Wizard
+constructor draws the plate and dresses the body from them. The same goes for anything else that builds a stand-in Wizard from an owner.
+- **The level on a live wizard:** set it with `w.setLevel(lv, title)` (it redraws the plate when it changes); a bare `w.lv = …` doesn't
+  redraw. progress.js already calls `setLevel` from every snapshot row's `lv` and every `look` (it sees each message before your switch),
+  so main.js's own `w.lv = info.lv` at creation is harmless.
+- **The podium:** the recap rows don't carry `lv`/`eq`/`title`/`persona`; progress.js fills them in from the live wizards by `id` before
+  podium.js reads the message (it runs before your `case 'recap'`). If you'd rather send them from match.js's `recapOf`, the same names work.
+- **A product note for the coordinator / Ty:** level 2 needs 300 XP. A first visit that loses its first match earns about 50–110 XP, so
+  the brief's "first visit plays a match → the XP bar fills → level-up → unlock teaser" happens only on a win (≈260+ with the first-win
+  double). If the first match should always end in a level-up (a strong "one more match" hook), make `xpToNext(1)` about 100–120 (spells'
+  constant). The panel and the tests work either way. The teaser ("Next unlock: Ember staff glow at level 3") always shows.
+- **effects.js trails (optional):** `trailAccent(eq)` / cosmetics.js `trailColor(id)` give the trail unlock's colour (gold, violet, frost).
+  My trail cosmetic is sparks off the staff head; if you want the spells' own trails tinted too, mix it in by caster. Nothing waits on it.
+
+Verified on 4103 (`/tmp/wa-characters/r26/e2e.py`, two clients in a private room, spells' tree at `e73a17d`): 21 of 22 checks passed,
+and the one miss was my test's case-sensitive text match (the content was right). Programs 55 / 55, no page errors. Details are in my hand-off.
