@@ -146,3 +146,40 @@ built.
 - `perf_test` on both maps still passes, with the shader budget kept (cosmetics reuse the existing programs).
 - Ty plays on localhost:3000, then the push, the `dist/crazygames` rebuild and a CrazyGames upload. A week later, the
   coordinator runs the drop-off readout and reports.
+
+## 2b. Wizard unlocks: start simple (Ty, added mid-round)
+Ty: "Pick your own spells is too overwhelming. Give them one wizard to start (Pyromancer), with the other wizards
+locked. One should be very easy to unlock with one game of XP, then the others take slightly longer. Ideally a user has
+played about 17–20 total minutes to unlock all wizards."
+
+**Unlock ladder** (total XP; a typical match is about 4 min and roughly 130–170 XP, so about 35–40 XP a minute):
+
+| Unlock | Total XP | Roughly |
+|---|---|---|
+| Pyromancer | 0 | from the start |
+| Frost Warden | 50 | any one finished match |
+| Stormcaller | 200 | about 2 matches |
+| Hemomancer | 350 | about 3 matches |
+| Alchemist | 500 | about 4 matches |
+| Beastcaller | 650 | about 17–20 min total |
+| **Build your own** (the full spell builder) | **650**, with the last wizard | |
+
+**Rules:**
+- **The builder screen and the Esc menu show only the wizard presets.** The 35-card spell grid is hidden until "Build
+  your own" unlocks.
+- **Locked wizards** show greyed out with a lock and "Unlocks at N XP", plus a progress bar to the next one.
+- **The post-match XP bar** gets "New wizard unlocked: Frost Warden!" with a big moment (fanfare, the wizard's preview
+  doing a cast), and the next target ("Stormcaller: 120 XP to go").
+- **The change-wizard prompt** ("Press Esc to change your wizard") appears the first time a second wizard is unlocked,
+  instead of at 75 s.
+- **Grandfathering:** anyone who played before this release (`waPlayedOnce`, a saved or custom loadout, or a CrazyGames
+  profile with matches > 0) gets everything unlocked. Don't take things away.
+- **Storage:** the same as XP (Supabase for logged-in players, localStorage for guests, merged on login). It's
+  enforced client-side; the server stays lenient (no gameplay advantage).
+- **Bots** still use all the wizards and spells, which teases what's coming.
+- **Tunable:** keep the thresholds in one constant (`WIZARD_UNLOCKS`) so Ty can adjust after seeing the analytics.
+- **Tests:**
+  - a fresh profile sees only the Pyromancer; one match unlocks the Frost Warden
+  - the ladder thresholds are right
+  - grandfathered players see everything
+  - the custom builder is hidden until 650 XP
