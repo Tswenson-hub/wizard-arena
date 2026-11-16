@@ -1,5 +1,99 @@
 # Spells hand-off
 
+## Round 26: playtime (drop-off event hooks, XP / levels / daily challenges, adaptive bots with personalities, emotes and taunts) and 26b (the wizard ladder)
+Commits: `35a258c` (constants.js), `0f35109` `81a07b8` `d633e8d` (bots.js), `992850a` (room.js, match.js, progress.js), `268c631` `052a562` (server.js),
+`a69d147` `029d80f` `a84d780` (main.js, net.js, index.html, style.css), `c87d299` (26b ladder), `e73a17d` `dfa1505` (tools/test/playtime-unit.mjs),
+`5fe33b4` (tools/test/adaptsim.mjs); requests.md posts `ed1915d` `615629c` `a84d780`.
+
+**Generations.** `PROTO = 26` (net.js, server.js), but rooms still split at **24** (`CURRENT_FROM`): 24 and 26 clients share 'current' rooms.
+Every new message (`xp`, `challenge`, `progress`, `emote`, `taunt`, `look`) goes only to players whose join said `proto >= 26` (`broadcast26`);
+new player fields (`lv` in every row, `eq` / `title` / `persona` in welcome and joined) are extra keys old clients ignore. The playtime unit
+checks join legacy (no proto), 22, 23 and 24 clients and see nothing new arrive, and a match still ends normally for each.
+
+**§1 Drop-off events (server.js, room.js → environment's Saves):** `Saves.startSession({ anonId, gen, platform, first, cg })` once per socket
+at the join (it logs `session_start`), `setSessionUser` after a verified auth, `logEvent(session, event, details, map)` for `join { room }`,
+`first_kill { s }`, `first_death { s }` (since joining), `match_end { place, kills, deaths, s, humans, bots }`, `rematch_stay`, `menu_open`
+(at most one per 10 s), `loadout_change`, `idle_kick { s }`, and `endSession(session, { state: 'menu'|'live'|'podium'|'lobby', kills, deaths,
+streak /* deaths since their last kill */ })` on close. The client sends `anon` (a random localStorage id, `waAnon`). Bots, proxies and
+add-bot sockets have no session. Everything is a `typeof` guarded no-op without environment's functions.
+
+**§2 XP, levels, challenges (constants.js, server/progress.js, room.js):** `XP` table (finish 50, kill 10, podium 30/20/10, win 50, the day's first
+win ×2 as its own line); `xpToNext(L) = 300 + 25(L−1)`, `xpForLevel`, `levelForXp`, `levelInfo`; titles (Apprentice 1, Adept 5, Battlemage 10,
+Archmage 15, Grand Archmage 25); `UNLOCKS` (one cosmetic a level, 2-16; characters draw them); `DAILY_POOL` (12) and `dailyChallenges(day)` (3 a
+UTC day, seeded, never two map-bound). Counters move in live matches only: kills, primary kills, void knockouts, runes, ultimates fired, potions,
+assists, damage (match.js `onStat`), and matches / podiums / wins / Sky wins at the end. A challenge's XP lands when it completes (a `challenge`
+toast) and is listed in that match's `xp`. Guests: the join's `progress` seeds it (sanitized; cosmetic, so trusted), and the client stores what
+`xp.progress` says. Accounts: `loadProgress` once both the auth and the join are in, `mergeGuestProgress` with the join's guest progress (once per
+account, environment's rule), `writeProgress` on a completion and at each match's end, `flushProgress` on close. Wardrobe: `{ t: 'equip' }`
+(or characters' `cosmetics`), sanitized against the level, `look` to everyone. `progress.js`'s `clock.day` can be pinned for tests.
+
+**§2b Wizard ladder:** `WIZARD_UNLOCKS` (cinder 0, rime 50, gale 200, vesper 350, embibe 500, jeb 650) and `BUILDER_UNLOCK_XP = 650`, the only place
+the numbers live. `wizardUnlocks(xp, gf)` → `{ unlocked, builder, all, next }` rides in every progress; `xp` adds `before.wizards` and `wizardsUnlocked`.
+One finished match (≥ 50 XP) always unlocks the Frost Warden. Grandfathering: main.js decides `waGrandfathered` once at this version's first
+load (waPlayedOnce, saved loadouts, the how-to flag, a cached profile with matches) and on a CrazyGames profile with matches; the join's progress
+carries `grandfathered: true`; the server keeps it as the `'grandfathered'` marker in `unlocks` (so storage and merges carry it) and grandfathers an
+account at its **first** round-26 login (a fresh progress row) when its stats already have matches, never later. The change-wizard hint comes with
+the second wizard (grandfathered players keep the 75 s one). The server stays lenient about loadouts. (Characters keep their own `wa-ladder` flag,
+decided the same way; the two agree.)
+
+**§3 Bots (bots.js, room.js, constants.js):**
+- **Adaptive skill:** a continuous 0 (Easy) – 0.5 (Normal) – 1 (Hard) scale; every number in the difficulty tables is interpolated, a yes/no
+  is the nearer table's. "Auto" is the new default bot pick (index.html; an old saved pick without `v: 26` moves to Auto once). A human's rating
+  (`ADAPT`: target 0.5 on a score of 65% podium rate + 35% K/D over the last 3 matches, ±0.12 steps) is client-held (`waAdapt`, sent in the join,
+  returned in `xp.adapt`); a first visit starts at 0. A room on Auto plays the humans' mean rating, applied **at the countdown only** (no
+  rubber-banding). `info().skill` shows it. A 26 first visit gets Auto; older clients keep the round-21 Easy rule.
+- **Personalities** (`PERSONAS`, one per bot, not repeated in a room while one is left), each with a matching loadout: Brawler (Gale Shear,
+  Cyclone, close range), Sniper (Spark, Meteor, ×1.45 range, goes up to a perch: a stair top or deck end on its own side of the gaps, 1.5 m above
+  the target, in sight, for up to 8 s), Trickster (Hex, Mirror Step, Trapped Relic, +dodge), Healer (Blood Siphon, Sanguine Aegis, Night Cage,
+  potions at 70 HP), Showboat (Fireball, rams, runes from 22 m, takes jump pads for fun, taunts 2.5× as often). "Grimshank the Sniper" on the
+  scoreboard (`persona`), a made-up level 2-30, a staff glow or trail sometimes.
+- **Human-like:** reactions vary per threat (now and then a slow one) and per bot; a grudge (35%: whoever just hurt it, 6-12 s); retreat to cover
+  and potions by personality; a target already chased by other bots costs more (a human more so); no new cheats.
+- **Emotes and taunts:** `{ t: 'emote', e }` (cheer, wave, taunt; one per 2.5 s, alive; V on the client is characters'); bots emote sometimes after
+  a kill or a multikill, a winner cheers, one waves at a countdown sometimes; `{ t: 'taunt', id, text }` from `C.TAUNTS` (kill, multi, death, win),
+  18% base chance × personality, a 25 s per-bot and an 8 s room cooldown. The toggle is characters' (client-side).
+- WA_DEBUG `addBot { proxy: true }`: an Easy brain the progression and the room skill treat as a human (no personality), for the sim; a
+  non-joined socket's `matchDebug` reaches its lab room (MATCH_DEBUG only).
+
+**Verified** (logs and shots in `/tmp/wa-spells/r26/`):
+- `node tools/test/playtime-unit.mjs`: **ALL PASS, 72 checks** (run 3 times green after the timing fix). The XP maths and level curve
+  (exact inverse to level 200), the rotation over 400 days, completion once, the first win once a day, a new day, guest sanitizing, the
+  adaptive rating's direction and bounds, the skill scale's endpoints and monotonicity, the ladder (a fresh profile has the Pyromancer only, one
+  match unlocks the Frost Warden, each threshold exact, the builder at 650, grandfathering survives storage, no unlock moments for them), and an
+  in-process room with stubbed Saves hooks (every event above with its details, XP to the 26 client only, the Auto skill moving between matches,
+  legacy / 22 / 23 / 24 clients unaffected).
+- `MATCH_DEBUG=1 node tools/test/modematch-unit.mjs`: ALL PASS, 290 checks. `node tools/test/notify-unit.mjs`: ALL PASS.
+- Playwright (`client.py`, `client_new.py`): ALL PASS. Auto is the default; the join carries proto 26, anon and adapt; the welcome has progress;
+  the scoreboard shows levels and "the Trickster" (`scoreboard.png`); a skipped match gives `xp` and stores the rating; an emote comes back;
+  a pre-existing browser is grandfathered; a brand-new one has the Pyromancer only, and one match says "New wizard unlocked: Frost Warden" with
+  "Stormcaller: 120 XP to go" (`first-unlock.png`: characters' XP panel over the podium). No console errors.
+- **The adaptive sim** (`node tools/test/adaptsim.mjs <port> 12 auto|normal 7 150`: an Easy Pyromancer proxy, matches to 7 kills or 150 s):
+  | Bots | Podium from match 4 on | Last place | Room skill |
+  |---|---|---|---|
+  | Auto | **78%** (7 of 9) | 22% | rose 0 → 0.51 by match 8, then settled at 0.3-0.45 |
+  | Normal (fixed) | 67% | 33% | n/a |
+
+  **The brief's 40-60% podium target is not met.** In a 4-player FFA the podium is the top 3, so even fixed Normal bots let an Easy player onto it
+  2 times in 3, partly because the bots no longer gang up on one wizard. The controller does its job (the skill climbs while the proxy wins and
+  comes down when it finishes last), but it chases a blended score (`ADAPT.kdWeight`) and stops around Normal−. If Ty wants the literal target,
+  the levers are `ADAPT.target` / `kdWeight` / `step` in constants.js. A gentler new-player goal may be better for retention anyway. Note: the
+  first sim run gave the proxy a persona kit by mistake (Healer vs Trickster); the numbers above are the corrected rerun.
+- **Sky Ruins** (`/tmp/wa-spells/r24/botmatch-sky.mjs`, 150 s, 4 bots with personalities): before the Skyward fix, 6 runs had 4 non-knockback
+  walk-offs (two by a Sniper right after a Skyward, one after a blink, one after a grab) plus 3 knocked. The edge probe now covers a Skyward float,
+  and the perch and pad-fun goals stay on the bot's own side of the gaps. After that, 4 runs had **0 walk-offs** (1 knocked).
+- `deploy/perf_test.py`, 30 s: **Sky Ruins PASS** on all 10 targets (60 fps, 77 draw calls, 96k triangles, 57 programs, none compiled in the match).
+  **The courtyard misses draw calls on some runs:** 134 / 97 / 134 now vs 113 / 109 at `90b7275` (the commit before round 26). Triangles were
+  already over the 120k target before round 26 (128k), and are 115-138k now. Programs are 57, none compiled in the match. The extra calls are most
+  likely the cosmetics on the bots (I give bots a random staff glow or trail; dropping `botEq` in room.js addBot would remove those). That is for
+  characters and deploy to weigh.
+
+**Known issues / for others:**
+- **Environment:** `sanitizeSave` should accept `bots: 'auto'` (asked in requests.md). Please keep the `'grandfathered'` unlock id through merges.
+- **Characters:** the cosmetic ids and the titles' levels are mine to change on request. A level 2 needs 300 XP: their note suggests 100-120 for
+  a level-up after the first match. That's a one-line change to `xpToNext` if the coordinator agrees (the ladder's first unlock already lands in match 1).
+- The `dodge` taunt pool is unused (no clean "a human dodged a bot's shot" signal yet).
+- A logged-in player whose progress loads while a match is ending keeps the guest's award for that one match (a rare race).
+
 ## Round 24: the drawbridge (a moving surface on the server clock), bot routes on the rebuilt Sky Ruins, three client generations
 Commits: `f6f05bf` (PROTO 24, the three generations), `2c7cea0` (constants.js, room.js: the moving surface), `7f0c1b4` + `2eb6321` (bots.js), `564775f` (main.js, effects.js, audio.js), `15378fd` (unit checks), plus the requests.md posts `878346d` `7735b02` `d4dd6e0`.
 
