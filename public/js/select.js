@@ -4,6 +4,8 @@ import * as C from '../shared/constants.js';
 import { makeWizardBody, looksReady, lookOf, clipsFor } from './looks.js';
 import { spellPlay } from './spellanim.js';
 import { loadSaved, saveSaved, MAX_SAVED } from './loadout-store.js';
+import { getView, subscribe as onProgress, equip, unlockList, tauntsEnabled, setTauntsEnabled } from './progress.js';   // round 26: the Wardrobe and the tracker
+import { LOOKS, SLOTS, SLOT_NAMES, DEFAULT_LOOK } from '../shared/cosmetics.js';
 
 const FPS = 30;
 const hex = (c) => '#' + c.toString(16).padStart(6, '0');
@@ -59,7 +61,8 @@ function builderHTML() {
         `<button type="button" class="sb-chip" data-preset="${p.id}" style="--el:${hex(lookOf(p.loadout).color)}" title="${esc(p.name)}: ${esc(C.LOADOUT_SLOTS.map(s => C.SPELLBOOK[p.loadout[s]]?.name).join(', '))}">${esc(p.name)}</button>`).join('')}
         <button type="button" class="sb-chip sb-random" data-random title="A random spell in every slot">🎲 Randomize</button>
         <button type="button" class="sb-chip sb-howto" data-howto title="Controls and the goal">How to play</button>
-        <button type="button" class="sb-chip sb-stats-btn" data-stats title="Your stats and the leaderboard">📊 Stats</button></div>
+        <button type="button" class="sb-chip sb-stats-btn" data-stats title="Your stats and the leaderboard">📊 Stats</button>
+        <button type="button" class="sb-chip sb-wd-btn" data-wardrobe title="Robes, hats, staff glows and spell trails you've unlocked">🎩 Wardrobe <i class="sb-wd-lv"></i></button></div>
       <div class="sb-group sb-saved" role="group" aria-label="Saved loadouts"><span class="sb-label">Saved</span>${Array.from({ length: MAX_SAVED }, (_, i) =>
         `<span class="sb-slotbtn" data-saved="${i}"><button type="button" class="sb-chip sb-load"></button><button type="button" class="sb-save" title="Save the current loadout here">Save</button></span>`).join('')}</div>
     </div>
@@ -70,6 +73,7 @@ function builderHTML() {
           <div class="sb-cards" role="radiogroup" aria-label="${esc(C.SLOT_INFO[slot].label)}" style="--n:${C.SPELL_POOL[slot].length}">${C.SPELL_POOL[slot].map(cardHTMLFor).join('')}</div>
         </div>`).join('')}
       </div>
+      <div class="sb-wardrobe" role="region" aria-label="Wardrobe"></div>
       <div class="sb-side">
         <div class="sb-preview" aria-hidden="true"><div class="sb-caption"></div></div>
         <div class="sb-summary">
@@ -77,6 +81,7 @@ function builderHTML() {
           <div class="sb-mix"></div>
           <div class="sb-combos"></div>
         </div>
+        <div class="sb-prog" hidden></div>
       </div>
     </div>
     <div class="sb-foot">
@@ -132,7 +137,7 @@ function makeBuilderPreview(el) {
 
   pv.setLoadout = (lo) => {
     if (!ready) { pv.onReady = () => pv.setLoadout(lo); return; }
-    const body = makeWizardBody(lo, { aura: 'full' });   // (the preview shows the whole look on every graphics tier)
+    const body = makeWizardBody(lo, { aura: 'full', cos: getView().equipped });   // (the preview shows the whole look on every graphics tier)
     if (pv.body) { scene.remove(pv.body.model); pv.mixer.stopAllAction(); }
     pv.body = body;
     body.model.rotation.y = pv.yaw;
@@ -145,6 +150,8 @@ function makeBuilderPreview(el) {
     el.style.setProperty('--el', hex(body.look.color));
     if (pv.demo) pv.play(pv.demo.id, pv.demo.lo);
   };
+  // Round 26: the Wardrobe dresses the preview in place.
+  pv.setCosmetics = (eq) => pv.body?.setCosmetics?.(eq);
   // Play spell `id`'s cast (from the clip set of loadout `lo`, which has it equipped), on repeat while hovered.
   pv.play = (id, lo) => {
     pv.demo = id ? { id, lo, step: 0, next: 0 } : null;
@@ -205,6 +212,40 @@ function makeBuilderPreview(el) {
   pv.setVisible = (v) => { pv.visible = v; if (v && !pv.raf) { pv.last = performance.now(); pv.raf = requestAnimationFrame(frame); } };
   pv.destroy = () => { pv.gone = true; pv.mixer?.stopAllAction(); renderer.dispose(); renderer.forceContextLoss(); };
   return pv;
+}
+
+// ---------------------------------------------------------------- round 26: the Wardrobe and the progress block
+
+const hexCss = (n) => '#' + (n >>> 0).toString(16).padStart(6, '0');
+// The level, its title and the bar, as the Wardrobe's header and the side block show it.
+function levelHTML(v) {
+  const pct = Math.min(100, (v.into || 0) / Math.max(1, v.need || 1) * 100);
+  return `<div class="pg-lv"><span>Level <b>${v.level}</b></span><em>${esc(v.title)}</em><small>${Math.floor(v.into || 0)} / ${v.need} XP</small></div>
+    <div class="pg-bar"><i style="width:${pct}%"></i></div>`;
+}
+function progHTML(v) {
+  const list = v.challenges?.list || [];
+  return `${levelHTML(v)}${list.length ? `<div class="pg-chs"><div class="pg-h">Daily challenges</div>${list.map(c => `<div class="pg-ch${c.done ? ' done' : ''}">
+      <span>${c.done ? '✓ ' : ''}${esc(c.text || c.id)}</span><b>${Math.min(c.n, c.goal)}/${c.goal}</b><i style="--k:${Math.min(1, c.n / Math.max(1, c.goal))}"></i></div>`).join('')}</div>` : ''}`;
+}
+// Four rows (robes, hat, staff glow, spell trail): the default and every unlock of that slot; a locked one shows its level.
+function wardrobeHTML(v) {
+  const all = unlockList();
+  const next = all.find(u => u.level > v.level);
+  const chip = (slot, u) => {
+    const id = u?.id || '', on = (v.equipped[slot] || '') === id, locked = u && !v.unlocks.includes(u.id);
+    const look = u ? LOOKS[u.id] : null, name = u ? u.name.replace(/ (robes|staff glow|spell trails)$/i, '') : DEFAULT_LOOK[slot].name;
+    const sw = look?.swatch != null ? hexCss(look.swatch) : 'transparent';
+    return `<button type="button" class="wd-item${on ? ' on' : ''}${locked ? ' locked' : ''}" data-wd-slot="${slot}" data-wd-id="${id}"
+      style="--sw:${sw}" title="${esc(u ? `${u.name}${locked ? `: unlocks at level ${u.level}` : ''}` : DEFAULT_LOOK[slot].blurb)}"${on ? ' aria-pressed="true"' : ''}>
+      <i class="wd-sw${u ? '' : ' def'}"></i><span>${esc(name)}</span>${locked ? `<em>🔒 Lv ${u.level}</em>` : on ? '<em>✓</em>' : ''}</button>`;
+  };
+  return `<div class="wd-head">${levelHTML(v)}
+      <div class="wd-next">${next ? `Next unlock: <b>${esc(next.name)}</b> at level ${next.level}` : all.length ? 'Every unlock is yours' : ''}</div>
+      <button type="button" class="sb-chip wd-back" data-wd-back>‹ Spells</button></div>
+    <div class="wd-rows">${SLOTS.map(slot => `<div class="wd-row"><div class="wd-slot">${esc(SLOT_NAMES[slot])}</div>
+      <div class="wd-items">${chip(slot, null)}${all.filter(u => u.slot === slot).map(u => chip(slot, u)).join('')}</div></div>`).join('')}</div>
+    <p class="wd-note">Cosmetic only: every unlock changes how you look, never how you play. Everyone in the match sees them.${all.length ? '' : ' (Unlocks arrive with the next server update.)'}</p>`;
 }
 
 // ---------------------------------------------------------------- the builder
@@ -299,6 +340,8 @@ export function mountSpellBuilder(container, { loadout, voice, onChange, onVoice
     else if ('random' in b.dataset) setLoadout(C.randomLoadout());
     else if ('howto' in b.dataset) openHowToPlay();
     else if ('stats' in b.dataset) openStats();
+    else if ('wardrobe' in b.dataset || 'wdBack' in b.dataset) setTab(root.classList.contains('sb-wd') ? 'spells' : 'wardrobe');
+    else if (b.dataset.wdSlot) { if (!b.classList.contains('locked')) equip(b.dataset.wdSlot, b.dataset.wdId || null); }
     else if (b.dataset.voice) { if (b.dataset.voice !== vox) { vox = b.dataset.voice; paint(); onVoice?.(vox); } }
     else if (b.classList.contains('sb-load')) { const s = saved[+b.parentElement.dataset.saved]; if (s) setLoadout(s.loadout); }
     else if (b.classList.contains('sb-save')) {
@@ -389,13 +432,33 @@ export function mountSpellBuilder(container, { loadout, voice, onChange, onVoice
   builders.add(hook);
   hook.profile();
 
+  // round 26: the Wardrobe (in place of the spell rows) and the level and today's challenges under the summary
+  const setTab = (tab) => {
+    const wd = tab === 'wardrobe';
+    root.classList.toggle('sb-wd', wd);
+    $('.sb-wd-btn').classList.toggle('active', wd);
+    if (wd) paintWardrobe(getView());
+  };
+  const paintWardrobe = (v) => {
+    if (!root.classList.contains('sb-wd')) return;
+    $('.sb-wardrobe').innerHTML = wardrobeHTML(v);
+  };
+  const paintProg = (v) => {
+    const el = $('.sb-prog');
+    el.hidden = !v.fromServer && v.xp <= 0 && !v.challenges.list.length;
+    el.innerHTML = progHTML(v);
+    $('.sb-wd-lv').textContent = `Lv ${v.level}`;
+  };
+  const unProgress = onProgress((v) => { paintWardrobe(v); paintProg(v); pv.setCosmetics(v.equipped); });
+  paintProg(getView());
+
   return {
     set(lo) { setLoadout(lo, { silent: true }); },
     setVoice(v) { vox = C.sanitizeVoice(v); paint(); },
     footer: $('.sb-foot'),
     get loadout() { return { ...cur }; },
     get voice() { return vox; },
-    destroy() { builders.delete(hook); io.disconnect(); ro.disconnect(); pv.destroy(); root.remove(); },
+    destroy() { unProgress(); builders.delete(hook); io.disconnect(); ro.disconnect(); pv.destroy(); root.remove(); },
   };
 }
 
@@ -427,7 +490,9 @@ export function setMatchTarget(n) {
 // Ty's privacy note (round 16), plain text, shown in the how-to-play card; exported for the "?" panel.
 export const PRIVACY = 'Privacy: if you play logged in to CrazyGames, we store your CrazyGames username and ID, your saved spells and '
   + 'settings, and your match stats on our server to keep your progress. As a guest, your data stays in this browser and your name is '
-  + 'used only for the match. CrazyGames usernames and match stats appear on the in-game leaderboard. No ads, no tracking. '
+  + 'used only for the match. CrazyGames usernames, levels and match stats appear on the in-game leaderboard. We also record anonymous '
+  + 'gameplay events (when you join, how long you play, kills, where you leave a match) and your XP, level and unlocks, tied to a random ID '
+  + 'and, if logged in, your CrazyGames ID, to improve the game. No ads, no IP addresses or emails stored. '
   + 'Questions or deletion requests: tyswenson34@gmail.com';
 let howTo = null;
 export function openHowToPlay() {
@@ -582,6 +647,15 @@ function watchMenu() {
     b.textContent = '? Controls';
     b.addEventListener('click', () => { if (hintEl) { hintEl.remove(); hintEl = null; } closeEscMenu(); setTimeout(() => showControlsStrip(), 150); });
     leave.after(b);
+  }
+  // round 26: the bots' speech bubbles and emotes, on or off (progress.js reads it)
+  if (leave && !menu.querySelector('.wa-taunts')) {
+    const t = document.createElement('button');
+    t.type = 'button'; t.className = 'ghost wa-taunts'; t.title = 'Speech bubbles and emotes from the bots';
+    const label = () => { t.textContent = `💬 Bot taunts: ${tauntsEnabled() ? 'On' : 'Off'}`; t.setAttribute('aria-pressed', String(tauntsEnabled())); };
+    label();
+    t.addEventListener('click', () => { setTauntsEnabled(!tauntsEnabled()); label(); });
+    (menu.querySelector('.wa-help') || leave).after(t);
   }
   let wasOpen = false;
   const sync = () => {

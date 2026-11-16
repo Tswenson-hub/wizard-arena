@@ -11,7 +11,8 @@
 //   Podium.warm(renderer, scene, camera)        round 20: compile the recap's shaders behind the loading screen (awaits preload)
 //   Podium.stop()                               end it now (the rematch countdown started, the player left); calls onEnd once
 // The message: { t: 'recap', duration?: 10, top: [{ name, place, body, loadout, color, kills, deaths, accolades: [{ icon, title,
-// value }] }, ...], rest: [{ name, place, kills, deaths }], next?: { id, name } }. Missing fields fall back (no accolades, the Mage,
+// value }] }, ...], rest: [{ name, place, kills, deaths }], next?: { id, name } }. Round 26: a top entry's `lv` (and `title`, a bot's
+// `persona`) adds "Lv 12 · Battlemage" under the name, and `eq` dresses the body in its cosmetics. Missing fields fall back (no accolades, the Mage,
 // the default loadout). Round 22: `next` (the map rotation) shows "Next map: Sky Ruins" at the bottom of the overlay.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -186,7 +187,7 @@ function build(top, arena) {
     const P = PLINTHS[p.place] || PLINTHS[3];
     const plinth = piece('floor_foundation_allsides', [P.w, P.h, P.w]); plinth.position.x = P.x; stage.add(plinth);
     const loadout = C.sanitizeLoadout?.(p.loadout) || { ...C.DEFAULT_LOADOUT };
-    const body = makeWizardBody(loadout, { body: p.body || 'mage' });
+    const body = makeWizardBody(loadout, { body: p.body || 'mage', cos: p.eq });   // round 26: their cosmetics
     const color = p.color ?? body.look.color;
     const banner = piece('banner_white', [1.0, 2.2, 0.2]);
     banner.traverse(o => { if (o.isMesh) { o.material = o.material.clone(); o.material.color.setHex(body.look.color).lerp(new THREE.Color(0xffffff), 0.25); } });
@@ -314,6 +315,7 @@ function overlay(top, rest, dur, onSkip, next = null) {
   const tag = (p) => `<div class="rc-tag rc-p${p.place}" style="--medal:${hex(MEDAL[p.place])};--col:${hex(p.color ?? 0xffffff)}">
       <div class="rc-place">${PLACE[p.place]}</div>
       <div class="rc-name">${esc(p.name)}</div>
+      ${Number.isFinite(p.lv) ? `<div class="rc-lv"><b>Lv ${p.lv}</b> · ${esc(p.persona || p.title || C.titleFor?.(p.lv) || '')}</div>` : ''}
       <div class="rc-kd">${count(p.kills, 'kill')} · ${count(p.deaths, 'death')}</div>
       <div class="rc-accs">${(p.accolades || []).slice(0, 2).map(a => `<div class="rc-acc"><i>${esc(iconOf(a))}</i><span>${esc(a.title)}</span>${a.value != null ? `<em>${esc(one(a.value))}</em>` : ''}</div>`).join('')}</div>
     </div>`;
