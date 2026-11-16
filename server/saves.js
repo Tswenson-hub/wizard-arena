@@ -392,7 +392,7 @@ export async function flushEvents() {
 // ---------------------------------------------------------------- progress (round 26, XP, levels, unlocks, daily challenges)
 // Logged-in players only; the XP maths and the challenge rules are spells' (constants.js / room.js): this stores and validates.
 // One shared object per player on this server (two sockets of one player see the same one); written at most once per 10 s.
-export const GUEST_XP_CAP = 20_000;      // a guest's client-held XP merged into an account is capped (cosmetic only)
+export const GUEST_XP_CAP = C.XP?.guestCap ?? 20_000;   // a guest's client-held XP merged into an account is capped (cosmetic only; spells' C.XP)
 const ID_RE = /^[a-z0-9_-]{1,32}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_UNLOCKS = 64, MAX_SLOTS = 8, MAX_CHALLENGES = 6;
