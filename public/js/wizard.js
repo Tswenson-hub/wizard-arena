@@ -1,6 +1,6 @@
 // A wizard in the scene: cloned skinned model, animation state machine, nameplate, colour ring.
 import * as THREE from 'three';
-import { makeWizardBody, botBody, cloneBodyMaterial, BONES, BODY_TOP } from './looks.js';
+import { makeWizardBody, botBody, cloneBodyMaterial, emoteClips, BONES, BODY_TOP } from './looks.js';
 import { FLIPS, PHASES } from './spellanim.js';
 import * as C from '../shared/constants.js';
 // ?clip: recording mode for store videos (no nameplates or health bars over wizards; see main.js)
@@ -63,6 +63,8 @@ function legacyPhase(name, timeScale, startAt) {
   if (name === 'dash') return 'dash';
   return null;
 }
+// Round 26: an emote plays at most this long (s); Cheering runs longer than a moment in a fight.
+const EMOTE_MAX = 2.2;
 // Landings and flips may cut these short (an air cast, a flip, an air roll); anything else playing at touchdown goes on.
 const LANDABLE = /^(jump|double_jump|float|air_cast|roll_air)/;
 
@@ -116,22 +118,37 @@ function shadowTexture() {
   return (shadowTex = new THREE.CanvasTexture(c));
 }
 
-function makeNameplate(name, color) {
+// Round 26: `sub` ({ level, title }) adds a smaller line under the name ("Lv 12 · Battlemage"); the plate grows upward so the
+// line clears the health bar. Without it the plate is the old one, at the old height (the nameplate's y: plateY(sub)).
+const PLATE_H = 176, PLATE_PX = 2.4 / 512;
+const plateY = (sub) => BODY_TOP + (sub ? 0.48 : 0.4);
+function makeNameplate(name, color, sub = null) {
   const canvas = document.createElement('canvas');
-  canvas.width = 512; canvas.height = 128;
+  canvas.width = 512; canvas.height = sub ? PLATE_H : 128;
   const ctx = canvas.getContext('2d');
+  const nameY = sub ? 58 : 64;
   // round 17: CrazyGames usernames run to 20 characters: a long name shrinks to fit the plate
   let px = 56;
   do ctx.font = `bold ${px}px "Trebuchet MS", sans-serif`; while (ctx.measureText(name).width > 490 && (px -= 2) > 22);
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.lineWidth = 10; ctx.strokeStyle = 'rgba(0,0,0,0.8)';
-  ctx.strokeText(name, 256, 64);
+  ctx.strokeText(name, 256, nameY);
   ctx.fillStyle = '#' + color.toString(16).padStart(6, '0');
-  ctx.fillText(name, 256, 64);
+  ctx.fillText(name, 256, nameY);
+  if (sub) {
+    // "Lv 12" in gold, then " · Battlemage" in a pale cream, centred together
+    const lv = `Lv ${sub.level}`, rest = sub.title ? ` · ${sub.title}` : '';
+    ctx.font = 'bold 34px "Trebuchet MS", sans-serif';
+    const w1 = ctx.measureText(lv).width, w2 = ctx.measureText(rest).width, x0 = 256 - (w1 + w2) / 2;
+    ctx.textAlign = 'left'; ctx.lineWidth = 8; ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+    ctx.strokeText(lv + rest, x0, 120);
+    ctx.fillStyle = '#ffd25a'; ctx.fillText(lv, x0, 120);
+    ctx.fillStyle = '#f3ead2'; ctx.fillText(rest, x0 + w1, 120);
+  }
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
-  sp.scale.set(2.4, 0.6, 1);
+  sp.scale.set(2.4, canvas.height * PLATE_PX, 1);
   sp.renderOrder = 10;
   return sp;
 }
@@ -147,7 +164,9 @@ export class Wizard {
     this.voice = C.sanitizeVoice(info.voice);
     // round 15: players are the KayKit Mage; bots are Skeletons (the snapshot's `body`, else one picked from the bot's name)
     this.bodyKind = info.body || (info.bot ? botBody(info.name ?? info.id) : 'mage');
-    const body = makeWizardBody(this.loadout, { body: this.bodyKind });
+    // round 26: the level (`lv`), its title, a bot's persona and the equipped cosmetics (`eq`), from a server that has them
+    this.lv = Number.isFinite(info.lv) ? info.lv : null; this.title = info.title || null; this.persona = info.persona || null;
+    const body = makeWizardBody(this.loadout, { body: this.bodyKind, cos: info.eq });
     const clips = body.clips;
     this.body = body;   // looks.js: optional extras such as Vesper's setWhip / setWhipGlow
     this.model = body.model;
@@ -296,8 +315,8 @@ export class Wizard {
     this.frozen = false;
     this.bound = false; this.slowed = false; this.siphoning = false;
 
-    this.nameplate = makeNameplate(this.bot ? `${info.name} · ${this.bot}` : info.name, info.color);
-    this.nameplate.position.y = BODY_TOP + 0.4;
+    this.nameplate = makeNameplate(this.bot ? `${info.name} · ${this.bot}` : info.name, info.color, this.plateSub());
+    this.nameplate.position.y = plateY(this.plateSub());
     this.nameplate.visible = !isLocal && !CLIP;
     this.group.add(this.nameplate);
 
@@ -506,12 +525,44 @@ export class Wizard {
   // Game modes: the ring and nameplate switch to the team colour (or back to the wizard's own).
   setColor(color) {
     this.ring.material.color.setHex(color);
-    const old = this.nameplate;
-    const np = makeNameplate(this.bot ? `${this.name} · ${this.bot}` : this.name, color);
-    np.position.copy(old.position); np.visible = old.visible; np.material.opacity = old.material.opacity;
+    this.plateColor = color;
+    this.remakePlate();
+  }
+  // Round 26: the nameplate's second line: the level and its title (a bot's persona instead: "Lv 8 · Sniper"); null without a level.
+  plateSub() {
+    if (this.lv == null) return null;
+    return { level: this.lv, title: this.persona || this.title || C.titleFor?.(this.lv) || '' };
+  }
+  remakePlate() {
+    const old = this.nameplate, sub = this.plateSub();
+    const np = makeNameplate(this.bot ? `${this.name} · ${this.bot}` : this.name, this.plateColor ?? this.color, sub);
+    np.position.copy(old.position); np.position.y = plateY(sub); np.visible = old.visible; np.material.opacity = old.material.opacity;
     this.group.remove(old); old.material.map?.dispose(); old.material.dispose();
     this.group.add(np);
     this.nameplate = np;
+  }
+  // Round 26 (characters): a new level (the snapshot's `lv`, a `look`) redraws the plate; the same one costs nothing.
+  setLevel(lv, title = null) {
+    lv = Number.isFinite(lv) ? lv : null;
+    if (lv === this.lv && (!title || title === this.title)) return;
+    this.lv = lv; if (title) this.title = title; else if (lv != null) this.title = null;
+    this.remakePlate();
+  }
+  // The equipped cosmetics changed (a `look`): the body re-dresses in place.
+  setCosmetics(eq) { this.body.setCosmetics?.(eq); }
+  // An emote (V, a bot's taunt): the KayKit Cheering / Waving / Skeletons_Taunt clip as a one-shot, its action made the first time
+  // (so no idle actions run in every wizard's mixer). The upper body plays it over a walk, like a cast. False if it can't play now.
+  emote(e) {
+    const clip = emoteClips()[e];
+    if (!clip || this.dead || this.stunned || (this.inOneShot() && !/^emote_/.test(this.current))) return false;
+    const key = `emote_${e}`;
+    if (!this.actions[key]) {
+      const a = this.mixer.clipAction(clip);
+      a.setLoop(THREE.LoopOnce); a.clampWhenFinished = true; a.enabled = true; a.setEffectiveWeight(0); a.play();
+      this.actions[key] = a;
+    }
+    this.oneShot(key, Math.min(clip.duration, EMOTE_MAX), 1, 0, true);
+    return true;
   }
 
   // Round 13: the air jump (main.js calls it on our Space in the air and on a `jump` with n: 2): the tucked front

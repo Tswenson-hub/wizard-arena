@@ -1,0 +1,65 @@
+/* Round 26 (characters): the post-match XP panel, the challenge toasts, the scoreboard's level tag. progress.js loads this. */
+
+/* ---- the XP panel: top right under the podium's Skip; on the left through the rematch countdown (over the arena) */
+.xp-panel {
+  position: fixed; z-index: 61; left: 18px; top: 84px; width: min(320px, calc(100vw - 36px)); padding: 12px 14px 12px;
+  border-radius: 12px; background: rgba(16, 12, 26, 0.88); border: 1px solid rgba(255, 210, 92, 0.35);
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.45); color: #f4ecd8; font-size: 13px; pointer-events: auto;
+  opacity: 0; transform: translateY(-8px); transition: opacity .3s, transform .3s, top .4s, left .4s, right .4s;
+}
+.xp-panel.on { opacity: 1; transform: none; }
+body.recap-on .xp-panel { left: auto; right: 18px; top: 62px; }
+.xp-x { position: absolute; top: 4px; right: 6px; width: 24px; height: 24px; border: 0; border-radius: 6px; background: transparent;
+  color: rgba(244, 236, 216, 0.6); font-size: 18px; line-height: 1; cursor: pointer; }
+.xp-x:hover { color: #fff; background: rgba(255, 255, 255, 0.08); }
+.xp-head { display: flex; align-items: baseline; gap: 8px; padding-right: 22px; }
+.xp-lv { font-size: 15px; font-weight: 700; letter-spacing: .5px; }
+.xp-lv b { color: #ffd25a; font-size: 20px; }
+.xp-title { color: rgba(244, 236, 216, 0.7); font-size: 12.5px; }
+.xp-gain { margin-left: auto; font-weight: 800; color: #9cff70; font-size: 15px; white-space: nowrap; }
+.xp-bar { position: relative; height: 16px; margin: 8px 0 8px; border-radius: 8px; background: rgba(255, 255, 255, 0.09); overflow: hidden; }
+.xp-bar i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 8px; background: linear-gradient(90deg, #ffb13c, #ffd25a);
+  box-shadow: 0 0 10px rgba(255, 200, 80, 0.6); }
+.xp-bar em { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-style: normal; font-size: 11px;
+  font-weight: 700; color: #241606; text-shadow: 0 0 3px rgba(255, 240, 200, 0.7); mix-blend-mode: normal; }
+.xp-items { display: grid; gap: 2px; }
+.xp-item { display: flex; justify-content: space-between; gap: 10px; opacity: 0; transform: translateX(-6px); transition: opacity .25s, transform .25s; }
+.xp-item.in { opacity: 1; transform: none; }
+.xp-item span { color: rgba(244, 236, 216, 0.85); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.xp-item b { color: #9cff70; }
+.xp-up { margin: 8px 0 2px; padding: 8px 10px; border-radius: 8px; text-align: center;
+  background: radial-gradient(ellipse at center, rgba(255, 210, 92, 0.28), rgba(255, 210, 92, 0.06)); border: 1px solid rgba(255, 210, 92, 0.5); }
+.xp-up.pop { animation: xpPop .6s cubic-bezier(.2, 1.6, .4, 1); }
+@keyframes xpPop { 0% { transform: scale(.6); opacity: 0; } 100% { transform: none; opacity: 1; } }
+.xp-up-big { font-size: 18px; font-weight: 800; letter-spacing: 1px; color: #ffe39a; text-shadow: 0 0 12px rgba(255, 190, 60, 0.8); }
+.xp-up-big b { font-size: 22px; color: #fff; }
+.xp-unlock { margin-top: 4px; font-size: 13px; display: flex; align-items: center; justify-content: center; gap: 6px; }
+.xp-unlock i { width: 12px; height: 12px; border-radius: 3px; background: var(--sw); box-shadow: 0 0 6px var(--sw); }
+.xp-unlock b { color: #ffd25a; }
+.xp-unlock span { color: rgba(244, 236, 216, 0.6); font-size: 11.5px; }
+.xp-next { margin-top: 8px; font-size: 12.5px; color: rgba(244, 236, 216, 0.75); }
+.xp-next b { color: #ffd25a; }
+.xp-chs { margin-top: 9px; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.1); display: grid; gap: 5px; }
+.xp-chs-h { font-size: 11px; letter-spacing: 1.2px; text-transform: uppercase; color: rgba(244, 236, 216, 0.55); }
+.xp-ch { position: relative; display: flex; justify-content: space-between; gap: 8px; padding: 3px 8px 5px; border-radius: 6px; background: rgba(255, 255, 255, 0.05); overflow: hidden; }
+.xp-ch i { position: absolute; left: 0; bottom: 0; height: 2px; width: calc(var(--k) * 100%); background: #7fd8ff; }
+.xp-ch.done i { background: #9cff70; }
+.xp-ch.done .xp-ch-text { color: #b8ff98; }
+.xp-ch-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.xp-ch-n { color: rgba(244, 236, 216, 0.7); font-variant-numeric: tabular-nums; }
+@media (max-height: 560px) { .xp-chs { display: none; } }
+
+/* ---- toasts: top left, under the status line and the sound chip */
+.wa-toasts { position: fixed; left: 20px; top: 84px; z-index: 40; display: grid; gap: 6px; pointer-events: none; }
+.wa-toast { min-width: 200px; max-width: 300px; padding: 8px 12px; border-radius: 10px; background: rgba(16, 12, 26, 0.9);
+  border: 1px solid rgba(156, 255, 112, 0.55); color: #f4ecd8; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  opacity: 0; transform: translateX(-14px); transition: opacity .3s, transform .3s; }
+.wa-toast.on { opacity: 1; transform: none; }
+.wa-toast .t-h { font-weight: 800; color: #b8ff98; letter-spacing: .5px; }
+.wa-toast .t-b { font-size: 13px; color: rgba(244, 236, 216, 0.85); }
+.wa-toast .t-xp { font-weight: 800; color: #ffd25a; font-size: 13px; }
+body.recap-on .wa-toasts { display: none; }
+
+/* ---- the scoreboard's level tag (main.js puts Progress.levelTag(w) before the name) */
+#scoreboard .lvl { display: inline-block; min-width: 18px; margin-right: 6px; padding: 0 4px; border-radius: 4px; font-size: 11px; font-weight: 800;
+  text-align: center; background: rgba(255, 210, 92, 0.18); color: #ffd25a; vertical-align: 1px; }
