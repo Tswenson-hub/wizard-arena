@@ -23,7 +23,6 @@ premium version or replace these icons.**
 | `bulwark.png` | fc1009 | Glacial Bulwark's frost |
 | `hex.png` | fc776 | Hex Shards |
 | `lash.png` | fc1058 | Sanguine Lash |
-| `trapped_relic.png` | fc1049 | Trapped Relic |
 | `sling.png` | fc209 | Shepherd's Sling |
 | `potion.png` | fc959 | Potion Toss (and its splash) |
 | `toxic.png` | fc809 | Toxic Flask (and its pool) |
@@ -47,6 +46,5 @@ premium version or replace these icons.**
 | `night_cage.png` | fc1180 | Night Cage (builder card) |
 | `stampede.png` | fc1045 | Stampede (builder card) |
 | `berserker_brew.png` | fc961 | Berserker Brew (builder card) |
-| `roll.png` | fc1079 | Roll (builder card; round 12, spells agent) |
 
 Round 11: the builder's spell cards use these too (the characters agent picked the 14 above for spells that had none).

@@ -7,8 +7,9 @@ const set = (k, v) => { try { localStorage.setItem(k, v); } catch { /* not remem
 const json = (k) => { try { return JSON.parse(get(k)); } catch { return null; } };
 
 export const MAX_SAVED = 3;
-export const loadLoadout = () => C.sanitizeLoadout(json('wizardLoadout')) || { ...C.DEFAULT_LOADOUT };
-export const saveLoadout = (lo) => { const c = C.sanitizeLoadout(lo); if (c) set('wizardLoadout', JSON.stringify(c)); return c; };
+// Round 27: always one wizard's whole kit. An old saved custom loadout maps to the kit with its primary, else the Pyromancer's.
+export const loadLoadout = () => { const lo = json('wizardLoadout'); return lo ? C.kitLoadout(lo).loadout : { ...C.DEFAULT_LOADOUT }; };
+export const saveLoadout = (lo) => { const c = C.sanitizeLoadout(lo) && C.isKit(lo) ? C.sanitizeLoadout(lo) : null; if (c) set('wizardLoadout', JSON.stringify(c)); return c; };
 export const loadVoice = () => C.sanitizeVoice(get('wizardVoice'));
 export const saveVoice = (v) => set('wizardVoice', C.sanitizeVoice(v));
 // [{ name, loadout }], at most MAX_SAVED, bad entries dropped.

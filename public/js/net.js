@@ -3,7 +3,7 @@ const serverUrl = () => window.WA_SERVER || `${location.protocol === 'https:' ? 
 const UNAVAILABLE = { t: 'stats', unavailable: true };
 // Round 22: the protocol version in the join. A server that knows runes, pads and the second map puts clients without it (the live
 // CrazyGames build from before this round) in legacy rooms: the courtyard only, never mixed with current clients.
-export const PROTO = 26;   // round 24: the rebuilt Sky Ruins (22-23 clients bundle the old one and play the courtyard only); round 26: XP, challenges, cosmetics, emotes (rooms still split at 24)
+export const PROTO = 27;   // round 24: the rebuilt Sky Ruins (22-23 clients bundle the old one and play the courtyard only); round 26: XP, challenges, cosmetics, emotes; round 27: six wizards (the join names one), rooms of our own
 
 // Round 19: the stats panel from the join screen (no game socket yet): a short-lived socket, auth with the CrazyGames token
 // if there is one, then { t: 'stats' }; resolves with the reply, or { unavailable } after `ms`. Never rejects.
@@ -72,7 +72,7 @@ export class Net {
       // round 14: the CrazyGames build sets window.WA_SERVER (config.js) to the Render server; our own site leaves it unset
       const ws = new WebSocket(serverUrl());
       this.ws = ws;
-      ws.onopen = () => { this.connected = true; this.send({ t: 'join', proto: PROTO, name, loadout: pick?.loadout, voice: pick?.voice, difficulty, room: room || undefined, ...(extra || {}) }); this.startPing(); };
+      ws.onopen = () => { this.connected = true; this.send({ t: 'join', proto: PROTO, name, wizard: pick?.wizard, voice: pick?.voice, difficulty, room: room || undefined, ...(extra || {}) }); this.startPing(); };
       ws.onmessage = (e) => {
         let msg; try { msg = JSON.parse(e.data); } catch { return; }
         if (msg.t === 'pong') { this.onPong(msg); return; }

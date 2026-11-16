@@ -71,7 +71,7 @@ const ui = {
   soundInd: $('#soundInd'), botDiff: $('#botDiff'), botTally: $('#botTally'), volume: $('#volume'), mute: $('#mute'),
   pickNote: $('#pickNote'),
   ammo: [...document.querySelectorAll('#abilities [data-ab="fast"] .ammo i')],
-  fPips: [...document.querySelectorAll('#abilities [data-ab="throw"] .ammo i')],   // Roll's charges, or Trapped Relic's armed traps
+  fPips: [...document.querySelectorAll('#abilities [data-ab="throw"] .ammo i')],   // (round 27: unused, kept hidden: Roll and Trapped Relic are gone)
   ePips: [...document.querySelectorAll('#abilities [data-ab="mobility"] .ammo i')],   // (unused since Roll moved to F: kept hidden)
   ab: Object.fromEntries([...document.querySelectorAll('.ab')].map(el => [el.dataset.ab, el])),
   ultFg: $('#abilities .ult .fg'), ultPct: $('#abilities .ult .pct'),
@@ -96,8 +96,7 @@ const local = {
   rootUntil: 0,                // bound (Frostfall, Blizzard, a Bulwark's freeze)
   silenceUntil: 0,             // bound: no spells, ward or telekinesis
   pad: null, padUntil: 0, padSteer: new THREE.Vector2(),   // round 22: our jump-pad flight { start, y0, arc, pad } and its small steering
-  dash: null,                  // { start, time, dist } during our own Smoke Screen or Roll dash (along lastDashDir)
-  rollCharges: null, rollUntil: 0,   // Roll: when each charge is back (predicted), and the current roll's end
+  dash: null,                  // { start, time, dist } during our own Smoke Screen dash (along lastDashDir)
   liftCdUntil: 0, wasHolding: false,       // telekinesis: no new lift for a while after letting go
   ammo: 3, reloadUntil: 0, lastShot: 0,   // primary magazine (predicted; the server's copy wins)
   frostAim: false,             // RMB held with Frostfall: aiming the circle
@@ -116,7 +115,6 @@ const local = {
   edgeAt: -1, rideQueued: 0,   // round 13: when we last stood on a floor (coyote time); a Ram Ride asked for in the air
   sprinting: false,            // Shift: running (predicted from our stamina; the server grants it)
   ride: null,                  // Jeb's Ram Ride: { start, rideAt, dismountAt, endAt } (predicted; the server's 'ride' confirms)
-  fHold: null,                 // { start } while F is held with nothing carried (Trapped Relic: hold to curse)
   flight: null,                // { start, drop } during our own Skyward Flash
   jump: null, crouch: false, crouchToggle: false, cHeld: false,   // round 9: jump (Space), crouch (C toggles, Ctrl holds)
   blocking: false,
@@ -128,28 +126,33 @@ let now = 0;
 const tmp = { v1: new THREE.Vector3(), v2: new THREE.Vector3(), v3: new THREE.Vector3() };
 const CYC = C.SPELLBOOK.cyclone, SKY = C.SPELLBOOK.skyward;
 
-// ---------------------------------------------------------------- loadout (round 11: the spell builder)
-// The loadout we want (localStorage, loadout-store.js). The server's copy (me.loadout) is what casts use; it differs
-// only while a change waits for our next respawn.
+// ---------------------------------------------------------------- the wizard (round 27: six fixed kits; was the spell builder)
+// The loadout we want (localStorage, loadout-store.js): always one wizard's whole kit (an old saved custom maps to the kit with
+// its primary, else the Pyromancer). The server's copy (me.loadout) is what casts use; it differs only while a change waits for
+// our next respawn. The server is told the wizard's id.
 let wantLoadout = loadLoadout(), wantVoice = loadVoice();
+const wantWizard = () => C.wizardOfLoadout(wantLoadout);
+const wizardName = (id) => C.WIZARDS[id]?.preset || 'Pyromancer';
 const kit = () => me?.loadout || wantLoadout;
 // Berserker Brew halves every cooldown of hers (the server's rule; we predict with it)
 const cdMul = () => me?.brewing ? C.SPELLBOOK.berserker_brew.cooldownMul : 1;
 const SPELL = C.SPELLBOOK;
-const FROST = SPELL.frostfall, SMOKE = SPELL.smoke_screen, ROLL = SPELL.roll;
+const FROST = SPELL.frostfall, SMOKE = SPELL.smoke_screen;
 const EYE = SPELL.eye_of_storm, CAGE = SPELL.night_cage, BLIZ = SPELL.blizzard, MRAIN = SPELL.meteor_rain, ULT_WIND = C.ULT_CHARGE.windup;
 const ULT_KINDS = new Set(['eye_of_storm', 'eye_burst', 'blizzard_freeze', 'meteor_rain_hit', 'meteor_rain_splash']);
 const STAMP = SPELL.stampede, RIDE = SPELL.ram_ride, RGUARD = SPELL.ram_guard;
 const AIMED_ULTS = { night_cage: CAGE, stampede: STAMP };   // hold Q to aim (a circle, or Stampede's lane), release; then the wind-up
-const SIPHON = SPELL.sanguine_lash, MIRROR = SPELL.mirror_step, BULWARK = SPELL.glacial_bulwark, RELIC = SPELL.trapped_relic, SKIM = SPELL.glacial_skim;
+const SIPHON = SPELL.sanguine_lash, MIRROR = SPELL.mirror_step, BULWARK = SPELL.glacial_bulwark, SKIM = SPELL.glacial_skim;
 
-function chooseLoadout(lo) {
-  const clean = saveLoadout(lo);
+// `lo`: a loadout or a wizard id (select.js's onChange(loadout, { wizard })); either way it becomes that wizard's kit
+function chooseLoadout(lo, opts = null) {
+  const wizard = C.isWizard(opts?.wizard) ? opts.wizard : C.wizardOfLoadout(lo);
+  const clean = saveLoadout(C.kitFor(wizard));
   if (!clean) return;
   if (!C.sameLoadout(clean, wantLoadout)) sfx.click();
   wantLoadout = clean;
   for (const pk of pickers) pk.set(clean);
-  if (me) net.send({ t: 'loadout', loadout: clean });
+  if (me) net.send({ t: 'wizard', id: wizard });
   updatePickNote();
 }
 function chooseVoice(v) {
@@ -161,43 +164,24 @@ function chooseVoice(v) {
 function updatePickNote() {
   if (!ui.pickNote) return;
   const pending = me && !C.sameLoadout(me.loadout, wantLoadout);
-  ui.pickNote.textContent = pending ? 'your new loadout starts when you respawn' : 'a change applies at your next respawn';
+  ui.pickNote.textContent = pending ? 'your new wizard starts when you respawn' : 'a change applies at your next respawn';
   ui.pickNote.classList.toggle('pending', !!pending);
 }
-// The builder (select.js mountSpellBuilder, characters agent). Until it exists, six plain <select>s, the presets,
-// Randomize and the voice stand in.
-// `footer` (optional): an element for the builder's bottom bar (the join screen's name, bots and Enter).
+// The wizard gallery (select.js mountSpellBuilder, characters agent). If select.js didn't load, six plain buttons and the voice.
+// `footer` (optional): an element for the gallery's bottom bar (the join screen's name, bots and Enter).
 function mountPicker(el, footer = null) {
   if (typeof Select.mountSpellBuilder === 'function') {
     const pk = Select.mountSpellBuilder(el, { loadout: wantLoadout, voice: wantVoice, onChange: chooseLoadout, onVoice: chooseVoice, footer });
     if (el.childElementCount) return pk;
   }
   if (footer) el.after(footer);   // the fallback keeps the footer under it
-  const hexOf = (n) => '#' + n.toString(16).padStart(6, '0');
   el.innerHTML = `<div class="wiz-fallback">
-    <div class="wf-presets">${C.PRESETS.map(k => `<button type="button" data-preset="${k.id}">${esc(k.name)}</button>`).join('')}<button type="button" data-random>Randomize</button></div>
-    <ul>${C.LOADOUT_SLOTS.map(slot => `<li><kbd>${C.SLOT_INFO[slot].key}</kbd> <select data-slot="${slot}" aria-label="${C.SLOT_INFO[slot].label}">${
-      C.SPELL_POOL[slot].map(id => `<option value="${id}">${esc(SPELL[id].name)}</option>`).join('')}</select> <span class="wf-blurb"></span></li>`).join('')}</ul>
-    <div class="wf-mix"></div>
+    <div class="wf-presets">${C.PRESETS.map(k => `<button type="button" data-preset="${k.id}">${esc(k.name)}</button>`).join('')}</div>
     <label class="wf-voice">Voice <select data-voice><option value="male">Male</option><option value="female">Female</option></select></label></div>`;
-  const sels = [...el.querySelectorAll('select[data-slot]')];
-  const show = (lo) => {
-    for (const sel of sels) {
-      const id = lo[sel.dataset.slot], info = C.spellInfo(id);
-      sel.value = id;
-      sel.style.borderColor = hexOf(info.color);
-      sel.parentElement.querySelector('.wf-blurb').textContent = `${info.tags.join(' · ')} · ${info.blurb}`;
-    }
-    const mix = C.loadoutElements(lo).map(e => `<b style="color:${hexOf(C.ELEMENTS[e.element].color)}">${C.ELEMENTS[e.element].name} ${e.count}</b>`).join(' ');
-    const combos = C.combosOf(lo).map(c => `<span class="wf-combo" title="${esc(c.text)}">Combo: ${esc(c.name)}</span>`).join(' ');
-    el.querySelector('.wf-mix').innerHTML = mix + (combos ? ' · ' + combos : '');
-  };
-  const read = () => Object.fromEntries(sels.map(sel => [sel.dataset.slot, sel.value]));
-  for (const sel of sels) { sel.addEventListener('change', () => chooseLoadout(read())); sel.addEventListener('keydown', (e) => e.stopPropagation()); }
+  const show = (lo) => { const id = C.wizardOfLoadout(lo); for (const b of el.querySelectorAll('[data-preset]')) b.classList.toggle('on', b.dataset.preset === id); };
   el.querySelector('.wf-presets').addEventListener('click', (e) => {
     const b = e.target.closest('button');
-    if (!b) return;
-    chooseLoadout(b.dataset.random !== undefined ? C.randomLoadout() : C.PRESETS.find(k => k.id === b.dataset.preset).loadout);
+    if (b) chooseLoadout(b.dataset.preset, { wizard: b.dataset.preset });
   });
   const vsel = el.querySelector('select[data-voice]');
   vsel.value = wantVoice;
@@ -303,7 +287,7 @@ ui.form.addEventListener('submit', async (e) => {
   try {
     const room = ui.form.dataset.room || undefined;   // round 17: select.js's buttons ('' public, 'new', a code); the launch's auto-join
     // fill bots play at this difficulty; round 21: a first-timer's own new public room gets Easy ones (the server's rule)
-    const welcome = await net.connect(name, { loadout: wantLoadout, voice: wantVoice }, ui.botDiff.value, room,
+    const welcome = await net.connect(name, { wizard: wantWizard(), voice: wantVoice }, ui.botDiff.value, room,
       { ...(firstVisit ? { firstVisit: true } : {}), ...(adminKey() ? { admin: adminKey() } : {}), platform: PLATFORM,   // (round 23: the admin key and the source)
         ...playtimeJoin() });   // round 26: the anonymous id, the adaptive rating, characters' progress and cosmetics
     onWelcome(welcome);
@@ -341,7 +325,7 @@ $('#resumeBtn').addEventListener('click', () => { sfx.click(); menuOpen = false;
 // Leave: back to the spell builder (the join screen). A reload is the clean way out of a live match; the loadout,
 // name and sound settings are saved in localStorage, and the models come back from the cache.
 $('#leaveBtn').addEventListener('click', () => { sfx.click(); leaveRoom(); location.href = pageWithRoom(null); });   // (out of the room for good: no ?room=)
-// Round 16: Respawn with these spells. Free when we haven't been hurt for RESPAWN_NOW.safeAfter s (the server decides; this
+// Round 16: Respawn as the chosen wizard (round 27; was "with these spells"). Free when we haven't been hurt for RESPAWN_NOW.safeAfter s (the server decides; this
 // mirrors it for the label), otherwise a death credited to whoever hurt us last. While dead it just sets the next loadout.
 let respawnNowAt = 0;
 function updateRespawnBtn() {
@@ -351,12 +335,13 @@ function updateRespawnBtn() {
   const wait = respawnNowAt - t;
   b.classList.toggle('danger', !me.dead && hurt);
   b.disabled = wait > 0;
-  b.textContent = me.dead ? 'Use these spells next life' : wait > 0 ? `Respawn (${Math.ceil(wait)} s)` : hurt ? 'Respawn (counts as a death)' : 'Respawn with these spells';
+  const name = wizardName(wantWizard());
+  b.textContent = me.dead ? `Play ${name} next life` : wait > 0 ? `Respawn (${Math.ceil(wait)} s)` : hurt ? 'Respawn (counts as a death)' : `Respawn as ${name}`;
 }
 $('#respawnBtn').addEventListener('click', () => {
   if (!me || performance.now() / 1000 < respawnNowAt) return;
   sfx.click();
-  net.send({ t: 'respawnNow', loadout: wantLoadout });
+  net.send({ t: 'respawnNow', wizard: wantWizard() });
   if (!me.dead) respawnNowAt = performance.now() / 1000 + C.RESPAWN_NOW.cooldown;
   menuOpen = false; play(); updateLockUI();
 });
@@ -902,14 +887,6 @@ function tkGesture(w, phase) {
   if (!w.pose(phase)) w.pose('cast', 0.4);
 }
 
-// Roll (round 12): the roll clip for its direction against the body's facing (spellanim.rollKey), else a dash.
-// Round 13: `air` (a roll off the ground) picks the air-dodge flips (rollKey's third argument).
-function playRoll(w, dir, air = false) {
-  const a = spellPlay('roll', 'cast');
-  if (a && spellanim.rollKey) a[0] = spellanim.rollKey(dir, w.group.rotation.y, !!air);
-  if (a && w.actions?.[a[0]]) w.oneShot(...a); else w.pose('dash', 0.4);
-}
-
 // Round 11: a spell's own animation (spellanim.js, characters agent) when the body has its clip: true if it played.
 function playSpell(w, spellId, phase, n) {
   const a = spellPlay(spellId, phase, n);
@@ -1183,7 +1160,7 @@ function handleMessage(msg) {
       if (target === me) {
         if (!msg.blocked && msg.dmg > 0) local.hurtAt = performance.now() / 1000;   // (round 16: the Respawn button's state)
         if (!msg.blocked) {
-          flashVignette(); shake(msg.kind === 'heavy' || msg.kind === 'cyclone' || msg.kind === 'trapped_relic' || ULT_KINDS.has(msg.kind) ? 0.6 : 0.25);
+          flashVignette(); shake(msg.kind === 'heavy' || msg.kind === 'cyclone' || ULT_KINDS.has(msg.kind) ? 0.6 : 0.25);
           if (msg.int !== false) local.stunUntil = Math.max(local.stunUntil, now + (msg.knockdown || (C.hitSpec(msg.kind)?.stun ?? 0.4)));
           if (msg.knockdown) { local.blocking = false; local.sprinting = false; local.knockUntil = now + msg.knockdown; }
           if (msg.slow) local.slowUntil = now + msg.slow;
@@ -1276,6 +1253,15 @@ function handleMessage(msg) {
         const n = rebuildWizard(w, msg.loadout, msg.color, msg.voice);
         if (n === me) feed(`New loadout: ${C.LOADOUT_SLOTS.map(k => `<b>${esc(shortName(msg.loadout[k]))}</b>`).join(' · ')}`);
       }
+      break;
+    }
+    case 'wizardRefused': {
+      // round 27: the server won't give us that wizard (locked for this account, or unknown): we play msg.wizard
+      const got = C.isWizard(msg.wizard) ? msg.wizard : C.DEFAULT_WIZARD;
+      feed(`<span class="warn">${esc(msg.reason === 'locked' ? `${wizardName(msg.want)} isn't unlocked yet: you're the ${wizardName(got)}` : `You're the ${wizardName(got)}`)}</span>`);
+      wantLoadout = saveLoadout(C.kitFor(got)) || C.kitFor(got);
+      for (const pk of pickers) pk.set(wantLoadout);
+      updatePickNote();
       break;
     }
     case 'loadoutRejected':
@@ -1387,41 +1373,6 @@ function handleMessage(msg) {
       walls.delete(msg.id);
       break;
     }
-    case 'curse': {
-      // only ever sent to the curser: the props we have trapped now
-      const ids = new Set(msg.ids || []);
-      if ([...ids].some(id => !cursedProps.has(id))) sfx.curse();
-      cursedProps = ids;
-      break;
-    }
-    case 'glyphs':
-      // enemy traps close enough to us to see (RELIC.seen)
-      seenTraps = new Set(msg.ids || []);
-      break;
-    case 'relicFuse': {
-      // a trap lit by an enemy close by: a flare, then it blows RELIC.fuse s later
-      effects.relicFuse(msg.p, msg.fuse ?? RELIC.fuse);
-      sfx.relicFuse(msg.p);
-      break;
-    }
-    case 'relicBlast': {
-      effects.relicBlast(msg.p, RELIC.radius);
-      sfx.relicBlast(msg.p);
-      const d = Math.hypot(msg.p[0] - local.pos.x, msg.p[2] - local.pos.z);
-      shake(d < RELIC.radius + 1 ? 0.9 : 0.6 / (1 + d * 0.2));
-      const by = players.get(msg.by), victim = msg.victim != null ? players.get(msg.victim) : null;
-      if (victim === me) feed(`It was a trap! <b>${esc(by?.name || '?')}</b> cursed that object`);
-      else if (by === me) feed(victim ? `Your trap went off in <b>${esc(victim.name)}</b>'s hands` : 'Your trap went off');
-      else if (!me.dead && d < RELIC.radius + 0.5) feed(`It was a trap! <b>${esc(by?.name || '?')}</b> cursed that object`);
-      break;
-    }
-    case 'roll': {
-      // Roll: our own was played when we pressed E; others tumble here (their position comes in the snapshots)
-      const w = players.get(msg.id);
-      if (w && w !== me) playRoll(w, [msg.dir[0], msg.dir[2]], msg.air);
-      if (!msg.air) effects.dust([msg.from[0], msg.from[1] || 0, msg.from[2]], 3);
-      break;
-    }
     case 'tp': {
       const w = players.get(msg.id);
       effects.teleport(msg.from, msg.to);
@@ -1457,7 +1408,7 @@ function handleMessage(msg) {
       if (w === me) {
         ui.death.querySelector('.big').textContent = msg.cause === 'ram' ? 'Flattened by a ram' : msg.cause === 'respawn' ? 'Respawning' : msg.cause === 'void' ? 'Knocked into the void' : 'You were vanquished';
         ui.death.classList.remove('hidden'); local.charging = false; local.blocking = false;
-        local.cyclone = null; local.flight = null; local.pos.y = 0; local.siphon = null; local.fHold = null;
+        local.cyclone = null; local.flight = null; local.pos.y = 0; local.siphon = null;
         local.slowUntil = local.rootUntil = local.silenceUntil = local.frozenUntil = 0; local.frostAim = false;
         local.cataAim = false; local.eyeUntil = local.blizzUntil = 0; local.pull = null; local.ride = null; local.ultWind = null; local.mrain = null;
         local.hover = null; local.airDash = null; local.jump = null; local.fall = null; local.airJumped = false; local.jumpSpeed = 0; local.castSlowUntil = 0;
@@ -1882,7 +1833,7 @@ function updateMusic() {
 // Browsers only allow sound after a gesture: the first click or key on the join screen starts the music.
 for (const ev of ['pointerdown', 'keydown']) document.addEventListener(ev, function first() { sfx.init(); sfx.resume(); updateMusic(); document.removeEventListener(ev, first); });
 
-// ---------------------------------------------------------------- decoys, walls, curses
+// ---------------------------------------------------------------- decoys, walls
 // Mirror Step decoys: full Wizards that look exactly like their caster (see-through on the caster's screen).
 const decoys = new Map();    // id -> { wiz, owner }
 function spawnDecoy(d) {
@@ -1975,11 +1926,6 @@ function updateSmokeHiding(dt) {
   for (const d of decoys.values()) check(d.wiz);
 }
 
-// Trapped Relic: the props we've trapped (the server tells only us) and the enemy traps near enough to see, each
-// marked with a glyph (ours plainly, theirs fainter).
-let cursedProps = new Set(), seenTraps = new Set();
-const curseMarks = [];   // a pool of glyph sprites, grown as needed
-
 // ---------------------------------------------------------------- UI helpers
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 function feed(html) {
@@ -2046,7 +1992,7 @@ function updatePotions(dt) {
 // Spell icons (Raven Fantasy Icons, public/textures/icons/CREDITS.md) by hit kind, and names for the feed and card.
 const KIND_ICON = { fireball: 'fireball', heavy: 'heavy', meteor_rain_hit: 'meteor_rain', meteor_rain_splash: 'meteor_rain', firewall_burn: 'firewall', shear: 'shear', cyclone: 'cyclone',
   eye_of_storm: 'eye_of_storm', eye_burst: 'eye_of_storm', cage_burn: 'night_cage', skim: 'skim', frostfall: 'frostfall', blizzard_chip: 'blizzard', blizzard_freeze: 'blizzard',
-  bulwark_frost: 'bulwark', hex: 'hex', siphon: 'lash', trapped_relic: 'trapped_relic', sling: 'sling', potion: 'potion', potion_splash: 'potion',
+  bulwark_frost: 'bulwark', hex: 'hex', siphon: 'lash', sling: 'sling', potion: 'potion', potion_splash: 'potion',
   toxic: 'toxic', toxic_pool: 'toxic', prop: 'prop', ram: 'ram', battering_ram: 'ram', ram_charge: 'ram', ram_shove: 'ram', fast: 'fast', flaskstep: 'flaskstep' };
 const KIND_NAME = { heavy: 'Meteor', fast: 'Spark', shear: 'Gale Shear', hex: 'Hex Shards', skim: 'Glacial Skim', siphon: 'Blood Siphon', sling: "Shepherd's Sling",
   potion: 'Potion Toss', potion_splash: 'Potion Toss', toxic: 'Toxic Flask', toxic_pool: 'Toxic Flask', prop: 'a thrown object',
@@ -2247,8 +2193,6 @@ function tkTarget() {
   }
   return best || near;
 }
-// Trapped Relic: an object we can curse (not a trap already)
-const curseable = (h) => !!h && !cursedProps.has(h.data.id) && !seenTraps.has(h.data.id);
 
 // What the crosshair is pointing at (wizard, pillar, tree or ground), for aiming hurled props.
 function aimPoint() {
@@ -2360,7 +2304,7 @@ function sendPickup() {
 }
 
 // Glow marker on the prop telekinesis would grab.
-// Round 14: the Telekinesis / Trapped Relic target marker, a soft glowing ring on the ground round the object (it was a
+// Round 14: the Arcane Grasp (telekinesis) target marker, a soft glowing ring on the ground round the object (it was a
 // white wireframe ball): a bright band with four notches that turn slowly, over a wider faint halo.
 const tkMarker = (() => {
   const c = document.createElement('canvas'); c.width = c.height = 256;
@@ -2612,45 +2556,20 @@ function updateLocal(dt) {
       }
       if (local.blocking) { local.blocking = false; }
     }
-    // utility: Telekinesis lifts, hurls and sets down props; Trapped Relic only curses (F on an object, RELIC.hold)
-    const relic = K.utility === 'trapped_relic';
-    // round 13 (Ty): Roll is a Utility on F: along the movement keys, backwards if none; two charges (their cooldown is the
-    // F slot's, liftCdUntil), and no root: we keep crouching or sprinting after
-    if (input.justPressed('KeyF') && K.utility === 'roll') {
-      if (now >= local.rollUntil && now >= local.liftCdUntil && !rooted && !busy) {
-        const d = (mx || mz) ? tmp.v3.set(0, 0, 0).addScaledVector(fwd, mz).addScaledVector(right, mx).normalize() : tmp.v3.set(-Math.sin(local.yaw), 0, -Math.cos(local.yaw));
-        local.rollCharges ??= Array(ROLL.charges).fill(0);
-        local.rollCharges[local.rollCharges.indexOf(Math.min(...local.rollCharges))] = now + ROLL.cooldown;
-        local.liftCdUntil = Math.min(...local.rollCharges);
-        local.rollUntil = now + ROLL.dashTime;
-        local.dash = { start: now, time: ROLL.dashTime, dist: ROLL.distance };
-        lastDashDir = [d.x, d.z];
-        net.send({ t: 'roll', dir: [d.x, 0, d.z], yaw: local.yaw, from: [local.pos.x, local.pos.y, local.pos.z] });
-        const air = startAirDash(ROLL.dashTime);   // round 13: in the air, a flipping air-dodge at this height
-        playRoll(me, [d.x, d.z], air);
-        if (!air) effects.dust([local.pos.x, local.pos.y, local.pos.z], 3);
-        if (local.blocking) local.blocking = false;
-      }
-    } else if (input.justPressed('KeyF')) {
+    // utility (F): Arcane Grasp (telekinesis) lifts, hurls and sets down props and goats, for every wizard (round 27)
+    if (input.justPressed('KeyF')) {
       if (me.carrying) {
         if (now >= local.cd.throw && props.get(me.carrying)?.data.state === 'carried') {
           computeAim();
           local.cd.throw = now + C.THROW_COOLDOWN;
           net.send({ t: 'throw', dir: aimDir.toArray(), target: aimPoint() }); castSlow();
         }
-      } else if (!busy && !local.blocking && tkHover && now >= local.liftCdUntil) {
-        if (relic) { if (curseable(tkHover)) local.fHold = { start: now }; }   // a tap or a hold: the curse takes RELIC.hold
-        else sendPickup();
-      }
-    }
-    if (local.fHold) {
-      if (holding || busy || local.blocking || !curseable(tkHover)) local.fHold = null;
-      else if (now - local.fHold.start >= RELIC.hold) { local.fHold = null; local.liftCdUntil = now + RELIC.liftCooldown; camera.getWorldDirection(camDir); net.send({ t: 'curse', aimOrigin: camera.position.toArray(), aimDir: camDir.toArray() }); castSlow(); }
+      } else if (!busy && !local.blocking && tkHover && now >= local.liftCdUntil) sendPickup();
     }
     if (input.justPressed('KeyG') && holding) net.send({ t: 'drop' });
   } else {
     if (local.blocking) { local.blocking = false; if (!ultLock) net.send({ t: 'block', on: false }); }
-    local.fHold = null; local.frostAim = false;
+    local.frostAim = false;
     if (!canAct) local.cataAim = false;
   }
   const aimedUlt = local.cataAim && AIMED_ULTS[K.ultimate];
@@ -2805,7 +2724,7 @@ function updateLocal(dt) {
     local.vel.x += (wish.x - local.vel.x) * accel;
     local.vel.z += (wish.z - local.vel.z) * accel;
   }
-  // Smoke Screen / Roll dash: along lastDashDir, covering the distance over its time in real time (so a slow
+  // Smoke Screen dash: along lastDashDir, covering the distance over its time in real time (so a slow
   // frame rate doesn't shorten it), in small steps that collide like walking
   let dashMove = 0;
   if (local.dash) {
@@ -3108,11 +3027,11 @@ function updateHud(dt) {
 
   // charge ring: the meteor's wind-up, or the cyclone's (purple)
   const windup = local.charging ? [local.chargeStart, C.SPELLS.heavy.chargeTime] : local.cyclone && !local.cyclone.pulsed ? [local.cyclone.start, CYC.windup]
-      : local.siphon && !local.siphon.sent ? [local.siphon.start, SIPHON.castTime] : local.fHold ? [local.fHold.start, RELIC.hold] : null;
+      : local.siphon && !local.siphon.sent ? [local.siphon.start, SIPHON.castTime] : null;
   if (windup) {
     const k = Math.min(1, (now - windup[0]) / windup[1]);
     ui.charge.classList.add('on'); ui.charge.classList.toggle('ready', k >= 1);
-    ui.charge.classList.toggle('cyclone', !!local.cyclone); ui.charge.classList.toggle('lash', !!local.siphon || !!local.fHold);
+    ui.charge.classList.toggle('cyclone', !!local.cyclone); ui.charge.classList.toggle('lash', !!local.siphon);
     ui.chargeFg.style.strokeDashoffset = 163.4 * (1 - k);
   } else ui.charge.classList.remove('on');
 
@@ -3138,12 +3057,9 @@ function updateHud(dt) {
   ui.ab.power.style.setProperty('--whip', whipK.toFixed(3));
   ui.ab.power.classList.toggle('whip', whipK > 0);
   cdFill('mobility', local.cd.mobility, SPELL[K.mobility].cooldown);
-  // pips under F: Roll's charges (round 13: a Utility now), or Trapped Relic's armed traps
-  const rolls = K.utility === 'roll' ? (local.rollCharges || [0, 0]).filter(c => c <= now).length : -1;
-  const traps = K.utility === 'trapped_relic' ? [...cursedProps].filter(id => props.get(id)?.data.state === 'idle').length : -1;
-  const pips = rolls >= 0 ? [rolls, ROLL.charges] : traps >= 0 ? [traps, RELIC.traps] : [-1, 0];
+  // (round 27: no pips under E or F any more: Roll's charges and Trapped Relic's traps are gone)
   ui.ePips.forEach(el => { if (el.style.display !== 'none') el.style.display = 'none'; });
-  ui.fPips.forEach((el, i) => { el.style.display = pips[0] >= 0 && i < pips[1] ? '' : 'none'; el.classList.toggle('full', i < pips[0]); el.classList.toggle('trap', traps >= 0); });
+  ui.fPips.forEach(el => { if (el.style.display !== 'none') el.style.display = 'none'; });
   cdFill('block', local.cd.guard, SPELL[K.guard].cooldown);
   if (!me.carrying && now < local.liftCdUntil) cdFill('throw', local.liftCdUntil, SPELL[K.utility].liftCooldown);   // lift cooldown
   else cdFill('throw', local.cd.throw, C.THROW_COOLDOWN);
@@ -3151,7 +3067,7 @@ function updateHud(dt) {
   ui.ab.power.classList.toggle('active', local.charging || !!local.cyclone || !!local.siphon || local.frostAim);
   ui.ab.mobility.classList.toggle('active', !!local.flight || !!local.ride);
   ui.ab.block.classList.toggle('disabled', bound || (C.isWard(K.guard) && me.st < 3) || !!local.flight);
-  ui.ab.throw.classList.toggle('active', holdingNow || !!local.fHold);
+  ui.ab.throw.classList.toggle('active', holdingNow);
   ui.ab.throw.classList.toggle('disabled', bound);
   ui.ab.fast.classList.toggle('disabled', holdingNow || bound);
   ui.ab.power.classList.toggle('disabled', holdingNow || (!!local.flight && !SPELL[K.power].airCast) || bound);
@@ -3172,27 +3088,13 @@ function updateHud(dt) {
   ultEl.classList.toggle('active', local.cataAim || !!local.ultWind || !!local.mrain || now < local.eyeUntil || now < local.blizzUntil || [...cages.values()].some(c => c.owner === myId));
   ultEl.classList.toggle('disabled', bound || holdingNow);
 
-  // Trapped Relics: a red glyph over each of ours, a fainter one over an enemy trap we're close enough to see
-  {
-    const shown = [...[...cursedProps].map(id => [id, true]), ...[...seenTraps].map(id => [id, false])]
-      .map(([id, mine]) => [props.get(id), mine]).filter(([e]) => e && e.data.state === 'idle');
-    while (curseMarks.length < shown.length) curseMarks.push(effects.curseGlyph());
-    curseMarks.forEach((m, i) => {
-      const [e, mine] = shown[i] || [];
-      m.visible = !!e;
-      if (!e) return;
-      m.position.set(e.data.x, C.PROP_TYPES[e.data.type].h + 0.45 + Math.sin(now * 2 + i) * 0.06, e.data.z);
-      m.material.opacity = mine ? 0.4 + Math.sin(now * 3) * 0.12 : 0.22 + Math.sin(now * 3 + i) * 0.06;
-    });
-  }
-
   // hint
   let hint = '';
-  tkHover = !me.dead && !holdingNow && K.utility !== 'roll' ? tkTarget() : null;   // (Roll: no lift, no curse)
-  if (tkHover && (K.utility === 'telekinesis' || curseable(tkHover))) {
+  tkHover = !me.dead && !holdingNow ? tkTarget() : null;
+  if (tkHover) {
     const spec = C.PROP_TYPES[tkHover.data.type];
     tkMarker.visible = true;
-    tkMarker.setColor(K.utility === 'trapped_relic' ? 0xff4060 : 0xb48cff);
+    tkMarker.setColor(0xb48cff);
     const base = tkHover.mesh ? tkHover.mesh.position.y - (tkHover.mesh.userData.lift || 0) : 0;
     tkMarker.position.set(tkHover.data.x, Math.max(0, base) + 0.05, tkHover.data.z);
     tkMarker.scale.setScalar((spec.r + 0.3) / TK_RING + Math.sin(now * 6) * 0.04);
@@ -3239,9 +3141,7 @@ function updateHud(dt) {
   else if (local.flight) hint = 'Hold E to hover · C to drop';
   else if (me.carrying) hint = 'F hurl · G set down';
   else if (now < local.stunUntil) hint = 'Stunned!';
-  else if (local.fHold) hint = 'Cursing…';
-  else if (tkHover && K.utility === 'trapped_relic') hint = cursedProps.has(tkHover.data.id) ? 'Your trap' : seenTraps.has(tkHover.data.id) ? 'A trap! Keep clear' : 'F curse';
-  else if (tkHover) hint = 'F lift';
+  else if (tkHover) hint = 'F Arcane Grasp';
   else if (slowed) hint = 'Slowed by frost';
   else if (local.reloadUntil && now - local.lastShot < 1) hint = 'Reloading…';
   ui.hint.textContent = hint; ui.hint.classList.toggle('on', !!hint); ui.hint.classList.toggle('danger', hunted || ((inFrost || inMeteor || inBlizzard || caged || inLaneNow || inPool) && !bound));
@@ -3369,5 +3269,5 @@ requestAnimationFrame(frame);
 
 // Debug handle for the automated tests (round 14: off unless asked for, with ?debug in the URL or localStorage waDebug = 1).
 const DEBUG = (() => { try { return new URLSearchParams(location.search).has('debug') || localStorage.getItem('waDebug') === '1'; } catch { return false; } })();
-if (DEBUG) window.__wa = { renderer, input, net, local, players, props, rams, effects, scene, camera, sfx, decoys, walls, frosts, frostMark, mrainMark, flaskMark, cageMark, laneMark, cages, firewalls, stampedeFx, C, drawbridgeFx, serverNow, get cursedProps() { return cursedProps; }, get seenTraps() { return seenTraps; }, get quality() { return Q.debug(); }, Q, NET, netBuf,
+if (DEBUG) window.__wa = { renderer, input, net, local, players, props, rams, effects, scene, camera, sfx, decoys, walls, frosts, frostMark, mrainMark, flaskMark, cageMark, laneMark, cages, firewalls, stampedeFx, C, drawbridgeFx, serverNow, get quality() { return Q.debug(); }, Q, NET, netBuf,
   get first() { return { firstVisit, visitNo, playT, hintShown, playedOnce, menuEverOpened, cfg: FIRST }; }, get map() { return mapId; }, set map(v) {}, get pads() { return padArcs; }, get pickups() { return pickups; }, get callouts() { return callouts; } };

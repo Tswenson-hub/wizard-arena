@@ -341,7 +341,7 @@ export class Effects {
     T(() => this.siphonTracer(p, wiz.group)); T(() => this.bind(p)); T(() => this.decoyPuff(p, 0xb48cff, true)); T(() => this.mirror(p, [p]));
     T(() => this.wallShatter(this.wall({ id: 1, x: at.x, y: 0, z: at.z, yaw: 0, hp: 100 }), { id: 1, x: at.x, z: at.z, yaw: 0 }));
     T(() => this.wall({ id: 2, x: at.x, y: 0, z: at.z, yaw: 0, hp: 50 }));
-    T(() => this.relicBlast(p, 3)); T(() => this.relicFuse(p, 1)); T(() => this.veilGust(p)); T(() => this.veilPop(p));
+    T(() => this.veilGust(p)); T(() => this.veilPop(p));
     T(() => this.smoke(fl, left)); T(() => { const e = this.frostfall(fl, left); this.frostfallImpact(e, fl); }); T(() => this.frostfall(fl, left));
     T(() => this.eyeStorm(wiz.group)); T(() => this.eyeBurst(p)); T(() => this.nightCage(fl, left));
     T(() => this.firewall({ id: 1, x: at.x, y: 0, z: at.z, yaw: 0, left })); T(() => this.burnUp(p)); T(() => this.ramPoof(p));
@@ -685,7 +685,7 @@ export class Effects {
     if (type === 'potion') { this.burst(pos, 0x5cf0b0, 22, 5, 0.45); this.burst(pos, 0xd98cff, 14, 3.5, 0.4, -1); }   // potion splash
   }
 
-  // ---------------------------------------------------------------- Blood Siphon / binds / Mirror Step / Bulwark / Relic
+  // ---------------------------------------------------------------- Blood Siphon / binds / Mirror Step / Bulwark
   // Round 16, Blood Siphon's drain: a red ribbon of light flowing from the victim (`from`, [x, y, z]) back to the caster
   // (`toObj`, an Object3D followed as it moves) over about 0.35 s.
   siphonTracer(from, toObj) {
@@ -840,54 +840,6 @@ export class Effects {
       });
     }
     this.burst(new THREE.Vector3(w.x, 1.3, w.z), 0xe8f8ff, 26, 5, 0.4, 3);
-  }
-
-  // Trapped Relic: a crimson blast at the lifter's hold point.
-  relicBlast(p, radius) {
-    const pos = new THREE.Vector3(p[0], p[1], p[2]);
-    this.burst(pos, 0xff2a3c, 40, 8, 0.7);
-    this.burst(pos, 0x2a0008, 22, 4, 0.8);
-    this.burst(pos, 0xffd0a0, 16, 6, 0.4, 2);
-    const orb = this.mesh(this.sphereGeo, this.mat(0xff3048, { opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false }));
-    orb.position.copy(pos); orb.scale.setScalar(0.5);
-    this.scene.add(orb);
-    this.particles.push({ mesh: orb, vel: new THREE.Vector3(), life: 0, maxLife: 0.3, grav: 0, grow: (radius - 0.5) / 0.3, still: true });
-    const ring = this.mesh(this.G(30, () => new THREE.RingGeometry(0.85, 1, 48).rotateX(-Math.PI / 2)),
-      this.mat(0xff3048, { opacity: 0.9, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
-    ring.position.set(p[0], floorUnder(p) + 0.13, p[2]); ring.scale.setScalar(0.5);
-    this.scene.add(ring);
-    this.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0, maxLife: 0.35, grav: 0, grow: (radius - 0.5) / 0.35, still: true });
-  }
-
-  // Trapped Relic lit by an enemy close by: a crimson flare that tightens over the fuse, then the blast (relicBlast).
-  relicFuse(p, fuse) {
-    const pos = new THREE.Vector3(p[0], p[1], p[2]);
-    this.burst(pos, 0xff2a3c, 18, 3, 0.35, 1.5);
-    const orb = this.mesh(this.sphereGeo, this.mat(0xff5060, { opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }));
-    orb.position.copy(pos); orb.scale.setScalar(1.1);
-    this.scene.add(orb);
-    this.particles.push({ mesh: orb, vel: new THREE.Vector3(), life: 0, maxLife: fuse, grav: 0, grow: -0.8 / fuse, still: true });
-    const ring = this.mesh(this.G(31, () => new THREE.RingGeometry(0.85, 1, 40).rotateX(-Math.PI / 2)),
-      this.mat(0xff3048, { opacity: 0.9, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
-    ring.position.set(p[0], floorUnder(p) + 0.12, p[2]); ring.scale.setScalar(1.8);
-    this.scene.add(ring);
-    this.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0, maxLife: fuse, grav: 0, grow: -1.2 / fuse, still: true });
-  }
-
-  // The red glyph over a Trapped Relic: one we laid (always shown to us), or an enemy's we're close enough to see.
-  curseGlyph() {
-    const c = document.createElement('canvas'); c.width = c.height = 128;
-    const g = c.getContext('2d');
-    g.translate(64, 64); g.strokeStyle = '#ff6070'; g.lineWidth = 6; g.lineCap = 'round';
-    g.shadowColor = '#ff2040'; g.shadowBlur = 10;
-    g.beginPath(); g.arc(0, 0, 50, 0, Math.PI * 2); g.stroke();
-    g.beginPath(); g.moveTo(0, -36); g.lineTo(0, 36); g.moveTo(-26, -14); g.lineTo(0, 8); g.lineTo(26, -14); g.moveTo(-18, 26); g.lineTo(18, 26); g.stroke();
-    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
-    const sp = new THREE.Sprite(this.M(THREE.SpriteMaterial, { map: tex, transparent: true, opacity: 0.55, depthWrite: false }));
-    sp.scale.setScalar(0.7);
-    sp.visible = false;
-    this.scene.add(sp);
-    return sp;
   }
 
   // ---------------------------------------------------------------- Tempest Veil

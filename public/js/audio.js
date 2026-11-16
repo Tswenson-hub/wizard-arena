@@ -307,13 +307,6 @@ export class Sfx {
     this.play('ward_block', { pos, vol: 0.4, rate: 1.6, jitter: 0.05, delay: 0.05 });
   }
   frostImpact(pos) { this.play('frostfall_impact', { pos, vol: 1.2, jitter: 0.04 }); }
-  // Trapped Relic: a quiet hiss when you lay the curse; a deep blast when it goes off.
-  curse() { this.play('swell', { vol: 0.35, rate: 0.45, jitter: 0.03 }); }
-  relicFuse(pos) { this.play('swell', { pos, vol: 0.9, rate: 1.6, jitter: 0.03 }); }   // a trap lit: a quick rising hiss before the blast
-  relicBlast(pos) {
-    this.play('impact_big', { pos, vol: 1.2, rate: 0.75, jitter: 0.04 });
-    this.play('meteor_cast', { pos, vol: 0.6, rate: 0.6, jitter: 0.04, delay: 0.02 });
-  }
 
   // Synthesized goat bleat: a buzzy tone with a fast wobble, shaped by a nasal formant filter.
   // A ram: calm ones higher and softer, angry ones lower and louder.
