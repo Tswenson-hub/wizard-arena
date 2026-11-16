@@ -5,7 +5,9 @@
 // (constants.js sanitizeLoadout, presets, random loadouts, combos). Round 12 adds checks against the real server on port 4191
 // (WA_DEBUG debugPlace/debugProp): only Telekinesis lifts, Trapped Relic traps (triggers, 2 per caster, glyphs), Roll. Round 13 adds
 // the air jump, coyote time, casting on the move and in the air, the hover, and sprint-jump momentum in the speed budget.
-import { createMatch } from '../../server/match.js';
+// (match.js reads MATCH_DEBUG when it loads: set it before the import, so a plain `node tools/test/modematch-unit.mjs` runs the debug checks too)
+process.env.MATCH_DEBUG ??= '1';
+const { createMatch } = await import('../../server/match.js');
 import * as C from '../../public/shared/constants.js';
 
 let clock = 0, nextId = 1, fails = 0;
@@ -1172,13 +1174,15 @@ async function skyPropChecks(join, since) {
     c.send({ t: 'pickup', aimOrigin: from, aimDir: [ctr[0] - from[0], ctr[1] - from[1], ctr[2] - from[2]] }); await wait(500);
     return propOf().get(pr.id)?.state;
   };
-  // 1. lift the crate from 2.5 m south of it, throw it at B (on the island 4 m north of it): a hit
-  place(A, crate.x, crate.z + 2.5, Math.PI); place(B, crate.x + 0.5, crate.z + 7.5, Math.PI); await wait(300);
+  // 1. lift the crate from 2.5 m south of it, throw it at B (on the island 3.5 m north of A): a hit. (B stands 1.5 m short of the
+  // layout's wall_half at (4.3, 35.8): at z 36 the crate met B's hit sphere and that wall within one tick, and on a loaded machine
+  // (a longer tick) the wall won: 'breaks at (4.1, 7.2, 34.9) with no hit')
+  place(A, crate.x, crate.z + 2.5, Math.PI); place(B, crate.x + 0.5, crate.z + 6, Math.PI); await wait(300);
   const st1 = await lift(A, { ...crate, lx: crate.x, lz: crate.z + 2.5 });
   ok(st1 === 'carried', `Telekinesis lifts the crate from the island's floor at 6 m (${st1})`);
   A.send({ t: 'debugPlace', p: [crate.x, 6, crate.z + 2.5], yaw: 0 }); await wait(250);   // (turned round to face B)
   let n = A.msgs.length;
-  A.send({ t: 'throw', target: [crate.x + 0.5, 6 + C.HIT_CENTER_Y, crate.z + 7.5] }); await wait(800);
+  A.send({ t: 'throw', target: [crate.x + 0.5, 6 + C.HIT_CENTER_Y, crate.z + 6] }); await wait(800);
   const hit = since(A, n, m => m.t === 'hit' && m.target === B.id && m.kind === 'prop')[0], br1 = since(A, n, m => m.t === 'propBreak' && m.id === crate.id)[0];
   ok(!!hit && hit.dmg > 0 && hit.target === B.id && !!br1 && br1.p[1] > 5, `the thrown crate hits B up on the island and breaks there (${hit?.dmg} damage, broke at y ${br1?.p?.[1]?.toFixed(2)})`);
   // 2. the keg: set down over the island's west edge (x -10): it falls away (broken), to be back at home
