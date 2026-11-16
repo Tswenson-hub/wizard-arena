@@ -150,6 +150,7 @@ const NEW = ['xp', 'challenge', 'emote', 'taunt', 'look', 'progress'];
   const w26 = fakeWs('S26'), w24 = fakeWs('S24');
   const id26 = room.join(w26, { t: 'join', proto: 26, name: 'New', difficulty: 'auto', anon: 'abcdefgh', progress: { xp: 290 }, adapt: { r: 0.8, h: [] }, equipped: { robe: 'robe_crimson' } });
   const id24 = room.join(w24, { t: 'join', proto: 24, name: 'Old', difficulty: 'normal' });
+  const keepAwake = setInterval(() => { for (const id of [id26, id24]) room.message(id, { t: 'activity' }); }, 3000);   // (not idle: they stay seated)
   const wel26 = w26.got.find(m => m.t === 'welcome'), wel24 = w24.got.find(m => m.t === 'welcome');
   ok(wel26.progress?.xp === 290 && wel26.progress.level === 1 && !wel24.progress, 'the 26 client gets its progress in the welcome; the 24 client gets none');
   ok(events.filter(e => e.event === 'join').map(e => `${e.s}:${e.details.room}:${e.map}`).join() === 'S26:public:courtyard,S24:public:courtyard', 'each session logs join with the room kind and the map');
@@ -169,8 +170,10 @@ const NEW = ['xp', 'challenge', 'emote', 'taunt', 'look', 'progress'];
   ok(autoBots().every(q => q.bot.auto && Math.abs(q.bot.skill - 0.6) < 1e-9), 'the fill bots switch to the auto skill at once (a host pick), keeping their personalities');
   room.message(id26, { t: 'emote', e: 'cheer' }); room.message(id26, { t: 'emote', e: 'cheer' }); room.message(id26, { t: 'emote', e: 'dance' });
   ok(w26.got.filter(m => m.t === 'emote' && m.id === id26).length === 1 && !w24.got.some(m => m.t === 'emote'), 'an emote: one per 2.5 s, only known ones, to 26 clients only');
-  // wait for a death (the bots go for the humans), up to 40 s
-  for (let i = 0; i < 80 && !events.some(e => e.event === 'first_death'); i++) await sleep(500);
+  // wait for a death (the bots go for the humans), up to 90 s
+  room.setBots('hard');   // (Hard bots meanwhile, so a standing human dies soon; Auto again after)
+  for (let i = 0; i < 180 && !events.some(e => e.event === 'first_death'); i++) await sleep(500);
+  room.setBots('auto');
   const fd = events.find(e => e.event === 'first_death');
   ok(fd && Number.isFinite(fd.details.s), `first_death with its seconds since joining (${fd && JSON.stringify(fd.details)})`);
   // the match ends
@@ -190,6 +193,7 @@ const NEW = ['xp', 'challenge', 'emote', 'taunt', 'look', 'progress'];
   ok(['menu', 'live', 'podium', 'lobby'].includes(st.state) && 'kills' in st && 'deaths' in st && 'streak' in st, `the disconnect's details: ${JSON.stringify(st)}`);
   ok(!w24.got.some(m => NEW.includes(m.t)), `the 24 client never got ${NEW.join(', ')}`);
   // an idle kick
+  clearInterval(keepAwake);
   room.message(id24, { t: 'debugIdle', kick: 1 });
   for (let i = 0; i < 10 && !events.some(e => e.event === 'idle_kick'); i++) await sleep(300);
   ok(events.some(e => e.event === 'idle_kick' && e.s === 'S24' && Number.isFinite(e.details.s)), 'an idle kick is logged');

@@ -9,7 +9,7 @@ const ws = new WebSocket(`ws://localhost:${port}`);
 let proxyId = null, skill = null, done = 0;
 const rows = [];
 ws.on('open', () => {
-  ws.send(JSON.stringify({ t: 'addBot', difficulty: 'easy', proxy: true }));
+  ws.send(JSON.stringify({ t: 'addBot', difficulty: 'easy', proxy: true, loadout: 'cinder' }));   // (a new player's kit: the Pyromancer)
   setTimeout(() => ws.send(JSON.stringify({ t: 'matchDebug', target: +target, cap: +cap, ...(mode !== 'auto' ? { botDiff: mode } : {}) })), 300);
 });
 ws.on('message', (raw) => {

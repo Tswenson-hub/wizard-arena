@@ -2619,8 +2619,8 @@ export function createRoom(opts) {
     const preset = typeof loadout === 'string' ? C.PRESETS.find(k => k.id === loadout)?.loadout : null;
     const used = new Set([...players.values()].map(q => q.persona).filter(Boolean));
     const left = C.PERSONA_IDS.filter(k => !used.has(k)), pool = left.length ? left : C.PERSONA_IDS;
-    const persona = pool[Math.floor(Math.random() * pool.length)];
-    const p = newPlayer(id, name, preset || C.sanitizeLoadout(loadout) || { ...C.PERSONAS[persona].loadout }, Math.random() < 0.5 ? 'male' : 'female');
+    const persona = proxy ? null : pool[Math.floor(Math.random() * pool.length)];   // (a proxy plays like a plain Easy bot: no personality)
+    const p = newPlayer(id, name, preset || C.sanitizeLoadout(loadout) || (persona ? { ...C.PERSONAS[persona].loadout } : C.botLoadout()), Math.random() < 0.5 ? 'male' : 'female');
     const sp = C.SPAWN_POINTS[Math.floor(Math.random() * C.SPAWN_POINTS.length)];
     p.p = [sp[0], sp[1] || 0, sp[2]];
     const skill = difficulty === 'auto' ? roomSkill() : null;
@@ -2636,7 +2636,7 @@ export function createRoom(opts) {
     if (!players.has(id)) return;   // the match had no room for it
     { const msp = match.spawnPointFor(p); if (msp) p.p = [msp[0], msp[1] || 0, msp[2]]; }
     broadcast({ t: 'joined', player: playerFull(p) });
-    console.log(`[+] bot ${name} the ${C.PERSONAS[persona].name}${proxy ? ' (proxy)' : ''} (${difficulty}${skill != null ? ` ${skill.toFixed(2)}` : ''}, ${C.LOADOUT_SLOTS.map(k => p.loadout[k]).join(' ')}) joined. ${players.size} online`);
+    console.log(`[+] bot ${name}${persona ? ` the ${C.PERSONAS[persona].name}` : ''}${proxy ? ' (proxy)' : ''} (${difficulty}${skill != null ? ` ${skill.toFixed(2)}` : ''}, ${C.LOADOUT_SLOTS.map(k => p.loadout[k]).join(' ')}) joined. ${players.size} online`);
   }
 
   function removePlayer(id) {
