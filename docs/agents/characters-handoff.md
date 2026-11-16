@@ -1,5 +1,52 @@
 # Characters hand-off
 
+## Round 27 §1: the wizard gallery (partial: the usage limit cut the verification short)
+Commits: `2a44515` (requests: interfaces), `3e95df3` (wizards.js roles + tips), `b5d8f34` (select.js, select.css, progress.js, podium.js,
+index.html). Port 4103 is stopped.
+
+### What's built
+- **select.js `mountSpellBuilder`** (same name and return, so main.js is unchanged) draws the gallery:
+  - six cards with portraits rendered once by a throwaway renderer, then freed
+  - locked cards dimmed, with a lock, "Unlocks at N XP" and a bar
+  - a detail panel for the hovered or focused card (else yours): a preview casting the signature spell (or the hovered row's spell),
+    the six abilities (key, icon, name, one line) and the tip
+- **The gallery's API:**
+  - `onChange(loadout, { wizard })`; `set()` takes a loadout or an id; `pk.wizard`
+  - `Select.wizardOf` (uses `C.wizardOfLoadout`) and `Select.wizardName`
+  - a locked or non-kit loadout falls back to the Pyromancer, and main.js is told after its pickers mount
+- **Removed:** the grid, slot rows, saved slots, Randomize, legend, combos and tooltip.
+- **Kept:** How to play, Stats, the Wardrobe (it replaces the gallery; the preview stays), the level and challenges, the rooms, voice,
+  name, bots and Play.
+- **The Esc menu:** compact. The voice moves to the top bar, and the preview sits beside the abilities. The "Try another wizard" pulse
+  is now on the gallery.
+- **progress.js:** the ladder has no 'custom' rung; `custom` is always false.
+- **Text:** hints, the how-to card (no legend), the podium's "Try another wizard", and index.html's help, keys and titles
+  (Arcane Grasp, "your wizard").
+- **Keyboard:** the cards are a radio group: arrows move (the grid's columns are measured), Enter or Space picks, and focus shows the
+  details.
+
+### Verified (`/tmp/wa-characters/r27/`, 4103, GPU Chromium, spells' working tree)
+- **Join screen without scrolling:** 1280×720 (`j720_rest.png`, `j720_hover.png`), 1366×768 (`j768.png`), 1920×1080 (`j1080.png`),
+  1024×700 (`j1024.png`).
+- **A 260 XP guest:** three wizards open (`p720_join260.png`).
+- **The Esc menu in a live match, 1280×720:** it fits without scrolling (`p720_pause.png`, `p720_pause_hover.png`), and the button
+  reads "Respawn as Pyromancer" (spells').
+- No page or console errors in any run.
+
+### Not done (next step)
+- **The brief's Playwright run hasn't been done:**
+  - unlock the Frost Warden after one match and select it
+  - F shows "Arcane Grasp" and lifts a crate
+  - the full keyboard walk
+  - the Wardrobe tab's look in the new layout
+
+  Re-run `/tmp/wa-characters/r26/ladder.py` adapted to `.wg-card`.
+- **Test note:** set `waGrandfathered='0'` in the init script. Otherwise main.js grandfathers a profile that has `waHowToPlaySeen`.
+- **Ability lines:** mine are short enough for one row. `SPELLBOOK[id].line` (spells') is only the fallback, because theirs ellipsize
+  in the panel.
+- **Clean-ups still to do:** `mountPicker`'s fallback in main.js still offers Randomize (spells'). `loadout-store.js` is no longer
+  imported by select.js.
+
 ## Round 26: cosmetics, levels on the plates, the post-match XP panel, the Wardrobe, challenges, emotes and taunts; 26b: the wizard ladder
 Commits: `e9a5feb` (requests: interfaces), `bc094b2` + `b4618bf` (cosmetics.js + looks.js), `0e8f6f2` (progress.js, progress.css,
 wizard.js), `4c35aa2` (select.js Wardrobe and tracker, podium.js, the privacy note), `63dfecf` (requests: the decoy tell),
