@@ -30,7 +30,7 @@ export const WIZARDS = {
     id: 'vesper', preset: 'Hemomancer', name: 'Vesper', title: 'the Hemomancer', role: 'Drain life, dodge with decoys',
     tip: 'Blood Siphon heals you as it hits, so trade blows and win. In trouble, Mirror Step: two decoys run off and they chase the wrong one.',
     color: 0xd8203c,
-    kit: { primary: 'hex_shards', power: 'sanguine_lash', mobility: 'mirror_step', guard: 'black_death', utility: 'trapped_relic', ultimate: 'night_cage' },
+    kit: { primary: 'hex_shards', power: 'sanguine_lash', mobility: 'mirror_step', guard: 'black_death', utility: 'telekinesis', ultimate: 'night_cage' },
   },
   jeb: {
     id: 'jeb', preset: 'Beastcaller', name: 'Jeb', title: 'the Shepherd', role: 'Rams do the fighting',
