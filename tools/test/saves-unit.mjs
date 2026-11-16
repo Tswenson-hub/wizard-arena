@@ -350,6 +350,7 @@ process.env.SUPABASE_SECRET_KEY = 'sb_secret_TEST';
   calls.length = 0;
   process.env.EVENTS_OFF = '1';
   ok(!S.logEvent(S.startSession({}), 'join') && S._test.events().length === 0, 'EVENTS_OFF=1 → nothing queued');
+  ok(['legacy', 'v22', 'v24', 'current'].every(g => S.startSession({ gen: g }).gen === g), 'all four generations kept (round 27: v24, the store build)');
   delete process.env.EVENTS_OFF;
   delete process.env.SUPABASE_URL;
   const s3 = S.startSession({});

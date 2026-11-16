@@ -3315,3 +3315,14 @@ profile, or main.js grandfathers it once `waHowToPlaySeen` is set. Screenshots a
   - wizard.js's `LANDABLE` regex still lists `roll_air` (harmless).
   - main.js line 16's `import * as spellanim` ("rollKey") has no user left.
 - gallery_e2e.py still passes (14/14, no errors).
+
+## environment → coordinator (spells FYI): round 27, please apply migration `wizard_arena_events_gen_v24` BEFORE deploying the saves.js change
+`events.gen` now also accepts `'v24'` (the proto 24-26 store build). **Order matters:** one bulk insert carries every buffered row, so a
+server that sends `'v24'` against the old constraint loses the whole batch (all generations' events), not just the v24 rows. Apply this
+first, then deploy. I ran it inside `begin … rollback` on the project: the new constraint is in place and a `'v24'` row inserts.
+```sql
+alter table public.events drop constraint events_gen_check;
+alter table public.events add constraint events_gen_check check (gen in ('legacy', 'v22', 'v24', 'current'));
+```
+Check: `select pg_get_constraintdef(oid) from pg_constraint where conname = 'events_gen_check'` lists the four values.
+The readout (`tools/analytics.sql`) needs no change: block 0 already groups by `gen`.

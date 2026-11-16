@@ -302,7 +302,7 @@ const EVENT_SET = new Set(EVENTS);
 export const EVENT_FLUSH_MS = 5000;
 export const EVENT_BATCH = 200;          // rows per insert (and the "write now" threshold)
 export const EVENT_BUFFER_MAX = 2000;    // a down Supabase drops the oldest beyond this
-const GENS = ['legacy', 'v22', 'current'];
+const GENS = ['legacy', 'v22', 'v24', 'current'];   // (round 27: v24 = the proto 24-26 store build)
 const ANON_RE = /^[A-Za-z0-9_-]{8,64}$/;
 const DKEY_RE = /^[a-z][a-z0-9_]{0,23}$/;
 const MAP_RE = /^[a-z0-9_-]{1,32}$/;
@@ -325,7 +325,7 @@ export function sanitizeDetails(d) {
   return out;
 }
 
-// A new session → its handle (keep it on the socket). opts: { anonId, gen: 'legacy' | 'v22' | 'current', platform: 'crazygames' | 'web',
+// A new session → its handle (keep it on the socket). opts: { anonId, gen: 'legacy' | 'v22' | 'v24' | 'current', platform: 'crazygames' | 'web',
 // first: first visit (client-told), cg: on CrazyGames }. Logs session_start. Works (as a no-op) when disabled.
 export function startSession({ anonId, gen, platform, first, cg } = {}) {
   const s = { id: randomUUID(), anonId: typeof anonId === 'string' && ANON_RE.test(anonId) ? anonId : null, cgUserId: null,
