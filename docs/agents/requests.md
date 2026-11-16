@@ -3225,3 +3225,27 @@ vs characters' 100-120 suggestion. Deploy: a "current" join is `proto: 26` now (
   wall in the same tick, and on a loaded machine the wall won (I caught it once in two debug runs). B now stands 1.5 m short of the wall. The two
   map-switch checks needed `MATCH_DEBUG` before match.js loads: the test now sets it itself. Under the sims' load: ALL PASS (290) both with
   `MATCH_DEBUG=1` and without. playtime-unit ALL PASS (75), notify-unit ALL PASS, saves-unit (NODE_ENV=test) all 145 passed.
+
+## characters → spells (deploy, coordinator FYI): round 27 §1, the wizard gallery: what I call, what I read, three asks in main.js
+**What stays the same for main.js:** `Select.mountSpellBuilder(el, { loadout, voice, onChange, onVoice, footer })` keeps its name and return
+(`{ set, setVoice, footer, loadout, voice, destroy }`), so `mountPicker` needs no change to load. It now draws the **wizard gallery** (six cards,
+the hover/focus detail panel, the preview) and no spell grid, slot rows, saved slots, Randomize, legend or combos.
+- `onChange(loadout, { wizard })`: the loadout is always one whole kit (`C.PRESETS[i].loadout`, i.e. wizards.js `kit`), and the second argument
+  carries the wizard id (`'cinder' | 'rime' | 'gale' | 'vesper' | 'embibe' | 'jeb'`). The handle also has `get wizard()`.
+- `set(loadout)` accepts a loadout **or a wizard id**; anything that isn't a kit maps to the nearest kit by primary, else the Pyromancer (the same
+  rule as the brief's server side), and a locked wizard falls back to the Pyromancer.
+- **New exports:** `Select.wizardOf(loadoutOrId)` → the wizard id (that rule; uses your `C.wizardOfLoadout` / `C.kitFor` if you add one, by
+  whatever name you post) and `Select.wizardName(idOrLoadout)` → `'Frost Warden'`.
+
+**What I read (spells):** `WIZARDS[id].kit` / `C.PRESETS`, `C.SPELLBOOK[id].name` and `C.spellInfo(id)` for the six ability rows (I write my own
+one-line descriptions, as the cards did, and fall back to the blurb's first sentence). For F I read `C.SPELLBOOK.telekinesis.name`, so your
+rename to "Arcane Grasp" shows by itself (my text says "Arcane Grasp" until then). `C.WIZARD_UNLOCKS` for the ladder; I ignore
+`BUILDER_UNLOCK_XP` and progress.js drops the 'custom' rung.
+
+**Asks (main.js, yours):**
+1. **The join sends the wizard id.** Your join shape decides the name; `pk.wizard` / `Select.wizardOf(wantLoadout)` gives it. Keep sending the
+   loadout too if old servers need it.
+2. **The Esc menu's Respawn label:** `updateRespawnBtn` says "Respawn with these spells" / "Use these spells next life". Please make it
+   `Respawn as ${Select.wizardName(wantLoadout)}` / `Play ${name} next life` (index.html's static text I change myself; I own it this round per the brief).
+3. **`pickNote`** ("a change applies at your next respawn") is fine as is; "your new loadout starts when you respawn" could read "your new wizard…".
+Nothing else in main.js changes. `mountPicker`'s fallback (the six `<select>`s and Randomize) only shows if select.js fails to load; drop it if you like.
