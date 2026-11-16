@@ -2,8 +2,9 @@
 // Round 15: build the KayKit character models and the clip file from Ty's packs (CC0, Kay Lousberg).
 //   node tools/build-characters.mjs [packs-dir]        (default ~/Downloads)
 // Writes public/models/characters/:
-//   mage.glb, skeleton_{mage,warrior,rogue,minion}.glb   one joined skinned mesh per material, the weapon baked under
-//                                                         the right hand slot with a 'tip' node at its far end, webp atlas
+//   mage.glb, knight.glb, rogue_hooded.glb, rogue.glb,   one joined skinned mesh per material, the weapon baked under
+//   barbarian.glb, ranger.glb (round 28: the wizards),    the right hand slot with a 'tip' node at its far end (an off-hand
+//   skeleton_{mage,warrior,rogue,minion}.glb (the bots)   prop under the left), webp atlas
 //   clips.glb                                            the Rig_Medium clips looks.js / spellanim.js use, skeleton only
 // Everything is meshopt-compressed (three needs MeshoptDecoder on the loader). Node names lose their dots ('handslot.r' ->
 // 'handslot_r'): three strips dots from node names, so this keeps the names we type and the names three sees the same.
@@ -41,6 +42,12 @@ const io = new NodeIO().registerExtensions(ALL_EXTENSIONS).registerDependencies(
 // body -> source, weapons ([gltf, slot]), and the atlas size (the KayKit atlases are flat colour swatches: 512 is plenty)
 const BODIES = {
   mage: { src: `${ADV}/Characters/gltf/Mage.glb`, weapons: [[`${ADV}/Assets/gltf/staff.gltf`, 'handslot_r', 'tip']] },
+  // round 28: a body per wizard (looks.js WIZARD_BODY), same Rig_Medium. Props in the left hand have no tip.
+  knight: { src: `${ADV}/Characters/gltf/Knight.glb`, weapons: [[`${ADV}/Assets/gltf/staff.gltf`, 'handslot_r', 'tip'], [`${ADV}/Assets/gltf/shield_badge_color.gltf`, 'handslot_l']] },
+  rogue_hooded: { src: `${ADV}/Characters/gltf/Rogue_Hooded.glb`, weapons: [[`${ADV}/Assets/gltf/wand.gltf`, 'handslot_r', 'tip']] },
+  rogue: { src: `${ADV}/Characters/gltf/Rogue.glb`, weapons: [[`${ADV}/Assets/gltf/wand.gltf`, 'handslot_r', 'tip'], [`${ADV}/Assets/gltf/spellbook_open.gltf`, 'handslot_l']] },
+  barbarian: { src: `${ADV}/Characters/gltf/Barbarian.glb`, weapons: [[`${ADV}/Assets/gltf/staff.gltf`, 'handslot_r', 'tip']] },
+  ranger: { src: `${ADV}/Characters/gltf/Ranger.glb`, weapons: [[`${ADV}/Assets/gltf/wand.gltf`, 'handslot_r', 'tip'], [`${ADV}/Assets/gltf/smokebomb.gltf`, 'handslot_l']] },
   skeleton_mage: { src: `${SKEL}/characters/gltf/Skeleton_Mage.glb`, weapons: [[`${SKEL}/assets/gltf/Skeleton_Staff.gltf`, 'handslot_r', 'tip']] },
   skeleton_warrior: { src: `${SKEL}/characters/gltf/Skeleton_Warrior.glb`, weapons: [[`${SKEL}/assets/gltf/Skeleton_Axe.gltf`, 'handslot_r', 'tip'], [`${SKEL}/assets/gltf/Skeleton_Shield_Large_A.gltf`, 'handslot_l']] },
   skeleton_rogue: { src: `${SKEL}/characters/gltf/Skeleton_Rogue.glb`, weapons: [[`${SKEL}/assets/gltf/Skeleton_Crossbow.gltf`, 'handslot_r', 'tip']] },
