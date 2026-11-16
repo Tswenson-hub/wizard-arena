@@ -424,6 +424,7 @@ body.wa-try #clickToPlay .pause-top #resumeBtn { background: transparent; color:
 .wd-rows { display: grid; gap: 8px; }
 .wd-row { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 8px; align-items: center; }
 .wd-slot { font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--dim); }
+.wd-slot small { display: block; margin-top: 2px; font-size: 10px; letter-spacing: 0; text-transform: none; opacity: 0.8; }   /* round 28: the hats fit the Mage's hat only */
 .wd-items { display: flex; flex-wrap: wrap; gap: 6px; }
 .wd-item { font: inherit; font-size: 12.5px; color: var(--ink); cursor: pointer; display: inline-flex; align-items: center; gap: 7px; padding: 6px 11px 6px 7px;
   border-radius: 10px; border: 1px solid var(--line); background: rgba(255,255,255,0.05); transition: border-color .12s, background .12s, transform .12s; }

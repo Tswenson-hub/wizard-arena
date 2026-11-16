@@ -301,7 +301,7 @@ function wardrobeHTML(v) {
   return `<div class="wd-head">${levelHTML(v)}
       <div class="wd-next">${next ? `Next unlock: <b>${esc(next.name)}</b> at level ${next.level}` : all.length ? 'Every unlock is yours' : ''}</div>
       <button type="button" class="sb-chip wd-back" data-wd-back>‹ Wizards</button></div>
-    <div class="wd-rows">${SLOTS.map(slot => `<div class="wd-row"><div class="wd-slot">${esc(SLOT_NAMES[slot])}</div>
+    <div class="wd-rows">${SLOTS.map(slot => `<div class="wd-row"><div class="wd-slot">${esc(SLOT_NAMES[slot])}${slot === 'hat' ? '<small>Pyromancer only</small>' : ''}</div>
       <div class="wd-items">${chip(slot, null)}${all.filter(u => u.slot === slot).map(u => chip(slot, u)).join('')}</div></div>`).join('')}</div>
     <p class="wd-note">Cosmetic only: every unlock changes how you look, never how you play. Everyone in the match sees them.${all.length ? '' : ' (Unlocks arrive with the next server update.)'}</p>`;
 }

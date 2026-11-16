@@ -198,7 +198,7 @@ function build(top, arena) {
     const g = glow(p.place === 1 ? 0xffd86a : MEDAL[p.place], p.place === 1 ? 0.95 : 0.7, p.place === 1 ? 24 : 10, p.place);
     g.position.set(P.x, P.h, 0); stage.add(g); ticks.push(g.userData.tick);
     const mixer = new THREE.AnimationMixer(body.model);
-    const skel = body.kind !== 'mage';
+    const skel = body.kind.startsWith('skeleton');
     const clip = p.place === 1 ? (skel ? emote.taunt : emote.cheer) : p.place === 2 ? emote.wave : emote.clap;
     const a = mixer.clipAction(clip); a.time = Math.random() * 0.3; a.play();
     if (clip === emote.clap && body.grip) body.grip.visible = false;     // the staff is tucked away to clap

@@ -2,14 +2,16 @@
 // wizard.js asks for a body with makeWizardBody(loadout, { body }) and owns everything that happens to it in play.
 //
 // Round 15: every player is the KayKit Mage (Kay Lousberg, CC0), its robe, hat and cape tinted by the elements of the spells
-// it carries; bots are the KayKit Skeletons, their eyes glowing in the element colour. All of them share KayKit's Rig_Medium
+// it carries; bots are the KayKit Skeletons, their eyes glowing in the element colour. Round 28: each wizard has its own
+// Adventurers body (WIZARD_BODY: the Mage, Knight, Rogue_Hooded, Rogue, Barbarian and Ranger), recoloured in its own style
+// by the same tint program (BODY_STYLE), so every body is one shader program. All of them share KayKit's Rig_Medium
 // skeleton, so one clip file (clips.glb, the Rig_Medium animation packs) drives every body by bone name with no retargeting.
 // The models are built from Ty's packs by tools/build-characters.mjs (joined meshes, weapons under the hand slot, webp, meshopt).
 // Clip keys are cut and retimed from those clips by the pick specs in spellanim.js.
 import * as THREE from 'three';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { WIZARDS, ELEMENTS, SPELLBOOK, SPELL_INFO, loadoutElements } from '../shared/constants.js';
+import { WIZARDS, ELEMENTS, SPELLBOOK, SPELL_INFO, loadoutElements, wizardOfLoadout } from '../shared/constants.js';
 import { LOOKS, lookEquipped } from '../shared/cosmetics.js';
 import { SPELL_ANIMS, COMMON_ANIMS, SKELETON_ANIMS, legacyKey } from './spellanim.js';
 import * as Q from './quality.js';
@@ -22,8 +24,14 @@ const HEIGHT = 1.8;
 export const BODY_TOP = 2.21, HEAD_Y = 1.55;
 
 const DIR = './models/characters/';
-export const BODY_KINDS = ['mage', 'skeleton_mage', 'skeleton_warrior', 'skeleton_rogue', 'skeleton_minion'];
-export const SKELETON_KINDS = BODY_KINDS.slice(1);
+// Round 28: a KayKit Adventurers body per wizard (all on Rig_Medium, so every clip and bone works on each); bots stay Skeletons.
+export const WIZARD_BODY = { cinder: 'mage', rime: 'knight', gale: 'rogue_hooded', vesper: 'rogue', jeb: 'barbarian', embibe: 'ranger' };
+export const PLAYER_KINDS = ['mage', 'knight', 'rogue_hooded', 'rogue', 'barbarian', 'ranger'];
+export const BODY_KINDS = [...PLAYER_KINDS, 'skeleton_mage', 'skeleton_warrior', 'skeleton_rogue', 'skeleton_minion'];
+export const SKELETON_KINDS = BODY_KINDS.filter(k => k.startsWith('skeleton'));
+export const isSkeleton = (kind) => String(kind).startsWith('skeleton');
+// The body a player's loadout wears: its wizard's (a loadout that isn't a kit maps to the nearest, as everywhere).
+export const bodyOfLoadout = (lo) => WIZARD_BODY[typeof lo === 'string' ? lo : wizardOfLoadout(lo)] || 'mage';
 const CLIPS_URL = DIR + 'clips.glb';
 
 // The rig's bone names, by role (KayKit's Rig_Medium, with the dots the build replaces by underscores: three strips dots from
@@ -261,13 +269,9 @@ export const __template = (kind = 'mage') => templates[kind]?.scene;
 
 // ---------------------------------------------------------------- the element look
 
-// Robe, hat, cape and staff gem: KayKit's atlas is flat colour swatches, so each part is a UV rectangle of mage_texture
-// (u0, v0, u1, v1, glTF v down). The shader re-hues texels inside a rectangle and keeps their shading (the swatch gradient).
-const REGIONS = {
-  robe: [0, 0.25, 0.25, 0.5],          // the wide purple swatch: robe, sleeves and hat
-  cape: [0.25, 0.25, 0.375, 0.5],      // the crimson swatch: the cape
-  gem: [0.75, 0.5, 0.875, 0.75],       // the green swatch: the staff's gem and its pommel
-};
+// Robe, hat, cape and staff gem: KayKit's atlas is flat colour swatches, so each part is a UV rectangle of the atlas (BODY_STYLE
+// below: the Mage's robe, sleeves and hat are its wide purple swatch, the cape the crimson, the gem the staff's green). The shader
+// re-hues texels inside a rectangle and keeps their shading (the swatch gradient).
 // Per element: robe and cape as [hue 0..1, saturation, value scale] (value scales the swatch's own; 1 keeps it), the gem a colour.
 // Tuned by eye in the builder and in game. Arcane keeps KayKit's own purple and crimson.
 const ROBES = {
@@ -279,6 +283,29 @@ const ROBES = {
   earth: { robe: [0.08, 0.5, 1.05], cape: [0.25, 0.4, 0.9] },
   acid: { robe: [0.27, 0.6, 1.0], cape: [0.78, 0.55, 1.0] },
 };
+// Round 28: each body's swatches (KayKit atlases are 8 × 4 swatches; CELL(col, row[, col1, row1]) in glTF uv) and, for the bodies
+// other than the Mage, its fixed style ([hue, sat, value scale] as ROBES; null keeps KayKit's colour). The Mage keeps the element
+// look by loadout (the Pyromancer: fire). `robe` and `cape` take the Wardrobe's robe palettes on every body; the hat colour,
+// the wide brim, the circlet and the crown are the Mage's hat only. Measured from the parts' uv (which swatch each part samples).
+const CELL = (c, r, c1 = c + 1, r1 = r + 1) => [c / 8, r / 4, c1 / 8, r1 / 4];
+const BODY_STYLE = {
+  mage: { robe: CELL(0, 1, 2), cape: CELL(2, 1), gem: CELL(6, 2), hat: true, staff: true },
+  // the Frost Warden: the armour, helmet and shield plate icy blue, the cape snow white
+  knight: { robe: CELL(3, 0, 4, 2), cape: CELL(0, 1), staff: true, tint: { robe: [0.56, 0.32, 1.55], cape: [0.57, 0.1, 1.15] } },
+  // the Stormcaller: a storm-violet tunic and mask, the hood and cape pale lavender
+  rogue_hooded: { robe: CELL(0, 1), cape: CELL(1, 1), tint: { robe: [0.76, 0.62, 1.55], cape: [0.74, 0.16, 1.8] } },
+  // the Hemomancer: a blood-red tunic, the cape near black
+  rogue: { robe: CELL(0, 1), cape: CELL(1, 1), tint: { robe: [0.985, 0.85, 1.6], cape: [0.97, 0.45, 0.4] } },
+  // the Beastcaller: KayKit's furs and leathers (earthy browns already); a palette recolours the furs and the bear hat
+  barbarian: { robe: CELL(7, 0), cape: CELL(3, 2), staff: true, tint: { robe: null, cape: null } },
+  // the Alchemist: the cream tunic and sleeves herb green, the scarf, cape and quiver strap a bright acid green; the leathers as
+  // they are; the flask in the off hand glows in the potions' purple (the gem)
+  ranger: { robe: CELL(5, 0, 7), cape: CELL(0, 1), tint: { robe: [0.26, 0.42, 0.72], cape: [0.29, 0.78, 0.95] } },
+};
+// The props from the Mage's atlas on another body (and the Alchemist's flask, from the Rogue's): a uniform set of their own with
+// only the gem (the glowing part) recoloured; by the prop's node name.
+const PROP_GEM = { staff: CELL(6, 2), wand: CELL(2, 2), smokebomb: CELL(6, 2) };
+const NO_REGION = [2, 2, 2, 2];
 const TINT_GLSL = /* glsl */`
 uniform float uOn;
 uniform vec3 uRobe, uCape, uGem;   // hue, sat, value scale (uRobe.y < 0: keep the texel); uGem: a colour
@@ -351,13 +378,15 @@ export function cloneBodyMaterial(m) {
   delete c.userData.shared;
   return c;
 }
-const tintUniforms = () => ({
+const tintUniforms = (st = BODY_STYLE.mage) => ({
   uOn: { value: 1 }, uRobe: { value: new THREE.Vector3(0, -1, 1) }, uCape: { value: new THREE.Vector3(0, -1, 1) },
   uGem: { value: new THREE.Color() },
-  uRobeR: { value: new THREE.Vector4(...REGIONS.robe) }, uCapeR: { value: new THREE.Vector4(...REGIONS.cape) }, uGemR: { value: new THREE.Vector4(...REGIONS.gem) },
+  uRobeR: { value: new THREE.Vector4(...(st.robe || NO_REGION)) }, uCapeR: { value: new THREE.Vector4(...(st.cape || NO_REGION)) }, uGemR: { value: new THREE.Vector4(...(st.gem || NO_REGION)) },
   uHat: { value: new THREE.Vector3(0, -1, 1) }, uHatY: { value: 9 },
-  uBrim: { value: new THREE.Vector4(1, 1, 2, 0) }, uRobeRV: { value: new THREE.Vector4(...REGIONS.robe) }, uHatC: { value: new THREE.Vector2() }, uHatYV: { value: 9 },
+  uBrim: { value: new THREE.Vector4(1, 1, 2, 0) }, uRobeRV: { value: new THREE.Vector4(...(st.robe || NO_REGION)) }, uHatC: { value: new THREE.Vector2() }, uHatYV: { value: 9 },
 });
+// A prop's uniforms on a body whose atlas it doesn't share: no robe or cape, its gem in the body's gem colour (the same uniform).
+const propUniforms = (u, gem) => ({ ...tintUniforms({ gem }), uGem: u.uGem });
 
 // The look of a loadout: { main, second (or null), mix: [{ element, count }], color }.
 export function lookOf(loadout) {
@@ -369,11 +398,12 @@ export function lookOf(loadout) {
 
 // The robe takes the dominant element; the cape the second one (when two or more spells share it), else the dominant's own cape.
 // Round 26: a robe palette (cosmetics.js) replaces both, a hat colour tints the hat alone, a staff glow sets the gem.
-function lookUniforms(look, u, cos = {}) {
+function lookUniforms(look, u, cos = {}, kind = 'mage') {
   const r = ROBES[look.main] || ROBES.arcane, c = look.second ? ROBES[look.second] : r;
-  const pal = LOOKS[cos.robe], hat = LOOKS[cos.hat], glow = LOOKS[cos.staff]?.glow;
-  u.uRobe.value.set(...(pal?.robe || r.robe || [0, -1, 1]));
-  u.uCape.value.set(...(pal?.cape || (look.second ? c.robe : r.cape) || [0, -1, 1]));
+  const st = BODY_STYLE[kind] || BODY_STYLE.mage, own = st.tint || { robe: r.robe, cape: look.second ? c.robe : r.cape };
+  const pal = LOOKS[cos.robe], hat = st.hat ? LOOKS[cos.hat] : null, glow = LOOKS[cos.staff]?.glow;
+  u.uRobe.value.set(...(pal?.robe || own.robe || [0, -1, 1]));
+  u.uCape.value.set(...(pal?.cape || own.cape || [0, -1, 1]));
   u.uHat.value.set(...(hat?.hat || [0, -1, 1]));
   u.uBrim.value.x = hat?.wide || 1;
   u.uGem.value.setHex(glow ?? ELEMENTS[look.main].bolt);
@@ -644,7 +674,7 @@ const pickAll = (table) => {
 };
 const KIT_ORDER = ['primary', 'power', 'mobility', 'guard', 'utility', 'ultimate'];
 function genericClips(loadout = {}, kind = 'mage') {
-  const skel = kind !== 'mage';
+  const skel = isSkeleton(kind);
   const sig = KIT_ORDER.map(s => loadout[s] || '').join('|') + (skel ? '|skel' : '');
   if (clipSets.has(sig)) return clipSets.get(sig);
   if (!commonClips) {
@@ -850,7 +880,8 @@ export function botBody(seed) {
   return SKELETON_KINDS[Math.abs(h) % SKELETON_KINDS.length];
 }
 
-// A body for a loadout. `body`: 'mage' (players) or a skeleton kind (bots). Returns
+// A body for a loadout. `body`: 'mage' (players: round 28, the body of the loadout's wizard, WIZARD_BODY), another player kind
+// (that body, whatever the loadout) or a skeleton kind (bots). Returns
 //   { model, clips, kind, look, loadout, setLook(loadout), hand, head, tip }
 // `model` is a wrapper group (wizard.js moves and tilts it); the KayKit scene inside is scaled to metres. `hand` is the right hand
 // slot, `tip` the staff head (Object3Ds: getWorldPosition). setLook re-tints and swaps the aura in place (the clips stay; make a
@@ -858,20 +889,24 @@ export function botBody(seed) {
 export function makeWizardBody(loadout = {}, opts = {}) {
   let kind = opts.body || 'mage';
   if (typeof loadout === 'string') loadout = WIZARDS[loadout]?.kit || {};
+  if (kind === 'mage') kind = bodyOfLoadout(loadout);
   if (!templates[kind]) kind = 'mage';
   const model = new THREE.Group();
   model.name = 'wizardBody';
   const inner = skeletonClone(templates[kind].scene);
   inner.scale.setScalar(BODY_SCALE);
   model.add(inner);
-  const skel = kind !== 'mage';
-  const u = tintUniforms();
+  const skel = isSkeleton(kind), st = BODY_STYLE[kind] || BODY_STYLE.mage;
+  const u = tintUniforms(st);
   const glow = [];
   let skin = null;     // the body's skinned mesh (round 26: the hat band is bound to its skeleton)
+  inner.traverse(o => { if (o.isSkinnedMesh && (!skin || o.name === 'Body')) skin = o; });
   inner.traverse(o => {
     if (!o.isMesh) return;
-    if (o.isSkinnedMesh) { o.customDepthMaterial = skinDepth(); if (!skin || o.name === 'Body') skin = o; }
-    if (!skel) o.material = tintMaterial(o.material, u);
+    if (o.isSkinnedMesh) o.customDepthMaterial = skinDepth();
+    // round 28: a prop drawn from another atlas than the body's (a staff or wand on the Knight, the Alchemist's flask) has its own
+    // uniforms: its gem in the body's colour, nothing else re-hued (the body's swatches mean other parts there)
+    if (!skel) o.material = tintMaterial(o.material, !o.isSkinnedMesh && skin && o.material.map !== skin.material.map ? propUniforms(u, PROP_GEM[o.name] || NO_REGION) : u);
     else if (o.material.name === 'Glow') { o.material = o.material.clone(); glow.push(o.material); }
     else o.material = o.material.clone();     // every body owns its materials (wizard.js fades and ghosts them)
   });
@@ -889,11 +924,11 @@ export function makeWizardBody(loadout = {}, opts = {}) {
     slot.add(grip);
     body.grip = grip;
   }
-  body.staff = kind === 'mage' || kind === 'skeleton_mage';
+  body.staff = !!st.staff && !skel || kind === 'skeleton_mage';   // (a staff stands upright in locomotion; a wand is held like a blade)
   body.updateGrip = (w) => updateGrip(body, w);
   // Round 26: the cosmetics (cosmetics.js ids by slot). The robe palette, the hat colour and the gem are the tint's uniforms; the
   // hat band is a skinned mesh on the body's skeleton; the staff glow and the trail sparks are motes on the staff head.
-  const geoOf = !skel && skin ? modelToGeo(skin.geometry) : null;
+  const geoOf = st.hat && !skel && skin ? modelToGeo(skin.geometry) : null;   // (the Mage's hat only)
   if (geoOf) {
     const v = new THREE.Vector3();
     u.uHatY.value = u.uHatYV.value = geoOf(v.set(0, HAT_FROM, 0)).y;
@@ -905,7 +940,7 @@ export function makeWizardBody(loadout = {}, opts = {}) {
   let band = null, cosFx = null;
   const dressCosmetics = () => {
     const cos = body.cos;
-    const want = !skel && skin && LOOKS[cos.hat]?.band;
+    const want = geoOf && LOOKS[cos.hat]?.band;
     if (band && band.userData.kind !== want) { band.removeFromParent(); band = null; }
     if (want && !band) {
       const head = skin.skeleton.bones.findIndex(b => b.name === BONES.head);
@@ -932,13 +967,13 @@ export function makeWizardBody(loadout = {}, opts = {}) {
   };
   body.setCosmetics = (cos) => {
     body.cos = lookEquipped(cos);
-    if (body.look) lookUniforms(body.look, u, body.cos);
+    if (body.look) lookUniforms(body.look, u, body.cos, kind);
     dressCosmetics();
   };
   body.setLook = (lo) => {
     body.loadout = lo || {};
     const look = body.look = lookOf(body.loadout);
-    lookUniforms(look, u, body.cos);
+    lookUniforms(look, u, body.cos, kind);
     // skeletons: the eyes burn in the element colour
     for (const m of glow) { m.color.setHex(0x000000); m.emissive.setHex(ELEMENTS[look.main].bolt); m.emissiveIntensity = 2.2; }
     if (aura) {
