@@ -81,10 +81,49 @@ const dist2D = (a, b) => Math.hypot(a[0] - b[0], a[2] - b[2]);
 const clampAbs = (v, m) => Math.max(-m, Math.min(m, v));
 const gauss = () => (Math.random() + Math.random() + Math.random() - 1.5) / 0.75;   // ~N(0,1), cheap
 
-export function createBot(difficulty) {
+// Round 26 (§3): a continuous skill, 0 (Easy) – 0.5 (Normal) – 1 (Hard), for the adaptive bots: every number in the tables above is
+// interpolated between its neighbours (aim error, reaction time, aggression, speed, ...), a yes/no is the nearer table's. Within the
+// Easy–Hard band, nothing beyond it. A personality (C.PERSONAS) then shifts its range, aggression and dodging, and every bot gets its
+// own small reaction-time bias, so two bots at one skill don't move alike.
+const SKILL_OF = { easy: 0, normal: 0.5, hard: 1 };
+export const tierOf = (s) => s < 0.25 ? 'easy' : s < 0.75 ? 'normal' : 'hard';
+export function cfgFor(skill, persona = null, base = null) {
+  const s = Math.max(0, Math.min(1, +skill || 0));
+  const [A, B, f] = s <= 0.5 ? [DIFFICULTY.easy, DIFFICULTY.normal, s / 0.5] : [DIFFICULTY.normal, DIFFICULTY.hard, (s - 0.5) / 0.5];
+  const near = DIFFICULTY[tierOf(s)];
+  const lerp = (a, b) => a + (b - a) * f;
+  const cfg = base ? { ...base } : {};
+  if (!base) for (const k of Object.keys(DIFFICULTY.normal)) {
+    const a = A[k], b = B[k];
+    cfg[k] = typeof a === 'number' && typeof b === 'number' ? lerp(a, b) : Array.isArray(a) ? a.map((v, i) => lerp(v, b[i])) : near[k];
+  }
+  cfg.skill = base ? (SKILL_OF[Object.keys(DIFFICULTY).find(k => DIFFICULTY[k] === base)] ?? 0.5) : s;
+  const P = C.PERSONAS?.[persona];
+  if (P) {
+    cfg.range = cfg.range.map(v => v * P.range);
+    cfg.aggression = Math.min(1, cfg.aggression + P.aggr);
+    cfg.dodge = Math.min(0.95, cfg.dodge + P.dodge);
+  }
+  cfg.reactMul = rand(0.85, 1.2);
+  return cfg;
+}
+// The room's adaptive skill moved (room.js, between matches only)
+export function setBotSkill(b, skill) {
+  b.skill = Math.max(0, Math.min(1, skill));
+  b.cfg = cfgFor(b.skill, b.persona);
+  b.difficulty = tierOf(b.skill);
+}
+
+// difficulty: 'easy' | 'normal' | 'hard' (the fixed tables), or 'auto' with opts.skill (0–1); opts.persona: a C.PERSONAS id
+export function createBot(difficulty, { skill = null, persona = null } = {}) {
+  const auto = difficulty === 'auto';
+  const s = auto ? Math.max(0, Math.min(1, Number.isFinite(skill) ? skill : 0.5)) : null;
+  const tier = DIFFICULTY[difficulty] ? difficulty : 'normal';
   return {
-    difficulty,
-    cfg: DIFFICULTY[difficulty] || DIFFICULTY.normal,
+    difficulty: auto ? tierOf(s) : tier, auto, skill: auto ? s : SKILL_OF[tier],
+    cfg: auto ? cfgFor(s, persona) : cfgFor(0, persona, DIFFICULTY[tier]),
+    persona, P: C.PERSONAS?.[persona] || null,
+    grudge: null, lastHitSeen: null,   // round 26: the one who hurt us, chased for a while (sometimes)
     slowFall: false,             // "holding E" during the current Skyward Flash
     acc: Math.random() * THINK_DT,
     vel: [0, 0],                 // movement velocity (x, z), includes knockback
@@ -338,13 +377,24 @@ function think(me, world, t) {
   const cur = world.players.get(b.targetId);
   if (cur && !cur.dead && smokeHides(me.p, cur.p)) { b.lastSeen = cur.p.slice(); b.lastSeenUntil = t + 3; b.targetId = null; b.decoyId = null; }
   const knocked = [...world.players.values()].some(q => q.knockUntil > t + 0.5 && foe(me, q) && !q.dead && dist2D(me.p, q.p) < 20 && q.id !== b.targetId);
+  // round 26: a grudge, sometimes: whoever just hurt us gets chased for a while
+  if (me.lastHitBy != null && me.lastHitBy !== b.lastHitSeen) {
+    b.lastHitSeen = me.lastHitBy;
+    if (Math.random() < 0.35) { b.grudge = { id: me.lastHitBy, until: t + rand(6, 12) }; b.retargetAt = Math.min(b.retargetAt, t + rand(0.2, 0.6)); }
+  }
+  if (b.grudge && t >= b.grudge.until) b.grudge = null;
   if (t >= b.retargetAt || knocked || !world.players.get(b.targetId) || world.players.get(b.targetId).dead) {
     let best = null, bs = Infinity;
     for (const q of world.players.values()) {
       if (q === me || q.dead || !foe(me, q) || smokeHides(me.p, q.p)) continue;
       let s = dist2D(me.p, q.p) + q.hp * 0.06;
       if (q.id === me.lastHitBy) s -= 7;
-      if (!q.bot) s -= 3;
+      if (b.grudge?.id === q.id) s -= 9;
+      if (!q.bot || q.proxy) s -= 3;
+      // round 26: not everyone on one wizard: each other bot already after them counts against it (a human more so)
+      let on = 0;
+      for (const o of world.players.values()) if (o !== me && o.bot && !o.dead && o.bot.targetId === q.id) on++;
+      s += on * (!q.bot || q.proxy ? 6 : 3);
       if (!hasLOS(me.p, q.p)) s += 6;
       if (q.knockUntil > t) s -= 10;   // round 10: knocked flat, a free punish
       if (shielded(q, t)) s += 12;     // just respawned: shoot someone else meanwhile
@@ -813,7 +863,7 @@ function flyMeteorRain(me, world, t, act) {
   // round 16: the same sway as a player's (C.meteorSway, this cast's seed): the bot steers against part of it, as a player would
   const aim = [best.p[0] + (tr ? tr.v[0] : 0) * lj + b.mrainErr[0], best.p[2] + (tr ? tr.v[1] : 0) * lj + b.mrainErr[1]];
   const sw = C.meteorSway(M.seed ?? 0, t - M.start, dist2D([M.from[0], 0, M.from[1]], [aim[0], 0, aim[1]]));
-  const correct = b.cfg === DIFFICULTY.hard ? 0.6 : b.cfg === DIFFICULTY.normal ? 0.4 : 0.15;
+  const correct = 0.15 + 0.45 * (b.cfg.skill ?? 0.5);   // (round 26: Easy 0.15, Normal 0.375, Hard 0.6)
   let at = [aim[0] + sw[0] * (1 - correct), aim[1] + sw[1] * (1 - correct)];
   if (VOID_Y != null && C.surfaceTopAt(at[0], at[1]) < VOID_Y) at = [best.p[0], best.p[2]];   // round 22b: never dive into the void: onto the target itself
   act({ t: 'mrainAim', at });
@@ -912,7 +962,8 @@ function firewallInWay(me, world, from, to) {
   }
   return false;
 }
-const newThreat = (cfg, t) => ({ seenAt: t, react: cfg.react * rand(0.8, 1.3), handled: false, ignore: Math.random() > cfg.dodge });
+// (round 26: reactions vary more, like a person's: now and then a slow one, and each bot has its own bias)
+const newThreat = (cfg, t) => ({ seenAt: t, react: cfg.react * (cfg.reactMul ?? 1) * (Math.random() < 0.12 ? rand(1.6, 2.4) : rand(0.75, 1.3)), handled: false, ignore: Math.random() > cfg.dodge });
 
 // Our primary spell at the target: a spark, or a Glacial Skim fan along the ground.
 function primary(me, target, act, cfg, world, t) {
@@ -1349,7 +1400,7 @@ function moveBot(me, dt, world, t) {
   if (me.grab) { b.vel = [0, 0]; me.anim = 'idle'; return; }   // pulling up onto a ledge: the server moves us
   if (me.pad) { me.anim = 'jump'; return; }                     // round 22: a jump pad's arc: the server flies us along it
   let wx = 0, wz = 0;
-  const goal = potionGoal(me, world, t, target) || runeGoal(me, world, t, target);
+  const goal = potionGoal(me, world, t, target) || runeGoal(me, world, t, target) || highGoal(me, world, t, target) || padFunGoal(me, world, t, target);   // (round 26: a Sniper's high ground, a Showboat's pads)
   if (b.dash) { /* the dash carries us */ }
   else if (!stunned) {
     if (t < b.dodgeUntil && b.dodgeVec) { wx = b.dodgeVec[0]; wz = b.dodgeVec[1]; }
@@ -1360,6 +1411,7 @@ function moveBot(me, dt, world, t) {
       if (wp && b.routeEdge?.kind === 'hop' && !b.hop && !flying && canJump(me, t)) startHop(me, b.routeEdge, routeGraph(world), t);   // round 24
       const gx = (wp ? wp[0] : goal[0]) - me.p[0], gz = (wp ? wp[1] : goal[1]) - me.p[2], gl = Math.hypot(gx, gz) || 1;
       wx = gx / gl; wz = gz / gl;
+      if (goal.hold && !wp && gl < 0.8) { wx = 0; wz = 0; }   // (round 26: a Sniper's perch: stand there and shoot)
       if (target && !target.dead && hasLOS(me.p, target.p)) me.yaw = yawTo(me.p, target.p);
       else me.yaw = Math.atan2(wx, wz);
     }
@@ -1368,7 +1420,7 @@ function moveBot(me, dt, world, t) {
       const d = Math.hypot(dx, dz) || 1;
       const fx = dx / d, fz = dz / d;
       const los = hasLOS(me.p, target.p);
-      const lowHp = me.hp < 25 && me.hp < target.hp;   // round 10: regen makes a retreat nearly free, so only when really low
+      const lowHp = me.hp < (b.P ? b.P.healAt * 0.5 : 25) && me.hp < target.hp;   // round 10: regen makes a retreat nearly free, so only when really low (round 26: a Healer sooner, a Brawler later)
       // Gale Shear only reaches 8 m: she fights up close
       const range = prefRange(me, cfg);
       const diving = t < (b.diveUntil || 0) && t >= me.cd.power && !me.carrying;
@@ -1643,7 +1695,7 @@ function moveBot(me, dt, world, t) {
 // Round 10: hurt, and a ready health potion near (one we can reach: its spot has a floor under it): go and drink it,
 // unless the fight is right on top of us and we're not that low.
 function potionGoal(me, world, t, target) {
-  if (!world.potions?.length || me.hp >= 55 || me.eye || me.ride) return null;
+  if (!world.potions?.length || me.hp >= (me.bot.P?.healAt ?? 55) || me.eye || me.ride) return null;   // (round 26: the personality's)
   if (target && !target.dead && dist2D(me.p, target.p) < 6 && me.hp > 35) return null;
   let best = null, bd = 22;
   for (const pt of world.potions) {
@@ -1664,7 +1716,7 @@ function potionGoal(me, world, t, target) {
 function runeGoal(me, world, t, target) {
   if (!world.runes?.length || me.eye || me.ride || me.pad) return null;
   const near = target && !target.dead && dist2D(me.p, target.p) < 10;
-  let best = null, bs = 12;   // (round 22 pace: 18 m and a 6 m "near" sent bots up the towers mid-fight)
+  let best = null, bs = me.bot.P?.runeR ?? 12;   // (round 22 pace: 18 m and a 6 m "near" sent bots up the towers mid-fight; round 26: a Showboat goes farther)
   for (const r of world.runes) {
     if (r.taken) continue;
     const sp = r.spot, y = sp.y ?? 0;
@@ -1673,6 +1725,47 @@ function runeGoal(me, world, t, target) {
     const d = Math.hypot(sp.x - me.p[0], sp.z - me.p[2]) + Math.max(0, y - me.p[1]) * 2 - (r.type === 'aegis' && me.hp < 50 ? 4 : 0);
     if (d < bs) { bs = d; best = [sp.x, sp.z]; }
   }
+  return best;
+}
+// Round 26: a Sniper with a target 7-20 m off goes up to a perch (the top of a stair or a deck end, 1.5 m+ above the target, in sight
+// of them and in its range) and shoots from there for up to 8 s; then a 6 s break. Worked out at most every 2 s.
+function highGoal(me, world, t, target) {
+  const b = me.bot;
+  if (!b.P?.high || !target || target.dead || me.eye || me.ride || me.pad || target.decoy) return null;
+  if (b.perch && (t > b.perch.until || dist2D(target.p, [b.perch.at[0], 0, b.perch.at[1]]) > prefRange(me, b.cfg)[1] + 4)) { b.perch = null; b.perchNext = t + 6; }
+  if (b.perch) return b.perch.at;
+  if (t < (b.perchNext || 0)) return null;
+  b.perchNext = t + 2;
+  const d = dist2D(me.p, target.p);
+  if (d < 7 || d > 20) return null;
+  const [r0, r1] = prefRange(me, b.cfg);
+  let best = null, bs = Infinity;
+  for (const n of routeGraph(world).nodes) {
+    if (!(n.ramp || n.deck) || !(n.y >= target.p[1] + 1.5)) continue;   // (a stair top or a deck end; not a stone, a bank or a pad)
+    const nm = dist2D(me.p, [n.p[0], 0, n.p[1]]), nt = dist2D(target.p, [n.p[0], 0, n.p[1]]);
+    if (nm > 18 || nt < r0 || nt > r1 + 2) continue;
+    if (!hasLOS([n.p[0], n.y + 1.3, n.p[1]], chest(target))) continue;
+    if (nm < bs) { bs = nm; best = n; }
+  }
+  if (!best) return null;
+  const at = [best.p[0], best.p[1]];
+  at.hold = true;
+  b.perch = { at, until: t + 8 + bs / 4 };
+  return at;
+}
+// Round 26: a Showboat with nobody close takes a jump pad within 16 m for the fun of it (once per 20 s or so).
+function padFunGoal(me, world, t, target) {
+  const b = me.bot;
+  if (!b.P?.pads || !world.pads?.length || me.eye || me.ride || me.pad || t < (b.padFunAt || 0)) return null;
+  if (target && !target.dead && dist2D(me.p, target.p) < 12) return null;
+  if (me.padUntil > t - 0.5) { b.padFunAt = t + rand(15, 25); return null; }   // (just flew)
+  let best = null, bd = 16;
+  for (const pd of world.pads) {
+    if (Math.abs((pd.y || 0) - me.p[1]) > 1) continue;
+    const d = Math.hypot(pd.x - me.p[0], pd.z - me.p[2]);
+    if (d < bd) { bd = d; best = [pd.x, pd.z]; }
+  }
+  if (!best) b.padFunAt = t + 5;
   return best;
 }
 // Does the straight line from `a` to `b` ([x, z]) cross the void (Sky Ruins: the floor below MAP_INFO.void)?
