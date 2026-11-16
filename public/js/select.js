@@ -52,6 +52,8 @@ const SIGNATURE = { cinder: 'fireball', rime: 'frostfall', gale: 'cyclone', vesp
 const DEMO = ['windup', 'cast', 'release', 'channel', 'loop', 'hold'];
 
 const presetOf = (id) => C.PRESETS.find(p => p.id === id) || null;
+// The gallery's order: the unlock ladder's (spells' C.WIZARD_IDS), so the cards read left to right as they open.
+const ORDERED = () => (C.WIZARD_IDS || C.PRESETS.map(p => p.id)).map(presetOf).filter(Boolean);
 // The wizard a loadout (or id) belongs to: its kit exactly, else spells' mapping when there is one, else the kit with the same
 // primary, else the Pyromancer (the server's rule for old saved custom loadouts).
 export function wizardOf(x) {
@@ -81,7 +83,7 @@ function builderHTML() {
     <div class="sb-main">
       <section class="wg-gallery" aria-label="Wizards">
         <div class="wg-head"><span class="wg-label">Choose your wizard</span><span class="wg-next"></span></div>
-        <div class="wg-grid" role="radiogroup" aria-label="Wizards">${C.PRESETS.map(p => `
+        <div class="wg-grid" role="radiogroup" aria-label="Wizards">${ORDERED().map(p => `
           <button type="button" class="wg-card" role="radio" aria-checked="false" tabindex="-1" data-wizard="${p.id}" style="--el:${wizColor(p.id)}">
             <span class="wg-pt" aria-hidden="true"><img alt="" draggable="false" hidden></span>
             <span class="wg-info"><b class="wg-name">${esc(p.name)}</b><span class="wg-role">${esc(WIZARDS[p.id]?.role || '')}</span><span class="wg-st"></span></span>
