@@ -2991,3 +2991,51 @@ in-memory buffer, flushed as **one insert every 5 s** (and at once when 200 are 
 - The level: I store what you give, clamped, but if `C.levelForXp(xp)` exists I recompute it from XP on merge. Challenge state is yours to
   shape; I keep it if it's `{ day: 'YYYY-MM-DD', list: [{ id, n, goal, done }] (≤ 6) }` with string ids ≤ 32 chars, ints, bools.
   Unlock/cosmetic ids: strings `^[a-z0-9_-]{1,32}$`, ≤ 64 unlocks, equipped ≤ 8 slots (characters: name your slots/ids to fit).
+
+## spells → characters, environment, deploy (coordinator FYI): round 26, the message shapes I'm building to (XP, challenges, cosmetics, emotes, taunts, personas)
+I build to environment's `Saves` calls above as posted (`startSession` on the socket, `logEvent` with their detail keys, `endSession` with
+`{ state, kills, deaths, streak }`, `loadProgress` / `writeProgress` / `mergeGuestProgress` / `flushProgress`). Their progress shape is the one
+shape everywhere (guests' localStorage too): `{ xp, level, unlocks, equipped, challenges: { day, list: [{ id, n, goal, done }] }, firstWinDay, guestMerged }`.
+
+**Generations.** net.js sends `proto: 26`. Rooms still split at 24 (`genOf`: 24+ is `'current'`, so 24 and 26 clients share rooms). Everything
+below that's a new message goes only to players whose join said `proto >= 26`; new fields on existing messages are extra keys old clients ignore.
+
+**constants.js (shared, characters read these):**
+- `XP = { finish: 50, kill: 10, podium: [30, 20, 10], win: 50, firstWinMult: 2 }`; `xpToNext(level)` = 300 + 25·(level − 1); `levelForXp(xp)`;
+  `levelInfo(xp)` → `{ level, into, need }` (XP into this level, XP this level needs); `TITLES` / `titleFor(level)`: Apprentice 1, Adept 5,
+  Battlemage 10, Archmage 15, Grand Archmage 25.
+- `COSMETIC_SLOTS = ['robe', 'hat', 'staff', 'trail']`; `UNLOCKS = [{ level, id, slot, name }]`, one per level 2–16: 2 `robe_crimson`, 3 `staff_ember`,
+  4 `robe_emerald`, 5 `trail_gold`, 6 `hat_wide`, 7 `robe_midnight`, 8 `staff_frost`, 9 `trail_violet`, 10 `robe_gold`, 11 `hat_circlet`, 12 `staff_void`,
+  13 `robe_frost`, 14 `trail_frost`, 15 `robe_void`, 16 `hat_crown`. `unlocksFor(level)`, `nextUnlock(level)`, `sanitizeEquipped(eq, level)` (drops
+  anything locked or unknown; `null` level = trust it, a guest). **Characters:** the visuals are yours, keyed by these ids; rename or swap any id
+  (say so here and I change the table, the ids fit environment's `^[a-z0-9_-]{1,32}$`).
+- `DAILY_POOL` and `dailyChallenges(day)` (three a day, a seeded pick from the UTC date `dayKey()`, never two map-bound ones): `primary_kills` 5,
+  `win_sky` 1, `runes` 3, `void_ko` 1, `ults` 3, `podiums` 2, `kills` 12, `matches` 3, `wins` 1, `damage` 2500, `potions` 3, `assists` 4; each
+  `{ id, text, goal, xp (100-150) }`.
+- `EMOTES = ['cheer', 'wave', 'taunt']` (characters: the KayKit Cheering, Waving, Skeletons_Taunt clips), `PERSONAS` (below).
+
+**Join (client → server, new optional keys):** `anon` (the localStorage id), `progress` (a guest's local progress, the shape above), `equipped`
+(`{ robe, hat, staff, trail }`), `adapt` (`{ r, h }`: the adaptive-difficulty state; client-held, it rides back in `xp`).
+
+**Server → client:**
+- `welcome.progress` and `{ t: 'progress', progress, merged? }` (after an auth loads or merges the account; after an `equip`): `progress` is
+  `{ xp, level, into, need, title, unlocks: [id], equipped, challenges: { day, list: [{ id, text, n, goal, done, xp }] }, next: { level, id, slot, name } | null, account: bool }`.
+  A guest's client stores what it gets back (the server computed it); a logged-in one only shows it.
+- `{ t: 'xp', items: [{ k: 'finish' | 'kills' | 'podium' | 'win' | 'firstWin' | 'challenge', xp, n?, place?, id? }], gained, before: { xp, level, into, need },
+  progress /* after, the shape above */, levelUps: [level], unlocked: [{ level, id, slot, name }], adapt }`: to each human who finished the match,
+  sent at `matchEnd` (before the podium's `recap`, which is 1.5 s later); the rematch countdown isn't touched.
+- `{ t: 'challenge', id, text, n, goal, done, xp }`: in-match progress on one of today's (a toast when `done` turns true).
+- Players (in `welcome`, `joined`, and a new `{ t: 'look', id, lv, eq }` when someone equips): `lv` (level; bots get one too, 2–30), `eq` (equipped),
+  `title` (the level's title), and for bots `persona` (`'Brawler' | 'Sniper' | 'Trickster' | 'Healer' | 'Showboat'`: the scoreboard shows
+  "Grimshank the Sniper"; `name` itself is unchanged). `lv` also rides in every snapshot's player rows (a small int); `eq` / `title` / `persona` don't.
+- `{ t: 'emote', id, e }` (someone plays `e` from `EMOTES`: bots sometimes after a kill or multikill, players on V) and `{ t: 'taunt', id, text }`
+  (a bot's speech bubble, a curated harmless line, rare, room-wide cooldown). Characters: the clip and bubble; the settings toggle is client-side
+  (I add it to the settings in main.js/index.html as `taunts: true` and skip the bubbles and bot emotes when off, unless you'd rather own it).
+
+**Client → server:** `{ t: 'emote', e }` (V; alive, one per 2.5 s), `{ t: 'equip', equipped }` (the Wardrobe; validated against the level, broadcast
+as `look`, saved for accounts, answered with `progress`).
+
+**Adaptive bots (§3, FYI coordinator):** public rooms whose humans picked "Auto" (the new default in the bot-difficulty select) get a bot skill on
+a continuous Easy (0)–Hard (1) scale, the humans' mean rating, changed only between matches (no rubber-banding). One thing to confirm with Ty:
+the brief's target is 40–60% **podium-or-better**, but a 4-player FFA has a podium of 3, so 50% means finishing last half the time. I build to the
+brief (the target is one constant, `ADAPT.target`), and the sim reports both the podium and the win rates.
