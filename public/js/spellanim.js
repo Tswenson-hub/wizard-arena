@@ -39,9 +39,6 @@ const shot = (n = 0.7) => ['#', n, 1, 0];
 // overhead raise of Ranged_Magic_Raise, the staff driven into the ground in Ranged_Magic_Summon, Throw's release.
 const SHOOT = 0.3, LONG = 1.5, RAISE = 0.38, SLAM = 2.45, THROW = 0.73;
 const DODGE = (dir) => ({ clip: `Dodge_${dir}`, from: 0, to: 0.4, warp: [[0, 0], [0.4, 0.45]] });
-// The ground roll's tuck under the procedural tumble (FLIPS): Jump_Land's crouch, reached by 0.06 s, held low through the turn,
-// up by 0.45 s. Its lean is the dodge's direction.
-const TUCK = (lean) => ({ clip: 'Jump_Land', warp: [[0, 0], [0.25, 0.06], [0.3, 0.34], [0.67, 0.45]], pinXZ: true, bend: { spine: 25 * lean, chest: 20 * lean } });
 // The blink's arrival: Spawn_Ground from the body bursting up out of the ground, the hop and the landing crouch, squeezed.
 const POP = (d) => ({ clip: 'Spawn_Ground', from: 0.3, to: 1.2, warp: [[0.3, 0], [0.8, d * 0.55], [1.2, d]], pinXZ: true });
 
@@ -105,15 +102,7 @@ export const SKELETON_ANIMS = {
 export const FLIPS = {
   double_jump: { dir: 1, time: 0.45 },
   double_jump_back: { dir: -1, time: 0.45 },
-  roll_air: { dir: 1, time: 0.42 },
-  roll_air_back: { dir: -1, time: 0.42 },
-  roll_air_left: { dir: -1, time: 0.42, axis: 'z' },
-  roll_air_right: { dir: 1, time: 0.42, axis: 'z' },
   smoke_screen: { dir: -1, time: 0.42 },
-  roll: { dir: 1, time: 0.36, pivot: 1.0, squash: 0.4 },
-  roll_back: { dir: -1, time: 0.36, pivot: 1.0, squash: 0.4 },
-  roll_left: { dir: -1, time: 0.36, pivot: 1.0, squash: 0.4, axis: 'z' },
-  roll_right: { dir: 1, time: 0.36, pivot: 1.0, squash: 0.4, axis: 'z' },
 };
 
 // Named phases for main.js (round 15: they replace the old clip-offset calls). Wizard.pose(name, duration?) plays `key`
@@ -266,20 +255,6 @@ export const SPELL_ANIMS = {
     keys: { smoke_screen: { clip: 'Jump_Start', from: 0.2, to: 0.5, warp: [[0.2, 0], [0.3, 0.1], [0.5, 0.5]], pinXZ: true } },
     play: { cast: ['smoke_screen', 0.5, 1, 0] },
   },
-  roll: {
-    grade: 'good', release: 0,
-    // a tucked crouch with a procedural tumble (FLIPS: a somersault forward or back, a sideways roll each way), one per direction
-    // relative to facing (rollKey below): over by 0.36 s (the 0.35 s dash), up by 0.45 s. In the air, KayKit's dodges with the
-    // hips pinned and the same tumble.
-    keys: {
-      roll: TUCK(1), roll_back: TUCK(-0.6), roll_left: TUCK(0.5), roll_right: TUCK(0.5),
-      roll_air: { ...DODGE('Forward'), flatY: 0.1 },
-      roll_air_back: { ...DODGE('Backward'), flatY: 0.1 },
-      roll_air_left: { ...DODGE('Left'), flatY: 0.1 },
-      roll_air_right: { ...DODGE('Right'), flatY: 0.1 },
-    },
-    play: { cast: ['roll', 0.45, 1, 0] },
-  },
   ram_ride: {
     grade: 'ok', release: 0, legacy: ['ride'],
     keys: { ride: { clip: 'Sit_Chair_Idle', loop: true } },     // seated on the ram's back, legs forward
@@ -341,11 +316,6 @@ export const SPELL_ANIMS = {
     grade: 'good', release: 0.35,
     keys: {},                                      // the shared tk_lift / tk_throw
     play: { cast: ['tk_lift', 0.9, 1, 0], release: ['tk_throw', 0.9, 1, 0] },
-  },
-  trapped_relic: {
-    grade: 'ok', release: 0.35,
-    keys: { trapped_relic: ['Ranged_Magic_Spellcasting', 0, 0.67, 0.5] },   // the curse: a hand worked over the object
-    play: { cast: ['tk_lift', 0.9, 1, 0], release: ['tk_throw', 0.9, 1, 0], hold: ['trapped_relic', 0.5, 1, 0] },
   },
 
   // ---------------------------------------------------------------- ultimates (Q): every one has a 1.3 s wind-up
@@ -413,15 +383,4 @@ export function spellPlay(spellId, phase, n = 1) {
   const shots = Object.keys(SPELL_ANIMS[spellId].keys).filter(k => /\d$/.test(k)).length;
   const key = p[0] === '#' ? `${spellId}${Math.max(1, Math.min(n, shots))}` : p[0];
   return [key, p[1], p[2], p[3]];
-}
-
-// Roll: the key for a roll along world direction `dir` ([x, z]) by a wizard facing `yaw` (a body faces +z at yaw 0;
-// wizard.js turns it by yaw about +y). Pass it to Wizard.oneShot with the rest of spellPlay('roll', 'cast').
-// `air`: the roll starts off the ground, so it's the flipping air-dodge (the roll_air* keys).
-export function rollKey(dir, yaw, air = false) {
-  const fx = Math.sin(yaw), fz = Math.cos(yaw);
-  const fwd = dir[0] * fx + dir[1] * fz, side = dir[0] * fz - dir[1] * fx;    // side > 0: to the body's left
-  const base = air ? 'roll_air' : 'roll';
-  if (Math.abs(fwd) >= Math.abs(side)) return fwd >= 0 ? base : `${base}_back`;
-  return side > 0 ? `${base}_left` : `${base}_right`;
 }
