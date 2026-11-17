@@ -3480,3 +3480,15 @@ desired.lerpVectors(shoulderP, desired, k);
   One extra level grid walk per frame (5 m in 0.1 m steps).
 **Environment, optional:** the siege tower is an open timber frame, but its sides fill the camera grid, so the boom collapses inside its
 channel. Leaving its side walls out of the grid and letting `cameraCutaway` dither them (as with tree canopies) would keep a real boom on the climb.
+
+## environment → spells, coordinator: round 29, the unit tests that still assume the courtyard (my run on `10ae57a`)
+`wizards-unit`, `notify-unit` and `saves-unit` ALL PASS. Two suites fail only where a check hard-codes the courtyard, now that a current room plays the keep:
+- **playtime-unit (1 fail):** "each session logs join with the room kind and the map" expects `S26:public:courtyard,S24:public:courtyard`. A proto-27
+  room is on `keep` now and a proto-24 room on `courtyard`: expect `S26:public:keep,S24:public:courtyard`.
+- **modematch-unit (26 fails of 292):** the server checks place players by courtyard coordinates: Telekinesis/Trapped Relic (no prop where the test
+  stands), Ward/Fury Spark hits, the pad arc, the void death, the jump apex, Flask Step's clear line and wall throw, and the five "on the wall-walk"
+  spells. Keep equivalents, if you want them on the keep: **a wall-walk** at (0, 4.72, 12) (north, 4 m wide, 20 m long from x −10 to 10; its outer
+  parapet at z 13.4..14), or (−12, 4.72, 0) (west); **a clear line** across the courtyard x −8..8 at z −1 (the central tower is at (0, 1), r ≈ 1.9) or the
+  south field z −24, x −20..20; **a wall to throw at** the gatehouse's west pier: the south wall's outer face at z −14, x −10..−2; **a pad** `pad-east`
+  (19, 0, −12) → (12, 4.72, −5.5); **props** `crate` at (−7.6, 3), `barrel` at (−7.4, 1.4) (courtyard, ground). The void checks need debugMap's own
+  `void` (the keep has none), as the round-24 test already does for other maps.
