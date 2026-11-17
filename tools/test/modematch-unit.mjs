@@ -9,6 +9,9 @@
 process.env.MATCH_DEBUG ??= '1';
 const { createMatch } = await import('../../server/match.js');
 import * as C from '../../public/shared/constants.js';
+// (round 29: the checks below play v24 rooms (proto 24: the courtyard, then Sky Ruins) and read their spots from the courtyard; the current
+// rooms' Siege Keep has its own checks in keep-unit.mjs)
+C.setActiveMap('courtyard');
 
 let clock = 0, nextId = 1, fails = 0;
 const ok = (cond, what) => { console.log(`${cond ? 'ok  ' : 'FAIL'} ${what}`); if (!cond) fails++; };

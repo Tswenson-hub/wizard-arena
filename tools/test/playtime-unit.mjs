@@ -157,7 +157,7 @@ const NEW = ['xp', 'challenge', 'emote', 'taunt', 'look', 'progress'];
   const keepAwake = setInterval(() => { for (const id of [id26, id24]) room.message(id, { t: 'activity' }); }, 3000);   // (not idle: they stay seated)
   const wel26 = w26.got.find(m => m.t === 'welcome'), wel24 = w24.got.find(m => m.t === 'welcome');
   ok(wel26.progress?.xp === 90 && wel26.progress.level === 1 && !wel24.progress, 'the 26 client gets its progress in the welcome; the 24 client gets none');
-  ok(events.filter(e => e.event === 'join').map(e => `${e.s}:${e.details.room}:${e.map}`).join() === 'S26:public:courtyard,S24:public:courtyard', 'each session logs join with the room kind and the map');
+  ok(events.filter(e => e.event === 'join').map(e => `${e.s}:${e.details.room}:${e.map}`).join() === 'S26:public:keep,S24:public:keep', 'each session logs join with the room kind and the map');
   room.message(id26, { t: 'equip', equipped: { robe: 'robe_crimson', staff: 'staff_ember' } });   // (level 1: neither is unlocked)
   ok(!w24.got.some(m => m.t === 'look') && w26.got.some(m => m.t === 'look' && m.id === id26 && !Object.keys(m.eq).length), 'equip at level 1 drops the locked robes; the look goes to the 26 client only');
   room.message(id26, { t: 'menu', open: true }); room.message(id26, { t: 'menu', open: false }); room.message(id26, { t: 'menu', open: true });
