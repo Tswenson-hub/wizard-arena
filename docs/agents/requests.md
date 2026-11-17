@@ -3432,3 +3432,51 @@ All from `layout-keep.json` through map.js's exports, as you read them today (`C
 - **Characters:** the camera grid stays `half 48, y0 −2, y1 30` (the highest roof is the courtyard tower's at about 10.4 m). Spots worth a look: the
   gatehouse passage (0, −12), the siege tower climb (−17.8, ~2.4, −4) and plank (−14.5, 4.72, −4), the stairs, the tower tops, the breach (12, 4).
 - **Spells: no `waypoint` kind yet;** say if the gate or the breach need one.
+
+## characters → spells (environment, coordinator FYI): round 29 §4, the camera on Siege Keep: two causes in `updateCamera`, a tested 10-line fix; the podium is moved
+**Podium (environment's ask): done in `2dba98c`.** The recap stage is Kenney pieces from `models/keep/` (`wall`, `tower-base`,
+`tower-square-base-border` plinths, `flag-banner-long` banners swatch-tinted to each player's colour) on the map's colormap material. Nothing
+loads from `models/castle` (which `fdeeee4` has since deleted). Three-client podium: `/tmp/wa-characters/r29/podium_2500.png`, no errors.
+**The check:** 23 spots × 4 yaws × 3 pitches on 4103 (`camera.py spots_keep.json`; bots removed before each placement):
+- the spots: both tower tops (centre, edge, corner), the wall-walks (both edges, against the NE tower, the NW corner, the west dock, the breach
+  end), the gatehouse top, the gate passage and portcullis, the drawbridge, both stairs, the siege tower's climb and plank, beside the court
+  tower, the breach, the trebuchet and a catapult.
+- **Fine:** tower tops, the gatehouse top, the open wall-walks, the drawbridge, the breach, both stairs, the siege tower's plank, and climbing
+  the siege tower lengthwise. The camera grid (y1 30) is ample.
+**Bad frames, two causes, both in main.js `updateCamera`:**
+1. **Round 24's `CAM.minSide` floor (still open).**
+   - On the north wall-walk facing south against the NE tower (9.6, 4.72, 12.8), the side step is blocked (clearance 0.21), and the 0.45 floor
+     puts the shoulder 10 cm from the tower's face.
+   - The boom then runs into the hollow `tower-square-mid-windows` model: half the screen is the tower's inside, its windows seen from within.
+   - Shot: `cam_ww-north-at-ne-tower_y3.14_p+0.0.png`.
+2. **New: a collapsed boom keeps the full 1.2 m side step.** When something stands right behind, the boom drops to about 0, but the shoulder
+   stays 1.2 m to the right, so the camera sits beside the head and the wizard is 90° off-screen.
+   - **Where:** the gate passage and portcullis facing west, the siege tower's 2.6 m channel facing sideways (boom 0.83 in every such row), and
+     beside the trebuchet (the camera's view is all beam).
+   - **Shots:** `probe_gate-passage_W.png`, `probe_siege-climb_S.png`, `probe_trebuchet_E.png`.
+**Suggested fix (yours to take or change; tested in a scratch worktree on 4113, now removed):** `/tmp/wa-characters/r29/camera_fix.diff`, in short:
+```js
+const side = CAM.side * camClear(pivot, sideFull);              // no minSide floor (camClear already keeps CAM.margin)
+...
+let k = camClear(shoulderP, desired);
+// a wall within 1.6 m behind (the boom held level, so looking up into the floor doesn't count) slides the shoulder in over the head
+const flatK = camClear(shoulderP, shoulderP.clone().add(tmp.flat.set(back.x, 0, back.z).normalize().multiplyScalar(camDist)));
+if (flatK * camDist < 1.6) {
+  shoulderP.lerpVectors(pivot, shoulderP, Math.max(0, flatK * camDist / 1.6));
+  desired = shoulderP.clone().addScaledVector(back, camDist);
+  k = camClear(shoulderP, desired);
+}
+desired.lerpVectors(shoulderP, desired, k);
+```
+(`tmp.flat`: one more Vector3 in `tmp`.) **Before and after:** `fix_compare.png`, `fix2_compare.png`.
+- **Better:**
+  - The NE-tower wall-walk: a full 5 m boom with the wizard in frame.
+  - The trebuchet: a full boom, the wizard in front of the engine.
+  - The gate passage: the hat in view, not a bare arch.
+- **The same:** the open spots, the wall-walks and the siege climb lengthwise.
+- **Still tight, and inherent:** facing the side wall in the 2.4 m portcullis passage or the siege tower's channel, or backed flat against a wall
+  (the court tower, the breach rubble). The camera sits over the head and shows what you face, without the body (as today, where it sits
+  beside the head). The grid's "boom ≥ 1.2 m" count goes down with the fix only because "over the head" measures shorter than "beside it".
+  One extra level grid walk per frame (5 m in 0.1 m steps).
+**Environment, optional:** the siege tower is an open timber frame, but its sides fill the camera grid, so the boom collapses inside its
+channel. Leaving its side walls out of the grid and letting `cameraCutaway` dither them (as with tree canopies) would keep a real boom on the climb.
