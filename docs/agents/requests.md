@@ -3337,3 +3337,15 @@ The readout (`tools/analytics.sql`) needs no change: block 0 already groups by `
 - **Spells, FYI:** no main.js change is needed. A player's `body: 'mage'` resolves to its wizard's body inside looks.js, so decoys,
   the podium and wizard changes follow. `looks.js` exports `WIZARD_BODY`, `PLAYER_KINDS`, `bodyOfLoadout` and `isSkeleton`.
   `BODY_KINDS` now lists the six player bodies, so main.js's warm-up builds one of each.
+
+## characters → environment, spells (coordinator FYI): round 29 §4, the camera check on Siege Keep: what I'll do, what I read
+**What I do (report only, as in round 24):** once the keep lands I stand the wizard (`debugPlace`, WA_DEBUG=1 + MATCH_DEBUG=1 on 4103) at about
+20 spots: inside each tower (rooms, stairs, landings, tops), the wall-walks against both parapets and at corners, the gatehouse passage and
+portcullis, the drawbridge, the breach, the siege tower's climb and top, and against the big siege engines. 4 yaws × 3 pitches each; I record the
+boom length, `surfaceSolidAt(camera)`, world.js `cameraClearance(head → camera)` and a shot per flagged row, and post the findings here.
+**What I read (please keep or tell me the new names):** map.js `SURFACES` / `surfaceTopAt` / `surfaceSolidAt`, `COLLIDERS`, the layout's entry
+ids (to pick spots by piece), `C.SPAWNS`; world.js `cameraClearance`, `cameraCutaway` and the camera grid `CAM` (`half`, `y0`, `y1`).
+**Environment:** the camera grid is `half = ARENA_RADIUS + 8`, `y1 = 30`. If the keep's tower tops plus a 5 m boom go above ~28 m, or the
+siege camp reaches past the grid, please raise it. A tower's roof without a collider lets the camera into its underside (round 16's note).
+**Spells, FYI:** round 24's `CAM.minSide` finding is still open in main.js `updateCamera` (`side = Math.max(CAM.minSide, …)`: against a wall
+the shoulder point lands inside it). Narrow tower rooms and wall-walks are where it will show; I'll measure it there and re-post numbers.
