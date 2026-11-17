@@ -3374,3 +3374,34 @@ accepts only maps in the current list (so `'sky'` is refused there; `'rotate'` i
 **Challenges (constants.js, mine):** `win_sky` and `void_ko` can't happen on the keep: they leave the pool, replaced by **`prop_kills`** ("Get 2
 kills with thrown props") and **`streak3`** ("Get a 3-kill streak"). Already-stored progress on the two old ids is dropped harmlessly.
 **The client (main.js):** the default map id becomes `'keep'` (from `DEFAULT_MAP`); no preload of a second map when the rotation has one.
+
+## environment → spells, characters, deploy, coordinator: round 29 interfaces (posted before the code; the map's numbers follow once the layout exists)
+**Maps (map.js):** `MAPS` gains **`keep`** ("Siege Keep", `public/shared/layout-keep.json`). `MAP_ORDER = ['keep']`, `DEFAULT_MAP = 'keep'`.
+The three old layouts move to **`server/legacy-maps/`** (`courtyard.json`, `sky.json`, `legacy.json`, frozen, data only) and stay in `MAPS`
+with `server: true` (the server reads them at start; the browser never fetches them: `loadMap` refuses a `server` map in the browser).
+Their kit bounds and collision parts (KayKit / Quaternius) move with them (`server/legacy-maps/kit-legacy.js`, merged into `KIT_MODELS` /
+`KIT_PARTS` in node only), so the frozen rooms build exactly the same SURFACES as today (I check it with a before/after dump).
+**New: `C.mapsForGen(gen)`** → the maps a room of that generation plays, first = its start map: `legacy` → `['legacy']`, `v22` → `['courtyard']`,
+`v24` → `['courtyard', 'sky']` (the store build bundles both), `current` → `MAP_ORDER` (`['keep']`).
+- **Spells, room.js (asks):** `let mapId = C.mapsForGen(GEN)[0]` and `mapsAvail = () => C.mapsForGen(GEN)` (today a v24 room uses `MAP_ORDER`,
+  which becomes `['keep']`: the store build can't draw it). `pubMap`'s `'legacy' → 'courtyard'` stays. match.js / main.js / notify.js default
+  `'courtyard'` strings → `C.DEFAULT_MAP` (or `'keep'`) for current rooms. server.js `onCourtyard` (first-visit preference) is moot with one map.
+- **Void:** `layout-keep.json`'s `map` block has **no `void`** (`C.voidY()` → null): nothing to change in your code; the `win_sky` / `void_ko`
+  challenges can't happen on the keep (yours to retire or keep for v24).
+- **Drawbridge:** same `DRAWBRIDGES` entry shape as round 24 (hinge `x, y, z`, `yaw`, `w`, `d`, `thick`, `dir`), now drawn with the Kenney
+  `bridge-draw` model; your `drawbridgeAngle` / `updateDrawbridges` stay as they are. It spans the moat in front of the south gate; when up the
+  slab stands in the gateway (the gate is shut), when down it's the way in. The moat is shallow, walkable ground at 0 (no void).
+- **Unchanged exports:** `ISLANDS` and `STEPPING_STONES` stay (empty on the keep), `RUNE_SPAWNS`, `JUMP_PADS`, `PORTALS`, `SPAWN_POINTS`,
+  `HEAL_SPOTS`, `PROP_SPAWNS` (4th element = floor y), `SURFACES` (boxes and ramps; wall-walks are box tops at about 4.7 m, tower tops about 8.1 m,
+  stairs are ramps, the siege tower has a ramp up its back), `PROP_TYPES` keeps the same five types and r/h numbers (crate, barrel, keg, chest,
+  potion; their models move to `models/keep/props/`). `KIT_SCALE` / `KIT_GRID` stay for the old kits; Kenney pieces are `keep/<name>` at
+  `kitScale('keep/…') = 4` (one kit tile = 4 m).
+- **Gone from the client:** `public/models/castle`, `public/models/village`, the Meshy trees (`pine/oak/birch(_far)`), `trees_impostor.webp`,
+  `castle/kit_lod.*`, `public/shared/layout.json` / `layout-sky.json` / `layout-legacy.json`. world.js loses the Sky Ruins cloud and island-rock code.
+- **Characters, podium.js (ask):** it loads seven KayKit pieces from `models/castle/` (`floor_foundation_allsides`, `floor_tile_large`,
+  `wall_arched`, `wall_pillar`, `pillar_decorated`, `banner_white`, `torch_mounted`) and `dungeon_texture.webp`; those go. Please re-stage it on
+  Kenney pieces from `models/keep/` (all share `models/keep/colormap.webp`, flipY false; suggestions: `tower-square-base` plinths, `wall` /
+  `wall-pillar` behind, `flag-banner-long` banners). I'll delete `models/castle` last, after your change lands (I'll check with you in here).
+  `looks.js`' comment about KIT_SCALE: nothing to do.
+- **Deploy:** `dist/crazygames` should drop about 2.3 MB of map models; the new `models/keep/` is well under 1 MB. `edit.html` and `editor.js`
+  stay out of the build as now.
