@@ -22,7 +22,7 @@
 #     farmhouse/silo/barn with 1024 maps (silo and farmhouse also simplify 0.5, error 0.002), the rest with 512.
 #     Not ice_wall/acid_puddle: effects.js loads those with its own GLTFLoader, which has no decoder.
 #     Packing an already-packed file works but re-quantizes; start from the backup or the source when you can.
-#   Repeated scenery (trees, rocks) needs a looser error to reach its ratio, e.g. one <pine.glb> pine 0.5 512 0.02
+#   Repeated scenery (trees, rocks) needs a looser error to reach its ratio, e.g. one <tree.glb> tree 0.5 512 0.02
 #   Big image-to-3d scenery went:  one <barn.glb> barn 0.03 2048   (88 MB -> 2.6 MB, 64k tris)
 #                                  one <silo.glb> silo 0.012 2048  (248 MB -> 4.1 MB)
 # Needs network access the first time (npx fetches @gltf-transform/cli).

@@ -1,8 +1,8 @@
 // Map layout, shared by server and client: arena size, props, spawn points, heal spots and everything solid.
 // Owned by the environment track; gameplay code reads it through constants.js (which re-exports it).
 //
-// Round 15: the castle courtyard. The map is built from kit pieces (KayKit Dungeon in public/models/castle, the
-// Quaternius Medieval Village roofs, towers and balconies in public/models/village), each one a layout entry of kind
+// Round 15: the castle courtyard. The map is built from kit pieces (round 15-28: KayKit Dungeon and the Quaternius Medieval Village;
+// round 29: the Kenney Castle Kit in public/models/keep), each one a layout entry of kind
 // 'kit'. Its colliders are the piece's box (from its bounding box, kit-models.js) or the parts listed in KIT_PARTS
 // (stairs are ramps, wall-walk floors are decks, parapets are thin walls). +z is north. A stone courtyard inside a
 // square curtain wall with a wall-walk round it, stair towers up to it, a gatehouse to the south and a hall with a
