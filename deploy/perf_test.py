@@ -38,7 +38,7 @@ ap.add_argument('--json', default=None)
 ap.add_argument('--shot', default=None)
 ap.add_argument('--swiftshader', action='store_true')
 ap.add_argument('--no-targets', action='store_true', help='report only, always exit 0')
-ap.add_argument('--map', default=None, choices=['courtyard', 'sky'], help='measure on this map (round 22)')
+ap.add_argument('--map', default=None, choices=['courtyard', 'sky', 'keep'], help='measure on this map (round 22)')
 A = ap.parse_args()
 # the private host's map lock (spells' room protocol, round 22): sent with --map on a --room new page
 ROOM_MAP = lambda m: {'t': 'roomMap', 'map': m}
