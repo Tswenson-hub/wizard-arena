@@ -1,5 +1,87 @@
 # Environment hand-off: the castle courtyard (round 15), then the farmstead (earlier rounds)
 
+## Round 29: Siege Keep (Kenney Castle Kit), the old map assets removed, the drag-and-drop editor
+Commits: `04f0b55` (interfaces), `de20d37` (the map), `dc68081` (heal names, a spawn), `59a8307` (the map's numbers in requests.md), `bb3faf1`
+(village, Meshy trees, impostors deleted), `7ee0cca` (the editor), `fdeeee4` (`models/castle` deleted), `10ae57a` (the moat's blue), `de513be`
+(test notes), `4325f02` (an editor fix).
+
+**The map** (`public/shared/layout-keep.json`, 138 entries; first drafted by `/tmp/wa-environment/r29/keep-gen.mjs`, the layout is the source
+of truth now). Kenney pieces are `keep/<name>` at `kitScale` 4 (one kit tile = 4 m; the kit's door is 2.4 m next to the 1.8 m wizards).
+- **Heights:** ground 0, **wall-walks 4.72** (walls centred at |x|, |z| = 12, 4 m thick), **tower tops 8.76** (NE (12, 12), SW (−12, −12): base,
+  `tower-square-mid-windows`, `tower-square-top`). The curtain is `wall-half` (its −x side crenellated: a `noStand` parapet 4.72→5.16 on the outer
+  edge; the inner edge open), `wall-corner` at NW/SE, plain `wall` where the siege tower docks (no parapet).
+- **Gatehouse** (0, −12): `tower-square-arch` scaled 1.168 so its deck is level with the walk (a 2.4 m opening, 2.9 m clear), the portcullis
+  (`metal-gate`) raised in it, banners and flags. **Drawbridge** hinged at its outer face (0, 0.25, −14.25), yaw π, 2.8 × 5.2 m, over the **moat**
+  (a water floor at ground level, z −14.6..−18.6, the whole width) to a dirt road. Up, the slab closes the gateway (checked: walking out stops at
+  z −13.8, shots blocked); down, it's the crossing.
+- **Routes:** the gate; the **breach** in the east wall at z 4 (rubble rocks and a log); **stairs** (`stairs-stone` at 7 m a unit, two flights
+  side by side) up the north wall's inner face (x −7.7 → −2) and the south's (x 8.3 → 2.6); the **siege tower** (scale 0.667, its gangplank at
+  4.72) docked on the west wall at z −4, climbed by a ramp along its local x (a new part type: `{ ramp: [z0, z1], lx: [lo, hi] }`); **pads**
+  courtyard → NE tower top, west camp → SW tower top, east camp → the east wall-walk.
+- **The siege camp:** catapults, a trebuchet, a ballista, a ram, two wrecked siege towers and other wrecks as cover (`engine()` parts: a
+  standable frame, a `noStand` upper part), rocks, trees; a central hexagon tower in the courtyard. Braziers and pole torches (a new `brazier`
+  kind, `BRAZIERS`, a collider each); banners and flags tinted to element colours (`tint` picks the nearest palette swatch).
+- **Points:** 8 spawns (≥ 15 m apart, none in another's sight: the checks script and the editor agree), 4 heal flasks, 4 runes (courtyard,
+  NE tower top, north camp, the breach), 3 pads, 20 props (5 courtyard, 2 on the walks, 13 round the camp). No void (`map.void` absent).
+- **Field:** 56 × 56 m bounds with invisible `block` walls just outside; world.js scatters rocks and small trees along the edge, a ring of
+  Kenney trees, more on the hills.
+- **Surface names** for spells' route graph: `<id>-wallwalk`, `<id>-towertop`, `siege-tower-climb`, `stairs-*-treads`, `gatehouse-wallwalk`.
+
+**map.js:** `MAPS.keep` (default, `MAP_ORDER ['keep']`), `mapsForGen(gen)` (legacy `['legacy']`, v22 `['courtyard']`, v24 `['courtyard','sky']`,
+current `MAP_ORDER`); the three old layouts moved to `server/legacy-maps/` (`server: true`, never fetched by the browser), with their KayKit /
+Quaternius bounds and parts in `kit-legacy.js` (merged in node only). **Their built exports are byte-identical to before** (a dump of
+SURFACES, COLLIDERS, spawns, props, runes, pads, islands, stones, drawbridges, bounds for all three, compared before and after: `cmp` equal,
+re-checked after every map.js change). New: `KEEP_SCALE`, `KEEP_GRID`, `kitGrid`, `FLOOR_TONES` (floors with a `tone`), `BRAZIER`, `BRAZIERS`.
+**world.js** is rewritten for the kit: one `MeshStandardMaterial` on `models/keep/colormap.webp` (Kenney variation a: warm stone, red roofs)
+for every piece, floor, brazier and the drawbridge; tints are UV shifts between palette swatches (no new material or program); the game merges
+everything by shadow/camera setting; the Sky Ruins clouds and islands, the KayKit LOD and the shadow proxies are gone.
+
+**Removed from `public/`:** `models/castle` (106 files), `models/village` (52), the six Meshy trees and `trees_impostor.webp`, the three old
+layout files; `tools/bake-impostors.py` and `tools/bake-kit-lod.py`. Kept: the four KayKit prop models (crate, barrel, keg, chest) and their
+11 KB palette, moved to `models/keep/props/`. **Size (git, `public/`):** 10.48 MB → **8.60 MB**; map models (characters aside) 3.67 → 2.01 MB
+(the keep is 543 KB of it, 63 pieces). A scan of every `models/` and `textures/` path in `public/` finds nothing missing (except rams.js's old
+`goat.glb` fallback, spells', only used if `ram.glb` fails). **~/Downloads:** the KayKit Dungeon and Medieval Village packs aren't there (nothing to
+delete); the KayKit Adventurers pack isn't either (characters' `build-characters.mjs` reads it from there).
+
+**The editor** (`npm run edit`, `/?edit=1`; `edit.html`, `editor.js`, `server/mapedit.js`):
+- the palette is a grid of thumbnails by category (walls and gates, towers, siege engines, nature, flags, props, gameplay points, fires and
+  floors); kit pieces and props are rendered once with the game's material, gameplay points are drawn icons
+- **drag a tile onto the map:** a ghost follows the pointer, snapped to 2 m (pieces) / 0.5 m (points) and onto what's below; release drops it.
+  A clicked tile is armed for the next click (Shift-click places more)
+- **drag placed pieces directly:** the instance follows live; Q/E or the wheel turn what's held (Shift 15°); Alt-drag duplicates; PgUp/PgDn a
+  tower storey (Shift 0.25 m); Ctrl while dragging: no snap; Delete; a set dragged together keeps its storeys
+- gameplay points drag the same way; a pad's landing spot (the orange cross) is its own handle; the drawbridge shows its slab down and up
+- checks kept (reachability, now counting ground pads and ignoring covered storeys; spawn spacing and sight; props near the edge of a raised floor)
+- **Test play:** saves, waits for npm run edit's restart (`GET /api/map/status`), opens a match in a new tab. Saving a frozen map is refused.
+
+**How I verified it** (port 4102; screenshots in `/tmp/wa-environment/r29/shots/`):
+- The game on the keep: joins with no console errors, 20 props (`g_*.png`: gatehouse, moat, siege camp, wall-walk, tower top, courtyard, breach).
+- Walking (`walk.py`, the real client): up the siege tower's climb and plank onto the west walk at 4.72; up the north stairs to the top.
+- `botmatch.mjs 4102 60`: kills, props thrown and hitting. `deploy/perf_test.py` (30 s, CPU 4×): **PASS**, 60 fps, p95 18.3 ms, 92.8k triangles
+  (p95 107.6k), 69 draw calls, 50 programs, 0 compiled mid-match.
+- The editor end to end (`edtest.py`, `edplay.py`): a wall dragged from the palette and dropped, dragged 6 m (snapped), turned with E and Q,
+  Alt-dragged into a copy, saved, still there after a reload; a spawn armed by a click, turned, placed; a pad's landing spot dragged; undo;
+  Test play (the server restarted, the tab opened the game). The layout was restored after each test. Shots: `ed_ui.png`, `ed_ghost.png`,
+  `ed_dragging.png`, `ed_spawn_pad.png`; overviews `final_top.png`, `final_sw.png`, `final_ne.png`, `final_gate.png`, `final_siege.png`.
+- Units: wizards, notify, saves ALL PASS; playtime-unit 1 and modematch-unit 26 fail on hard-coded courtyard coordinates (posted to spells and
+  the coordinator with keep coordinates to use, `de513be`).
+
+**For the coordinator: a README section** (README is yours; paste or edit):
+> ### Editing the map (drag and drop)
+> Run `npm run edit` and open `http://localhost:3000/?edit=1`. Drag a piece from the palette on the left onto the map; it snaps to the grid and
+> onto walls and tower tops. Click a piece to select it and drag it to move it; Q/E or the mouse wheel turn it (Shift for 15°), Alt-drag makes a
+> copy, PgUp/PgDn lift it a storey, Delete removes it, Ctrl+Z undoes. Spawns, heal flasks, runes, jump pads (drag the orange cross to set where
+> a pad lands), props and the drawbridge move the same way. The Checks panel lists problems (spawns in sight of each other, places nobody can
+> reach, props near a ledge). **Save** (Ctrl+S) writes `public/shared/layout-keep.json` and keeps the old file in `tools/layout-backups/`;
+> **▶ Test play** saves and opens a match on the new layout in a new tab. The editor only exists under `npm run edit` on this computer.
+
+**Known / for others**
+- Spells: the two test suites above; the bots' route graph on the keep (names posted); `rams.js`' `goat.glb` fallback is dead.
+- Characters: the camera check (spots posted); the camera grid is unchanged (`half 48`, `y1 30`).
+- Deploy: rebuild `dist/crazygames` (no old map assets; `server/legacy-maps` isn't in the build); the editor stays out of it as before.
+- Ty: the field is a first draft. Things worth his eye in the editor: the courtyard is 20 m square (the stairs take its north and south edges),
+  the camp's cover density, the banners' colours.
+
 ## Round 26: drop-off analytics and progress storage (`aae4810` requests, `41f7931` `7adcda8` saves.js, `de2cad8` the readout)
 **What I built**
 - **Two migrations for the coordinator** (in requests.md, "round 26, two migrations"): `wizard_arena_events` (`public.events`: session id,
