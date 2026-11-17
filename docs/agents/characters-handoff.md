@@ -1,5 +1,73 @@
 # Characters hand-off
 
+## Round 29 §4: the camera on Siege Keep; the podium and the cover moved to the keep
+Commits:
+- `485192e`: requests, the plan
+- `2dba98c`: podium.js on Kenney pieces (environment's ask)
+- `b34111b`: requests, the camera findings and a tested fix for spells
+- `01438e3`: capture_cover.py on the keep
+- `0741569`: select.js, the how-to card's arena line
+- this hand-off
+
+Port 4103 is stopped. My scratch worktree on 4113 has been removed. Nothing is pushed.
+
+### What's built
+- **The podium** (podium.js) now loads from `models/keep/`, on the map's colormap material (`roughness 0.82`, the same program as the map):
+  - a `wall` row behind, `tower-base` columns
+  - `tower-square-base-border` plinths, stretched to the old heights
+  - a `flag-banner-long` per player, tinted by moving the palette's accent texels to the nearest colour column (world.js's way; one cached
+    geometry per column, no material clones)
+  - a grey-stone floor quad
+  - Nothing loads from `models/castle` (environment deleted it in `fdeeee4`).
+- **The cover** (deploy/capture_cover.py):
+  - New variants: `gate` (round 25's duel2 pose on the road south of the moat, with the gatehouse, portcullis, drawbridge and walls
+    behind), `court` (the courtyard, the hex tower behind) and `meteor` (by the gate).
+  - The courtyard variants are gone (the client can't load that map now).
+  - A guard in the render wrapper: a frame between a re-stage and the next size used to throw `reading 'p'`.
+- **The how-to card:** "Jump pads fling you up to the towers. The arena is Siege Keep: take the walls by the stairs, the breach or the siege
+  tower." This replaces the Courtyard / Sky Ruins rotation and the fatal fall.
+- **The camera:** checked and reported, not changed (main.js `updateCamera` is spells'). See below.
+
+### The camera check (`/tmp/wa-characters/r29/`)
+- **The run:** `camera.py spots_keep.json`, 23 spots × 4 yaws × 3 pitches, bots removed before each placement.
+  - The spots: tower tops, the wall-walks, the gatehouse, the passage and portcullis, the drawbridge, the stairs, the siege tower's climb
+    and plank, the breach, beside the siege engines.
+  - Reports: `now/camera_report.json`; the fix's `fix2/`.
+- **The towers are solid** (their tops at 8.76 m are reached by pads), so "inside the towers" means their tops. They're fine, and so are the
+  gatehouse top, the open wall-walks, the drawbridge, the breach, the stairs, the plank and the siege climb taken lengthwise.
+- **Two causes behind the bad frames, both in `updateCamera`:**
+  1. **Round 24's `minSide` floor:** on the north wall-walk against the NE tower the camera ends up inside the hollow tower shell.
+  2. **A collapsed boom keeps the 1.2 m side step:** the camera sits beside the head and the wizard is off-screen. Seen in the gate
+     passage, the siege tower's channel facing sideways, and beside the trebuchet.
+- **The fix (posted to spells, `camera_fix.diff`, about 10 lines):**
+  - no `minSide` floor
+  - a wall within 1.6 m behind (tested with the boom held level, so the floor doesn't count) slides the shoulder in over the head
+- **Tested on 4113:**
+  - fixed: the NE-tower wall-walk, the trebuchet, and the gate passage (the hat now shows)
+  - not worse anywhere, by the shots
+  - Side by side: `fix_compare.png`, `fix2_compare.png`.
+- **Inherent:** facing the side wall in the 2.4 m portcullis passage or the siege tower's channel, or backed flat against a wall. The view
+  shows what you face, without the body.
+- **Optional for environment:** take the siege tower's timber sides out of the camera grid and leave them to `cameraCutaway`.
+
+### Verified (4103, `WA_DEBUG=1 MATCH_DEBUG=1`, GPU Chromium, on the keep)
+- **The podium** (three clients: Stormcaller 1st, Frost Warden 2nd, Alchemist 3rd):
+  - Shots: `podium_2500.png`, `podium_3500.png`.
+  - Programs: 42 before the recap, 42 during it.
+  - No errors.
+- **gallery_e2e.py (round 27's):** ALL PASS on the keep, including Arcane Grasp lifting a crate as the Frost Warden. No errors.
+- **The how-to card at 1280×720:** it spans 16–704 px (`howto_720.png`). No errors.
+- **The covers** are in `/tmp/wa-characters/r29/covers/`: `gate` in all three sizes, plus `court` and `meteor` landscape.
+  - Page errors: none, after the guard.
+  - **Not copied into `deploy/crazygames/store/covers/`:** that's Ty's pick. Run
+    `python3 deploy/capture_cover.py http://localhost:<port> --variants gate --pick gate` (about 20 s) to write the store names.
+  - My pick is `gate`. In `court`, the courtyard's sand paving washes out to white under the grade.
+
+### Notes
+- podium.js still imports `BODY_SCALE` from looks.js. It's unused now, and harmless.
+- pickups.js's stepping-stone dust is dormant on the keep (no stones). It's still there for the v24 rooms' Sky Ruins in the store build's own
+  bundle.
+
 ## Round 28: a distinct body per wizard
 Commits: `33c4ed0` (the five models and the build script) and `7624279` (looks.js, podium.js, select.js, select.css). Port 4103
 is stopped. Nothing is pushed.
