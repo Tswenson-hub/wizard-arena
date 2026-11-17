@@ -65,13 +65,13 @@ ok(C.levelForXp(4670) === 15 && C.levelForXp(4669) === 14 && C.titleFor(1) === '
   ok(lv4.equipped.robe === 'robe_emerald' && lv4.equipped.staff === 'staff_ember' && !lv4.equipped.hat && lv4.unlocks.includes('robe_crimson'), 'a level 4 guest wears Emerald robes and the Ember staff, not the level-16 crown');
   ok(C.nextUnlock(3).id === 'robe_emerald' && C.nextUnlock(3).level === 4, '"Next unlock: Emerald robes at level 4"');
 
-  // a challenge completed mid-match: its XP once, then listed in the match's award (the day pinned: 2026-12-26's are wins, podiums, void_ko)
+  // a challenge completed mid-match: its XP once, then listed in the match's award (the day pinned: 2026-12-26's are wins, podiums, streak3)
   Prog.clock.day = () => '2026-12-26';
   const p = { id: 1 };
   Prog.initProgress(p, { xp: 50 });
-  ok(p.prog.challenges.list.map(e => e.id).join() === 'wins,podiums,void_ko', `the pinned day's challenges (${p.prog.challenges.list.map(e => e.id)})`);
-  const moved = [...Prog.bump(p, 'voidKos'), ...Prog.bump(p, 'voidKos')];
-  ok(moved.filter(m => m.newly).length === 1 && p.prog.xp === 50 + 130 && p.prog.challenges.list[2].done, 'a void knockout completes "void_ko" once (+130 XP), a second does nothing');
+  ok(p.prog.challenges.list.map(e => e.id).join() === 'wins,podiums,streak3', `the pinned day's challenges (${p.prog.challenges.list.map(e => e.id)})`);
+  const moved = [...Prog.bump(p, 'streaks3'), ...Prog.bump(p, 'streaks3')];
+  ok(moved.filter(m => m.newly).length === 1 && p.prog.xp === 50 + 130 && p.prog.challenges.list[2].done, 'a 3-kill streak completes "streak3" once (+130 XP), a second does nothing');
   ok(Prog.bump(p, 'nothing').length === 0 && Prog.bump({ bot: {} }, 'kills').length === 0, 'unknown counters and bots move nothing');
   const r1 = Prog.finishMatch(p, { place: 2, of: 4, won: false, map: 'courtyard', kills: 13, deaths: 2 });
   const it = (k) => r1.msg.items.find(i => i.k === k);
