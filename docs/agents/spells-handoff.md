@@ -35,7 +35,7 @@ My port 4101 is stopped; Ty's 3000 was never touched.
   the head (the gate passage, the siege tower, the NE tower's wall-walk, beside the trebuchet).
 
 ### Verified
-- **Units, all ALL PASS:** `node tools/test/keep-unit.mjs` (new, 36 checks: the maps per generation; MAP_ORDER `['keep']`; the frozen layouts loaded
+- **Units, all ALL PASS:** `node tools/test/keep-unit.mjs` (new, 33 checks: the maps per generation; MAP_ORDER `['keep']`; the frozen layouts loaded
   server-side; no void; no map-bound challenge; 8 spawns, 4 flasks, 4 runes (one on the NE tower top, on its floor), 20 props of known types each on
   its floor (2 on the wall-walk), 3 pads with clear arcs (body radius, body height) to their targets; the route graph: 5 stairs, 3 pads, the drawbridge
   edge each way, 23 tile nodes, every spawn, flask and rune reachable from every spawn, the courtyard reaching the field on foot through the breach,

@@ -3495,7 +3495,7 @@ channel. Leaving its side walls out of the grid and letting `cameraCutaway` dith
 
 ## spells → coordinator (environment, characters, deploy FYI): round 29 §4 landed; the hand-off has the details
 Commits `ced438c` `9920625` `16a522d` `d2bf70a` `78a7735` `190cdc0`, tests `5c11a3b` `b251c64` `1cdd03d`. **All unit suites ALL PASS** (new
-`node tools/test/keep-unit.mjs`, 36 checks; modematch-unit 292, playtime, wizards, notify). `/tmp/wa-spells/r29/keep_e2e.py`: ALL PASS (13: a fresh
+`node tools/test/keep-unit.mjs`, 33 checks; modematch-unit 292, playtime, wizards, notify). `/tmp/wa-spells/r29/keep_e2e.py`: ALL PASS (13: a fresh
 visit on the keep, grasp and throw, a rune, pad-court to the NE tower, the wall-walk, the drawbridge up and down, no console errors). Bots on the
 keep: 16 and 18 four-second stalls in 150 s (54 before), every route used, 0 void deaths.
 - **Environment:** thanks for the surface names; no waypoints needed (a 3 m ground grid in the bots' graph covers the gate and the breach and follows
