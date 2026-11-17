@@ -1,9 +1,9 @@
 # Action key art for the CrazyGames store (round 25): a staged in-engine render, graded and titled.
 # usage: WA_DEBUG=1 MATCH_DEBUG=1 PORT=4103 node server.js &   (a private port; never the live server)
-#        python3 deploy/capture_cover.py http://localhost:4103 [out dir=deploy/crazygames/store/covers] [--variants duel,duel2,meteor]
+#        python3 deploy/capture_cover.py http://localhost:4103 [out dir=deploy/crazygames/store/covers] [--variants gate,court,meteor]
 #                                        [--work /tmp/wa-cover] [--only landscape,portrait,square] [--pick duel2] [--swiftshader]
-# Variants: duel (Ranged_Magic_Shoot), duel2 (the Meteor wind-up's thrust; Ty's pick in round 25), meteor (the 'heavy' projectile at a
-# skeleton mage). Spots come from a clear-line search (every camera sees the head, tip, fireball and target; 2.5 m free round both).
+# Variants (round 29, Siege Keep): gate and court (the Meteor wind-up's thrust, Ty's round-25 pick, before the gatehouse or in the
+# courtyard), meteor (the 'heavy' projectile at a skeleton mage). Spots come from a clear-line search (every camera sees the head, tip, fireball and target; 2.5 m free round both).
 # Writes cover-action-<variant>-{landscape-1920x1080,portrait-800x1200,square-800x800}.jpg into the out dir (and the raw
 # renders, masks and a 300 px comparison sheet into --work). Pick the best variant by eye and copy it to the unsuffixed
 # cover-action-{landscape-1920x1080,...}.jpg names (--pick <variant> does the copy).
@@ -49,17 +49,19 @@ CAMS = {'landscape': dict(f=2.0, s=-3.8, h=0.75, lf=2.35, lh=1.55, fov=55),
         'portrait': dict(dist=3.0, u=0.38, f=1.5, s=-5.2, h=0.8, lf=1.5, lh=0.45, fov=68),
         'square': dict(dist=4.0, u=0.5, f=1.8, s=-4.8, h=0.8, lf=2.0, lh=0.4, fov=66)}
 VARIANTS = {
-    'duel': dict(map='courtyard', M=[-12.25, 0, 10.75], yaw=math.pi / 2, dist=5.2,
-                 mage=dict(clip='Ranged_Magic_Shoot', t=0.3, turn=-0.35, nod=0.28), skel=dict(kind='skeleton_warrior', clip='Hit_A', t=0.18, turn=0.5),
+    # Round 29: Siege Keep is the only map the client has (the courtyard is server-only now), so the stages moved there; the poses are
+    # round 25's (duel2's Meteor wind-up was Ty's pick). gate: on the road south of the moat, the gatehouse, drawbridge and walls behind.
+    'gate': dict(map='keep', M=[2.6, 0, -21.6], yaw=-math.pi / 2, dist=5.2,
+                 mage=dict(clip='Ranged_Magic_Spellcasting_Long', t=1.6, turn=-0.3, nod=0.25), skel=dict(kind='skeleton_warrior', clip='Hit_A', t=0.18, turn=0.5),
                  u=0.5, big=1.5, keyI=26,
                  cams={'landscape': dict(f=2.0, s=-3.8, h=0.75, lf=2.35, lh=1.55, fov=55)}),
-    # the same duel with the Meteor wind-up's thrust (a diagonal staff, the body leaning in)
-    'duel2': dict(map='courtyard', M=[-12.25, 0, 10.75], yaw=math.pi / 2, dist=5.2,
+    # court: in the keep's courtyard, the hex tower and the NE tower behind
+    'court': dict(map='keep', M=[3.2, 0, -5.6], yaw=-math.pi / 2, dist=5.2,
                   mage=dict(clip='Ranged_Magic_Spellcasting_Long', t=1.6, turn=-0.3, nod=0.25), skel=dict(kind='skeleton_warrior', clip='Hit_A', t=0.18, turn=0.5),
                   u=0.5, big=1.5, keyI=26,
                   cams={'landscape': dict(f=2.0, s=-3.8, h=0.75, lf=2.35, lh=1.55, fov=55)}),
-    # Meteor: the Pyromancer's power spell (the game's 'heavy' projectile) at the end of its wind-up, a skeleton mage knocked back
-    'meteor': dict(map='courtyard', M=[-4, 0, -14], yaw=0, dist=5.0, kind='heavy',
+    # Meteor: the Pyromancer's power spell (the game's 'heavy' projectile) at the end of its wind-up, a skeleton mage knocked back, by the gate
+    'meteor': dict(map='keep', M=[2.5, 0, -22.0], yaw=-math.pi / 2, dist=5.0, kind='heavy',
                    mage=dict(clip='Ranged_Magic_Spellcasting_Long', t=1.6, turn=-0.3, nod=0.25), skel=dict(kind='skeleton_mage', clip='Hit_B', t=0.15, turn=0.45),
                    u=0.48, big=1.6, keyI=30,
                    cams={'landscape': dict(f=2.3, s=-3.4, h=0.7, lf=2.45, lh=1.6, fov=60)}),
@@ -160,7 +162,7 @@ STAGE = r"""async (V) => {
       for (const w of wa.players.values()) w.group.visible = false;
       if (!window.__pickHidden) { window.__pickHidden = []; sc.traverse(o => { if (o.userData?.cat === 'pickups' && o.visible) window.__pickHidden.push(o); }); }
       for (const o of window.__pickHidden) o.visible = false;
-      if (!st || !cv) return render(sc, cam);
+      if (!st || !cv || !st.cams[cv.aspect]) return render(sc, cam);   // (between a re-stage and the next aspect)
       const c = st.cams[cv.aspect];
       cam.position.copy(c.p); cam.lookAt(c.l); cam.fov = c.fov; cam.updateProjectionMatrix(); cam.updateMatrixWorld();
       if (!cv.mask) return render(sc, cam);
@@ -350,7 +352,7 @@ async def main():
             pg.on('pageerror', lambda e: errs.append(str(e)))
             await pg.goto(URL + '/?debug&first&room=new', timeout=120000)
             await pg.wait_for_function(JOIN_WAIT, timeout=60000)
-            if V['map'] != 'courtyard':
+            if V['map'] != 'keep':   # a room starts on the current generation's first map (round 29: the keep)
                 await pg.evaluate(f"window.__wa.net.send({{ t: 'roomMap', map: '{V['map']}' }})")
                 await pg.wait_for_function(f"window.__wa.map === '{V['map']}'", timeout=30000)
                 await pg.wait_for_timeout(2500)
