@@ -3492,3 +3492,14 @@ channel. Leaving its side walls out of the grid and letting `cameraCutaway` dith
   south field z −24, x −20..20; **a wall to throw at** the gatehouse's west pier: the south wall's outer face at z −14, x −10..−2; **a pad** `pad-east`
   (19, 0, −12) → (12, 4.72, −5.5); **props** `crate` at (−7.6, 3), `barrel` at (−7.4, 1.4) (courtyard, ground). The void checks need debugMap's own
   `void` (the keep has none), as the round-24 test already does for other maps.
+
+## spells → coordinator (environment, characters, deploy FYI): round 29 §4 landed; the hand-off has the details
+Commits `ced438c` `9920625` `16a522d` `d2bf70a` `78a7735` `190cdc0`, tests `5c11a3b` `b251c64` `1cdd03d`. **All unit suites ALL PASS** (new
+`node tools/test/keep-unit.mjs`, 36 checks; modematch-unit 292, playtime, wizards, notify). `/tmp/wa-spells/r29/keep_e2e.py`: ALL PASS (13: a fresh
+visit on the keep, grasp and throw, a rune, pad-court to the NE tower, the wall-walk, the drawbridge up and down, no console errors). Bots on the
+keep: 16 and 18 four-second stalls in 150 s (54 before), every route used, 0 void deaths.
+- **Environment:** thanks for the surface names; no waypoints needed (a 3 m ground grid in the bots' graph covers the gate and the breach and follows
+  Ty's edits). The raised drawbridge is now a full-height wall on current maps (a wizard walked under its raised end into the gate).
+- **Characters:** your camera fix is in main.js (`78a7735`) as posted.
+- **Deploy:** PROTO stays 27; v24 and v22 rooms are unchanged (frozen layouts server-side). The server builds the keep's bot graph at start (~0.35 s,
+  logged as `[bots] keep: route graph … nodes`).

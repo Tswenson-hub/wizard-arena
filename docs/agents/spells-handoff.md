@@ -1,5 +1,80 @@
 # Spells hand-off
 
+## Round 29 §4: Siege Keep for the current rooms (the bots' routes, the drawbridge, no void, no rotation), the camera fix, the tests
+Commits: `f8dd4a1` (requests: interfaces, posted first), `ced438c` `9920625` (room.js, match.js, server.js, progress.js, constants.js, main.js,
+notify.js: the maps per generation, the challenges), `5c11a3b` `b251c64` (playtime-unit, modematch-unit), `16a522d` `190cdc0` (bots.js, server.js: the
+route graph), `d2bf70a` (constants.js: the raised drawbridge a wall), `78a7735` (main.js: characters' camera fix), `1cdd03d` (`tools/test/keep-unit.mjs`).
+My port 4101 is stopped; Ty's 3000 was never touched.
+
+### What changed
+- **Rooms:** a room plays `C.mapsForGen(gen)` (environment's; room.js keeps the same table as a fallback): legacy `['legacy']`, v22 `['courtyard']`,
+  v24 `['courtyard', 'sky']` (the store build, unchanged), current `MAP_ORDER` = `['keep']`. A room's first map is the first of its list (was a
+  hard-coded courtyard, in room.js and match.js), so a current room starts on the keep and every rematch stays there; a current host's `roomMap 'sky'`
+  is refused (not in its list). A first visit prefers a public room on its generation's first map (`room.homeMap()`). PROTO stays 27.
+- **No void on the keep:** its `map` block has no `void`, so `C.voidY()` is null and the rule, the bots' void guards and `landingSpot` stand down
+  by themselves. Checked: a wizard put below the moat isn't killed.
+- **Challenges:** `win_sky` and `void_ko` (impossible on the keep) are replaced in `DAILY_POOL` by **`prop_kills`** ("Get 2 kills with thrown props",
+  a thrown prop's kill, `kind === 'prop'`) and **`streak3`** ("Get a 3-kill streak", at the streak's third kill). The pool has no map-bound entry now;
+  progress.js no longer bumps `winSky`. A stored entry on an old id is just not found (harmless).
+- **The drawbridge** runs on the keep's own `DRAWBRIDGES` entry with the round-24 code. One fix: on Siege Keep the road side is walkable ground, and a
+  raised slab (past the 45° fall angle) was only its 0.35 m deck tilted up, so a wizard walked under its high end and was pushed out on the hinge side,
+  into the gate. Past the fall angle the slab's body now reaches down to the hinge: a full-height wall that holds walkers and shots. Not on the frozen
+  maps (the v24 build's Sky Ruins slab stays as its clients predict it).
+- **Bots (bots.js), on current maps only** (`NEW_MAP`: the live map isn't `server`-only; the frozen maps' bots are unchanged):
+  - `lineOk` now sees walls: `surfaceHeight` only reports floors within a step of the feet, so a 4 m wall was invisible to every route check
+    (on the old maps walls were mostly circles). It asks `surfaceSolidAt` at body height every 0.8 m; the gatehouse deck (bottom 2.9 m) lets the walk through.
+  - Route nodes on every `*-wallwalk` and `*-towertop` tile (environment's names), plus a **3 m grid of open ground** over `ARENA_BOUNDS` (no solid
+    piece within 0.8 m at body height, ground level), with neighbours joined. So the bots go round the corner towers and through the breach and the
+    gate wherever Ty's edits put them; no waypoints needed. A route query only tries grid points within 7 m of its ends (cost).
+  - No plain walk crosses the drawbridge's span (only the round-24 time-gated edge does), so the graph is the same whatever the slab's phase was when it was built.
+  - The fight walk always asks the route graph on a current map (it did only when the target was on another plane), so a target on the other side of
+    a wall is reached round it, not by pressing into it.
+  - The server builds each current map's graph at start (about 0.35 s, 1.2 s on a loaded machine), not in the first room's tick. The cache key includes
+    where the static pieces are, so a piece moved in the editor rebuilds it.
+- **Camera (main.js `updateCamera`):** characters' tested fix: no `CAM.minSide` floor, and a wall within 1.6 m behind slides the shoulder in over
+  the head (the gate passage, the siege tower, the NE tower's wall-walk, beside the trebuchet).
+
+### Verified
+- **Units, all ALL PASS:** `node tools/test/keep-unit.mjs` (new, 36 checks: the maps per generation; MAP_ORDER `['keep']`; the frozen layouts loaded
+  server-side; no void; no map-bound challenge; 8 spawns, 4 flasks, 4 runes (one on the NE tower top, on its floor), 20 props of known types each on
+  its floor (2 on the wall-walk), 3 pads with clear arcs (body radius, body height) to their targets; the route graph: 5 stairs, 3 pads, the drawbridge
+  edge each way, 23 tile nodes, every spawn, flask and rune reachable from every spawn, the courtyard reaching the field on foot through the breach,
+  no plain walk across the span; the drawbridge down a floor at 0.25, rising a slope that lifts, raised a wall that holds a walker from the road at
+  its face and blocks a shot; real rooms: a current room on the keep only, v24 on courtyard + sky, v22 the courtyard, the welcome carries the
+  drawbridge, the host's Sky Ruins lock refused, end → recap → the next match on the keep with no map message, Arcane Grasp lifts the barrel on the
+  wall-walk, no death below the moat). `MATCH_DEBUG=1 modematch-unit` (292; it now reads its spots from the courtyard, since its server checks join
+  v24 rooms), `playtime-unit`, `wizards-unit`, `notify-unit`.
+- **Playwright, GPU Chromium, 4101:** `/tmp/wa-spells/r29/keep_e2e.py`: **ALL PASS, 13 checks**:
+  - a fresh visit lands on Siege Keep (`MAP_ORDER ['keep']`), no void, and no request for the old maps' files
+  - Arcane Grasp lifts the courtyard crate and throws it (it breaks on the west wall)
+  - rune-court is taken; pad-court flies us onto the NE tower top (0.5 m from its target)
+  - we stand on the north wall-walk at 4.72
+  - the drawbridge, from the map's own entry: rising carries us up to 1.65 m, past 45° we slide off toward the hinge alive (no death); raised,
+    walking north from the road stops at z −15.6, at the slab's face
+  - no console errors
+- **Bots** (`/tmp/wa-spells/r29/botmatch-keep.mjs 4101 150 keep hard normal easy normal`, 4 bots, 150 s):
+
+  | Run | 4 s stalls | Routes used (zone entries, all bots) | Other |
+  |---|---|---|---|
+  | before (graph as on Sky Ruins) | **54** (bots pressed against wall faces) | breach 4, wall-walk 10, drawbridge 0, tower tops 2 | |
+  | final, run 1 | **16** | camp 69, court 33, wall-walk 39, tower tops 16, siege climb 12, stairs 6, gate 10, drawbridge 10, breach 8 | 0 void deaths, 17 pad launches, 15 runes |
+  | final, run 2 | **18** | camp 83, court 41, wall-walk 55, tower tops 11, siege climb 7, stairs 12, gate 4, drawbridge 5, breach 14 | 0 void deaths, 16 pad launches, 14 runes |
+
+  The stalls left are mostly fights at the court tower's corners and a bot held by an Eye of the Storm (the harness doesn't count that pull);
+  round 24's Sky Ruins had 26. Kills by thrown props happen (`prop` deaths in every run).
+- **Screenshots (looked at):** `/tmp/wa-spells/r29/keep_overhead.png` (from the NE tower top: the courtyard, both stairs, the bots, one carrying a
+  barrel), `keep_gate_down.png` (the bridge over the moat, the portcullis open), `keep_gate_up.png` (the slab in the gateway), `keep_wallwalk.png`
+  (the north wall-walk), `keep_camp.png` (the west camp: the siege tower against the wall, a catapult, the camp's crate and brazier), `keep_throw.png`.
+
+### Notes
+- **Deploy:** current clients (proto 27) play the keep; v24 (24-26) still get the courtyard + Sky Ruins rotation and v22 the courtyard, now from
+  `server/legacy-maps/`. Perf on the keep (`perf_test`) is yours; nothing of mine draws on it (the slab is world.js's).
+- **Environment:** no `waypoint` kind is needed (the ground grid covers the gate and the breach). The graph follows Ty's edits after a server restart or
+  any piece move (the key). If a new map adds walkable tiles at height, name their floors `*-wallwalk` / `*-towertop` (or ask me for a new suffix).
+- **Ty / coordinator:** a wizard on the slab near its hinge when it rises slides into the gate passage (the slide goes toward the hinge, as on Sky
+  Ruins); one standing farther out drops into the moat. Bots still never climb a tower for `rune-tower` on foot (round 22's height weighting); the pads
+  take them up (11-19 tower-top visits per run). The bot fill rows with 0/0 in the harness output are the room's fill bots before the added ones.
+
 ## Round 27 §2: six fixed kits, Arcane Grasp for everyone, Roll and Trapped Relic gone, the join by wizard id
 Commits: `e94d6a0` `cae2ca3` (requests: interfaces, posted first; saves.js `'v24'` ask), `4fd0e71` (wizards.js kit), `f4efc3c` (constants.js),
 `65b4202` (server.js, room.js, bots.js), `4c343f3` (main.js, net.js, loadout-store.js, effects.js, audio.js, the two icons), `bf3b1a2` and the
