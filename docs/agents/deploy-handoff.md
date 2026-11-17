@@ -212,17 +212,26 @@ configured in this server, so no rows were written (the events batching runs in 
 - **Unit:** `playtime-unit`, `notify-unit`, `saves-unit` ALL PASS. **`modematch-unit` needs `MATCH_DEBUG=1` exported** (without it the two map-switch checks fail); with it **one check fails, every run:**
   "the thrown crate hits B up on the island and breaks there": the crate flies and breaks at (4.1, 7.2, 34.9) with no `hit` message (spells' hand-off says 290 pass; something between).
 
-## Round 27 (deploy's part): status and the store text
-**Status:** waiting on the spells (kits, Arcane Grasp, Roll and Relic removed) and characters (the gallery) commits; at the brief's commit (`9644d94`) neither has landed.
-When they do: `smoke.py`, `subpath_test.py`, `legacy_test.py` (legacy, v22, v24) and `perf_test.py` on both maps, then the zip from the final commit.
-`smoke.py` and `subpath_test.py` still check the spell builder (`.sb-row` / `.sb-card`); they move to the gallery's selectors once characters post them.
+## Round 27 verification (final commit `8fba931`; includes round 28's bodies; private ports 4105 / 4195-4199, all stopped; 3000 untouched)
+Server `WA_DEBUG=1 MATCH_DEBUG=1 PORT=4105`; builds from `95aca29` (legacy), `21a31ef` (v22), `54d1a9a` (v24), `1c14c92` (the round-26 build) and HEAD, in `/tmp/wa-deploy/r27/`.
+- **Unit:** modematch (with `MATCH_DEBUG=1`), playtime, notify, wizards ALL PASS; saves-unit all passed.
+- **`smoke.py` PASS:** the gallery has 6 `.wg-card`, no spell cards or rows (the script now checks that); no-proto join in a legacy room, proto 22 in a v22 room, **proto 24 in a `v24` room** (the
+  check expected "current" before round 27; `legacyjoin.py` fixed), none of them got round-26 messages; a proto-26+ join's welcome carries progress; first visit in 1.3 s; no console errors.
+- **`subpath_test.py --max-mb 20` (HEAD build) PASS:** 9.9 MB initial (was 9.3: the five body models), 6 wizard cards and 0 spell cards, rooms ok, no failed requests, no errors.
+- **`legacy_test.py --fast`: legacy PASS, `--gen v22` PASS, `--gen v24` (54d1a9a) PASS** (match, recap, rematch; no round-26 messages).
+  The round-26 build (`1c14c92`, proto 26) also plays a whole match, recap and rematch in a v24 room; the test's "no round-26 messages" check fails for it, as it should (a proto-26 client is sent xp/emote/taunt), so that is not a regression.
+- **Perf: inconclusive.** The machine was at load 22-40 (other agents' browsers; one headless Chromium has run since 12:39), so every run dropped to the `low` tier at 27-42 fps and the frame targets can't be judged.
+  Load-independent numbers: sky 90.9k triangles / 90 draw calls (round 26: 88.9k / 58 on the `high` tier), courtyard 109k triangles / 104 draw calls (round 26: 116-124k / 94-121); 62-63 programs at load, 0 linked mid-match
+  (the "programs < 60" miss is the harness counting every WebGL context, as characters said). **Rerun on an idle machine** (`perf_test.py http://localhost:41xx --map sky|courtyard`) before the upload.
+- **Zip rebuilt:** `npm run build:crazygames -- --ref HEAD` from `8fba931`: 452 files, 11.3 MB unzipped, 8.0 MB zip, sha256 `c2eca607a96df993…`, exit 0, `models/characters/` has the five new bodies; the only Trapped Relic text left is a comment in `shared/map.js`.
+- Screenshots: `/tmp/wa-deploy/r27/smoke-builder.png` (the gallery on the join screen), `smoke.png` (in the FFA), `subpath.png`.
 
 **Short description** (round 27):
 ```
 Start as the Pyromancer, level up to unlock five more wizards, then duel three rivals in fast free-for-alls across two arenas: a castle courtyard and the Sky Ruins.
 ```
 
-**Description** (round 27, draft: six fixed wizards, no spell builder, Arcane Grasp for all):
+**Description** (round 27: six fixed wizards, no spell builder, Arcane Grasp for all):
 ```
 Start as the Pyromancer, win duels, level up and unlock more wizards with XP: the Frost Warden after your first match, then the Stormcaller, the Hemomancer, the Alchemist and finally the Beastcaller. Six wizards, six very different kits. Hurl fireballs and call down a meteor rain, freeze a rival mid-dash and wall off a corridor with ice, blink through a storm, drain a rival with Blood Siphon to heal yourself, throw potions that poison and a brew that makes you berserk, or ram through the arena as the Beastcaller. Hover a wizard on the select screen to see all six of its abilities before you pick.
 
