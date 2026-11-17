@@ -202,6 +202,10 @@ function poseDrawbridge(s, b, a) {
   s.y0 = b.y; s.y1 = b.y + b.d * Math.sin(a); s.angle = a;
   const ns = a > DRAWBRIDGE.fallAngle;
   if (!!s.noStand !== ns) { s.noStand = ns; _floorN = -1; }   // (topFloorAt's standable list is filtered on noStand)
+  // round 29 (Siege Keep: the road side is walkable ground): past the fall angle the slab's body reaches down to its hinge, a full-height
+  // wall, else a wizard walks under its raised far end and is pushed out on the hinge side, into the gate. (Not on the frozen maps: the
+  // v24 build's Sky Ruins slab stays as its clients predict it.)
+  if (ns && !MAPNS.activeMap?.()?.server) s.thick = b.thick + (s.y1 - s.y0);
 }
 // Put every drawbridge's surface where the clock says, in SURFACES and in the live map's built list. Returns the angle.
 export function updateDrawbridges(t) {
