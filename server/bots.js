@@ -1818,7 +1818,9 @@ function crossesSpan(db, a, b) {
 function routeGraph(world) {
   const m = mapList();
   const pads = world.pads || [], dbs = typeof C.drawbridges === 'function' ? C.drawbridges() : [];
-  const key = `${pads.length}:${dbs.length}:${(C.ISLANDS || []).length}:${C.SURFACES.length}`;
+  let sum = 0;   // (round 29: and where the pieces are, so a piece moved in the editor rebuilds it; the drawbridge moves every tick, so not it)
+  for (const s of C.SURFACES) if (!s.drawbridge) sum += s.x * 1.3 + s.z * 1.7 + (s.top ?? s.y1 ?? 0) + (s.yaw || 0);
+  const key = `${pads.length}:${dbs.length}:${(C.ISLANDS || []).length}:${C.SURFACES.length}:${sum.toFixed(2)}`;
   if (m.graph && m.graph.key === key) return m.graph;
   const nodes = [], edges = [];   // nodes: { p: [x, z], y, kind?, r? (how far its floor reaches toward a hop) }; edges: { a, b, cost, kind, ... }
   const add = (x, z, y, extra = {}) => { nodes.push({ p: [x, z], y, ...extra }); return nodes.length - 1; };

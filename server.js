@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import * as C from './public/shared/constants.js';
 import { createRoom } from './server/room.js';
+import { routeGraphDebug } from './server/bots.js';
 import * as Saves from './server/saves.js';
 import { createNotifier } from './server/notify.js';   // round 23: Discord alerts when a real player is in, and the admin key (env only; no-ops without)
 import { attach as attachNoobTube } from './vendor/noobtube/server/index.js';   // Noob Tube (separate game) on /nt, rooms in its own worker thread   // round 18: CrazyGames players' saves on Supabase (environment-owned; no-ops without keys)
@@ -331,4 +332,6 @@ for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => {
   Promise.race([Saves.flushAllSaves(), new Promise(r => setTimeout(r, 3000))]).finally(() => process.exit(0));
 });
 
+// round 29: build the bots' route graph of each current map now (Siege Keep's takes about 0.35 s), not in the first room's tick
+for (const m of C.MAP_ORDER) { try { const t0 = Date.now(); if (C.setActiveMap(m)) { const g = routeGraphDebug(); console.log(`[bots] ${m}: route graph ${g.nodes.length} nodes in ${Date.now() - t0} ms`); } } catch (e) { console.warn('[bots] route graph', m, e); } }
 httpServer.listen(PORT, () => console.log(`Wizard Arena listening on http://localhost:${PORT}`));
