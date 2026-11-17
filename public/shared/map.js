@@ -414,7 +414,7 @@ export const KIT_PARTS = {
   'keep/tower-square-roof': [{ name: 'roof', box: [-0.5, 0.5, -0.5, 0.5], y: [0, 2.01], noStand: true }],
   'keep/tower-square-top-roof': [TOWERTOP, { name: 'roof', box: [-0.4, 0.4, -0.4, 0.4], y: [0.17, 1.0], noStand: true }],
   'keep/tower-square-top-roof-high': [TOWERTOP, { name: 'roof', box: [-0.4, 0.4, -0.4, 0.4], y: [0.17, 1.35], noStand: true }],
-  'keep/tower-hexagon-roof': [{ name: 'roof', box: [-0.42, 0.42, -0.36, 0.36], y: [0, 0.83], noStand: true }],
+  'keep/tower-hexagon-roof': [{ name: 'roof', box: [-0.49, 0.49, -0.42, 0.42], y: [0, 0.83], noStand: true }],
   'keep/tower-slant-roof': [{ name: 'roof', box: [-0.55, 0.55, -0.55, 0.55], y: [0, 2.14], noStand: true }],
 };
 // Round 29: the frozen maps' pieces (KayKit castle/, Quaternius village/), for the server only (their rooms collide exactly as before)

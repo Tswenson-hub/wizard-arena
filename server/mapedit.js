@@ -3,7 +3,10 @@
 // js/editor.js and /api/map/* answer 404, so the live site doesn't serve the editor at all.
 //   GET  /?edit=1          the editor page (public/edit.html)
 //   GET  /api/map/models   the models in public/models and its kit folders, for the editor's palette (read-only)
-//   POST /api/map/layout   write public/shared/layout.json (or ?map=sky: that map's file, round 22). Only when the server runs with MAP_EDIT=1 (npm run edit),
+//   GET  /api/map/status   { started } (round 29): when this server process started, so the editor's Test play can wait for the
+//                          restart that `npm run edit` (node --watch) does after a save
+//   POST /api/map/layout   write the map's layout file (?map=<id>, default the default map; round 29: public/shared/layout-keep.json; a
+//                          server-only map (the frozen legacy layouts) is refused). Only when the server runs with MAP_EDIT=1 (npm run edit),
 //                          only from this machine (loopback address, and a localhost Origin so another site open in
 //                          the browser can't post to it), and only a layout that passes validateLayout(). The file it
 //                          replaces is kept in tools/layout-backups/ (gitignored). Render never sets MAP_EDIT.
@@ -21,7 +24,9 @@ export function mountMapEdit(app, root) {
   const editing = () => process.env.MAP_EDIT === '1';
   app.use(['/edit.html', '/js/editor.js', '/api/map'], (req, res, next) => (editing() ? next() : res.status(404).send('Not found')));
   app.get('/', (req, res, next) => (!('edit' in req.query) ? next() : editing() ? res.sendFile(path.join(root, 'public', 'edit.html')) : res.status(404).send('Not found')));
-  // every .glb under public/models, with its folder: 'castle/wall', 'village/Roof_RoundTiles_4x4', 'potion'
+  const started = Date.now();
+  app.get('/api/map/status', (req, res) => res.json({ started }));
+  // every .glb under public/models, with its folder: 'keep/wall', 'keep/props/keg', 'potion'
   app.get('/api/map/models', (req, res) => {
     const dir = path.join(root, 'public', 'models');
     try {
@@ -37,6 +42,7 @@ export function mountMapEdit(app, root) {
     if (bad.length) return res.status(400).json({ error: bad.slice(0, 5).join('; ') });
     const name = String(req.query.map || DEFAULT_MAP);
     if (!(name in MAPS)) return res.status(400).json({ error: `no map ${name}` });
+    if (MAPS[name].server) return res.status(400).json({ error: `${name} is a frozen map (the store builds' rooms): not editable` });
     const layoutFile = fileOf(name);
     try {
       fs.mkdirSync(backups, { recursive: true });

@@ -5,25 +5,31 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Wizard Arena map editor</title>
 <style>
-  :root { --bg: #14161c; --panel: rgba(20, 22, 30, 0.92); --line: #2e3242; --text: #e6e8ef; --dim: #9aa0b4; --accent: #b48cff; --warn: #ffb44a; --ok: #7fd34a; }
+  :root { --bg: #14161c; --panel: rgba(20, 22, 30, 0.93); --line: #2e3242; --text: #e6e8ef; --dim: #9aa0b4; --accent: #b48cff; --warn: #ffb44a; --ok: #7fd34a; --tile: #1d2030; }
   html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font: 13px/1.4 system-ui, -apple-system, sans-serif; }
-  canvas { display: block; }
+  canvas#view { display: block; }
   .panel { position: fixed; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px; box-sizing: border-box; }
-  #left { top: 10px; left: 10px; width: 230px; bottom: 10px; overflow-y: auto; }
+  #left { top: 10px; left: 10px; width: 300px; bottom: 10px; overflow-y: auto; }
   #right { top: 10px; right: 10px; width: 290px; bottom: 10px; overflow-y: auto; }
-  #bar { top: 10px; left: 250px; right: 310px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 6px 10px; }
+  #bar { top: 10px; left: 320px; right: 310px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 6px 10px; }
   h3 { margin: 10px 0 6px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim); }
   h3:first-child { margin-top: 0; }
   button { background: #262a38; color: var(--text); border: 1px solid var(--line); border-radius: 5px; padding: 4px 8px; font: inherit; cursor: pointer; }
   button:hover { border-color: var(--accent); }
   button.on { background: #3b2e5c; border-color: var(--accent); }
   button.primary { background: #4a3480; border-color: var(--accent); }
-  #palSearch { width: 100%; box-sizing: border-box; background: #1b1e28; color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; font: inherit; margin-bottom: 6px; }
-  .pal details { margin: 2px 0; }
-  .pal summary { cursor: pointer; color: var(--dim); font-size: 12px; padding: 2px 0; }
+  button.play { background: #2c5a2e; border-color: var(--ok); }
+  #palSearch { width: 100%; box-sizing: border-box; background: #1b1e28; color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 5px 7px; font: inherit; margin-bottom: 6px; }
+  .pal details { margin: 2px 0 4px; }
+  .pal summary { cursor: pointer; color: var(--dim); font-size: 12px; padding: 3px 0; user-select: none; }
   .pal summary b { color: var(--text); font-weight: 600; }
-  .pal .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 4px 0 6px; }
-  .pal button { text-align: left; font-size: 12px; padding: 3px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pal .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin: 4px 0 6px; }
+  .tile { background: var(--tile); border: 1px solid var(--line); border-radius: 6px; padding: 3px 3px 4px; cursor: grab; user-select: none; touch-action: none;
+    display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; }
+  .tile:hover { border-color: var(--accent); }
+  .tile.on { background: #3b2e5c; border-color: var(--accent); }
+  .tile img, .tile canvas { width: 64px; height: 64px; display: block; pointer-events: none; }
+  .tile span { font-size: 10.5px; color: var(--dim); text-align: center; line-height: 1.15; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   label.tog { display: flex; gap: 6px; align-items: center; margin: 2px 0; color: var(--dim); }
   .field { display: grid; grid-template-columns: 80px 1fr; gap: 6px; align-items: center; margin: 3px 0; }
   .field input, .field select { background: #1b1e28; color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 3px 5px; font: inherit; min-width: 0; }
@@ -35,7 +41,9 @@
   #help { color: var(--dim); font-size: 12px; }
   #help b { color: var(--text); font-weight: 600; }
   .sel-title { font-weight: 600; margin-bottom: 6px; }
-  #placing { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); display: none; }
+  #hintbar { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); display: none; pointer-events: none; padding: 6px 12px; }
+  #dragIcon { position: fixed; pointer-events: none; display: none; width: 56px; height: 56px; opacity: 0.85; z-index: 10; }
+  select { background: #262a38; color: var(--text); border: 1px solid var(--line); border-radius: 5px; padding: 3px 6px; font: inherit; }
 </style>
 <script type="importmap">
 { "imports": {
@@ -47,48 +55,51 @@
 <body>
 <canvas id="view"></canvas>
 <div id="left" class="panel">
-  <h3>Place</h3>
-  <input id="palSearch" type="search" placeholder="Search pieces (wall, stairs, banner…)">
+  <h3>Pieces: drag onto the map</h3>
+  <input id="palSearch" type="search" placeholder="Search (wall, tower, catapult, spawn…)">
   <div id="palette" class="pal"></div>
+  <h3>Snap</h3>
+  <label class="tog"><input type="checkbox" id="snapGrid" checked> grid: 2 m for pieces, 0.5 m for points; 90° turns</label>
+  <label class="tog"><input type="checkbox" id="snapGround" checked> onto what's below (walls, tower tops)</label>
   <h3>Overlays</h3>
   <div id="overlays"></div>
-  <h3>Snap</h3>
-  <label class="tog"><input type="checkbox" id="snapGround" checked> ground (surface height)</label>
-  <label class="tog"><input type="checkbox" id="snapKit" checked> kit grid 0.83 m (half a KayKit tile) / 90°</label>
-  <label class="tog"><input type="checkbox" id="snapGrid"> fine grid 0.25 m / 15°</label>
   <h3>Keys</h3>
   <div id="help">
-    <b>Right-drag</b> look, with <b>WASD</b> fly, <b>Q/E</b> down/up, <b>Shift</b> fast, <b>wheel</b> forward<br>
-    <b>T</b> top-down<br>
-    <b>Click</b> select, <b>Shift-click</b> add<br>
-    <b>W</b> move, <b>E</b> rotate, <b>R</b> scale<br>
-    <b>[ ]</b> turn the selection 90°, <b>PgUp/PgDn</b> lift it one storey<br>
-    <b>Del</b> delete, <b>Ctrl+D</b> duplicate<br>
-    <b>Ctrl+Z</b> undo, <b>Ctrl+Shift+Z</b> redo<br>
-    <b>Ctrl+S</b> save, <b>Esc</b> deselect
+    <b>Drag</b> a piece from the palette onto the map<br>
+    <b>Click</b> select, <b>Shift-click</b> add, then <b>drag</b> it across the map<br>
+    <b>Alt-drag</b> duplicate and move the copy<br>
+    <b>Q / E</b> or the <b>wheel</b> while dragging: turn 90° (<b>Shift</b>: 15°)<br>
+    <b>PgUp / PgDn</b> lift one tower storey (<b>Shift</b>: 0.25 m)<br>
+    <b>Del</b> delete, <b>Ctrl+D</b> duplicate, <b>Esc</b> deselect<br>
+    <b>Ctrl+Z</b> undo, <b>Ctrl+Shift+Z</b> redo, <b>Ctrl+S</b> save<br>
+    <b>Right-drag</b> look, with <b>WASD</b> fly, <b>Q/E</b> down/up, <b>Shift</b> fast; <b>wheel</b> forward<br>
+    <b>T</b> top-down; <b>1-4</b> drag / move / rotate / scale gizmo; hold <b>Ctrl</b> while dragging: no snap
   </div>
 </div>
 <div id="bar" class="panel">
-  <button data-mode="translate" class="on">Move (W)</button>
-  <button data-mode="rotate">Rotate (E)</button>
-  <button data-mode="scale">Scale (R)</button>
-  <button id="topBtn">Top-down (T)</button>
+  <button data-mode="drag" class="on" title="Drag pieces directly (1)">Drag</button>
+  <button data-mode="translate" title="Move gizmo (2)">Move</button>
+  <button data-mode="rotate" title="Rotate gizmo (3)">Rotate</button>
+  <button data-mode="scale" title="Scale gizmo (4)">Scale</button>
+  <button id="topBtn" title="Top-down view (T)">Top-down</button>
   <select id="mapSel" title="Which map to edit (each has its own layout file)"></select>
   <button id="undoBtn">Undo</button>
   <button id="redoBtn">Redo</button>
   <button id="saveBtn" class="primary">Save</button>
-  <button id="exportBtn">Export JSON</button>
-  <button id="importBtn">Import JSON</button>
+  <button id="playBtn" class="play" title="Save, then open a match on this layout in a new tab">▶ Test play</button>
+  <button id="exportBtn">Export</button>
+  <button id="importBtn">Import</button>
   <input id="importFile" type="file" accept=".json,application/json" hidden>
   <span id="status">Loading…</span>
 </div>
 <div id="right" class="panel">
   <h3>Selection</h3>
-  <div id="inspector"><div id="help">Click an asset to select it.</div></div>
+  <div id="inspector"><div id="help">Click a piece to select it.</div></div>
   <h3>Checks</h3>
   <div id="warnings"></div>
 </div>
-<div id="placing" class="panel">Click the ground to place. <b>Esc</b> to cancel.</div>
+<div id="hintbar" class="panel"></div>
+<img id="dragIcon" alt="">
 <script type="module" src="/js/editor.js"></script>
 </body>
 </html>

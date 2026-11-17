@@ -288,6 +288,14 @@ function tintGeometry(geo, tint) {
   return g;
 }
 
+// The editor's ghosts and palette thumbnails: a kit model's meshes (geometry in model units) once loaded, and the shared material.
+export async function kitModelMeshes(loader, model) {
+  loader.setMeshoptDecoder?.(MeshoptDecoder);
+  if (kitGeo[model]) return kitGeo[model];
+  return kitMeshes(model, await loadGlb(loader, `./models/${model}.glb`));
+}
+export { kitMaterial, tintGeometry, floorGeometries, brazierGeometries };
+
 // ------------------------------------------------------------ the drawbridge (round 24; round 29: the Kenney bridge-draw model)
 // map.js DRAWBRIDGES: the hinge, the slab's size and the direction it extends when down. The kit's drawbridge (planks between two
 // kerbs, 1 unit long from its hinge at x 0 toward -x, 0.84 wide, 0.1 thick) stretched to the slab, pivoted at the hinge, and two
@@ -301,6 +309,7 @@ function buildDrawbridges(scene, loader) {
   const mat = kitMaterial();
   for (const D of C.DRAWBRIDGES || []) {
     const root = new THREE.Group(); root.position.set(D.x, D.y, D.z); root.rotation.y = D.yaw;   // local +z: the slab's direction when down
+    root.userData.entryId = D.id;
     const pivot = new THREE.Group(); root.add(pivot);
     // a plain plank slab until the model is in (and if it never loads)
     const stand = new THREE.Mesh(texelUV(new THREE.BoxGeometry(D.w, D.thick, D.d).translate(0, -D.thick / 2, D.d / 2), TEXEL.wood), mat);
@@ -451,7 +460,7 @@ function kitInstances(model, meshes, items, { shadows = true, tint = null } = {}
     items.forEach((it, i) => im.setMatrixAt(i, m.compose(p.set(it.x, it.y, it.z), q.setFromAxisAngle(up, it.yaw), s.setScalar(it.s))));
     im.castShadow = shadows; im.receiveShadow = true;
     im.computeBoundingSphere();
-    im.userData.kit = model;
+    im.userData.kit = model; im.userData.ids = items.map(it => it.id);   // (the editor moves an instance live while it's dragged)
     group.add(im);
   }
   return group;
@@ -656,7 +665,10 @@ export function loadModels(loader, scene, { cameraGrid = true, merge = cameraGri
     for (const [F, geos] of floorGeos) bucketGeometries(buckets, geos, F.x, F.z, { shadows: false, solid: false, cat: 'floors' });
     for (const [B, geos] of brazierGeos) bucketGeometries(buckets, geos, B.x, B.z, { shadows: shadowsOn && B.style !== 'torch', solid: false, cat: 'torches' });
   } else {
-    for (const [, geos] of [...floorGeos, ...brazierGeos]) { const m = new THREE.Mesh(mergeGeometries(geos), kitMaterial()); m.receiveShadow = true; m.userData.cat = 'floors'; for (const g of geos) g.dispose(); addW(scene, m); }
+    for (const [E, geos] of [...floorGeos, ...brazierGeos]) {
+      const m = new THREE.Mesh(mergeGeometries(geos), kitMaterial()); m.receiveShadow = true; m.userData.cat = 'floors'; m.userData.entryId = E.id;
+      for (const g of geos) g.dispose(); addW(scene, m);
+    }
   }
   addFires(scene, (C.BRAZIERS || []).map(B => ({ p: [B.x, B.y + FIRE_AT[B.style], B.z], light: B.light, big: B.style !== 'torch' })));
   const propModels = Object.entries(C.PROP_TYPES).filter(([, T]) => T.model);
