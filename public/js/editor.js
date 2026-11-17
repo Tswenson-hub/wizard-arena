@@ -373,7 +373,7 @@ function pickPoint(ev) {
   const r = rayAt(ev), targets = scene.children.filter(o => o !== helpers && !o.isLight);
   for (const h of r.intersectObjects(targets, true)) {
     if (h.object.userData.grass || h.object.isPoints || h.object.isSprite || h.object.isLine) continue;
-    if (ghost && ghost.obj.getObjectById?.(h.object.id)) continue;
+    if (ghost?.obj?.getObjectById?.(h.object.id)) continue;
     return h.point;
   }
   return planeHit(ev, 0);
@@ -401,7 +401,7 @@ canvas.addEventListener('pointermove', (ev) => {
 });
 canvas.addEventListener('pointerup', (ev) => {
   if (ev.button !== 0) return;
-  if (ghost && placing) { dropGhost(ev); return; }
+  if (ghost?.armed) { dropGhost(ev); return; }
   const was = press; press = null;
   if (drag) { endDrag(); return; }
   if (!was || gizmo.dragging) return;
@@ -475,7 +475,7 @@ function endDrag() {
 // Turn what's held (a drag, or the palette's ghost) by a quarter, or 15° with Shift.
 function turnHeld(dir, fine) {
   const a = dir * (fine ? Math.PI / 12 : Math.PI / 2);
-  if (ghost) { ghost.rot = (ghost.rot + a + 2 * Math.PI) % (2 * Math.PI); ghost.obj.rotation.y = ghost.rot; return; }
+  if (ghost) { ghost.rot = (ghost.rot + a + 2 * Math.PI) % (2 * Math.PI); if (ghost.obj) ghost.obj.rotation.y = ghost.rot; return; }
   if (drag && !drag.padTarget) { drag.rot += a; dragTo(drag.lastEv); }
 }
 // While a drag runs: the map's data follows (overlays, checks next commit) and the dragged pieces' instances and objects move with it.
@@ -649,35 +649,45 @@ async function ghostFor(item) {
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, 0.1, d).translate(0, 0.05, e.kind === 'drawbridge' ? d / 2 : 0), mark(0xb48cff)); g.add(m);
   return g;
 }
-async function pickTile(item, ev) {
+function pickTile(item, ev) {
   cancelPlacing();
   placing = item; for (const it of PALETTE) it.el?.classList.toggle('on', it === item);
-  const obj = await ghostFor(item);
-  if (placing !== item) return;
-  ghost = { item, obj, rot: 0, at: null, fromTile: true };
-  obj.visible = false; obj.traverse(o => { o.renderOrder = 12; });
-  helpers.add(obj);
+  const t = { item, obj: null, rot: 0, at: null, fromTile: true, armed: false };
+  ghost = t;
+  ghostFor(item).then(obj => {   // (the listeners below are already in: a quick click is caught while the model loads)
+    if (ghost !== t) return;
+    t.obj = obj; obj.visible = false; obj.traverse(o => { o.renderOrder = 12; });
+    helpers.add(obj);
+    if (t.last) moveGhost(t.last);
+  });
   const icon = $('dragIcon'); icon.src = thumbs.get(item) || iconFor(item); icon.style.display = 'block';
-  const follow = (e) => { icon.style.left = e.clientX - 28 + 'px'; icon.style.top = e.clientY - 28 + 'px'; const over = document.elementFromPoint(e.clientX, e.clientY) === canvas; icon.style.display = over ? 'none' : 'block'; if (over) moveGhost(e); else if (ghost) ghost.obj.visible = false; };
+  const follow = (e) => {
+    icon.style.left = e.clientX - 28 + 'px'; icon.style.top = e.clientY - 28 + 'px';
+    const over = document.elementFromPoint(e.clientX, e.clientY) === canvas;
+    icon.style.display = over ? 'none' : 'block';
+    if (over) moveGhost(e); else if (ghost?.obj) ghost.obj.visible = false;
+  };
   const up = (e) => {
-    removeEventListener('pointermove', follow); removeEventListener('pointerup', up);
+    removeEventListener('pointermove', follow); removeEventListener('pointerup', up, true);
     icon.style.display = 'none';
-    if (!ghost) return;
-    if (document.elementFromPoint(e.clientX, e.clientY) === canvas && ghost.at) dropGhost(e);   // dragged onto the map
-    else if (Math.hypot(e.clientX - ev.clientX, e.clientY - ev.clientY) < 5) { ghost.fromTile = false; hint(`Click the map to place ${item.label} · Q/E or wheel to turn · Esc to cancel`); }   // a click: armed
+    if (ghost !== t) return;
+    const onMap = document.elementFromPoint(e.clientX, e.clientY) === canvas;
+    if (onMap && Math.hypot(e.clientX - ev.clientX, e.clientY - ev.clientY) >= 5) { e.stopPropagation(); dropGhost(e); }   // dragged onto the map
+    else if (!onMap && Math.hypot(e.clientX - ev.clientX, e.clientY - ev.clientY) < 5) { t.fromTile = false; t.armed = true; hint(`Click the map to place ${item.label} · Q/E or wheel to turn · Shift-click for more · Esc to cancel`); }   // a click: armed
     else cancelPlacing();
   };
-  addEventListener('pointermove', follow); addEventListener('pointerup', up);
+  addEventListener('pointermove', follow); addEventListener('pointerup', up, true);
   follow(ev);
 }
 function ghostEntry() { return { ...ghost.item.make(), rotY: ghost.rot }; }
 function moveGhost(ev) {
   if (!ghost) return;
-  const p = pickPoint(ev); if (!p) { ghost.obj.visible = false; return; }
+  ghost.last = ev;
+  const p = pickPoint(ev); if (!p) { if (ghost.obj) ghost.obj.visible = false; return; }
   const e = ghostEntry(), x = snapXZ(p.x, e), z = snapXZ(p.z, e);
   const y = $('snapGround').checked ? groundUnder(x, z) : 0;
   ghost.at = { x, y, z };
-  ghost.obj.position.set(x, y, z); ghost.obj.rotation.y = ghost.rot; ghost.obj.visible = true;
+  if (ghost.obj) { ghost.obj.position.set(x, y, z); ghost.obj.rotation.y = ghost.rot; ghost.obj.visible = true; }
 }
 function dropGhost(ev) {
   moveGhost(ev);
@@ -699,7 +709,7 @@ function dropGhost(ev) {
 }
 function cancelPlacing() {
   placing = null; hint('');
-  if (ghost) { helpers.remove(ghost.obj); ghost = null; }
+  if (ghost) { if (ghost.obj) helpers.remove(ghost.obj); ghost = null; }
   for (const it of PALETTE) it.el?.classList.remove('on');
 }
 function newId(base) { let i = 1; while (byId(`${base}-${i}`)) i++; return `${base}-${i}`; }
