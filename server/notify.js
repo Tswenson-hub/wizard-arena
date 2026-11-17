@@ -56,7 +56,7 @@ export function createNotifier({
         color: ev.legacy ? 0x8899aa : 0x7c5cff,
         fields: [
           { name: 'Room', value: `${ev.roomId}${ev.kind === 'private' ? ' (private)' : ''}${ev.legacy ? ' · legacy' : ''}`, inline: true },
-          { name: 'Map', value: String(ev.map || 'courtyard'), inline: true },
+          { name: 'Map', value: String(ev.map || '?'), inline: true },
           { name: 'Source', value: sourceOf(ev), inline: true },
           { name: `Humans (${real.length})`, value: names(real), inline: false },
         ],
@@ -91,7 +91,7 @@ export function createNotifier({
     if (t - (roomMatchAt.get(ev.roomId) ?? -Infinity) < matchGapMs) return false;
     roomMatchAt.set(ev.roomId, t);
     const w = ranked[0];
-    const line = `🏁 Match over in ${ev.roomId} (${ev.map || 'courtyard'}${ev.legacy ? ', legacy' : ''}, ${Math.round((ev.seconds || 0) / 60)} min): `
+    const line = `🏁 Match over in ${ev.roomId} (${ev.map || '?'}${ev.legacy ? ', legacy' : ''}, ${Math.round((ev.seconds || 0) / 60)} min): `
       + (w ? `**${w.name}** wins with ${w.kills} kill${w.kills === 1 ? '' : 's'}${w.bot ? ' (a bot)' : ''}` : 'no winner')
       + ` · real players: ${real.map(p => `${p.name} (${p.kills})`).join(', ')}`;
     post({ content: line });

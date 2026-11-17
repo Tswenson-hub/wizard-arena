@@ -31,7 +31,8 @@ export function createRoom(opts) {
   // Sky Ruins), the current one on C.MAP_ORDER (Siege Keep only: no rotation). map.js lists only the maps it could load.
   const GEN_MAPS = { legacy: ['legacy'], v22: ['courtyard'], v24: ['courtyard', 'sky'] };
   const mapsAvail = () => {
-    const m = (GEN_MAPS[GEN] || (Array.isArray(C.MAP_ORDER) ? C.MAP_ORDER : [])).filter(id => C.MAPS?.[id]);
+    const list = typeof C.mapsForGen === 'function' ? C.mapsForGen(GEN) : GEN_MAPS[GEN] || C.MAP_ORDER;   // (environment's map.js table; the same lists)
+    const m = (Array.isArray(list) ? list : []).filter(id => C.MAPS?.[id]);
     return m.length ? m.slice() : [C.DEFAULT_MAP || 'courtyard'];
   };
   let mapId = mapsAvail()[0];
