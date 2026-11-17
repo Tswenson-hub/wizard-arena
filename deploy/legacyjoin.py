@@ -130,7 +130,7 @@ def report_no26(res, name):
     return ok
 
 def report_v24(res, current_name, name='v24join'):
-    """A `proto: 24` join (the round-24/25 build) shares the current rooms with proto 26, gets a welcome and snapshots, and no round-26 messages."""
+    """A `proto: 24` join (the round-24/25 build) lands in a 'v24' room (round 27: proto 24-26 keep the old rules; current rooms are proto 27), gets a welcome and snapshots, and no round-26 messages."""
     w = res.get('welcome')
     print(f'v24 join (proto 24) as {name!r}:')
     ok = w is not None and not res.get('error') and res.get('snaps', 0) > 5
@@ -138,6 +138,6 @@ def report_v24(res, current_name, name='v24join'):
     if not w: return False
     room = w.get('room') or {}
     g = room.get('gen')
-    gen_ok = g in (None, 'current') and not room.get('legacy')
-    print(('  ok   ' if gen_ok else '  FAIL ') + f"a current-generation room (room.gen {g!r}, legacy {room.get('legacy')!r})")
+    gen_ok = g == 'v24' and not room.get('legacy')
+    print(('  ok   ' if gen_ok else '  FAIL ') + f"a v24 room (room.gen {g!r}, legacy {room.get('legacy')!r})")
     return ok and gen_ok and report_no26(res, name)
