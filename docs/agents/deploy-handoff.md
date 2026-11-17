@@ -511,3 +511,24 @@ RESULT: PASS
   inside a game). If the Meshy models were made on Meshy's free plan, they're CC BY 4.0 and the README credits
   should name Meshy. Kenney particles are CC0 and not yet credited (no credit required).
 - `deploy/smoke.py` is the re-runnable live check. It exits non-zero on any failure.
+
+## Round 29 verification (HEAD `e31c1a4`, a clean worktree; Siege Keep; private ports, 3000 untouched; files in `/tmp/wa-deploy/r29/`)
+Server `WA_DEBUG=1 MATCH_DEBUG=1 PORT=4105`; the 95aca29 / 21a31ef / 54d1a9a / HEAD builds on 4198 / 4197 / 4196 / 4199. Ty's uncommitted `layout-keep.json` was not in the worktree.
+- **`perf_test.py` on the keep: PASS, all 9 targets** (60 s, 4x throttle, tier normal): 59.9 fps, p95 18.5 ms, 1 frame over 50 ms (none after 10 s), **98.6k triangles** (p95 121k;
+  the 120k target is on the mean), 89 draw calls, **50 programs** (0 linked after load), no console errors. Both old failures (courtyard 121k triangles, programs 62) are gone. Shot: `perf.png`. (`--map` accepts `keep` now; one map, so it needs no flag.)
+- **`smoke.py` PASS:** legacy join (courtyard, no runes), v22 join (courtyard, 4 runes and 6 pads), v24 join in a `v24` room, no round-26 messages to the old three, a proto-26 welcome with progress, first visit in 1.1 s, no console errors.
+- **`subpath_test.py` PASS** (HEAD build, `--max-mb 20`): rooms, invite, old-client roomError 'version', no failed requests, 9.2 MB in 322 responses at "Ready" (`models/keep` 0.4 MB), no errors.
+- **`legacy_test.py --fast`: legacy (95aca29) PASS, `--gen v22` (21a31ef) PASS, `--gen v24` (54d1a9a) PASS** on their frozen layouts (`server/legacy-maps/`): match, recap, rematch, no failed requests.
+- **Size** (before = `1035762`): `public/` 11,688 → 9,544 KB (-2.1 MB); the build 12,504 → 10,340 KB; zip 8.03 → 6.75 MB (-1.28 MB, from a test zip; `dist/crazygames` is NOT rebuilt yet, waiting for Ty's final layout).
+  The test build warns "untracked file shipped" for `public/shared/layout.json`, `icons/roll.png` and `icons/trapped_relic.png` (they exist in the ref but are not tracked: worth a look by their owners; harmless).
+- **Left to do:** after Ty's layout is committed: `npm run build:crazygames -- --ref <sha>`, then the quick set once more on that sha.
+
+**Short description** (round 29):
+```
+Start as the Pyromancer, level up to unlock five more wizards, then duel three rivals in fast free-for-alls in one castle-siege arena.
+```
+**Description changes** (round 29; the rest of round 27's text stands): replace the two paragraphs about the arenas with:
+```
+One arena, the Siege Keep: a castle under siege. Cross the drawbridge, break through the breach in the wall, climb the siege tower or ride a jump pad onto the towers, and fight from the wall-walks while catapults and trebuchets loom outside. Dodge, double-jump, take the high ground and time your shield to turn the duel.
+```
+and in the Arcane Grasp paragraph, "break it on the courtyard walls and the Sky Ruins' stones" becomes "break it on the keep's walls and stones". Also "ride the jump pads onto the towers and across the courtyard" becomes "ride the jump pads onto the towers". (The cover and the screens in `store/` still show the old courtyard: re-stage them on the keep before the upload.)
