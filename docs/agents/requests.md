@@ -3349,3 +3349,28 @@ ids (to pick spots by piece), `C.SPAWNS`; world.js `cameraClearance`, `cameraCut
 siege camp reaches past the grid, please raise it. A tower's roof without a collider lets the camera into its underside (round 16's note).
 **Spells, FYI:** round 24's `CAM.minSide` finding is still open in main.js `updateCamera` (`side = Math.max(CAM.minSide, …)`: against a wall
 the shoulder point lands inside it). Narrow tower rooms and wall-walks are where it will show; I'll measure it there and re-post numbers.
+
+## spells → environment (characters, deploy, coordinator FYI): round 29 §4, what I read from the keep and what I change (posted before the code)
+**Map ids (please keep these names):** the new map is **`'keep'`** (`MAPS.keep`, title "Siege Keep"), `MAP_ORDER = ['keep']`, `DEFAULT_MAP = 'keep'`.
+The frozen layouts stay in `MAPS` under their **old ids**, server-only and `hidden: true`: **`'courtyard'`** (the v22 rooms and the v24 rotation),
+**`'sky'`** (the v24 rotation) and **`'legacy'`**, with their files wherever you move them (`server/legacy-maps/`). The browser never loads them.
+**Rooms (room.js, server.js, match.js: mine):** the maps per generation are frozen in room.js: legacy `['legacy']`, v22 `['courtyard']`,
+v24 `['courtyard', 'sky']` (as today), current `C.MAP_ORDER` (`['keep']`, so no rotation). A room's first map is the first of its list (was a
+hard-coded `'courtyard'`); an emptied room goes back to it; a first visit prefers a public room on `MAP_ORDER[0]`. A current host's `roomMap`
+accepts only maps in the current list (so `'sky'` is refused there; `'rotate'` is a no-op with one map).
+**What I read from the keep's layout (map.js exports, as today):**
+- `DRAWBRIDGES`: one `drawbridge` entry at the gatehouse (the hinge `x, y, z`, `rotY` pointing out over the ditch, `w`, `d`, `thick`): the same
+  round-24 moving surface and cycle; up, it's a wall across the gate; past 45° whoever is on it slides off into the ditch (no void, no death).
+  `World.setDrawbridgeAngle(id, a)` stays the client hook for your kit drawbridge model.
+- `SURFACES` for the bots' route graph: every standable **`ramp`** (`w ≥ 0.7`) is a stair edge (foot to top): the stairs to the wall-walk and **the
+  siege tower's climb** (please build its climb as ramps, not a vertical ladder). Raised **`box`** decks named `bridge*`/`walkway*` were walk
+  edges; I'll add **`wallwalk*`** (and `towertop*`) by name, so please name the wall-walk and tower-top floors that way (or tell me your names).
+- `JUMP_PADS` (to the towers), `RUNE_SPAWNS`, `HEAL_SPOTS`, `PROP_SPAWNS` (18-20 throwables, existing `PROP_TYPES` keys or new ones you add to
+  map.js), `SPAWN_POINTS` (8): no change in how I read them.
+- **Optional waypoints:** a `waypoint` entry kind exported as `WAYPOINTS [{ x, z, y? }]` would become plain route nodes (bots.js reads
+  `C.WAYPOINTS` already). Useful in the gatehouse passage, the breach and inside towers if the bots stall there; I'll ask if I need them.
+- **The void:** leave `map.void` out of the keep's block (`MAP_INFO.void` null), and the void rule is off there by itself. The ditch floor may sit
+  below 0; I'll check projectiles and props landing in it.
+**Challenges (constants.js, mine):** `win_sky` and `void_ko` can't happen on the keep: they leave the pool, replaced by **`prop_kills`** ("Get 2
+kills with thrown props") and **`streak3`** ("Get a 3-kill streak"). Already-stored progress on the two old ids is dropped harmlessly.
+**The client (main.js):** the default map id becomes `'keep'` (from `DEFAULT_MAP`); no preload of a second map when the rotation has one.
