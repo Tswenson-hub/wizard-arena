@@ -258,7 +258,7 @@ function kitTexture(url) {
 }
 const PALETTE = './models/keep/colormap.webp';
 const px = (x, y) => [(x + 0.5) / 512, (y + 0.5) / 512];
-const TEXEL = { stone: px(136, 452), sand: px(424, 430), dirt: px(360, 499), water: px(360, 345), waterDeep: px(360, 378), iron: px(40, 420),
+const TEXEL = { stone: px(136, 452), sand: px(424, 430), dirt: px(360, 499), water: px(360, 366), waterDeep: px(370, 382), iron: px(40, 420),
   ember: px(232, 300), flame: px(104, 268), wood: px(296, 470), white: px(208, 420) };
 let kitMat = null, flameMat = null;
 const kitMaterial = () => kitMat ??= new THREE.MeshStandardMaterial({ map: kitTexture(PALETTE), roughness: 0.82, metalness: 0 });
