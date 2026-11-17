@@ -123,7 +123,7 @@ const local = {
   stunUntil: 0,
 };
 let now = 0;
-const tmp = { v1: new THREE.Vector3(), v2: new THREE.Vector3(), v3: new THREE.Vector3() };
+const tmp = { v1: new THREE.Vector3(), v2: new THREE.Vector3(), v3: new THREE.Vector3(), flat: new THREE.Vector3() };
 const CYC = C.SPELLBOOK.cyclone, SKY = C.SPELLBOOK.skyward;
 
 // ---------------------------------------------------------------- the wizard (round 27: six fixed kits; was the spell builder)
@@ -2901,7 +2901,7 @@ function updateLocal(dt) {
 // parallel to the boom through the side point, so the body and hat stay left of the crosshair at any distance. Walls, towers
 // and kit pieces shorten the side step first, then the boom (environment's camera grid and the castle's SURFACES boxes), and a
 // boom pulled in close rises a little so we look over the hat rather than into it.
-const CAM = { dist: 5.0, height: 1.95, side: 1.2, minSide: 0.45, lift: 0.7, margin: 0.35 };
+const CAM = { dist: 5.0, height: 1.95, side: 1.2, lift: 0.7, margin: 0.35 };
 // How far along a -> b (0..1) the camera can go before something solid, less a small margin.
 function camClear(a, b) {
   let k = World.cameraClearance ? World.cameraClearance(a, b) : 1;
@@ -2918,7 +2918,7 @@ function updateCamera(dt) {
   const right = tmp.v3.set(-Math.cos(local.yaw), 0, Math.sin(local.yaw));   // the body's right (its local -x)
   // the side step: as far right as the walls allow
   const sideFull = pivot.clone().addScaledVector(right, CAM.side);
-  const side = Math.max(CAM.minSide, CAM.side * camClear(pivot, sideFull));
+  const side = CAM.side * camClear(pivot, sideFull);   // (round 29: no minSide floor: against a wall it put the shoulder inside it; camClear keeps CAM.margin)
   const shoulderP = pivot.clone().addScaledVector(right, side);
   // pull the camera in if a pillar sits between it and the shoulder point (2D circle test along the boom)
   for (const p of C.COLLIDERS) {
@@ -2929,7 +2929,15 @@ function updateCamera(dt) {
   }
   let desired = shoulderP.clone().addScaledVector(back, camDist);
   // round 14/15 (environment's camera blockers, and the castle's boxes): stop short of a wall or tower behind us
-  const k = camClear(shoulderP, desired);
+  let k = camClear(shoulderP, desired);
+  // round 29 (characters' fix): a wall within 1.6 m behind (the boom held level, so looking up into the floor doesn't count) slides the
+  // shoulder in over the head, so the wizard stays in view (the keep's gate passage, the siege tower's channel, beside a trebuchet)
+  const flatK = camClear(shoulderP, shoulderP.clone().add(tmp.flat.set(back.x, 0, back.z).normalize().multiplyScalar(camDist)));
+  if (flatK * camDist < 1.6) {
+    shoulderP.lerpVectors(pivot, shoulderP, Math.max(0, flatK * camDist / 1.6));
+    desired = shoulderP.clone().addScaledVector(back, camDist);
+    k = camClear(shoulderP, desired);
+  }
   desired.lerpVectors(shoulderP, desired, k);
   // pulled in close (backed against a wall): rise a little and look over the hat
   const lifted = desired.clone(); lifted.y += CAM.lift * (1 - k);
