@@ -26,13 +26,18 @@ export function createRoom(opts) {
   // Round 27: a current room plays the six wizards' fixed kits only (a join names a wizard; any loadout maps to a kit, C.kitLoadout).
   // The older rooms (legacy, v22, v24: the store builds) keep their free loadouts, Roll and Trapped Relic included.
   const KITS = GEN === 'current';
-  // a legacy room runs on map.js's frozen copy of the courtyard ('legacy': what the live build bundles), shown to clients as 'courtyard'
-  let mapId = LEGACY && C.MAPS?.legacy ? 'legacy' : 'courtyard';
+  // the maps this room plays, in rotation order (round 29): the older generations are frozen on the layouts their builds bundle (a
+  // legacy room on map.js's 'legacy' copy of the courtyard, shown to clients as 'courtyard'; v22 the courtyard; v24 the courtyard and
+  // Sky Ruins), the current one on C.MAP_ORDER (Siege Keep only: no rotation). map.js lists only the maps it could load.
+  const GEN_MAPS = { legacy: ['legacy'], v22: ['courtyard'], v24: ['courtyard', 'sky'] };
+  const mapsAvail = () => {
+    const m = (GEN_MAPS[GEN] || (Array.isArray(C.MAP_ORDER) ? C.MAP_ORDER : [])).filter(id => C.MAPS?.[id]);
+    return m.length ? m.slice() : [C.DEFAULT_MAP || 'courtyard'];
+  };
+  let mapId = mapsAvail()[0];
   // (round 24: and put the drawbridge where the clock says, so every query this tick or message sees the moving surface)
   const useMap = () => { if (typeof C.setActiveMap === 'function' && C.ACTIVE_MAP?.name !== mapId) C.setActiveMap(mapId); if (typeof C.updateDrawbridges === 'function') C.updateDrawbridges(now()); };
   useMap();
-  // the maps this room rotates through (a legacy room: the courtyard only); map.js lists only the maps it could load
-  const mapsAvail = () => LEGACY ? [mapId] : GEN === 'v22' ? ['courtyard'] : (Array.isArray(C.MAP_ORDER) && C.MAP_ORDER.length ? C.MAP_ORDER.slice() : ['courtyard']);
   const pubMapId = (id) => (id === 'legacy' ? 'courtyard' : id);
   const pubMap = (id) => ({ id: pubMapId(id), name: C.MAPS?.[id]?.title ?? (id === 'legacy' ? 'The Courtyard' : id) });
   // round 24: this map's drawbridges (constants.js drawbridges(): the map's, or a test's) with the cycle's origin, so a client or a
@@ -541,7 +546,7 @@ export function createRoom(opts) {
       if (humanish(attacker)) {
         chal(attacker, 'kills');
         if (spellOf(kind, attacker, spell) === attacker.loadout?.primary) chal(attacker, 'primaryKills');
-        if (cause === 'void') chal(attacker, 'voidKos');
+        if (kind === 'prop') chal(attacker, 'propKills');   // (round 29: a thrown prop's kill)
         attacker.deathsInRow = 0;
         if (!attacker.firstKillAt) { attacker.firstKillAt = now(); ev(attacker, 'first_kill', { s: Math.round(now() - attacker.joinedAt) }); }
       } else if (match.state().phase === 'live') botChatter(attacker, (attacker.killTimes?.length || 0) >= 2 ? 'multi' : 'kill');
@@ -575,6 +580,7 @@ export function createRoom(opts) {
     const label = C.STREAKS.steps[attacker.streak];
     if (label) callout('streak', attacker, label, STREAK_SUB[attacker.streak]?.(attacker.name) ?? `${attacker.name} is on a ${attacker.streak}-kill streak`, { streak: attacker.streak });
     if (attacker.streak === C.STREAKS.ultBonusAt) addUltCharge(attacker, C.STREAKS.ultBonus);
+    if (attacker.streak === 3) chal(attacker, 'streaks3');   // round 29: the day's challenge
     if (ended >= C.STREAKS.shutdownAt) callout('shutdown', attacker, 'Shutdown!', `${attacker.name} ended ${target.name}'s ${ended}-kill streak`, { victim: target.id, streak: ended });
   }
 
@@ -3010,6 +3016,6 @@ export function createRoom(opts) {
       const ph = match.state().phase;
       return { state: p.spectator ? 'lobby' : p.inMenu ? 'menu' : ph === 'end' || ph === 'recap' ? 'podium' : 'live', kills: p.kills || 0, deaths: p.deaths || 0, streak: p.deathsInRow || 0 };
     },
-    legacy: LEGACY, gen: GEN, map: () => pubMapId(mapId),
+    legacy: LEGACY, gen: GEN, map: () => pubMapId(mapId), homeMap: () => pubMapId(mapsAvail()[0]),   // (round 29: the map its matches start on)
   });
 }

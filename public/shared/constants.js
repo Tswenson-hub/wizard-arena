@@ -1410,9 +1410,9 @@ export function sanitizeEquipped(eq, level = null) {
 // stat: the counter that moves it (server/progress.js bumps them in live matches only).
 export const DAILY_POOL = [
   { id: 'primary_kills', stat: 'primaryKills', goal: 5, xp: 120, text: 'Get 5 kills with your primary' },
-  { id: 'win_sky', stat: 'winSky', goal: 1, xp: 150, text: 'Win a match on Sky Ruins', map: 'sky' },
+  { id: 'prop_kills', stat: 'propKills', goal: 2, xp: 140, text: 'Get 2 kills with thrown props' },   // (round 29: was win_sky)
   { id: 'runes', stat: 'runes', goal: 3, xp: 100, text: 'Take 3 runes' },
-  { id: 'void_ko', stat: 'voidKos', goal: 1, xp: 130, text: 'Knock someone into the void', map: 'sky' },
+  { id: 'streak3', stat: 'streaks3', goal: 1, xp: 130, text: 'Get a 3-kill streak' },   // (round 29: was void_ko; Siege Keep has no void)
   { id: 'ults', stat: 'ults', goal: 3, xp: 120, text: 'Use your ultimate 3 times' },
   { id: 'podiums', stat: 'podiums', goal: 2, xp: 120, text: 'Finish on the podium twice' },
   { id: 'kills', stat: 'kills', goal: 12, xp: 120, text: 'Get 12 kills' },

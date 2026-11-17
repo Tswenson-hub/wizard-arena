@@ -107,8 +107,8 @@ function makeRoom(kind, gen = 'current') {
 // The fullest public room with a free seat (an empty one counts), else a new one. At the room cap: the emptiest public
 // room even if full (the 5th human watches until a place opens), so a plain join always gets in somewhere. Round 22: only
 // rooms of the joiner's generation (legacy, v22 or current). Ty: players should face each other over bots whenever possible, so other
-// humans always win; a first visit only prefers the courtyard between rooms with the same number of humans.
-const onCourtyard = (r) => r.map() === 'courtyard' ? 0 : 1;
+// humans always win; a first visit only prefers the first map (the keep; the courtyard in older rooms) between rooms with the same number of humans.
+const onCourtyard = (r) => r.map() === (r.homeMap?.() ?? 'courtyard') ? 0 : 1;   // (round 29: the generation's first map)
 function publicRoom(gen = 'current', firstVisit = false) {
   const pub = [...rooms.values()].filter(r => r.kind === 'public' && r.gen === gen);
   const free = pub.filter(r => r.humanCount() < 4)

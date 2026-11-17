@@ -88,7 +88,7 @@ export function createMatch(ctx) {
     filling: false,                                // ctx.addBot is adding a fill bot right now
     fillCheckAt: 0, graceUntil: 0,
     matches: 0,                                    // finished matches (for the harness)
-    map: 'courtyard', next: null, lock: null, forceMap: null, rotateNext: false,   // round 22: the map rotation
+    map: null, next: null, lock: null, forceMap: null, rotateNext: false,   // round 22: the map rotation
   };
   const t = () => ctx.now();
   const target = () => S.target ?? FFA.target;
@@ -99,6 +99,7 @@ export function createMatch(ctx) {
     kills: p.kills, deaths: p.deaths, dmg: Math.round(p.mDmg || 0) });
   // ------------------------------------------------------------ maps (round 22)
   const maps = () => { const m = ctx.maps?.(); return Array.isArray(m) && m.length ? m : ['courtyard']; };
+  S.map = maps()[0];   // (round 29: the room's first map: Siege Keep in a current room, the courtyard in the older ones)
   const pubMap = (id) => (id == null ? null : ctx.pubMap ? ctx.pubMap(id) : { id, name: C.MAPS?.[id]?.title ?? id });
   const rotated = (id) => { const m = maps(); return m[(Math.max(0, m.indexOf(id)) + 1) % m.length]; };
   // the map the next countdown starts on: a test's pick, the host's lock, or the rotation (only after a finished match)

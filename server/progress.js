@@ -57,7 +57,6 @@ export function finishMatch(p, { place, of, won, map, kills = 0, deaths = 0 }) {
     ...bump(p, 'matches'),
     ...(place <= 3 && of > 1 ? bump(p, 'podiums') : []),
     ...(won ? bump(p, 'wins') : []),
-    ...(won && map === 'sky' ? bump(p, 'winSky') : []),
   ];
   const day = clock.day();
   const firstWin = won && p.prog.firstWinDay !== day;

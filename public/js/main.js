@@ -662,9 +662,9 @@ function mountPickupsFor(pads) {
   try { pickups?.clear?.(); } catch {}
   pickups = pickupsMod.mountPickups({ scene, sfx, players, myId: () => myId, pads: serverPads.map(pd => ({ id: pd.id, x: pd.x, y: pd.y, z: pd.z, r: pd.r, to: pd.to, yaw: pd.yaw })) });
 }
-let mapId = 'courtyard', preloaded = new Set();
+let mapId = C.DEFAULT_MAP || 'keep', preloaded = new Set();   // (round 29: Siege Keep)
 function noteMap(m) {
-  mapId = m?.id || m || 'courtyard';
+  mapId = m?.id || m || C.DEFAULT_MAP || 'keep';
   document.documentElement.dataset.map = mapId;
   if (window.__wa) window.__wa.map = mapId;
 }
