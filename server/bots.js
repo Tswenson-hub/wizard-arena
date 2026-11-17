@@ -69,6 +69,8 @@ function smokeFlaskInWay(me, world, from, to) {
   return false;
 }   // Jeb's Ram Guard: shots at him are absorbed and charged back
 let clouds = [];   // Smoke Screen clouds this tick: nobody sees into, out of or through them
+const GRID_LINK = 4.3, GRID_NEAR = 7;   // round 29: grid neighbours; a route query only tries grid points this near its ends
+let NEW_MAP = true;   // round 29: the live map is a current one (not a frozen server-side map): lineOk sees walls, the graph has a ground grid
 let VOID_Y = null;   // round 22: the live map's void height (world.voidY: the room's, a test may override it), set per tick
 let match = null;  // game modes (server/match.js): who is an enemy
 let players = null;
@@ -194,6 +196,7 @@ export function updateBots(dt, world) {
   clouds = [...(world.smokes?.values() || [])].filter(c => t < c.until);
   match = world.match || null; players = world.players; tracks = (world.tracks ??= new Map());
   VOID_Y = world.voidY ?? C.voidY();
+  NEW_MAP = !C.activeMap?.()?.server;   // round 29: the walls and the ground grid on the current maps only (the frozen ones keep their bots)
   losMemo.clear(); floorMemo.clear(); spotMemo.clear();   // (round 20: the per-tick answers, for this room's tick)
   let any = false;
   for (const p of world.players.values()) {
@@ -1404,7 +1407,7 @@ function moveBot(me, dt, world, t) {
         const want = !los || kit(me).primary === 'gale_shear' || d > range[1] || t - (b.lastDetourAt || -1e9) < 2;   // (round 22b: just stuck: the route, even with a line of sight)
         // round 22b: on a map with gaps and planes, the route graph (bridges, stairs, pads); else a pad only for a target up on high
         // ground (the courtyard's pads lead away from a fight on the floor), then the ramps
-        const planes = VOID_Y != null || Math.abs(target.p[1] - me.p[1]) > C.STEP_UP + 0.5;
+        const planes = VOID_Y != null || NEW_MAP || Math.abs(target.p[1] - me.p[1]) > C.STEP_UP + 0.5;   // (round 29: the keep's walls: always the graph)
         const wp = (want && planes ? routeWaypoint(me, world, [target.p[0], target.p[2]], target.p[1], t) : null)
           || (want && target.p[1] > me.p[1] + C.STEP_UP + 0.5 ? padWaypoint(me, world, [target.p[0], target.p[2]], target.p[1], t) : null)
           || (want ? rampWaypoint(me, [target.p[0], target.p[2]], target.p[1]) : null);
@@ -1775,6 +1778,9 @@ function lineOk(a, ay, b, by = null) {
     const k = i / n, f = C.surfaceHeight(a[0] + dx * k, a[1] + dz * k, prev);
     if (VOID_Y != null && f < VOID_Y) return false;
     if (f > prev + C.STEP_UP + 0.05) return false;   // a wall or a ledge in the way
+    // round 29: a wall (surfaceHeight only sees floors within a step of the feet, so a solid piece at body height must be asked for:
+    // the keep's walls are 4 m boxes; the gatehouse's deck overhead starts at 2.9 m and lets the walk through)
+    if (NEW_MAP && C.surfaceSolidAt(a[0] + dx * k, Math.max(prev, f) + 1.0, a[1] + dz * k)) return false;
     before = prev; prev = f;
   }
   // a spot on a lower plane must be reached before the last stretch (a flask under the deck's edge: standing above it is no way down)
@@ -1798,6 +1804,17 @@ function hopPlanFor(A, B) {
   const plan = C.hopPlan(takeoff, [B.p[0], B.y, B.p[1]], HOP_CAP());
   return plan && { ...plan, takeoff: [takeoff[0], takeoff[2]], land: B.p.slice(), landY: B.y };
 }
+// round 29: does the walk a→b cross a drawbridge's span (the slab's footprint when down, from 0.5 m inside the hinge to its far end, 0.4 m
+// either side)? Sampled every 0.5 m in the slab's own frame.
+function crossesSpan(db, a, b) {
+  const l = Math.hypot(b[0] - a[0], b[1] - a[1]), n = Math.max(2, Math.ceil(l / 0.5)), side = [db.dir[1], -db.dir[0]];
+  for (let i = 0; i <= n; i++) {
+    const x = a[0] + (b[0] - a[0]) * i / n - db.x, z = a[1] + (b[1] - a[1]) * i / n - db.z;
+    const along = x * db.dir[0] + z * db.dir[1], across = x * side[0] + z * side[1];
+    if (along > -0.5 && along < db.d && Math.abs(across) < db.w / 2 + 0.4) return true;
+  }
+  return false;
+}
 function routeGraph(world) {
   const m = mapList();
   const pads = world.pads || [], dbs = typeof C.drawbridges === 'function' ? C.drawbridges() : [];
@@ -1816,6 +1833,8 @@ function routeGraph(world) {
       const a = add(s.x + along[0] * half, s.z + along[1] * half, narrow ? C.surfaceHeight(s.x + along[0] * half, s.z + along[1] * half, s.top + 1) : s.top, { deck: s });
       const b = add(s.x - along[0] * half, s.z - along[1] * half, narrow ? C.surfaceHeight(s.x - along[0] * half, s.z - along[1] * half, s.top + 1) : s.top, { deck: s });
       both(a, b, half * 2 * (narrow ? 1.3 : 1) + (narrow ? 1 : 0), narrow ? { kind: 'narrow', s } : { kind: 'walk' });
+    } else if (s.kind === 'box' && /(wallwalk|towertop)$/.test(s.name || '') && !s.noStand) {
+      add(s.x, s.z, s.top, { tile: s });   // round 29 (Siege Keep): a wall-walk or tower-top tile's middle; walks join neighbouring tiles
     } else if (s.kind === 'ramp' && s.w >= 0.7 && !s.noStand && !s.moveOnly) {
       const foot = C.rampFoot(s), top = rampHigh(s), lo = Math.min(s.y0, s.y1), hi = Math.max(s.y0, s.y1);
       const a = add(foot[0], foot[1], lo, { ramp: s }), b = add(top[0] + (top[0] - foot[0]) * 0.15, top[1] + (top[1] - foot[1]) * 0.15, hi, { ramp: s });
@@ -1847,6 +1866,17 @@ function routeGraph(world) {
       both(stoneNodes[i], stoneNodes[j], d + 3, { kind: 'hop' });
     }
   }
+  // round 29: on a current map, open ground every GRID m inside the arena (no solid piece within 0.8 m at body height, the floor there
+  // ground level or a low step): the ways round the keep's corners and through its breach and gate, wherever Ty's edits put them
+  if (NEW_MAP && VOID_Y == null && Number.isFinite(C.ARENA_BOUNDS?.x0)) {
+    const A = C.ARENA_BOUNDS, GRID = 3;
+    for (let x = A.x0 + 2; x <= A.x1 - 2; x += GRID) for (let z = A.z0 + 2; z <= A.z1 - 2; z += GRID) {
+      const y = C.surfaceHeight(x, z, 0);
+      if (y > C.STEP_UP || [[0, 0], [0.8, 0], [-0.8, 0], [0, 0.8], [0, -0.8]].some(([ox, oz]) => C.surfaceSolidAt(x + ox, y + 1.0, z + oz))) continue;
+      if (dbs.some(db => crossesSpan(db, [x, z], [x, z]))) continue;   // (not on the drawbridge's span)
+      add(x, z, y, { grid: 1 });
+    }
+  }
   // (environment may place plain waypoints one day: C.WAYPOINTS [{ x, z, y? }])
   for (const w of C.WAYPOINTS || []) add(w.x, w.z, w.y ?? C.surfaceHeight(w.x, w.z, 99));
   // walks between nodes on a floor (a drop allowed, a rise not)
@@ -1855,6 +1885,10 @@ function routeGraph(world) {
     const a = nodes[i], b = nodes[j], d = Math.hypot(a.p[0] - b.p[0], a.p[1] - b.p[1]);
     if (d > 30 || b.y > a.y + C.STEP_UP + 0.05) continue;
     if (a.stone && b.stone) continue;   // (two stones never join by a walk)
+    if (a.grid && b.grid && d > GRID_LINK) continue;   // (round 29: grid points join their neighbours only, diagonals included)
+    // round 29: never a plain walk across a drawbridge's span (the keep's gate: down it's floor at ground level, up a wall; whichever it was
+    // when the graph was built, only the time-gated edge crosses it)
+    if (Math.min(a.y, b.y) < 2 && dbs.some(db => crossesSpan(db, a.p, b.p))) continue;
     if (lineOk(a.p, a.y, b.p, b.y)) edges.push({ a: i, b: j, cost: d, kind: 'walk' });
   }
   const adj = nodes.map(() => []);
@@ -1880,7 +1914,7 @@ function edgeCost(e, me, t, etaDist) {
   }
 }
 // Exported for the unit checks: the live map's graph (nodes and edges with kinds), built against C.JUMP_PADS.
-export function routeGraphDebug() { VOID_Y = C.voidY(); return routeGraph({ pads: (C.JUMP_PADS || []).map(pd => ({ x: pd.x, y: pd.y, z: pd.z, tx: pd.target[0], ty: pd.target[1], tz: pd.target[2] })) }); }
+export function routeGraphDebug() { VOID_Y = C.voidY(); NEW_MAP = !C.activeMap?.()?.server; return routeGraph({ pads: (C.JUMP_PADS || []).map(pd => ({ x: pd.x, y: pd.y, z: pd.z, tx: pd.target[0], ty: pd.target[1], tz: pd.target[2] })) }); }
 function routeWaypoint(me, world, dest, destY, t) {
   const b = me.bot;
   if (b.routeWp !== undefined && t < (b.routeAt || 0) && b.routeDest && Math.hypot(b.routeDest[0] - dest[0], b.routeDest[1] - dest[1]) < 3) return b.routeWp;
@@ -1891,7 +1925,7 @@ function routeWaypoint(me, world, dest, destY, t) {
   const G = routeGraph(world);
   if (!G.nodes.length) return (b.routeWp = null);
   const n = G.nodes.length, dist = new Array(n).fill(Infinity), prev = new Array(n).fill(-1), via = new Array(n).fill(null), done = new Array(n).fill(false);
-  for (let i = 0; i < n; i++) { const N = G.nodes[i]; if (N.y <= myFloor + C.STEP_UP + 0.05 && lineOk(me2, myFloor, N.p, N.y)) dist[i] = Math.hypot(N.p[0] - me2[0], N.p[1] - me2[1]); }
+  for (let i = 0; i < n; i++) { const N = G.nodes[i], d = Math.hypot(N.p[0] - me2[0], N.p[1] - me2[1]); if ((!N.grid || d < GRID_NEAR) && N.y <= myFloor + C.STEP_UP + 0.05 && lineOk(me2, myFloor, N.p, N.y)) dist[i] = d; }
   let bestEnd = -1, bestCost = Infinity;
   for (let it = 0; it < n; it++) {
     let u = -1;
@@ -1899,7 +1933,7 @@ function routeWaypoint(me, world, dest, destY, t) {
     if (u < 0) break;
     done[u] = true;
     const N = G.nodes[u];
-    if (destFloor <= N.y + C.STEP_UP + 0.05 && lineOk(N.p, N.y, dest, destFloor)) { const c = dist[u] + Math.hypot(dest[0] - N.p[0], dest[1] - N.p[1]); if (c < bestCost) { bestCost = c; bestEnd = u; } }
+    if (destFloor <= N.y + C.STEP_UP + 0.05 && (!N.grid || Math.hypot(dest[0] - N.p[0], dest[1] - N.p[1]) < GRID_NEAR) && lineOk(N.p, N.y, dest, destFloor)) { const c = dist[u] + Math.hypot(dest[0] - N.p[0], dest[1] - N.p[1]); if (c < bestCost) { bestCost = c; bestEnd = u; } }
     for (const e of G.adj[u]) { const c = edgeCost(e, me, t, dist[u]); if (c < Infinity && dist[u] + c < dist[e.b]) { dist[e.b] = dist[u] + c; prev[e.b] = u; via[e.b] = e; } }
   }
   if (bestEnd < 0) return (b.routeWp = null);
