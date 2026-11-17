@@ -1,10 +1,10 @@
-// The end-of-match podium recap (characters track, round 16). Ten seconds after a match ends: a stage of KayKit castle pieces with
+// The end-of-match podium recap (characters track, round 16). Ten seconds after a match ends: a stage of Kenney Castle Kit pieces with
 // three stepped plinths (1st in the middle and highest, 2nd on the left, 3rd on the right), the top three's real bodies on them
 // (the Mage tinted by their spells, a Skeleton for a bot) emoting by place, a camera that dollies in on the winner and then frames
 // all three, and an overlay with each name, place, K/D and accolades. 4th and below get a line at the bottom.
 //
 // API (main.js):
-//   Podium.preload()                            load the stage pieces ahead (they're the castle's own models: from the cache)
+//   Podium.preload()                            load the stage pieces ahead (round 29: Siege Keep's own models, so from the cache)
 //   Podium.start(msg, { renderer, scene, onEnd })  play the recap for a {t:'recap'} message; `scene` lends its sky
 //   Podium.active()                             true while it plays: render with Podium.frame(dt) instead of the arena
 //   Podium.frame(dt)                            advance and draw (uses `renderer`)
@@ -21,8 +21,11 @@ import { makeWizardBody, emoteClips, BODY_SCALE, BODY_TOP, looksReady } from './
 import * as C from '../shared/constants.js';
 import { hasProfile, firstVisitUI, openEscMenu } from './select.js';   // round 18: "Saved to your profile"; round 21: "Try another wizard" on a first visit
 
-const KIT = './models/castle/';
-const PIECES = ['floor_foundation_allsides', 'floor_tile_large', 'wall_arched', 'wall_pillar', 'pillar_decorated', 'banner_white', 'torch_mounted'];
+// Round 29: the stage is Siege Keep's Kenney pieces (models/keep, one tile = 4 m) on the map's one palette texture, with the map's
+// material settings, so it compiles nothing the arena hasn't.
+const KIT = './models/keep/';
+const PIECES = ['wall', 'tower-base', 'tower-square-base-border', 'flag-banner-long'];
+const KIT_S = 4;
 // The plinths: x (2nd on the viewer's left), top height and width (m).
 const PLINTHS = { 1: { x: 0, h: 1.25, w: 1.7 }, 2: { x: -2.15, h: 0.8, w: 1.5 }, 3: { x: 2.15, h: 0.45, w: 1.5 } };
 const MEDAL = { 1: 0xffc857, 2: 0xd8dde6, 3: 0xd08a52 };
@@ -33,9 +36,7 @@ let pieces = null, loading = null;
 export function preload() {
   if (loading) return loading;
   const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
-  const tex = new THREE.TextureLoader().load(KIT + 'dungeon_texture.webp');
-  tex.colorSpace = THREE.SRGBColorSpace; tex.flipY = false;
-  const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.75, metalness: 0 });
+  const mat = kitMat();
   loading = Promise.all(PIECES.map(n => loader.loadAsync(KIT + n + '.glb').then(g => {
     g.scene.traverse(o => { if (o.isMesh) { o.material = mat; o.castShadow = true; o.receiveShadow = true; } });
     return [n, g.scene];
@@ -43,14 +44,47 @@ export function preload() {
   return loading;
 }
 
-// A kit piece, scaled to the castle (or stretched to `size` [w, h, d] m on its bounding box), its base at y 0.
+let matCache = null;
+function kitMat() {
+  if (matCache) return matCache;
+  const tex = new THREE.TextureLoader().load(KIT + 'colormap.webp');
+  tex.colorSpace = THREE.SRGBColorSpace; tex.flipY = false; tex.anisotropy = 4;
+  return (matCache = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.82, metalness: 0 }));
+}
+
+// A banner in a player's colour: the kit's accent texels (the palette's red column, u 256..320 px, v 256..384 px) moved to the nearest
+// accent column, as world.js tints the map's flags. One geometry per column, kept.
+const SWATCH = { red: 256, yellow: 64, orange: 128, green: 0, blue: 320, purple: 384 };
+const SWATCH_RGB = { red: [222, 67, 62], yellow: [255, 192, 68], orange: [255, 126, 68], green: [97, 203, 139], blue: [140, 180, 245], purple: [168, 120, 232] };
+function swatchOf(hex) {
+  const c = new THREE.Color(hex), rgb = [c.r * 255, c.g * 255, c.b * 255];
+  let best = 'red', d = Infinity;
+  for (const [k, v] of Object.entries(SWATCH_RGB)) { const e = v.reduce((s, q, i) => s + (q - rgb[i]) ** 2, 0); if (e < d) { d = e; best = k; } }
+  return best;
+}
+const tinted = {};
+function tintBanner(obj, hex) {
+  const sw = swatchOf(hex), du = (SWATCH[sw] - SWATCH.red) / 512;
+  if (!du) return;
+  obj.traverse(o => {
+    if (!o.isMesh) return;
+    const key = o.geometry.uuid + sw;
+    o.geometry = tinted[key] ??= (() => {
+      const g = o.geometry.clone(), a = g.attributes.uv;
+      for (let i = 0; i < a.count; i++) { const u = a.getX(i), v = a.getY(i); if (u >= 0.5 && u < 0.625 && v >= 0.5 && v < 0.75) a.setX(i, u + du); }
+      return g;
+    })();
+  });
+}
+
+// A kit piece at the map's scale (or stretched to `size` [w, h, d] m on its bounding box), its base at y 0.
 function piece(name, size) {
   const src = pieces?.[name];
   if (!src) return new THREE.Group();
   const o = src.clone(true);
-  o.scale.setScalar(BODY_SCALE);
+  o.scale.setScalar(KIT_S);
   const box = new THREE.Box3().setFromObject(o), dim = box.getSize(new THREE.Vector3());
-  if (size) o.scale.set(BODY_SCALE * size[0] / dim.x, BODY_SCALE * size[1] / dim.y, BODY_SCALE * size[2] / dim.z);
+  if (size) o.scale.set(KIT_S * size[0] / dim.x, KIT_S * size[1] / dim.y, KIT_S * size[2] / dim.z);
   const b2 = new THREE.Box3().setFromObject(o), c = b2.getCenter(new THREE.Vector3());
   const g = new THREE.Group(); o.position.set(-c.x, -b2.min.y, -c.z); g.add(o);
   return g;
@@ -158,15 +192,17 @@ function fogLike(arena) {
   return f.isFogExp2 ? new THREE.FogExp2(f.color, 0) : new THREE.Fog(f.color, 500, 1000);   // (the same program, no haze on the stage)
 }
 
-// The stone floor, the wall of arches, pillars and torches: built once and reused.
+// The stone floor (one quad on the palette's grey stone column), a curtain wall behind, round columns and banners: built once and reused.
 let stageCache = null;
 function staticStage() {
   if (stageCache) return stageCache;
   const stage = new THREE.Group();
-  for (let x = -3; x <= 3; x++) for (let z = -2; z <= 1; z++) { const f = piece('floor_tile_large'); f.position.set(x * 3.33, 0, z * 3.33); stage.add(f); }
-  for (let x = -3; x <= 3; x++) { const w = piece('wall_arched'); w.position.set(x * 3.33, 0, -2.6); stage.add(w); }
-  for (const x of [-5, 5]) { const p = piece('pillar_decorated'); p.position.set(x, 0, -2.0); stage.add(p); }
-  for (const x of [-3.3, 3.3]) { const t = piece('torch_mounted'); t.position.set(x, 1.9, -2.15); stage.add(t); }
+  const floorGeo = new THREE.PlaneGeometry(26, 14).rotateX(-Math.PI / 2), uv = floorGeo.attributes.uv;
+  for (let i = 0; i < uv.count; i++) uv.setXY(i, 72.5 / 512, uv.getY(i) > 0.5 ? 400 / 512 : 470 / 512);   // the grey stone column, darker at the back
+  const floor = new THREE.Mesh(floorGeo, kitMat()); floor.receiveShadow = true; floor.position.z = 2; stage.add(floor);
+  for (let x = -3; x <= 3; x++) { const w = piece('wall', [4, 4.2, 1.2]); w.position.set(x * 4, 0, -3.2); stage.add(w); }
+  for (const x of [-5, 5]) { const p = piece('tower-base', [1.3, 3.4, 1.3]); p.position.set(x, 0, -2.0); stage.add(p); }
+  for (const [x, c] of [[-7.6, 0xff6a3d], [7.6, 0x7aa8ff]]) { const b = piece('flag-banner-long', [0.12, 3.0, 1.1]); b.rotation.y = Math.PI / 2; tintBanner(b, c); b.position.set(x, 0, -2.4); stage.add(b); }
   if (pieces) stageCache = stage;
   return stage;
 }
@@ -185,13 +221,13 @@ function build(top, arena) {
   const emote = emoteClips();
   for (const p of top) {
     const P = PLINTHS[p.place] || PLINTHS[3];
-    const plinth = piece('floor_foundation_allsides', [P.w, P.h, P.w]); plinth.position.x = P.x; stage.add(plinth);
+    const plinth = piece('tower-square-base-border', [P.w, P.h, P.w]); plinth.position.x = P.x; stage.add(plinth);
     const loadout = C.sanitizeLoadout?.(p.loadout) || { ...C.DEFAULT_LOADOUT };
     const body = makeWizardBody(loadout, { body: p.body || 'mage', cos: p.eq });   // round 26: their cosmetics
     const color = p.color ?? body.look.color;
-    const banner = piece('banner_white', [1.0, 2.2, 0.2]);
-    banner.traverse(o => { if (o.isMesh) { o.material = o.material.clone(); o.material.color.setHex(body.look.color).lerp(new THREE.Color(0xffffff), 0.25); } });
-    banner.position.set(P.x, 1.0, -2.35); stage.add(banner);
+    const banner = piece('flag-banner-long', [0.12, 2.9, 1.0]);
+    banner.rotation.y = Math.PI / 2; tintBanner(banner, body.look.color);
+    banner.position.set(P.x, 0, -2.25); stage.add(banner);
     body.model.position.set(P.x, P.h, 0);
     body.model.rotation.y = P.x * -0.12;                 // turned a little towards the middle
     stage.add(body.model);
