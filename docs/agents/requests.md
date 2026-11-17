@@ -3405,3 +3405,30 @@ Their kit bounds and collision parts (KayKit / Quaternius) move with them (`serv
   `looks.js`' comment about KIT_SCALE: nothing to do.
 - **Deploy:** `dist/crazygames` should drop about 2.3 MB of map models; the new `models/keep/` is well under 1 MB. `edit.html` and `editor.js`
   stay out of the build as now.
+
+## environment → spells, characters (coordinator FYI): round 29, Siege Keep's data is in (`de20d37`, `dc68081`): the drawbridge, pads, props, runes, spawns
+All from `layout-keep.json` through map.js's exports, as you read them today (`C.setActiveMap('keep')`). +z is north; the moat and the gate are south.
+- **Heights:** ground 0; **wall-walks 4.72** (the curtain's centre lines at |x|, |z| = 12, 4 m thick: the walk spans 10..14); the gatehouse deck 4.72
+  (you walk under it: 2.9 m clear); **tower tops 8.76** (NE (12, 12) and SW (−12, −12), 4 m square). The outer parapets are `noStand` boxes 4.72→5.16
+  (a jump clears them); the inner edges are open (drop into the courtyard).
+- **Surface names (for the route graph):** every wall piece's walk is `<entry id>-wallwalk` (e.g. `wall-n-3-wallwalk`, `corner-nw-1-wallwalk`,
+  `gatehouse-wallwalk`), the tower tops `tower-ne-top-1-towertop` / `tower-sw-top-1-towertop`. The walk is continuous S→W→N (via the NW corner) and
+  S→E (via the SE corner) round to the breach; the tall towers' bodies cut it at NE and SW (dead ends at their faces).
+- **Ramps (stairs, all standable):** `stairs-n-1/2-treads` (x −7.74 → −2, z 6.75..10, rising east to 4.72, beside the north wall), `stairs-s-1/2-treads`
+  (x 8.34 → 2.6, z −10..−6.75, rising west), **`siege-tower-climb`** (x −20.3 → −15.3 at z −4 ± 0.8, rising east to 4.72) then `siege-tower-plank`
+  (a deck at 4.72, x −15.3 → −13.7) onto the west wall-walk at (−12, 4.72, −4); the tower's sides `siege-tower-side-l/r` are `noStand`.
+- **Drawbridge:** `{ id: 'drawbridge', x: 0, y: 0.25, z: −14.25, yaw: π, w: 2.8, d: 5.2, thick: 0.35, dir: [0, −1] }`: hinged at the gatehouse's outer face, it
+  spans the moat (z −14.6..−18.6) south to the road at z −19.45. Up, it stands in the gate opening (2.4 m wide, between `gatehouse-pillar-*`).
+  The moat is a **water floor at ground level** (wade through it; no void, no ditch below 0).
+- **Pads:** `pad-court` (5.5, 0, 5.5) → NE tower top (12.6, 8.76, 12.6), h 10.5; `pad-west` (−19.5, 0, −9.5) → SW tower top (−12.4, 8.76, −12.6), h 10.5;
+  `pad-east` (19, 0, −12) → the east wall-walk (12, 4.72, −5.5), h 6.5.
+- **Runes:** `rune-court` (−4.5, 0, −3.5), `rune-tower` (11.2, **8.76**, 11.2, the NE tower top), `rune-camp` (0.5, 0, 22), `rune-breach` (16.8, 0, 3.8).
+- **Heal flasks:** `heal-court` (3.5, −4.5), `heal-west` (−22.5, −1), `heal-east` (25, 11.5), `heal-south` (−6.5, −23.5), all on the ground.
+- **Spawns (8, ≥ 15 m apart, no pair in sight):** (−6.5, 5) and (7, −4) in the courtyard (the central tower between them), (−19.5, 22), (23, 20.5),
+  (22.5, −22), (−21.5, −22.5), (−24.5, −2), (24.5, −4.5) in the camp.
+- **Props (20, the same PROP_TYPES):** courtyard 5, the walks 2 (`crate` (4, 12) and `barrel` (−12, 5.5), floor 4.72), west camp 3, north 3, east 3, south 4.
+- **The field:** `ARENA_BOUNDS` x, z −28..28; invisible `block`s (`edge-n/s/e/w`, h 9, shots too) just outside it. `C.voidY()` is null.
+- **Braziers (new export `BRAZIERS`, and `COLLIDERS` kind `'brazier'`):** bowls r 0.45 h 1.25, pole torches r 0.15; the walls carry three torches.
+- **Characters:** the camera grid stays `half 48, y0 −2, y1 30` (the highest roof is the courtyard tower's at about 10.4 m). Spots worth a look: the
+  gatehouse passage (0, −12), the siege tower climb (−17.8, ~2.4, −4) and plank (−14.5, 4.72, −4), the stairs, the tower tops, the breach (12, 4).
+- **Spells: no `waypoint` kind yet;** say if the gate or the breach need one.
