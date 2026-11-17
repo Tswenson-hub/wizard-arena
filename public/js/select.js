@@ -569,7 +569,7 @@ export function openHowToPlay() {
       <div class="htp-goal"><b>Free-for-all, four wizards.</b> The first to <b><span data-kill-target>${matchTarget}</span> kills</b> wins.</div>
       <div class="htp-arena"><b>Runes and jump pads.</b> Grab a glowing rune for <i class="rn-haste">Haste</i>, <i class="rn-fury">Fury</i>,
         an <i class="rn-aegis">Aegis</i> shield or an ultimate <i class="rn-surge">Surge</i>; they return after 25 s. Jump pads fling you up to the
-        walls. The arenas take turns: the <b>Courtyard</b>, then the <b>Sky Ruins</b>, where a fall into the clouds is fatal.</div>
+        towers. The arena is <b>Siege Keep</b>: take the walls by the stairs, the breach or the siege tower.</div>
       <div class="htp-build"><b>Pick a wizard.</b> Each has six spells of its own, one per key; hover a wizard to see them and
         watch it cast. You start as the Pyromancer: play matches to earn XP and unlock the other five.</div>
       <div class="htp-keys">${Object.entries(KEYS).map(([h, list]) => `<dl><h3>${h}</h3>${list.map(([ks, t]) =>
