@@ -1,4 +1,4 @@
-# Deploy smoke test: health check, page load, the spell builder renders, join the 4-player FFA (bots fill
+# Deploy smoke test: health check, page load, the wizard gallery renders, join the 4-player FFA (bots fill
 # the empty seats), WebSocket traffic, no console errors.
 # usage: python3 deploy/smoke.py <base url> [screenshot path] [--swiftshader]
 #   python3 deploy/smoke.py http://localhost:3000
@@ -54,9 +54,9 @@ async def main():
         print(f'page ready (assets loaded) in {time.time() - t:.1f}s')
         b_ = await pg.evaluate("""() => { const q = s => document.querySelectorAll('#joinPicker ' + s).length;
           const r = document.querySelector('#joinPicker')?.getBoundingClientRect();
-          return { rows: q('.sb-row'), cards: q('.sb-card'), presets: q('.sb-presets .sb-chip'), visible: !!r && r.width > 0 && r.height > 0 }; }""")
-        builder_ok = b_['rows'] >= 4 and b_['cards'] >= 8 and b_['visible']
-        print('spell builder:', b_, 'ok' if builder_ok else 'FAIL')
+          return { cards: q('.wg-card'), spellCards: q('.sb-card'), rows: q('.sb-row'), visible: !!r && r.width > 0 && r.height > 0 }; }""")
+        builder_ok = b_['cards'] == 6 and b_['spellCards'] == 0 and b_['rows'] == 0 and b_['visible']   # round 27: six wizard cards, no spell grid
+        print('wizard gallery:', b_, 'ok' if builder_ok else 'FAIL')
         ok = ok and builder_ok
         if SHOT:
             await pg.screenshot(path=SHOT.replace('.png', '-builder.png'), timeout=120000)

@@ -216,9 +216,9 @@ async def main():
         ok = ok and status.startswith('Ready')
         cfg = await pg.evaluate("({ server: window.WA_SERVER, platform: window.WA_PLATFORM?.name, sdk: !!window.CrazyGames?.SDK, icon: !!document.querySelector('link[rel=icon]') })")
         print('config:', cfg)
-        cards = await pg.evaluate("document.querySelectorAll('#joinPicker .sb-card').length")
-        print('builder cards:', cards)
-        ok = ok and cards >= 8
+        cards = await pg.evaluate("document.querySelectorAll('#joinPicker .wg-card').length + ':' + document.querySelectorAll('#joinPicker .sb-card').length")
+        print('wizard cards : spell cards =', cards)   # round 27
+        ok = ok and cards == '6:0'
         # first visit: the "How to play" card (round 14) covers the builder until it's dismissed
         if await pg.locator('.htp-close').count():
             await pg.click('.htp-close'); print('how-to-play card: dismissed')
