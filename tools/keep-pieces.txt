@@ -1,0 +1,7 @@
+wall wall-corner wall-corner-half wall-corner-slant wall-half wall-pillar wall-doorway wall-to-narrow wall-narrow wall-narrow-corner wall-narrow-gate wall-narrow-stairs wall-narrow-wood wall-stud
+tower-base tower-top tower-square-base tower-square-base-border tower-square-mid tower-square-mid-door tower-square-mid-windows tower-square-mid-open tower-square-top tower-square-top-roof tower-square-top-roof-high tower-square-roof tower-square-arch
+tower-hexagon-base tower-hexagon-mid tower-hexagon-top tower-hexagon-top-wood tower-hexagon-roof tower-slant-roof
+gate metal-gate door bridge-draw bridge-straight bridge-straight-pillar stairs-stone stairs-stone-square
+siege-catapult siege-catapult-demolished siege-trebuchet siege-trebuchet-demolished siege-ballista siege-ballista-demolished siege-ram siege-ram-demolished siege-tower siege-tower-demolished
+rocks-large rocks-small tree-large tree-small tree-log tree-trunk ground-hills
+flag flag-wide flag-pennant flag-banner-long flag-banner-short

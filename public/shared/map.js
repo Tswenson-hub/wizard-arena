@@ -13,6 +13,10 @@
 // the live CrazyGames build's legacy rooms); setActiveMap(name) swaps every export below in place, so the server runs
 // rooms on different maps by switching before each room's tick, and the client switches when the match changes map.
 // New kinds: rune (a power-up spawn), pad (a jump pad with a fixed arc, padLaunch), portal (a linked pair).
+//
+// Round 29: one map, Siege Keep (layout-keep.json), built from the Kenney Castle Kit (public/models/keep, `keep/<piece>` at
+// kitScale 4: one kit tile is 4 m). The Courtyard, Sky Ruins and the legacy courtyard are frozen and server-only
+// (server/legacy-maps/: their layouts and their KayKit / Quaternius bounds and parts), for the store builds' rooms (mapsForGen).
 import { KIT_MODELS } from './kit-models.js';
 export { KIT_MODELS };
 
@@ -20,11 +24,12 @@ export const ARENA_RADIUS = 40;       // the outer bound (m): the castle's walls
 
 // Prop archetypes (Telekinesis lifts and throws them, Trapped Relic curses them). `r` is the collision radius, `h` the
 // height used for the hit sphere; `model` is the kit piece drawn for it, fitted to `h`.
+// (round 29: the four KayKit prop pieces moved to models/keep/props/ with their palette, the only KayKit models kept)
 export const PROP_TYPES = {
-  crate:   { r: 0.5,  h: 0.95, hp: 1, color: 0xb07a45, model: 'castle/box_small' },
-  barrel:  { r: 0.45, h: 0.95, hp: 1, color: 0x8a5a3a, model: 'castle/barrel_small' },
-  keg:     { r: 0.6,  h: 1.15, hp: 1, color: 0x9a6438, model: 'castle/keg' },
-  chest:   { r: 0.6,  h: 0.95, hp: 1, color: 0xa0683a, model: 'castle/chest' },
+  crate:   { r: 0.5,  h: 0.95, hp: 1, color: 0xb07a45, model: 'keep/props/box_small' },
+  barrel:  { r: 0.45, h: 0.95, hp: 1, color: 0x8a5a3a, model: 'keep/props/barrel_small' },
+  keg:     { r: 0.6,  h: 1.15, hp: 1, color: 0x9a6438, model: 'keep/props/keg' },
+  chest:   { r: 0.6,  h: 0.95, hp: 1, color: 0xa0683a, model: 'keep/props/chest' },
   potion:  { r: 0.5,  h: 1.15, hp: 1, color: 0x9a5cff },   // Meshy potion barrel (models/potion.glb)
 };
 
@@ -32,8 +37,13 @@ export const PROP_TYPES = {
 // scales it to 1.8 m, so the kit gets the same factor and its doorways keep their proportions next to the players
 // (requests.md, round 15). Quaternius' 2 m grid is half of KayKit's 4, so it takes the same factor.
 export const KIT_SCALE = 1.8 / 2.16;
-export const KIT_GRID = 2 * KIT_SCALE;    // the editor's snap: half a KayKit tile (a wall is 4 units, a small tile 2)
-export const kitScale = (model) => KIT_SCALE;
+export const KIT_GRID = 2 * KIT_SCALE;    // half a KayKit tile (a wall is 4 units, a small tile 2)
+// Round 29: the Kenney Castle Kit's pieces are one unit a tile (a wall 1 x 1.31, its walk at 1.18; its door 0.61 tall for a figure
+// about 0.45 units): 4 m a unit puts the wall-walk at 4.72 m and a doorway at 2.4 m next to the 1.8 m wizards.
+export const KEEP_SCALE = 4;
+export const KEEP_GRID = KEEP_SCALE;      // one Kenney tile; the editor snaps to half of it
+export const kitScale = (model) => model?.startsWith('keep/') ? KEEP_SCALE : KIT_SCALE;
+export const kitGrid = (model) => model?.startsWith('keep/') ? KEEP_GRID : 2 * KIT_GRID;
 
 // ------------------------------------------------------------ walkable surfaces (platforms and ramps)
 // High ground you can stand on: boxes (a flat top) and ramps (a top sloping along the piece's local +z).
@@ -208,25 +218,32 @@ export const rampFoot = (s) => sWorld(s, 0, (s.y1 >= s.y0 ? -1 : 1) * (s.d / 2 +
 // turns and scales with it. The server reads the file synchronously at start; the browser fetches it (uncached) before
 // anything builds. applyLayout() rebuilds every export in place (same arrays and objects), for the editor.
 const IS_NODE = typeof process !== 'undefined' && !!process.versions?.node && typeof window === 'undefined';
-// The maps. Each has a layout file next to this module; `legacy` is a frozen copy of the courtyard as the live CrazyGames
-// build bundles it (its clients collide against their own copy, so legacy rooms must run on exactly that), not in the
-// rotation. The server reads every file at start; the browser fetches the default map now and the others on demand
-// (loadMap), so the first load stays small.
+// The maps. Each has a layout file next to this module, or (`server: true`, round 29) in server/legacy-maps/: the frozen maps of the
+// store builds' rooms, which only the server simulates (those clients draw their own bundled copies; the browser never fetches these).
+// `legacy` is the courtyard as the first CrazyGames build bundles it. The server reads every file at start; the browser fetches the
+// default map now and the others on demand (loadMap), so the first load stays small.
 export const MAPS = {
-  courtyard: { name: 'courtyard', title: 'The Courtyard', file: 'layout.json' },
-  sky: { name: 'sky', title: 'Sky Ruins', file: 'layout-sky.json' },
-  legacy: { name: 'legacy', title: 'The Courtyard', file: 'layout-legacy.json', hidden: true },
+  keep: { name: 'keep', title: 'Siege Keep', file: 'layout-keep.json' },
+  courtyard: { name: 'courtyard', title: 'The Courtyard', file: 'courtyard.json', server: true, hidden: true },
+  sky: { name: 'sky', title: 'Sky Ruins', file: 'sky.json', server: true, hidden: true },
+  legacy: { name: 'legacy', title: 'The Courtyard', file: 'legacy.json', server: true, hidden: true },
 };
-export const MAP_ORDER = ['courtyard', 'sky'];   // the rotation, in order
-export const DEFAULT_MAP = 'courtyard';
-export const LAYOUT_URL = new URL('./layout.json', import.meta.url);
-const layoutURL = (file) => new URL('./' + file, import.meta.url);
-async function readLayout(file) {
+export const MAP_ORDER = ['keep'];   // the rotation, in order (round 29: one map; the registry stays, so a second map is one entry)
+export const DEFAULT_MAP = 'keep';
+// The maps a room of each client generation plays (server.js GENERATIONS), its start map first: the store builds keep the maps they
+// bundle (legacy: its frozen courtyard; v22: the courtyard; v24: the courtyard and the rebuilt Sky Ruins), the current build MAP_ORDER.
+export const GEN_MAPS = { legacy: ['legacy'], v22: ['courtyard'], v24: ['courtyard', 'sky'] };
+export const mapsForGen = (gen) => (GEN_MAPS[gen] || MAP_ORDER).filter(n => n in MAPS);
+export const LAYOUT_URL = new URL('./layout-keep.json', import.meta.url);
+const layoutURL = (M) => M.server ? new URL('../../server/legacy-maps/' + M.file, import.meta.url) : new URL('./' + M.file, import.meta.url);
+async function readLayout(M) {
   if (IS_NODE) {
     const { readFileSync } = await import('node:fs');
-    return JSON.parse(readFileSync(layoutURL(file), 'utf8'));
+    return JSON.parse(readFileSync(layoutURL(M), 'utf8'));
   }
-  const res = await fetch(layoutURL(file), { cache: 'no-store' });
+  if (M.server) throw new Error(`${M.name} is a server-only map`);
+  const file = M.file;
+  const res = await fetch(layoutURL(M), { cache: 'no-store' });
   if (!res.ok) throw new Error(`${file}: ${res.status}`);
   return res.json();
 }
@@ -234,7 +251,7 @@ async function readLayout(file) {
 export async function loadMap(name) {
   const M = MAPS[name];
   if (!M) throw new Error(`no map ${name}`);
-  if (!M.layout) M.layout = await (M.loading ??= readLayout(M.file));
+  if (!M.layout) M.layout = await (M.loading ??= readLayout(M));
   return M;
 }
 // The live map's layout (the editor edits its entries) and name; MAP_INFO is its settings (the file's `map` block).
@@ -247,7 +264,8 @@ if (IS_NODE) {
     catch (err) { console.warn(`[map] ${MAPS[name].file} not loaded (${err.message}); map '${name}' is off`); delete MAPS[name]; const i = MAP_ORDER.indexOf(name); if (i >= 0) MAP_ORDER.splice(i, 1); }
   }
 } else {
-  await loadMap(new URLSearchParams(location.search).get('map') in MAPS ? new URLSearchParams(location.search).get('map') : DEFAULT_MAP);
+  const q = new URLSearchParams(location.search).get('map');
+  await loadMap(q in MAPS && !MAPS[q].server ? q : DEFAULT_MAP);
 }
 
 // The kinds an entry may have, and the fields the editor shows for each (x, z, rotY and scale are common to all).
@@ -275,11 +293,17 @@ if (IS_NODE) {
 //           element, or the entry's `y`), spawn (facing rotY), heal (named spot);
 //           a spawn or heal spot stands on top of what's there unless its `y` says otherwise (under a deck, inside the hall)
 //   bounds  the playable rectangle (`w` x `d`): blinks and thrown wizards are kept inside it (ARENA_BOUNDS)
+//   brazier (round 29) a fire: `style` 'bowl' (an iron brazier on legs, solid, the default) or 'torch' (a pole torch), on the floor
+//           there unless `y`; `light: 1` asks for one of the few real flickering lights (BRAZIERS)
+//   floor   (round 29) `tone` instead of a model: a flat paving in one of the kit's palette colours (FLOOR_TONES: stone, sand, dirt,
+//           water), drawn just over the ground (a moat is a water floor: shallow, you wade through it)
 export const RUNE_TYPES = ['haste', 'fury', 'aegis', 'surge'];
 export const LAYOUT_KINDS = {
-  kit: ['model', 'y', 'solid', 'tint', 'light'], circle: ['r', 'h'], rune: ['type', 'y'], pad: ['tx', 'ty', 'tz', 'h', 'r', 'y'], portal: ['link', 'r', 'y'], floor: ['model', 'w', 'd', 'mix', 'seed'], block: ['w', 'd', 'y', 'h', 'shots', 'stand', 'rock', 'stone', 'ghost'], drawbridge: ['w', 'd', 'y', 'thick'],
-  deco: ['model', 'h', 'y', 'r', 'colH'], prop: ['type', 'y'], spawn: ['y'], heal: ['name', 'y'], bounds: ['w', 'd'],
+  kit: ['model', 'y', 'solid', 'tint', 'light'], circle: ['r', 'h'], rune: ['type', 'y'], pad: ['tx', 'ty', 'tz', 'h', 'r', 'y'], portal: ['link', 'r', 'y'], floor: ['model', 'tone', 'w', 'd', 'mix', 'seed'], block: ['w', 'd', 'y', 'h', 'shots', 'stand', 'rock', 'stone', 'ghost'], drawbridge: ['w', 'd', 'y', 'thick'],
+  deco: ['model', 'h', 'y', 'r', 'colH'], prop: ['type', 'y'], spawn: ['y'], heal: ['name', 'y'], bounds: ['w', 'd'], brazier: ['style', 'y', 'light'],
 };
+export const FLOOR_TONES = ['stone', 'sand', 'dirt', 'water'];
+export const BRAZIER = { r: 0.45, h: 1.25 };   // a bowl brazier's collider (a torch is a thin pole: r 0.15)
 // Stable pretty JSON for layout.json: one entry per line, keys in a fixed order, numbers to 4 decimals (0.1 mm), so a
 // moved asset is a one-line git diff.
 const KEY_ORDER = ['id', 'kind', 'model', 'type', 'name', 'x', 'y', 'z', 'rotY', 'scale'];
@@ -312,6 +336,7 @@ export function validateLayout(L) {
     if (e.kind === 'kit' && !(e.model in KIT_MODELS)) bad.push(`${e.id}: unknown kit model ${e.model}`);
     if (e.kind === 'prop' && !(e.type in PROP_TYPES)) bad.push(`${e.id}: unknown prop type ${e.type}`);
     if (e.kind === 'rune' && e.type != null && e.type !== '' && !RUNE_TYPES.includes(e.type)) bad.push(`${e.id}: unknown rune type ${e.type}`);
+    if (e.kind === 'floor' && e.tone != null && !FLOOR_TONES.includes(e.tone)) bad.push(`${e.id}: unknown floor tone ${e.tone}`);
     if (e.kind === 'pad') for (const k of ['tx', 'tz']) if (typeof e[k] !== 'number') bad.push(`${e.id}: ${k} missing (the pad's target)`);
     if (e.kind === 'portal' && !L.entries.some(q => q !== e && q.kind === 'portal' && q.id === e.link)) bad.push(`${e.id}: link ${e.link} is not another portal`);
     for (const k of ['x', 'z']) if (typeof e[k] !== 'number') bad.push(`${e.id}: ${k} missing`);
@@ -327,53 +352,79 @@ const S_ = (e) => e.scale ?? 1;
 export const LOS_HEIGHT = 1.6;
 
 // ------------------------------------------------------------ kit pieces: their solid parts
-// A kit piece's parts, in the model's own units (KayKit: a wall is x -2..2, z -0.5..0.5, 4 tall, its origin at the
-// foot of its centre line), before KIT_SCALE, the entry's scale, yaw and lift:
+// A kit piece's parts, in the model's own units (Kenney: a wall is a 1 x 1 tile, x -0.5..0.5 and z -0.5..0.5, its origin at the
+// foot of its middle), before kitScale, the entry's scale, yaw and lift:
 //   { box: [x0, x1, z0, z1], y: [bottom, top] }               solid from bottom to top (a deck when bottom is above the
 //                                                             entry's foot, so you walk under it)
 //   { ramp: [x0, x1], lz: [low end, high end], y: [low, high] }  a slope (stairs); it may rise toward local -z
+//   { ramp: [z0, z1], lx: [low end, high end], y: [low, high] }  (round 29) the same along local x (the siege tower's climb)
 //   either with noStand: true (a parapet or a rail: never stood on, a wall to anyone below its top) or
 //   moveOnly: true (blocks movement only; spells and sight pass)
 // A model not listed here is solid inside its bounding box (KIT_MODELS); KIT_DECOR models have no parts at all. Parts
 // that end up no higher than 0.12 m (a floor tile on the ground) are dropped: the ground is already there.
-const KIT_DECOR = /(^|\/)(banner|torch|candle|sword_shield|Prop_Vine|Prop_Support|Window|DoorFrame|Door_\d|Corner_Exterior)/;
-// a Quaternius wall with a door: the jambs and the lintel, the opening a little wider than the frame (1.25 m)
-const doorWall = [{ name: 'jamb-l', box: [-1, -0.75, -0.31, 0.09], y: [0, 3.12] }, { name: 'jamb-r', box: [0.75, 1, -0.31, 0.09], y: [0, 3.12] },
-  { name: 'lintel', box: [-0.75, 0.75, -0.31, 0.09], y: [2.6, 3.12] }];
-// roofs and gables: solid, never stood on (the camera and spells stop at them; nobody perches on a ridge)
-const roof = (model) => { const b = KIT_MODELS[model]; return b ? [{ name: 'roof', box: [b[0], b[1], b[4], b[5]], y: [b[2], b[3]], noStand: true }] : []; };
-const stairsParts = (w, rail) => [
-  { name: 'treads', ramp: [-w, w], lz: [4, 0], y: [0, 4] },
-  ...(rail ? [{ name: 'rail-l', ramp: [-2.5, -w], lz: [4, 0], y: [1, 5.1], noStand: true }, { name: 'rail-r', ramp: [w, 2.5], lz: [4, 0], y: [1, 5.1], noStand: true }] : []),
-];
+// Round 29, the Kenney pieces (measured with a raycast heightmap of each model, /tmp/wa-environment/r29/hm.py): a wall's walk is
+// at 1.18 (4.72 m), its crenels at 1.22-1.31. `wall-half` has crenels on its -x side only (the outer face of a curtain: its parapet
+// is solid, a jump gets you over it); `wall` has them both sides and no parapet parts (a wall you cross, where the siege tower docks);
+// `wall-corner`'s outer faces are +x and -z. A tower top's floor is at 0.17 over its foot (its crenels are scenery, so a tower top
+// level with the walk joins it). The arch (a gatehouse) is four pillars under a deck you walk beneath.
+let KIT_DECOR = /^keep\/(flag|metal-gate|gate|door|bridge-draw|ground|tree-log|tower-hexagon-top|tower-top|wall-stud)/;
+const parapet = (x0, x1, z0, z1) => ({ name: 'parapet', box: [x0, x1, z0, z1], y: [1.18, 1.29], noStand: true });
+// The walk on a wall piece and a tower's top floor: their surfaces are named '<entry id>-wallwalk' / '<entry id>-towertop' (the bots'
+// route graph finds the high ground by these names, spells' bots.js)
+const WALLWALK = { name: 'wallwalk', box: [-0.5, 0.5, -0.5, 0.5], y: [0, 1.18] }, TOWERTOP = { name: 'towertop', box: [-0.5, 0.5, -0.5, 0.5], y: [0, 0.17] };
+// a siege engine: its frame (stood on, cover) and what rises above it (never stood on: an arm, a roof's ridge)
+const engine = (frame, top, upper) => [{ name: 'frame', box: frame, y: [0, top] }, ...(upper ? [{ name: 'upper', box: upper.box, y: [top, upper.top], noStand: true }] : [])];
 export const KIT_PARTS = {
-  // L and T walls: two boxes, not their bounding square
-  'castle/wall_corner': [{ box: [-2, 0.5, -0.5, 0.5], y: [0, 4] }, { box: [-0.5, 0.5, 0.5, 2], y: [0, 4] }],
-  'castle/wall_Tsplit': [{ box: [-2, 2, -0.5, 0.5], y: [0, 4] }, { box: [-0.5, 0.5, 0.5, 2], y: [0, 4] }],
-  'castle/barrier_corner': [{ box: [-2, 0.39, -0.39, 0.39], y: [0, 1.4] }, { box: [-0.39, 0.39, 0.39, 2], y: [0, 1.4] }],
-  // stairs rise toward -z from 0 at z 4 to 4 (a wall's height) at z 0, between rails or walls
-  'castle/stairs': stairsParts(1.5, true),
-  'castle/stairs_wide': [{ name: 'treads', ramp: [-2.5, 2.5], lz: [4, 0], y: [0, 4] },
-    { name: 'rail-l', ramp: [-3.5, -2.5], lz: [4, 0], y: [1, 5.1], noStand: true }, { name: 'rail-r', ramp: [2.5, 3.5], lz: [4, 0], y: [1, 5.1], noStand: true }],
-  'castle/stairs_walled': [{ name: 'treads', ramp: [-1.25, 1.25], lz: [4, 0], y: [0, 4] },
-    { name: 'wall-l', box: [-2.5, -1.25, 0, 4], y: [0, 4] }, { name: 'wall-r', box: [1.25, 2.5, 0, 4], y: [0, 4] }],
-  // round 24 (Sky Ruins): the rail-less 2-unit flight (tower stairs), the narrow flight with rails, the long shallow one
-  'castle/stairs_modular_center': [{ name: 'treads', ramp: [-1, 1], lz: [4, 0], y: [0, 4] }],
-  'castle/stairs_narrow': stairsParts(1.5, true).map(p => p.name === 'treads' ? p : { ...p, ramp: p.name === 'rail-l' ? [-2, -1.5] : [1.5, 2] }),
-  'castle/stairs_long': [{ name: 'treads', ramp: [-1.5, 1.5], lz: [8, 0], y: [0, 4] },
-    { name: 'rail-l', ramp: [-2.5, -1.5], lz: [8, 0], y: [1, 5.1], noStand: true }, { name: 'rail-r', ramp: [1.5, 2.5], lz: [8, 0], y: [1, 5.1], noStand: true }],
-  // a doorway you walk through (the opening is about 1.6 units wide and 2.1 tall, arched to 2.8): two jambs and a lintel
-  'castle/wall_doorway': [{ name: 'jamb-l', box: [-2, -0.8, -0.5, 0.5], y: [0, 4] }, { name: 'jamb-r', box: [0.8, 2, -0.5, 0.5], y: [0, 4] },
-    { name: 'lintel', box: [-0.8, 0.8, -0.5, 0.5], y: [2.1, 4] }],
-  // rubble: a pile you can jump onto, a little lower than its peaks
-  'castle/rubble_large': [{ box: [-3.6, 3.6, -1.3, 0.7], y: [0, 2.9] }],
-  'castle/rubble_half': [{ box: [0, 3.6, -1.2, 0.6], y: [0, 2.9] }],
-  // Quaternius: doorways you walk through, balcony rails you lean on but don't stand on, roofs
-  'village/Wall_UnevenBrick_Door_Round': doorWall, 'village/Wall_Plaster_Door_Round': doorWall,
-  'village/Balcony_Cross_Straight': [{ box: [-1, 1, 0.9, 1.1], y: [0, 1.12], noStand: true }],
-  'village/Balcony_Cross_Corner': [{ box: [-1, 1.1, 0.9, 1.1], y: [0, 1.12], noStand: true }, { box: [0.9, 1.1, -1, 1], y: [0, 1.12], noStand: true }],
+  'keep/wall': [WALLWALK],
+  'keep/wall-half': [WALLWALK, parapet(-0.5, -0.36, -0.5, 0.5)],
+  'keep/wall-corner': [WALLWALK, parapet(0.31, 0.5, -0.5, 0.5), parapet(-0.5, 0.31, -0.5, -0.31)],
+  'keep/wall-pillar': [WALLWALK],
+  'keep/wall-to-narrow': [WALLWALK],
+  'keep/tower-square-top': [TOWERTOP],
+  'keep/tower-square-top-color': [TOWERTOP],
+  'keep/tower-square-arch': [
+    { name: 'pillar-sw', box: [-0.465, -0.26, -0.465, -0.26], y: [0, 1.01] }, { name: 'pillar-se', box: [0.26, 0.465, -0.465, -0.26], y: [0, 1.01] },
+    { name: 'pillar-nw', box: [-0.465, -0.26, 0.26, 0.465], y: [0, 1.01] }, { name: 'pillar-ne', box: [0.26, 0.465, 0.26, 0.465], y: [0, 1.01] },
+    { name: 'wallwalk', box: [-0.465, 0.465, -0.465, 0.465], y: [0.63, 1.01] }],   // (its deck: a gatehouse scaled to the walk joins it)
+  // the stone stairs rise toward +z, 0.675 over 0.82 (at 1.75 x the kit scale: the walk's 4.72 m over 5.7 m)
+  'keep/stairs-stone': [{ name: 'treads', ramp: [-0.116, 0.116], lz: [-0.41, 0.41], y: [0, 0.675] }],
+  'keep/stairs-stone-square': [{ name: 'treads', ramp: [-0.12, 0.12], lz: [-0.41, 0.41], y: [0, 0.675] }],
+  // the siege tower (its gangplank toward +x at 1.77, so at 2.67 x the kit scale it lands on a 4.72 m walk): a ramp from the
+  // ground behind it up through the tower to the plank, the tower's sides, the plank; its roof is scenery (you'd hit your head)
+  'keep/siege-tower': [
+    { name: 'climb', ramp: [-0.3, 0.3], lx: [-1.5, 0.36], y: [0, 1.77] },
+    { name: 'side-l', box: [-0.38, 0.36, -0.6, -0.36], y: [0, 2.3], noStand: true }, { name: 'side-r', box: [-0.38, 0.36, 0.36, 0.6], y: [0, 2.3], noStand: true },
+    { name: 'plank', box: [0.36, 0.98, -0.42, 0.42], y: [1.68, 1.77] }],
+  'keep/siege-tower-demolished': engine([-0.8, 0.8, -0.7, 0.7], 0.55, { box: [-0.5, 0.2, -0.5, 0.5], top: 1.9 }),
+  'keep/siege-catapult': engine([-0.8, 0.6, -0.5, 0.5], 0.42, { box: [-0.45, 0.25, -0.3, 0.3], top: 1.1 }),
+  'keep/siege-catapult-demolished': engine([-0.6, 0.9, -0.7, 0.7], 0.28),
+  'keep/siege-trebuchet': engine([-0.95, 0.6, -0.55, 0.55], 0.35, { box: [-0.35, 0.25, -0.5, 0.5], top: 1.75 }),
+  'keep/siege-trebuchet-demolished': engine([-0.8, 0.9, -0.9, 0.9], 0.28),
+  'keep/siege-ballista': engine([-0.55, 0.8, -0.5, 0.5], 0.45, { box: [-0.3, 0.5, -0.25, 0.25], top: 0.85 }),
+  'keep/siege-ballista-demolished': engine([-0.8, 0.75, -0.7, 0.65], 0.35),
+  'keep/siege-ram': engine([-0.95, 0.95, -0.47, 0.47], 1.0),
+  'keep/siege-ram-demolished': engine([-0.95, 0.95, -0.7, 0.75], 0.55),
+  // rocks: a lump a little inside the outline, a little under the peaks; trees: their trunk
+  'keep/rocks-large': [{ box: [-0.48, 0.48, -0.55, 0.55], y: [0, 0.42] }],
+  'keep/rocks-small': [{ box: [-0.4, 0.4, -0.42, 0.42], y: [0, 0.36] }],
+  'keep/tree-large': [{ name: 'trunk', box: [-0.09, 0.09, -0.09, 0.09], y: [0, 1.85], noStand: true }],
+  'keep/tree-small': [{ name: 'trunk', box: [-0.08, 0.08, -0.08, 0.08], y: [0, 1.35], noStand: true }],
+  'keep/tree-trunk': [{ box: [-0.18, 0.18, -0.15, 0.15], y: [0, 0.38] }],
+  // roofs: solid, never stood on
+  'keep/tower-square-roof': [{ name: 'roof', box: [-0.5, 0.5, -0.5, 0.5], y: [0, 2.01], noStand: true }],
+  'keep/tower-square-top-roof': [TOWERTOP, { name: 'roof', box: [-0.4, 0.4, -0.4, 0.4], y: [0.17, 1.0], noStand: true }],
+  'keep/tower-square-top-roof-high': [TOWERTOP, { name: 'roof', box: [-0.4, 0.4, -0.4, 0.4], y: [0.17, 1.35], noStand: true }],
+  'keep/tower-hexagon-roof': [{ name: 'roof', box: [-0.42, 0.42, -0.36, 0.36], y: [0, 0.83], noStand: true }],
+  'keep/tower-slant-roof': [{ name: 'roof', box: [-0.55, 0.55, -0.55, 0.55], y: [0, 2.14], noStand: true }],
 };
-for (const m of ['village/Roof_RoundTiles_6x14', 'village/Roof_RoundTiles_6x8', 'village/Roof_Front_Brick6', 'village/Roof_Tower_RoundTiles']) KIT_PARTS[m] = roof(m);
+// Round 29: the frozen maps' pieces (KayKit castle/, Quaternius village/), for the server only (their rooms collide exactly as before)
+if (IS_NODE) {
+  const L = await import('../../server/legacy-maps/kit-legacy.js');
+  for (const [k, v] of Object.entries(L.KIT_MODELS)) KIT_MODELS[k] ??= v;
+  for (const [k, v] of Object.entries(L.KIT_PARTS)) KIT_PARTS[k] ??= v;
+  const keepDecor = KIT_DECOR, legacyDecor = L.KIT_DECOR;
+  KIT_DECOR = { test: (m) => keepDecor.test(m) || legacyDecor.test(m) };
+}
 export function kitParts(model) {
   if (model in KIT_PARTS) return KIT_PARTS[model];
   const b = KIT_MODELS[model];
@@ -396,9 +447,15 @@ function buildKit(out, e) {
       if (bottom > 0.05) s.thick = top - bottom;
       out.SURFACES.push(s);
     } else if (pt.ramp) {
-      const [x0, x1] = pt.ramp, [lzLo, lzHi] = pt.lz, [yLo, yHi] = pt.y, up = lzHi > lzLo;
-      const [cx, cz] = place(P, [(x0 + x1) / 2 * k, (lzLo + lzHi) / 2 * k]);
-      const s = { kind: 'ramp', x: cx, z: cz, w: (x1 - x0) * k + SEAM, d: Math.abs(lzHi - lzLo) * k, yaw: P.yaw + (up ? 0 : Math.PI), y0: y + yLo * k, y1: y + yHi * k, ...extra };
+      const [x0, x1] = pt.ramp, [yLo, yHi] = pt.y;
+      let s;
+      if (pt.lx) {   // rising along local x: the surface's own +z is the piece's +x (yaw + pi/2), or -x
+        const [lxLo, lxHi] = pt.lx, up = lxHi > lxLo, [cx, cz] = place(P, [(lxLo + lxHi) / 2 * k, (x0 + x1) / 2 * k]);
+        s = { kind: 'ramp', x: cx, z: cz, w: (x1 - x0) * k + SEAM, d: Math.abs(lxHi - lxLo) * k, yaw: P.yaw + (up ? Math.PI / 2 : -Math.PI / 2), y0: y + yLo * k, y1: y + yHi * k, ...extra };
+      } else {
+        const [lzLo, lzHi] = pt.lz, up = lzHi > lzLo, [cx, cz] = place(P, [(x0 + x1) / 2 * k, (lzLo + lzHi) / 2 * k]);
+        s = { kind: 'ramp', x: cx, z: cz, w: (x1 - x0) * k + SEAM, d: Math.abs(lzHi - lzLo) * k, yaw: P.yaw + (up ? 0 : Math.PI), y0: y + yLo * k, y1: y + yHi * k, ...extra };
+      }
       if (y > 0.05) s.thick = yHi * k;   // stacked: solid down to the entry's foot at the high end
       out.SURFACES.push(s);
     }
@@ -417,6 +474,8 @@ export const RUNE_SPAWNS = [], JUMP_PADS = [], PORTALS = [], ISLANDS = [];   // 
 // Round 24: STEPPING_STONES { id, x, y (the walkable top), z, r (the footprint's radius) } (blocks with stone: 1); DRAWBRIDGES
 // { id, x, y, z (the hinge), yaw, w, d, thick, dir: [dx, dz] (the slab's direction when down) }.
 export const STEPPING_STONES = [], DRAWBRIDGES = [];
+// Round 29: BRAZIERS { id, x, y, z, style ('bowl' | 'torch'), light } (world.js draws the fire).
+export const BRAZIERS = [];
 // A jump pad's arc for a point mass under `gravity` (JUMP.gravity on both the server and the client, so both compute the
 // same flight): up to the apex `h` above the pad, then down to the target. Returns { v: [vx, vy, vz] (m/s), t (s), h }.
 export function padLaunch(pad, gravity) {
@@ -452,7 +511,7 @@ export function buildMap(L, name = ACTIVE_MAP.name) {
   out.ISLANDS = of('block').filter(e => e.rock).map(e => ({ id: e.id, x: e.x, z: e.z, w: e.w * S_(e), d: e.d * S_(e), yaw: e.rotY || 0, top: (e.y || 0) + (e.h ?? 3) * S_(e), bottom: e.y || 0 }));
   out.STEPPING_STONES = of('block').filter(e => e.stone).map(e => ({ id: e.id, x: e.x, y: (e.y || 0) + (e.h ?? 3) * S_(e), z: e.z, r: Math.max(e.w, e.d) * S_(e) / 2 }));
   out.DRAWBRIDGES = of('drawbridge').map(e => { const yaw = e.rotY || 0; return { id: e.id, x: e.x, y: e.y || 0, z: e.z, yaw, w: (e.w ?? 3) * S_(e), d: (e.d ?? 6) * S_(e), thick: (e.thick ?? 0.3) * S_(e), dir: [Math.sin(yaw), Math.cos(yaw)] }; });
-  out.FLOORS = of('floor').map(e => ({ id: e.id, model: e.model, x: e.x, z: e.z, w: e.w * S_(e), d: e.d * S_(e), yaw: e.rotY || 0,
+  out.FLOORS = of('floor').map(e => ({ id: e.id, model: e.model, ...(e.tone ? { tone: e.tone } : {}), x: e.x, z: e.z, w: e.w * S_(e), d: e.d * S_(e), yaw: e.rotY || 0,
     mix: e.mix ? String(e.mix).split(',').map(s => s.trim()).filter(Boolean) : [], seed: e.seed ?? 1 }));
   out.RUNE_CIRCLES = of('circle').map(e => ({ id: e.id, x: e.x, z: e.z, y: e.y || 0, r: (e.r ?? 6) * S_(e), h: (e.h ?? 5) * S_(e) }));
   const bo = of('bounds')[0];
@@ -489,12 +548,15 @@ export function buildMap(L, name = ACTIVE_MAP.name) {
   // height (`h`); line-of-sight checks only count colliders at least LOS_HEIGHT tall. The castle's pieces are SURFACES
   // (boxes and ramps); only round decos are circles.
   out.COLLIDERS = out.DECOS.filter(d => d.r > 0).map(d => ({ x: d.x, z: d.z, r: d.r, h: d.colH, kind: 'deco' }));
+  // round 29: braziers (a bowl is a short solid post; a pole torch a thin one)
+  out.BRAZIERS = of('brazier').map(e => ({ id: e.id, x: e.x, y: e.y ?? floorAt(e.x, e.z), z: e.z, style: e.style === 'torch' ? 'torch' : 'bowl', light: e.light ? 1 : 0 }));
+  for (const b of out.BRAZIERS) out.COLLIDERS.push({ x: b.x, z: b.z, r: b.style === 'torch' ? 0.15 : BRAZIER.r, h: b.y + (b.style === 'torch' ? 2.2 : BRAZIER.h), kind: 'brazier' });
   return out;
 }
 
 // Rebuild every export from `L` in place: arrays keep their identity (emptied and refilled), objects are cleared and
 // reassigned, so every module holding a reference sees the new layout.
-const EXPORTS = { SCATTER_SETTINGS, ARENA_BOUNDS, MAP_INFO, PROP_SPAWNS, SPAWN_POINTS, HEAL_SPOTS, COLLIDERS, LOS_VOLUMES, KIT_PIECES, FLOORS, DECOS, RUNE_CIRCLES, RUNE_SPAWNS, JUMP_PADS, PORTALS, ISLANDS, STEPPING_STONES, DRAWBRIDGES, SURFACES };
+const EXPORTS = { SCATTER_SETTINGS, ARENA_BOUNDS, MAP_INFO, PROP_SPAWNS, SPAWN_POINTS, HEAL_SPOTS, COLLIDERS, LOS_VOLUMES, KIT_PIECES, FLOORS, DECOS, RUNE_CIRCLES, RUNE_SPAWNS, JUMP_PADS, PORTALS, ISLANDS, STEPPING_STONES, DRAWBRIDGES, BRAZIERS, SURFACES };
 function assignExports(m) {
   for (const [k, target] of Object.entries(EXPORTS)) {
     const v = m[k];

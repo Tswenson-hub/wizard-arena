@@ -12,6 +12,9 @@
 #     KIT_SIMPLIFY="<ratio> <error>" also simplifies them (uvs and normals kept). Round 20: the village's round-tile roofs,
 #     KIT_SIMPLIFY="0.25 0.005" tools/optimize-models.sh kit <MegaKit>/glTF village Roof_Tower_RoundTiles Roof_RoundTiles_6x14
 #     (4024 -> 2054 and 5372 -> 2373 triangles; KayKit's castle pieces won't go: every brick is its own piece)
+#     Round 29: the Kenney Castle Kit (GLB, one shared colormap) -> public/models/keep/ (copy "Models/GLB format" to a
+#     path without spaces first, with its Textures/ folder):  tools/optimize-models.sh kit <glb-dir> keep $(cat tools/keep-pieces.txt)
+#     (the list is in tools/keep-pieces.txt; world.js draws them all with models/keep/colormap.webp)
 #   tools/optimize-models.sh pack <name> [maps-px] [simplify-ratio]
 #     meshopt-compress public/models/<name>.glb in place (EXT_meshopt_compression: world.js and the editor set
 #     three's MeshoptDecoder on their GLTFLoaders), shrinking its normal/roughness maps to maps-px (default 512;
@@ -107,7 +110,8 @@ if [ "$1" = kit ]; then
   # tools/optimize-models.sh kit <src-gltf-dir> <public/models subdir> name... : the kit pieces the layout uses (round 15: castle/, village/)
   SRC="$2"; SUB="$3"; shift 3
   mkdir -p "$OUT/$SUB"
-  FILES=""; for n in "$@"; do FILES="$FILES $SRC/$n.gltf"; done
+  # (round 29: a Kenney GLB source works too; .gltf wins when both exist)
+  FILES=""; for n in "$@"; do if [ -f "$SRC/$n.gltf" ]; then FILES="$FILES $SRC/$n.gltf"; else FILES="$FILES $SRC/$n.glb"; fi; done
   kitpack "$OUT/$SUB" $FILES
 elif [ "$1" = pack ]; then
   cp "$OUT/$2.glb" "$TMP/in.glb"
