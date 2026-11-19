@@ -1,0 +1,173 @@
+{
+ "explosion": {
+  "files": [
+   "explosion0.mp3",
+   "explosion1.mp3",
+   "explosion2.mp3",
+   "explosion3.mp3"
+  ],
+  "layer": 0.55,
+  "vol": 0.9
+ },
+ "rpgboom": {
+  "files": [
+   "rpgboom0.mp3",
+   "rpgboom1.mp3",
+   "rpgboom2.mp3"
+  ],
+  "layer": 0.6,
+  "vol": 0.9
+ },
+ "flak": {
+  "files": [
+   "flak0.mp3",
+   "flak1.mp3",
+   "flak2.mp3"
+  ],
+  "layer": 0.4,
+  "vol": 0.9
+ },
+ "cannon": {
+  "files": [
+   "cannon.mp3"
+  ],
+  "layer": 0.6,
+  "vol": 1.0
+ },
+ "keepfall": {
+  "files": [
+   "keepfall.mp3"
+  ],
+  "layer": 0.7,
+  "vol": 1.0
+ },
+ "gatebreach": {
+  "files": [
+   "gatebreach.mp3"
+  ],
+  "layer": 0.6,
+  "vol": 1.0
+ },
+ "splash": {
+  "files": [
+   "splash.mp3"
+  ],
+  "layer": 0.0,
+  "vol": 1.0
+ },
+ "door": {
+  "files": [
+   "door.mp3"
+  ],
+  "layer": 0.0,
+  "vol": 1.0
+ },
+ "pu_drive": {
+  "files": [
+   "pu_drive.mp3"
+  ],
+  "layer": 0.5,
+  "vol": 1.0
+ },
+ "pu_shield": {
+  "files": [
+   "pu_shield.mp3"
+  ],
+  "layer": 0.4,
+  "vol": 1.0
+ },
+ "pu_rpg": {
+  "files": [
+   "pu_rpg.mp3"
+  ],
+  "layer": 0.5,
+  "vol": 0.9
+ },
+ "unlock": {
+  "files": [
+   "unlock.mp3"
+  ],
+  "layer": 0.3,
+  "vol": 1.0
+ },
+ "vo_objective": {
+  "files": [
+   "vo_objective.mp3"
+  ],
+  "layer": 0.0,
+  "vol": 1.0
+ },
+ "vo_monster": {
+  "files": [
+   "vo_monster.mp3"
+  ],
+  "layer": 0.0,
+  "vol": 1.0
+ },
+ "crumble": {
+  "files": [
+   "crumble0.mp3",
+   "crumble1.mp3",
+   "crumble2.mp3"
+  ],
+  "layer": 0.35,
+  "vol": 1.0
+ },
+ "stonebreak": {
+  "files": [
+   "stonebreak0.mp3",
+   "stonebreak1.mp3",
+   "stonebreak2.mp3"
+  ],
+  "layer": 0.5,
+  "vol": 1.0
+ },
+ "stonechip": {
+  "files": [
+   "stonechip0.mp3",
+   "stonechip1.mp3"
+  ],
+  "layer": 0.0,
+  "vol": 0.8
+ },
+ "clang": {
+  "files": [
+   "clang0.mp3",
+   "clang1.mp3"
+  ],
+  "layer": 0.3,
+  "vol": 1.0
+ },
+ "helihit": {
+  "files": [
+   "helihit0.mp3",
+   "helihit1.mp3"
+  ],
+  "layer": 0.3,
+  "vol": 1.0
+ },
+ "woodcrack": {
+  "files": [
+   "woodcrack0.mp3",
+   "woodcrack1.mp3"
+  ],
+  "layer": 0.3,
+  "vol": 1.0
+ },
+ "tinkle": {
+  "files": [
+   "tinkle0.mp3",
+   "tinkle1.mp3"
+  ],
+  "layer": 0.3,
+  "vol": 1.0
+ },
+ "crash": {
+  "files": [
+   "crash0.mp3",
+   "crash1.mp3"
+  ],
+  "layer": 0.5,
+  "vol": 1.0
+ }
+}
